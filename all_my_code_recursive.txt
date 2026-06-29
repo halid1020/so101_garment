@@ -1,0 +1,519 @@
+==================================================
+FILE: so101_dual_arm.py
+==================================================
+
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import (
+    FeetechMotorsBus,
+    OperatingMode,
+)
+from pathlib import Path
+import draccus
+import time
+
+class SO101DualArm:
+    def __init__(self, config: dict):
+        """Initializes both arms based on a single configuration dictionary."""
+        
+        # 1. Extract robot connection settings
+        robot_conf = config.get('robot', {})
+        port_0 = robot_conf.get('PORT_ID_0')
+        port_1 = robot_conf.get('PORT_ID_1')
+        name_0 = robot_conf.get('ROBOT_NAME_0')
+        name_1 = robot_conf.get('ROBOT_NAME_1')
+        
+        # 2. Extract and store positions for later use
+        self.rest_pos = config.get('rest_pos', {})
+        self.mid_pos = config.get('mid_pos', {})
+
+        print("Loading calibrations...")
+        self.calib_0 = self._load_calibration(name_0)
+        self.calib_1 = self._load_calibration(name_1)
+        
+        print("Setting up motor buses...")
+        self.bus_0 = self._setup_motors(self.calib_0, port_0)
+        self.bus_1 = self._setup_motors(self.calib_1, port_1)
+
+    def _load_calibration(self, robot_name) -> MotorCalibration:
+        fpath = Path(f'calibration_files/{robot_name}.json')
+        with open(fpath) as f, draccus.config_type("json"):
+            calibration = draccus.load(dict[str, MotorCalibration], f)
+            return calibration
+
+    def _setup_motors(self, calibration, port_id):
+        bus = FeetechMotorsBus(
+            port=port_id,
+            motors={
+                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.DEGREES),
+                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.DEGREES),
+                "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
+                "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
+                "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100), 
+            },
+            calibration=calibration,
+        )
+        bus.connect(True)
+
+        with bus.torque_disabled():
+            bus.configure_motors()
+            for motor in bus.motors:
+                bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                bus.write("P_Coefficient", motor, 16) 
+                bus.write("I_Coefficient", motor, 0)
+                bus.write("D_Coefficient", motor, 32) 
+        return bus
+    # TODO: also add move_to_norm_pose, where it takes the normalised joint signals of the joints between -1 and 1.
+    def move_to_pose(self, desired_pos_0, desired_pos_1, duration): # TODO: change this name to move to joint pose
+        """Interpolates and moves both arms synchronously over a set duration."""
+        start_time = time.time()
+        starting_pose_0 = self.bus_0.sync_read("Present_Position")
+        starting_pose_1 = self.bus_1.sync_read("Present_Position")
+        
+        while True:
+            t = time.time() - start_time
+            if t > duration:
+                break
+
+            alpha = min(t / duration, 1)
+
+            position_dict_0 = {}
+            for joint in desired_pos_0:
+                p0 = starting_pose_0[joint]
+                pf = desired_pos_0[joint]
+                position_dict_0[joint] = (1 - alpha) * p0 + alpha * pf
+
+            position_dict_1 = {}
+            for joint in desired_pos_1:
+                p0 = starting_pose_1[joint]
+                pf = desired_pos_1[joint]
+                position_dict_1[joint] = (1 - alpha) * p0 + alpha * pf
+
+            self.bus_0.sync_write("Goal_Position", position_dict_0, normalize=True)
+            self.bus_1.sync_write("Goal_Position", position_dict_1, normalize=True)
+
+            time.sleep(0.02) 
+
+    # TODO: add move_to_ee_pose that is relative to the robot base.
+
+    def send_to_rest(self, duration=2.0):
+        """Moves both arms to the rest position loaded from config."""
+        print("Moving to rest position...")
+        if not self.rest_pos:
+            print("Warning: No rest_pos found in config!")
+            return
+        self.move_to_pose(self.rest_pos, self.rest_pos, duration)
+
+    def send_to_middle(self, duration=2.0):
+        """Moves both arms to the middle position loaded from config."""
+        print("Moving to middle position...")
+        if not self.mid_pos:
+            print("Warning: No mid_pos found in config!")
+            return
+        self.move_to_pose(self.mid_pos, self.mid_pos, duration)
+
+    # ----------------------------
+
+    def read_positions(self):
+        """Returns the current positions of both arms."""
+        pos_0 = self.bus_0.sync_read("Present_Position")
+        pos_1 = self.bus_1.sync_read("Present_Position")
+        return pos_0, pos_1
+
+    def hold_position(self, duration):
+        """Pauses the execution while holding the current pose."""
+        start_time = time.time()
+        while True:
+            if time.time() - start_time > duration:
+                break
+            time.sleep(0.02)
+
+    def disable_torque(self):
+        """Relaxes both arms."""
+        print("Disabling torque...")
+        self.bus_0.disable_torque()
+        self.bus_1.disable_torque()
+
+
+==================================================
+FILE: read_joints.py
+==================================================
+
+import time
+# Assuming you save the class from the file above as 'so101_dual_arm.py'
+# you could just do: `from so101_dual_arm import SO101DualArm` 
+# But for completeness, I will assume the class is accessible here.
+
+from send_position import SO101DualArm 
+
+# --- CONFIGURATION VARIABLES ---
+PORT_ID_0 = "/dev/ttyACM0"
+PORT_ID_1 = "/dev/ttyACM1"  
+ROBOT_NAME_0 = "follower_0" 
+ROBOT_NAME_1 = "follower_1" 
+
+def main():
+    print("Initializing Dual Arm Reader...")
+    dual_arm = SO101DualArm(PORT_ID_0, PORT_ID_1, ROBOT_NAME_0, ROBOT_NAME_1)
+
+    # Disable torque so you can move the motors freely by hand
+    dual_arm.disable_torque()
+    
+    print("\nTorque disabled! You can now physically move both robot arms.")
+    print("Reading joint positions... (Press Ctrl+C to stop)\n")
+
+    try:
+        while True:
+            # Read the current position of all joints from our class
+            pos_0, pos_1 = dual_arm.read_positions()
+            
+            # Format the dictionary to round the numbers to 2 decimal places
+            fmt_0 = {k: round(v, 2) for k, v in pos_0.items()}
+            fmt_1 = {k: round(v, 2) for k, v in pos_1.items()}
+            
+            # Print side-by-side cleanly in the terminal
+            print(f"ARM 0: {fmt_0} | ARM 1: {fmt_1}", end="\r", flush=True)
+            
+            # Sleep to prevent overloading the serial bus (10Hz loop)
+            time.sleep(0.1) 
+            
+    except KeyboardInterrupt:
+        print("\n\nStopped reading joint angles. Exiting...")
+        
+if __name__ == "__main__":
+    main()
+
+
+==================================================
+FILE: send_middle_and_rest.py
+==================================================
+
+import yaml
+from pathlib import Path
+from so101_dual_arm import SO101DualArm
+
+def load_yaml(filepath):
+    """Helper function to load a YAML file as a dictionary."""
+    with open(filepath, 'r') as file:
+        return yaml.safe_load(file)
+
+def main():
+    # 1. Build the comprehensive config dictionary
+    # This reads all three of your config files into one central state
+    config = {
+        "robot": load_yaml("conf/robot.yaml"),
+        "rest_pos": load_yaml("conf/rest_pos.yaml"),
+        "mid_pos": load_yaml("conf/mid_pos.yaml")
+    }
+
+    # 2. Initialize the dual arm class with the unified config
+    print("Initializing Dual Arms...")
+    dual_arm = SO101DualArm(config)
+
+    # Configuration for movement
+    move_time = 2.0  
+    hold_time = 2.0  
+
+    # 3. Execute movement sequence using the new class methods!
+    dual_arm.send_to_rest(move_time)
+    dual_arm.hold_position(hold_time)
+
+    dual_arm.send_to_middle(move_time)
+    dual_arm.hold_position(hold_time)
+
+    dual_arm.send_to_rest(move_time)
+    
+    # 4. Finish
+    print("Sequence complete.")
+    dual_arm.disable_torque()
+
+if __name__ == "__main__":
+    main()
+
+
+==================================================
+FILE: check_motor_5.py
+==================================================
+
+from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.motors import Motor
+import sys
+
+# Dynamically grab the enum from the same module where Motor lives
+# This avoids needing to guess the exact import path
+MotorNormMode = sys.modules[Motor.__module__].MotorNormMode
+
+# Use the port you confirmed
+port = "/dev/ttyACM0"
+
+# 1. Define the motor configuration with the newly required 'norm_mode'
+motors_config = {
+    "wrist_roll": Motor(id=5, model="sts3215", norm_mode=MotorNormMode.DEGREES) 
+}
+
+# 2. Initialize the bus
+bus = FeetechMotorsBus(port=port, motors=motors_config)
+
+try:
+    # Open the serial port
+    bus.connect(handshake=False)
+    
+    # Explicitly set baudrate to 1,000,000 for SO-101 motors
+    bus.set_baudrate(1_000_000)
+
+    # 3. Read the raw position. 
+    # normalize=False is crucial here because we haven't loaded calibration files!
+    pos = bus.read("Present_Position", "wrist_roll", normalize=False)
+    
+    print(f"\n✅ Success! Wrist Roll (ID 5) is communicating.")
+    print(f"Raw position value: {pos}\n")
+    
+except Exception as e:
+    print(f"\n❌ Failed to communicate with ID 5: {e}\n")
+finally:
+    # Use the proper disconnect method for the new class
+    if bus.is_connected:
+        bus.disconnect()
+
+
+==================================================
+FILE: combine_files.py
+==================================================
+
+import os
+import glob
+
+def combine_files_recursively(directory_path, output_filename="combined_code.txt"):
+    """
+    Recursively finds all .py, .json, and .yaml/.yml files in a directory 
+    and its subdirectories, combining them into a single text file.
+    """
+    # Define the file extensions you want to capture
+    extensions = ["*.py", "*.json", "*.yaml", "*.yml", "*.md"]
+    matched_files = []
+    
+    # Search for each extension recursively
+    for ext in extensions:
+        # The "**" tells glob to look in all subdirectories
+        search_pattern = os.path.join(directory_path, "**", ext)
+        
+        # We must explicitly set recursive=True for the "**" to work
+        matched_files.extend(glob.glob(search_pattern, recursive=True))
+
+    # Check if any files were found
+    if not matched_files:
+        print(f"No target files found in '{directory_path}' or its subdirectories.")
+        return
+
+    try:
+        # Open the output file in write mode
+        with open(output_filename, 'w', encoding='utf-8') as outfile:
+            for file_path in matched_files:
+                # We use the full relative path instead of just the basename
+                # This helps you know exactly which subfolder the code came from!
+                filename = os.path.relpath(file_path, directory_path)
+                
+                # Write a clear visual header for each file
+                outfile.write(f"{'='*50}\n")
+                outfile.write(f"FILE: {filename}\n")
+                outfile.write(f"{'='*50}\n\n")
+                
+                # Read the contents of the current file and write it
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as infile:
+                        outfile.write(infile.read())
+                except Exception as e:
+                    outfile.write(f"# Error reading {filename}: {e}\n")
+                
+                # Add some blank space before the next file begins
+                outfile.write("\n\n\n")
+                
+        print(f"Success! Combined {len(matched_files)} files into '{output_filename}'.")
+    
+    except Exception as e:
+        print(f"An error occurred while writing the output file: {e}")
+
+# --- Execution ---
+if __name__ == "__main__":
+    # The directory you want to scan. 
+    # "." means the current directory where this script is located.
+    target_directory = "." 
+    
+    # The name of the text file you want to generate
+    output_file = "all_my_code_recursive.txt"
+    
+    combine_files_recursively(target_directory, output_file)
+
+
+==================================================
+FILE: calibration_files/follower_0.json
+==================================================
+
+{
+    "shoulder_pan": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": 1871,
+        "range_min": 765,
+        "range_max": 3542
+    },
+    "shoulder_lift": {
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": -1318,
+        "range_min": 750,
+        "range_max": 3320
+    },
+    "elbow_flex": {
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": -1377,
+        "range_min": 841,
+        "range_max": 3081
+    },
+    "wrist_flex": {
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": -1419,
+        "range_min": 880,
+        "range_max": 3275
+    },
+    "wrist_roll": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": -557,
+        "range_min": 0,
+        "range_max": 4095
+    },
+    "gripper": {
+        "id": 6,
+        "drive_mode": 0,
+        "homing_offset": 1532,
+        "range_min": 1990,
+        "range_max": 3578
+    }
+}
+
+
+==================================================
+FILE: calibration_files/follower_1.json
+==================================================
+
+{
+    "shoulder_pan": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": -1488,
+        "range_min": 803,
+        "range_max": 3363
+    },
+    "shoulder_lift": {
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": -1664,
+        "range_min": 807,
+        "range_max": 3216
+    },
+    "elbow_flex": {
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": -718,
+        "range_min": 798,
+        "range_max": 3042
+    },
+    "wrist_flex": {
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": 1727,
+        "range_min": 882,
+        "range_max": 3275
+    },
+    "wrist_roll": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": 1636,
+        "range_min": 0,
+        "range_max": 4095
+    },
+    "gripper": {
+        "id": 6,
+        "drive_mode": 0,
+        "homing_offset": -501,
+        "range_min": 1927,
+        "range_max": 3449
+    }
+}
+
+
+==================================================
+FILE: conf/robot.yaml
+==================================================
+
+PORT_ID_0: "/dev/ttyACM0"
+PORT_ID_1: "/dev/ttyACM1"  
+ROBOT_NAME_0: "follower_0" 
+ROBOT_NAME_1: "follower_1" 
+
+
+==================================================
+FILE: conf/rest_pos.yaml
+==================================================
+
+shoulder_pan: -6.02
+shoulder_lift: -110.68
+elbow_flex: 96.53
+wrist_flex: 75.03
+wrist_roll: -0.48
+gripper: 1.39
+
+
+==================================================
+FILE: conf/mid_pos.yaml
+==================================================
+
+shoulder_pan: 0
+shoulder_lift: 0
+elbow_flex: 0
+wrist_flex: 0
+wrist_roll: 0
+gripper: 0
+
+
+==================================================
+FILE: CODE.md
+==================================================
+
+Keep industrial-level documentation.
+
+Reduce redundancy between files.
+
+Keep good level of modularisation.
+
+Be surgical of your changes.
+
+
+==================================================
+FILE: README.md
+==================================================
+
+
+This repository provide garment manipulation using dual Sov101 models with tactile sensors.
+
+The pipeline provides the meta-ques tele-opration of the dual arm based on actoris harena framework.
+
+1. Build data collection pipeline.
+
+2. Build data visusaliser
+
+3. Build the training on pi 0.5 on simulated evnvironiment.
+
+4. Build the meta-quest data collection and collect some data to visualise it.
+
+We need an external device to save data.
+
+
+We nee to build lerobot locally. (version LeRobot 0.5.2)
+
+The version used by YongQiang is 0.1.0
+
+
