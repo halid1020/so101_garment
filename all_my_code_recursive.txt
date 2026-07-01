@@ -1,46 +1,146 @@
 ==================================================
-FILE: so101_dual_arm.py
+FILE: combine_files.py
 ==================================================
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
-from pathlib import Path
-import draccus
+import glob
+import os
+
+
+def combine_files_recursively(directory_path, output_filename="combined_code.txt"):
+    """
+    Recursively finds all .py, .json, and .yaml/.yml files in a directory
+    and its subdirectories, combining them into a single text file.
+    Ignores any files located inside 'venv' or '.venv' directories.
+    """
+    # Define the file extensions you want to capture
+    extensions = ["*.py", "*.json", "*.yaml", "*.yml", "*.md"]
+    matched_files = []
+
+    # Define directory names to ignore exactly
+    ignore_dirs = {"venv", ".venv"}
+
+    # Search for each extension recursively
+    for ext in extensions:
+        # The "**" tells glob to look in all subdirectories
+        search_pattern = os.path.join(directory_path, "**", ext)
+
+        # We must explicitly set recursive=True for the "**" to work
+        found_files = glob.glob(search_pattern, recursive=True)
+
+        for file_path in found_files:
+            # Normalize slashes and split the path into its individual folders/components
+            path_parts = file_path.replace("\\", "/").split("/")
+
+            # Only add the file if it is NOT inside any of the ignored directories
+            if not any(ignored in path_parts for ignored in ignore_dirs):
+                matched_files.append(file_path)
+
+    # Check if any files were found
+    if not matched_files:
+        print(
+            f"No target files found in '{directory_path}' or its subdirectories (excluding venv)."
+        )
+        return
+
+    try:
+        # Open the output file in write mode
+        with open(output_filename, "w", encoding="utf-8") as outfile:
+            for file_path in matched_files:
+                # We use the full relative path instead of just the basename
+                # This helps you know exactly which subfolder the code came from!
+                filename = os.path.relpath(file_path, directory_path)
+
+                # Write a clear visual header for each file
+                outfile.write(f"{'='*50}\n")
+                outfile.write(f"FILE: {filename}\n")
+                outfile.write(f"{'='*50}\n\n")
+
+                # Read the contents of the current file and write it
+                try:
+                    with open(file_path, "r", encoding="utf-8") as infile:
+                        outfile.write(infile.read())
+                except Exception as e:
+                    outfile.write(f"# Error reading {filename}: {e}\n")
+
+                # Add some blank space before the next file begins
+                outfile.write("\n\n\n")
+
+        print(f"Success! Combined {len(matched_files)} files into '{output_filename}'.")
+
+    except Exception as e:
+        print(f"An error occurred while writing the output file: {e}")
+
+
+# --- Execution ---
+if __name__ == "__main__":
+    # The directory you want to scan.
+    # "." means the current directory where this script is located.
+    target_directory = "."
+
+    # The name of the text file you want to generate
+    output_file = "all_my_code_recursive.txt"
+
+    combine_files_recursively(target_directory, output_file)
+
+
+
+==================================================
+FILE: src/so101_dual_arm.py
+==================================================
+
 import time
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
+import draccus
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
+
 
 class SO101DualArm:
-    def __init__(self, config: dict):
-        """Initializes both arms based on a single configuration dictionary."""
-        
+    """
+    Hardware interface for dual SO-101 robotic arms.
+    Provides standard joint-space control, normalized teleoperation control,
+    and end-effector Cartesian control wrappers.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initializes both arms based on a single configuration dictionary.
+
+        Args:
+            config (Dict): Comprehensive YAML-loaded configuration dictionary.
+        """
         # 1. Extract robot connection settings
-        robot_conf = config.get('robot', {})
-        port_0 = robot_conf.get('PORT_ID_0')
-        port_1 = robot_conf.get('PORT_ID_1')
-        name_0 = robot_conf.get('ROBOT_NAME_0')
-        name_1 = robot_conf.get('ROBOT_NAME_1')
-        
-        # 2. Extract and store positions for later use
-        self.rest_pos = config.get('rest_pos', {})
-        self.mid_pos = config.get('mid_pos', {})
+        robot_conf = config.get("robot", {})
+        port_0 = robot_conf.get("PORT_ID_0")
+        port_1 = robot_conf.get("PORT_ID_1")
+        name_0 = robot_conf.get("ROBOT_NAME_0")
+        name_1 = robot_conf.get("ROBOT_NAME_1")
+
+        # Extracted limits for normalized mapping (assumes a 'joint_limits_deg' section in robot.yaml)
+        self.limits = robot_conf.get("joint_limits_deg", {})
+
+        # 2. Extract and store predefined positions
+        self.rest_pos = config.get("rest_pos", {})
+        self.mid_pos = config.get("mid_pos", {})
 
         print("Loading calibrations...")
         self.calib_0 = self._load_calibration(name_0)
         self.calib_1 = self._load_calibration(name_1)
-        
+
         print("Setting up motor buses...")
         self.bus_0 = self._setup_motors(self.calib_0, port_0)
         self.bus_1 = self._setup_motors(self.calib_1, port_1)
 
-    def _load_calibration(self, robot_name) -> MotorCalibration:
-        fpath = Path(f'calibration_files/{robot_name}.json')
+    def _load_calibration(self, robot_name: str) -> MotorCalibration:
+        fpath = Path(f"calibration_files/{robot_name}.json")
         with open(fpath) as f, draccus.config_type("json"):
-            calibration = draccus.load(dict[str, MotorCalibration], f)
-            return calibration
+            return draccus.load(Dict[str, MotorCalibration], f)
 
-    def _setup_motors(self, calibration, port_id):
+    def _setup_motors(
+        self, calibration: MotorCalibration, port_id: str
+    ) -> FeetechMotorsBus:
         bus = FeetechMotorsBus(
             port=port_id,
             motors={
@@ -49,7 +149,7 @@ class SO101DualArm:
                 "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
                 "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
                 "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100), 
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=calibration,
         )
@@ -59,17 +159,29 @@ class SO101DualArm:
             bus.configure_motors()
             for motor in bus.motors:
                 bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                bus.write("P_Coefficient", motor, 16) 
+                bus.write("P_Coefficient", motor, 16)
                 bus.write("I_Coefficient", motor, 0)
-                bus.write("D_Coefficient", motor, 32) 
+                bus.write("D_Coefficient", motor, 32)
         return bus
-    # TODO: also add move_to_norm_pose, where it takes the normalised joint signals of the joints between -1 and 1.
-    def move_to_pose(self, desired_pos_0, desired_pos_1, duration): # TODO: change this name to move to joint pose
-        """Interpolates and moves both arms synchronously over a set duration."""
+
+    def move_to_joint_pose(
+        self,
+        desired_pos_0: Dict[str, float],
+        desired_pos_1: Dict[str, float],
+        duration: float,
+    ) -> None:
+        """
+        Interpolates and moves both arms synchronously to target joint angles over a set duration.
+
+        Args:
+            desired_pos_0: Target degrees/ranges for Arm 0.
+            desired_pos_1: Target degrees/ranges for Arm 1.
+            duration: Time in seconds to complete the motion.
+        """
         start_time = time.time()
         starting_pose_0 = self.bus_0.sync_read("Present_Position")
         starting_pose_1 = self.bus_1.sync_read("Present_Position")
-        
+
         while True:
             t = time.time() - start_time
             if t > duration:
@@ -77,125 +189,3559 @@ class SO101DualArm:
 
             alpha = min(t / duration, 1)
 
-            position_dict_0 = {}
-            for joint in desired_pos_0:
-                p0 = starting_pose_0[joint]
-                pf = desired_pos_0[joint]
-                position_dict_0[joint] = (1 - alpha) * p0 + alpha * pf
-
-            position_dict_1 = {}
-            for joint in desired_pos_1:
-                p0 = starting_pose_1[joint]
-                pf = desired_pos_1[joint]
-                position_dict_1[joint] = (1 - alpha) * p0 + alpha * pf
+            position_dict_0 = {
+                j: (1 - alpha) * starting_pose_0[j] + alpha * desired_pos_0[j]
+                for j in desired_pos_0
+            }
+            position_dict_1 = {
+                j: (1 - alpha) * starting_pose_1[j] + alpha * desired_pos_1[j]
+                for j in desired_pos_1
+            }
 
             self.bus_0.sync_write("Goal_Position", position_dict_0, normalize=True)
             self.bus_1.sync_write("Goal_Position", position_dict_1, normalize=True)
 
-            time.sleep(0.02) 
+            time.sleep(0.02)
 
-    # TODO: add move_to_ee_pose that is relative to the robot base.
+    def move_to_norm_pose(
+        self,
+        norm_pos_0: Dict[str, float],
+        norm_pos_1: Dict[str, float],
+        duration: float,
+    ) -> None:
+        """
+        Moves the arms based on normalized inputs [-1.0, 1.0].
+        Designed for raw analog inputs from devices like Meta-Quest controllers.
+        Requires 'joint_limits_deg' to be defined in robot.yaml.
+        """
+        if not self.limits:
+            raise ValueError(
+                "Cannot move to normalized pose: 'joint_limits_deg' missing from robot config."
+            )
 
-    def send_to_rest(self, duration=2.0):
+        def map_norm_to_deg(norm_dict: Dict[str, float]) -> Dict[str, float]:
+            deg_dict = {}
+            for joint, norm_val in norm_dict.items():
+                min_val, max_val = self.limits[joint]
+                # Map [-1, 1] to [min_val, max_val]
+                deg_dict[joint] = min_val + ((norm_val + 1.0) / 2.0) * (
+                    max_val - min_val
+                )
+            return deg_dict
+
+        target_deg_0 = map_norm_to_deg(norm_pos_0)
+        target_deg_1 = map_norm_to_deg(norm_pos_1)
+
+        self.move_to_joint_pose(target_deg_0, target_deg_1, duration)
+
+    def move_to_ee_pose(
+        self,
+        ee_pose_0: Dict[str, float],
+        ee_pose_1: Dict[str, float],
+        duration: float,
+        ik_solver: Any,
+    ) -> None:
+        """
+        Moves both arms to a Cartesian End-Effector (EE) pose relative to the robot base.
+
+        Args:
+            ee_pose_0: Target x, y, z, rx, ry, rz for Arm 0.
+            ee_pose_1: Target x, y, z, rx, ry, rz for Arm 1.
+            duration: Time in seconds for the motion.
+            ik_solver: An external inverse kinematics solver instance (e.g., Pinocchio/PyBullet wrapper)
+                       that contains a `compute_ik(ee_pose)` method.
+        """
+        if ik_solver is None:
+            raise NotImplementedError(
+                "An external IK solver is required to map Cartesian EE poses to joint angles."
+            )
+
+        # Resolve Cartesian poses to Joint Angles via the external IK solver
+        target_joints_0 = ik_solver.compute_ik(ee_pose_0)
+        target_joints_1 = ik_solver.compute_ik(ee_pose_1)
+
+        self.move_to_joint_pose(target_joints_0, target_joints_1, duration)
+
+    # --- ROUTINE HELPER FUNCTIONS ---
+    def send_to_rest(self, duration: float = 2.0) -> None:
         """Moves both arms to the rest position loaded from config."""
         print("Moving to rest position...")
         if not self.rest_pos:
             print("Warning: No rest_pos found in config!")
             return
-        self.move_to_pose(self.rest_pos, self.rest_pos, duration)
+        self.move_to_joint_pose(self.rest_pos, self.rest_pos, duration)
 
-    def send_to_middle(self, duration=2.0):
+    def send_to_middle(self, duration: float = 2.0) -> None:
         """Moves both arms to the middle position loaded from config."""
         print("Moving to middle position...")
         if not self.mid_pos:
             print("Warning: No mid_pos found in config!")
             return
-        self.move_to_pose(self.mid_pos, self.mid_pos, duration)
+        self.move_to_joint_pose(self.mid_pos, self.mid_pos, duration)
 
-    # ----------------------------
+    # --- STATE & HARDWARE LIFECYCLE ---
+    def read_positions(self) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """Returns the current joint positions of both arms."""
+        return (
+            self.bus_0.sync_read("Present_Position"),
+            self.bus_1.sync_read("Present_Position"),
+        )
 
-    def read_positions(self):
-        """Returns the current positions of both arms."""
-        pos_0 = self.bus_0.sync_read("Present_Position")
-        pos_1 = self.bus_1.sync_read("Present_Position")
-        return pos_0, pos_1
-
-    def hold_position(self, duration):
-        """Pauses the execution while holding the current pose."""
+    def hold_position(self, duration: float) -> None:
+        """Pauses execution while actively holding the current pose."""
         start_time = time.time()
-        while True:
-            if time.time() - start_time > duration:
-                break
+        while time.time() - start_time < duration:
             time.sleep(0.02)
 
-    def disable_torque(self):
-        """Relaxes both arms."""
+    def disable_torque(self) -> None:
+        """Relaxes both arms, dropping hardware torque."""
         print("Disabling torque...")
         self.bus_0.disable_torque()
         self.bus_1.disable_torque()
 
 
+
 ==================================================
-FILE: read_joints.py
+FILE: src/common/visualizer_core.py
 ==================================================
 
+"""Module-level helpers for the robot visualizer."""
+
+from typing import Any
+
+import numpy as np
+import viser
+import yourdfpy
+from scipy.spatial.transform import Rotation
+from viser.extras import ViserUrdf
+
+
+class RobotVisualizerCore:
+    """Handles the 3D rendering of the robot, ghost robot, and target frames."""
+
+    def __init__(self, urdf_path: str) -> None:
+        """TODO: Document this method."""
+        self.server = viser.ViserServer()
+        self.server.scene.add_grid("/ground", width=2, height=2, cell_size=0.1)
+
+        # Load actual robot URDF
+        urdf = yourdfpy.URDF.load(urdf_path)
+        self.urdf_vis = ViserUrdf(self.server, urdf, root_node_name="/robot_actual")
+
+        # Load ghost robot URDF
+        ghost_urdf = yourdfpy.URDF.load(urdf_path)
+        self.ghost_robot_urdf = ViserUrdf(
+            self.server,
+            ghost_urdf,
+            root_node_name="/robot_ghost",
+            mesh_color_override=(1.0, 0.65, 0.0, 0.25),
+        )
+
+        self.controller_handle: Any = None
+        self.target_frame_handle: Any = None
+        self.rgb_image_handle: Any = None
+
+    def add_controller_visualization(self) -> None:
+        """TODO: Document this method."""
+        self.controller_handle = self.server.scene.add_transform_controls(
+            "/controller", scale=0.15, position=(0, 0, 0), wxyz=(1, 0, 0, 0)
+        )
+
+    def add_target_frame_visualization(self) -> None:
+        """TODO: Document this method."""
+        self.target_frame_handle = self.server.scene.add_frame(
+            "/target_goal", axes_length=0.1, axes_radius=0.003
+        )
+
+    def add_rgb_image_placeholder(self, height: int = 480, width: int = 640) -> None:
+        """TODO: Document this method."""
+        if self.rgb_image_handle is None:
+            dummy_image = np.zeros((height, width, 3), dtype=np.uint8)
+            self.rgb_image_handle = self.server.gui.add_image(
+                dummy_image, label="RGB Camera", format="jpeg", jpeg_quality=85
+            )
+
+    def update_rgb_image(self, rgb_image: np.ndarray | None) -> None:
+        """TODO: Document this method."""
+        if rgb_image is None:
+            return
+        if self.rgb_image_handle is None:
+            self.add_rgb_image_placeholder(
+                height=rgb_image.shape[0], width=rgb_image.shape[1]
+            )
+        self.rgb_image_handle.image = rgb_image
+
+    def update_robot_pose(self, joint_config: np.ndarray) -> None:
+        """TODO: Document this method."""
+        self.urdf_vis.update_cfg(joint_config)
+
+    def update_ghost_robot_pose(self, joint_config: np.ndarray) -> None:
+        """TODO: Document this method."""
+        if self.ghost_robot_urdf:
+            self.ghost_robot_urdf.update_cfg(joint_config)
+
+    def update_ghost_robot_visibility(self, flag: bool) -> None:
+        """TODO: Document this method."""
+        if self.ghost_robot_urdf:
+            self.ghost_robot_urdf.show_visual = flag
+
+    def get_ghost_robot_visibility(self) -> bool:
+        """TODO: Document this method."""
+        if self.ghost_robot_urdf:
+            return self.ghost_robot_urdf.show_visual
+        return False
+
+    def set_ghost_robot_color(self, color: tuple[float, float, float, float]) -> None:
+        """TODO: Document this method."""
+        if self.ghost_robot_urdf:
+            self.ghost_robot_urdf.mesh_color_override = color
+
+    def update_controller_visualization(self, transform: np.ndarray | None) -> None:
+        """TODO: Document this method."""
+        if self.controller_handle is None or transform is None:
+            return
+        pos = transform[:3, 3]
+        rot = Rotation.from_matrix(transform[:3, :3]).as_quat()
+        self.controller_handle.position = tuple(pos)
+        self.controller_handle.wxyz = (rot[3], rot[0], rot[1], rot[2])
+
+    def update_target_visualization(self, transform: np.ndarray | None) -> None:
+        """TODO: Document this method."""
+        if self.target_frame_handle is None or transform is None:
+            return
+        pos = transform[:3, 3]
+        rot = Rotation.from_matrix(transform[:3, :3]).as_quat()
+        self.target_frame_handle.position = tuple(pos)
+        self.target_frame_handle.wxyz = (rot[3], rot[0], rot[1], rot[2])
+
+    def stop(self) -> None:
+        """TODO: Document this method."""
+        self.server.stop()
+
+
+
+==================================================
+FILE: src/common/visualizer_gui.py
+==================================================
+
+"""Module-level helpers for the robot visualizer."""
+
+from typing import Any, Callable
+
+import numpy as np
+import viser
+
+
+class RobotVisualizerGUI:
+    """Handles all the 2D UI elements: buttons, sliders, and text readouts."""
+
+    def __init__(self, server: viser.ViserServer) -> None:
+        """TODO: Document this method."""
+        self.server = server
+        self._ema_timing = 0.001
+
+        # State Handles
+        self._timing_handle: Any = None
+        self._joint_angles_handle: Any = None
+        self._robot_status_handle: Any = None
+        self._teleop_status_handle: Any = None
+        self._controller_status_handle: Any = None
+        self._gripper_status_handle: Any = None
+        self._policy_status_handle: Any = None
+
+        # Input Handles
+        self._position_weight_handle: Any = None
+        self._orientation_weight_handle: Any = None
+        self._frame_task_gain_handle: Any = None
+        self._lm_damping_handle: Any = None
+        self._damping_weight_handle: Any = None
+        self._solver_damping_value_handle: Any = None
+        self._posture_cost_handles: list[Any] = []
+
+        self._controller_min_cutoff_handle: Any = None
+        self._controller_beta_handle: Any = None
+        self._controller_d_cutoff_handle: Any = None
+        self._translation_scale_handle: Any = None
+        self._rotation_scale_handle: Any = None
+
+        self._prediction_ratio_handle: Any = None
+        self._policy_execution_rate_handle: Any = None
+        self._robot_rate_handle: Any = None
+        self._execution_mode_dropdown: Any = None
+
+        self._grip_value_handle: Any = None
+        self._trigger_value_handle: Any = None
+
+        # Button Handles
+        self._enable_robot_handle: Any = None
+        self._disable_robot_handle: Any = None
+        self._emergency_stop_handle: Any = None
+        self._go_home_button: Any = None
+        self._toggle_robot_enabled_status_button: Any = None
+        self._run_policy_button: Any = None
+        self._start_policy_execution_button: Any = None
+        self._play_policy_button: Any = None
+
+        self._slow_translation_scale_handle: Any = None
+        self._slow_rotation_scale_handle: Any = None
+        self._wrist_step_handle: Any = None
+        self._save_config_button: Any = None
+
+    def add_advanced_tuning_controls(
+        self, initial_slow_t: float, initial_slow_r: float, initial_wrist_step: float
+    ) -> None:
+        """Adds advanced sliders for precision movement and button toggles."""
+        self._slow_translation_scale_handle = self.server.gui.add_number(
+            "Slow Translation Scale", initial_slow_t, min=0.1, max=5.0, step=0.01
+        )
+        self._slow_rotation_scale_handle = self.server.gui.add_number(
+            "Slow Rotation Scale", initial_slow_r, min=0.1, max=5.0, step=0.01
+        )
+        self._wrist_step_handle = self.server.gui.add_number(
+            "Wrist Nudge (Degrees)", initial_wrist_step, min=1.0, max=45.0, step=1.0
+        )
+        self._save_config_button = self.server.gui.add_button("💾 Save Config to YAML")
+
+    def get_slow_translation_scale(self) -> float:
+        """TODO: Document this method."""
+        return self._slow_translation_scale_handle.value
+
+    def get_slow_rotation_scale(self) -> float:
+        """TODO: Document this method."""
+        return self._slow_rotation_scale_handle.value
+
+    def get_wrist_step_degrees(self) -> float:
+        """TODO: Document this method."""
+        return self._wrist_step_handle.value
+
+    def set_save_config_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._save_config_button:
+            self._save_config_button.on_click(lambda _: cb())
+
+    def add_basic_controls(self) -> None:
+        """TODO: Document this method."""
+        self._timing_handle = self.server.gui.add_number(
+            "IK Solve Time (ms)", 0.001, disabled=True
+        )
+        self._joint_angles_handle = self.server.gui.add_text(
+            "Joint Angles", "Waiting..."
+        )
+
+    def add_robot_status_controls(self) -> None:
+        """TODO: Document this method."""
+        self._robot_status_handle = self.server.gui.add_text(
+            "Robot Status", "Initializing..."
+        )
+
+    def add_teleop_controls(self) -> None:
+        """TODO: Document this method."""
+        self._grip_value_handle = self.server.gui.add_number(
+            "Grip Value", 0.0, disabled=True
+        )
+        self._trigger_value_handle = self.server.gui.add_number(
+            "Trigger", 0.0, disabled=True
+        )
+        self._teleop_status_handle = self.server.gui.add_text(
+            "Teleop Status", "Inactive"
+        )
+        self._controller_status_handle = self.server.gui.add_text(
+            "Controller Status", "Waiting..."
+        )
+
+    def add_gripper_status_controls(self) -> None:
+        """TODO: Document this method."""
+        self._gripper_status_handle = self.server.gui.add_text(
+            "Gripper Status", "Open (0%)"
+        )
+
+    def add_homing_controls(self) -> None:
+        """TODO: Document this method."""
+        self._go_home_button = self.server.gui.add_button("Go Home")
+
+    def add_toggle_robot_enabled_status_button(self) -> None:
+        """TODO: Document this method."""
+        self._toggle_robot_enabled_status_button = self.server.gui.add_button(
+            "Enable Robot"
+        )
+
+    def add_controller_filter_controls(
+        self, initial_min_cutoff: float, initial_beta: float, initial_d_cutoff: float
+    ) -> None:
+        """TODO: Document this method."""
+        self._controller_min_cutoff_handle = self.server.gui.add_number(
+            "Controller Min Cutoff", initial_min_cutoff, min=0.01, max=10.0, step=0.01
+        )
+        self._controller_beta_handle = self.server.gui.add_number(
+            "Controller Beta", initial_beta, min=0.0, max=10.0, step=0.01
+        )
+        self._controller_d_cutoff_handle = self.server.gui.add_number(
+            "Controller D Cutoff", initial_d_cutoff, min=0.01, max=10.0, step=0.01
+        )
+
+    def add_scaling_controls(
+        self, initial_translation_scale: float, initial_rotation_scale: float
+    ) -> None:
+        """TODO: Document this method."""
+        self._translation_scale_handle = self.server.gui.add_number(
+            "Translation Scale",
+            initial_translation_scale,
+            min=0.1,
+            max=10.0,
+            step=0.001,
+        )
+        self._rotation_scale_handle = self.server.gui.add_number(
+            "Rotation Scale", initial_rotation_scale, min=0.1, max=10.0, step=0.001
+        )
+
+    def add_pink_parameter_controls(
+        self,
+        position_cost: float,
+        orientation_cost: float,
+        frame_task_gain: float,
+        lm_damping: float,
+        damping_cost: float,
+        solver_damping_value: float,
+        posture_cost_vector: list[float],
+    ) -> None:
+        """TODO: Document this method."""
+        self._position_weight_handle = self.server.gui.add_number(
+            "Position Weight", position_cost, min=0.0, max=10.0, step=0.1
+        )
+        self._orientation_weight_handle = self.server.gui.add_number(
+            "Orientation Weight", orientation_cost, min=0.0, max=1.0, step=0.01
+        )
+        self._frame_task_gain_handle = self.server.gui.add_number(
+            "Frame Task Gain", frame_task_gain, min=0.0, max=10.0, step=0.1
+        )
+        self._lm_damping_handle = self.server.gui.add_number(
+            "LM Damping", lm_damping, min=0.0, max=5.0, step=0.01
+        )
+        self._damping_weight_handle = self.server.gui.add_number(
+            "Damping Weight", damping_cost, min=0.0, max=1.0, step=0.01
+        )
+        self._solver_damping_value_handle = self.server.gui.add_number(
+            "Solver Damping Value", solver_damping_value, min=0.0, max=1.0, step=0.0001
+        )
+
+        for i, cost in enumerate(posture_cost_vector):
+            self._posture_cost_handles.append(
+                self.server.gui.add_number(
+                    f"Posture Cost J{i+1}", cost, min=0.0, max=1.0, step=0.01
+                )
+            )
+
+    def add_policy_controls(
+        self,
+        initial_prediction_ratio: float = 0.8,
+        initial_policy_rate: float = 200.0,
+        initial_robot_rate: float = 200.0,
+        initial_execution_mode: str = "targeting_time",
+    ) -> None:
+        """TODO: Document this method."""
+        self._policy_status_handle = self.server.gui.add_text("Policy Status", "Ready")
+        self._prediction_ratio_handle = self.server.gui.add_number(
+            "Prediction Ratio", initial_prediction_ratio, min=0.0, max=1.0, step=0.01
+        )
+        self._policy_execution_rate_handle = self.server.gui.add_number(
+            "Policy Rate", initial_policy_rate, min=1.0, max=200.0, step=1.0
+        )
+        self._robot_rate_handle = self.server.gui.add_number(
+            "Robot Rate", initial_robot_rate, min=1.0, max=200.0, step=1.0
+        )
+        self._execution_mode_dropdown = self.server.gui.add_dropdown(
+            "Execution Mode",
+            options=["targeting_time", "targeting_pose"],
+            initial_value=initial_execution_mode,
+        )
+
+    def add_policy_buttons(self) -> None:
+        """TODO: Document this method."""
+        self._run_policy_button = self.server.gui.add_button("Run Policy (Preview)")
+        self._start_policy_execution_button = self.server.gui.add_button(
+            "Execute Policy (Run Preview)"
+        )
+        self._play_policy_button = self.server.gui.add_button(
+            "Continuous Receding Horizon"
+        )
+
+    # --- UI Update Methods ---
+    def update_timing(self, solve_time_ms: float) -> None:
+        """TODO: Document this method."""
+        if self._timing_handle:
+            self._ema_timing = 0.99 * self._ema_timing + 0.01 * solve_time_ms
+            self._timing_handle.value = self._ema_timing
+
+    def update_robot_status(self, status: str) -> None:
+        """TODO: Document this method."""
+        if self._robot_status_handle:
+            """TODO: Document this method."""
+            self._robot_status_handle.value = status
+
+    def update_teleop_status(self, active: bool) -> None:
+        """TODO: Document this method."""
+        if self._teleop_status_handle:
+            """TODO: Document this method."""
+            self._teleop_status_handle.value = (
+                f"Teleop Status: {'Active' if active else 'Inactive'}"
+            )
+
+    def update_controller_status_display(
+        self, position: np.ndarray | None, connected: bool = True
+    ) -> None:
+        """TODO: Document this method."""
+        if not self._controller_status_handle:
+            return
+        if connected and position is not None:
+            self._controller_status_handle.value = f"Controller Status:\n  Position: [{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}]\n  Connected: ✓"
+        else:
+            self._controller_status_handle.value = "Controller Status:\n  Connected: ✗"
+
+    def update_gripper_status(
+        self, trigger_value: float, robot_enabled: bool = True
+    ) -> None:
+        """TODO: Document this method."""
+        if not self._gripper_status_handle:
+            return
+        state = (
+            "Closed"
+            if trigger_value > 0.9
+            else "Closing"
+            if trigger_value > 0.1
+            else "Open"
+        )
+        status = f"Gripper: {state} ({trigger_value * 100.0:.0f}% closed)"
+        self._gripper_status_handle.value = status + (
+            "" if robot_enabled else " [Disabled]"
+        )
+
+    def update_policy_status(self, status: str) -> None:
+        """TODO: Document this method."""
+        if self._policy_status_handle:
+            """TODO: Document this method."""
+            self._policy_status_handle.value = status
+
+    def update_toggle_robot_enabled_status(self, enabled: bool) -> None:
+        """TODO: Document this method."""
+        if self._toggle_robot_enabled_status_button:
+            """TODO: Document this method."""
+            self._toggle_robot_enabled_status_button.label = (
+                "Disable Robot" if enabled else "Enable Robot"
+            )
+
+    def update_play_policy_button_status(self, active: bool) -> None:
+        """TODO: Document this method."""
+        if self._play_policy_button:
+            """TODO: Document this method."""
+            self._play_policy_button.label = (
+                "Stop Continuous Horizon" if active else "Continuous Receding Horizon"
+            )
+
+    def update_joint_angles_display(
+        self, joint_config: np.ndarray, show_gripper: bool = False
+    ) -> None:
+        """TODO: Document this method."""
+        if not self._joint_angles_handle:
+            return
+        lines = ["Joint Angles (rad):"]
+        num_joints = len(joint_config) if show_gripper else 6
+        for i in range(num_joints):
+            lbl = (
+                f"Joint {i+1} ({'Robot' if i < 6 else 'Gripper'})"
+                if show_gripper
+                else f"J{i+1}"
+            )
+            lines.append(
+                f"  {lbl}: {joint_config[i]:.3f} rad ({np.degrees(joint_config[i]):.1f}°)"
+            )
+        self._joint_angles_handle.value = "\n".join(lines)
+
+    def set_grip_value(self, value: float) -> None:
+        """TODO: Document this method."""
+        if self._grip_value_handle:
+            """TODO: Document this method."""
+            self._grip_value_handle.value = value
+
+    def set_trigger_value(self, value: float) -> None:
+        """TODO: Document this method."""
+        if self._trigger_value_handle:
+            """TODO: Document this method."""
+            self._trigger_value_handle.value = value
+
+    # --- Getters ---
+    def get_controller_filter_params(self) -> tuple[float, float, float]:
+        """TODO: Document this method."""
+        return (
+            self._controller_min_cutoff_handle.value,
+            self._controller_beta_handle.value,
+            self._controller_d_cutoff_handle.value,
+        )
+
+    def get_translation_scale(self) -> float:
+        """TODO: Document this method."""
+        return self._translation_scale_handle.value
+
+    def get_rotation_scale(self) -> float:
+        """TODO: Document this method."""
+        return self._rotation_scale_handle.value
+
+    def get_prediction_ratio(self) -> float:
+        """TODO: Document this method."""
+        return self._prediction_ratio_handle.value
+
+    def get_policy_execution_rate(self) -> float:
+        """TODO: Document this method."""
+        return self._policy_execution_rate_handle.value
+
+    def get_robot_rate(self) -> float:
+        """TODO: Document this method."""
+        return self._robot_rate_handle.value
+
+    def get_execution_mode(self) -> str:
+        """TODO: Document this method."""
+        return self._execution_mode_dropdown.value
+
+    def get_pink_parameters(self) -> dict:
+        """TODO: Document this method."""
+        return {
+            "position_cost": self._position_weight_handle.value,
+            "orientation_cost": self._orientation_weight_handle.value,
+            "frame_task_gain": self._frame_task_gain_handle.value,
+            "lm_damping": self._lm_damping_handle.value,
+            "damping_cost": self._damping_weight_handle.value,
+            "solver_damping_value": self._solver_damping_value_handle.value,
+            "posture_cost_vector": np.array(
+                [h.value for h in self._posture_cost_handles]
+            ),
+        }
+
+    # --- Button Setters/Callbacks ---
+    def set_toggle_robot_enabled_status_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._toggle_robot_enabled_status_button:
+            """TODO: Document this method."""
+            self._toggle_robot_enabled_status_button.on_click(lambda _: cb())
+
+    def set_go_home_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._go_home_button:
+            """TODO: Document this method."""
+            self._go_home_button.on_click(lambda _: cb())
+
+    def set_run_policy_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._run_policy_button:
+            """TODO: Document this method."""
+            self._run_policy_button.on_click(lambda _: cb())
+
+    def set_start_policy_execution_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._start_policy_execution_button:
+            """TODO: Document this method."""
+            self._start_policy_execution_button.on_click(lambda _: cb())
+
+    def set_play_policy_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._play_policy_button:
+            """TODO: Document this method."""
+            self._play_policy_button.on_click(lambda _: cb())
+
+    def set_execution_mode_callback(self, cb: Callable[[], Any]) -> None:
+        """TODO: Document this method."""
+        if self._execution_mode_dropdown:
+            """TODO: Document this method."""
+            self._execution_mode_dropdown.on_update(lambda _: cb())
+
+    def set_run_policy_button_disabled(self, disabled: bool) -> None:
+        """TODO: Document this method."""
+        if self._run_policy_button:
+            """TODO: Document this method."""
+            self._run_policy_button.disabled = disabled
+
+    def set_start_policy_execution_button_disabled(self, disabled: bool) -> None:
+        """TODO: Document this method."""
+        if self._start_policy_execution_button:
+            """TODO: Document this method."""
+            self._start_policy_execution_button.disabled = disabled
+
+    def set_play_policy_button_disabled(self, disabled: bool) -> None:
+        """TODO: Document this method."""
+        if self._play_policy_button:
+            """TODO: Document this method."""
+            self._play_policy_button.disabled = disabled
+
+
+
+==================================================
+FILE: src/common/__init__.py
+==================================================
+
+"""Common modules for robot demos.
+
+This package contains shared utilities for robot visualization and teleoperation state management.
+"""
+
+
+
+==================================================
+FILE: src/common/policy_helpers.py
+==================================================
+
+"""Shared helpers for AgileX Neuracore policy rollout examples."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import neuracore as nc
+import numpy as np
+from neuracore_types import (
+    BatchedJointData,
+    BatchedNCData,
+    BatchedParallelGripperOpenAmountData,
+    DataType,
+    EmbodimentDescription,
+)
+
+from .configs import GRIPPER_NAME, JOINT_NAMES
+
+DEFAULT_ROBOT_NAME = "AgileX PiPER"
+
+
+def embodiment_names_ordered(spec: list[str] | dict[int, str]) -> list[str]:
+    """Ordered channel names from an embodiment entry (list or index→name map)."""
+    if isinstance(spec, dict):
+        return [spec[i] for i in sorted(spec)]
+    return list(spec)
+
+
+def get_policy_embodiments(
+    policy: Any,
+) -> tuple[EmbodimentDescription, EmbodimentDescription | None]:
+    """Read input/output embodiment specs resolved on the loaded policy."""
+    if hasattr(policy, "_policy"):
+        inner = policy._policy
+        return inner.input_embodiment_description, inner.output_embodiment_description
+    input_emb = getattr(policy, "input_embodiment_description", None)
+    if input_emb is None:
+        raise AttributeError(
+            "Could not read input_embodiment_description from policy; "
+            "use nc.policy(..., robot_name=...) without overriding embodiments."
+        )
+    output_emb = getattr(policy, "output_embodiment_description", None)
+    return input_emb, output_emb
+
+
+def print_policy_embodiments(
+    input_embodiment: EmbodimentDescription,
+    output_embodiment: EmbodimentDescription | None,
+) -> None:
+    """Print resolved policy embodiment channels."""
+    print("\n📋 Policy input embodiment (from model):")
+    for data_type, spec in input_embodiment.items():
+        print(f"  {data_type.name}: {embodiment_names_ordered(spec)}")
+    if output_embodiment is not None:
+        print("\n📋 Policy output embodiment (from model):")
+        for data_type, spec in output_embodiment.items():
+            print(f"  {data_type.name}: {embodiment_names_ordered(spec)}")
+
+
+def log_robot_state_for_policy(
+    data_manager: Any,
+    input_embodiment_description: EmbodimentDescription,
+) -> bool:
+    """Log only sensor streams the policy expects. Returns True if anything was logged."""
+    logged_any = False
+
+    if DataType.JOINT_POSITIONS in input_embodiment_description:
+        current_joint_angles = data_manager.get_current_joint_angles()
+        if current_joint_angles is not None:
+            joint_angles_rad = np.radians(current_joint_angles)
+            positions_by_name = {
+                jn: float(ang) for jn, ang in zip(JOINT_NAMES, joint_angles_rad)
+            }
+            policy_joint_order = embodiment_names_ordered(
+                input_embodiment_description[DataType.JOINT_POSITIONS]
+            )
+            nc.log_joint_positions(
+                {jn: positions_by_name[jn] for jn in policy_joint_order}
+            )
+            logged_any = True
+
+    if DataType.PARALLEL_GRIPPER_OPEN_AMOUNTS in input_embodiment_description:
+        gripper_open_value = data_manager.get_current_gripper_open_value()
+        if gripper_open_value is not None:
+            for gripper_name in embodiment_names_ordered(
+                input_embodiment_description[DataType.PARALLEL_GRIPPER_OPEN_AMOUNTS]
+            ):
+                nc.log_parallel_gripper_open_amount(gripper_name, gripper_open_value)
+            logged_any = True
+
+    if DataType.RGB_IMAGES in input_embodiment_description:
+        for camera_name in embodiment_names_ordered(
+            input_embodiment_description[DataType.RGB_IMAGES]
+        ):
+            rgb_image = data_manager.get_rgb_image(camera_name)
+            if rgb_image is not None:
+                nc.log_rgb(camera_name, rgb_image)
+                logged_any = True
+
+    return logged_any
+
+
+def log_sync_step_for_policy(
+    step: Any,
+    input_embodiment_description: EmbodimentDescription,
+) -> bool:
+    """Log a synchronized dataset step using only channels the policy expects."""
+    logged_any = False
+
+    if DataType.JOINT_POSITIONS in input_embodiment_description:
+        joint_data = step.data.get(DataType.JOINT_POSITIONS, {})
+        joint_positions_dict = {
+            joint_name: joint_data[joint_name].value
+            for joint_name in embodiment_names_ordered(
+                input_embodiment_description[DataType.JOINT_POSITIONS]
+            )
+            if joint_name in joint_data
+        }
+        if joint_positions_dict:
+            nc.log_joint_positions(joint_positions_dict)
+            logged_any = True
+
+    if DataType.PARALLEL_GRIPPER_OPEN_AMOUNTS in input_embodiment_description:
+        gripper_data = step.data.get(DataType.PARALLEL_GRIPPER_OPEN_AMOUNTS, {})
+        for gripper_name in embodiment_names_ordered(
+            input_embodiment_description[DataType.PARALLEL_GRIPPER_OPEN_AMOUNTS]
+        ):
+            if gripper_name in gripper_data:
+                nc.log_parallel_gripper_open_amount(
+                    gripper_name, gripper_data[gripper_name].open_amount
+                )
+                logged_any = True
+
+    if DataType.RGB_IMAGES in input_embodiment_description:
+        rgb_data = step.data.get(DataType.RGB_IMAGES, {})
+        for camera_name in embodiment_names_ordered(
+            input_embodiment_description[DataType.RGB_IMAGES]
+        ):
+            if camera_name in rgb_data:
+                nc.log_rgb(camera_name, np.array(rgb_data[camera_name].frame))
+                logged_any = True
+
+    return logged_any
+
+
+def convert_predictions_to_horizon(
+    predictions: dict[DataType, dict[str, BatchedNCData]],
+) -> dict[str, list[float]]:
+    """Convert policy predictions to a per-channel horizon dict (model-driven keys)."""
+    horizon: dict[str, list[float]] = {}
+
+    if DataType.JOINT_TARGET_POSITIONS in predictions:
+        for joint_name, batched in predictions[DataType.JOINT_TARGET_POSITIONS].items():
+            if isinstance(batched, BatchedJointData):
+                horizon[joint_name] = batched.value[0, :, 0].cpu().numpy().tolist()
+
+    if DataType.PARALLEL_GRIPPER_TARGET_OPEN_AMOUNTS in predictions:
+        for gripper_name, batched in predictions[
+            DataType.PARALLEL_GRIPPER_TARGET_OPEN_AMOUNTS
+        ].items():
+            if isinstance(batched, BatchedParallelGripperOpenAmountData):
+                horizon[gripper_name] = (
+                    batched.open_amount[0, :, 0].cpu().numpy().tolist()
+                )
+
+    return horizon
+
+
+def horizon_length(horizon: dict[str, list[float]]) -> int:
+    """Number of steps in a prediction horizon dict."""
+    if not horizon:
+        return 0
+    return len(next(iter(horizon.values())))
+
+
+def arm_joint_names_in_horizon(horizon: dict[str, list[float]]) -> list[str]:
+    """Body joint names present in a horizon (excludes gripper channels)."""
+    return [name for name in JOINT_NAMES if name in horizon]
+
+
+def joint_targets_deg_at_index(
+    horizon: dict[str, list[float]], index: int
+) -> np.ndarray | None:
+    """Arm joint targets in degrees at horizon index (Piper JOINT_NAMES order)."""
+    if not all(jn in horizon for jn in JOINT_NAMES):
+        return None
+    if any(index >= len(horizon[jn]) for jn in JOINT_NAMES):
+        return None
+    rad = np.array([horizon[jn][index] for jn in JOINT_NAMES], dtype=np.float64)
+    return np.degrees(rad)
+
+
+def gripper_open_at_index(
+    horizon: dict[str, list[float]],
+    index: int,
+    gripper_names: list[str] | None = None,
+) -> float | None:
+    """Gripper open amount in [0, 1] from the first matching horizon channel."""
+    names = gripper_names or [GRIPPER_NAME]
+    for gripper_name in names:
+        if gripper_name in horizon and index < len(horizon[gripper_name]):
+            return float(np.clip(horizon[gripper_name][index], 0.0, 1.0))
+    return None
+
+
+def urdf_cfg_from_horizon(
+    horizon: dict[str, list[float]], index: int
+) -> np.ndarray | None:
+    """Joint configuration in radians for Viser URDF (JOINT_NAMES order)."""
+    if not all(jn in horizon for jn in JOINT_NAMES):
+        return None
+    if any(index >= len(horizon[jn]) for jn in JOINT_NAMES):
+        return None
+    return np.array([float(horizon[jn][index]) for jn in JOINT_NAMES], dtype=np.float64)
+
+
+
+==================================================
+FILE: src/common/config_parser.py
+==================================================
+
+"""Utilities for loading teleoperation and IK configuration from YAML files."""
+
+from pathlib import Path
+
+import yaml  # type: ignore[import]
+
+
+def load_ik_config(config_path: str) -> dict:
+    """Loads the teleoperation and IK parameters from a YAML file."""
+    path = Path(config_path)
+    if not path.exists():
+        print(
+            f"⚠️ Warning: Config file not found at {path}. Using safe fallback defaults."
+        )
+        return {}
+
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+
+
+==================================================
+FILE: src/common/policy_actions.py
+==================================================
+
+"""Extracted actions for running and executing policies across different rollout scripts."""
+
+import threading
 import time
-# Assuming you save the class from the file above as 'so101_dual_arm.py'
-# you could just do: `from so101_dual_arm import SO101DualArm` 
-# But for completeness, I will assume the class is accessible here.
+from typing import Any, Optional
 
-from send_position import SO101DualArm 
+import numpy as np
 
-# --- CONFIGURATION VARIABLES ---
-PORT_ID_0 = "/dev/ttyACM0"
-PORT_ID_1 = "/dev/ttyACM1"  
-ROBOT_NAME_0 = "follower_0" 
-ROBOT_NAME_1 = "follower_1" 
+from so101_garment.src.common.configs import (
+    CAMERA_NAMES,
+    GRIPPER_NAME,
+    JOINT_NAMES,
+    MAX_ACTION_ERROR_THRESHOLD,
+    MAX_SAFETY_THRESHOLD,
+    POLICY_EXECUTION_RATE,
+    TARGETING_POSE_TIME_THRESHOLD,
+)
+from so101_garment.src.common.data_manager import DataManager, RobotActivityState
+from so101_garment.src.common.policy_helpers import (
+    convert_predictions_to_horizon,
+    log_robot_state_for_policy,
+)
+from so101_garment.src.common.policy_state import PolicyState
 
-def main():
-    print("Initializing Dual Arm Reader...")
-    dual_arm = SO101DualArm(PORT_ID_0, PORT_ID_1, ROBOT_NAME_0, ROBOT_NAME_1)
 
-    # Disable torque so you can move the motors freely by hand
-    dual_arm.disable_torque()
-    
-    print("\nTorque disabled! You can now physically move both robot arms.")
-    print("Reading joint positions... (Press Ctrl+C to stop)\n")
+def run_policy(
+    data_manager: DataManager,
+    policy: Any,
+    policy_state: PolicyState,
+    visualizer: Optional[Any],
+    input_embodiment_description: dict,
+) -> bool:
+    """Handle Run Policy trigger to capture state and get policy prediction."""
+    print("Running policy...")
+
+    # Use our helper to log only what the model expects
+    if not log_robot_state_for_policy(data_manager, input_embodiment_description):
+        print("✗ No data available to run policy")
+        return False
 
     try:
-        while True:
-            # Read the current position of all joints from our class
-            pos_0, pos_1 = dual_arm.read_positions()
-            
-            # Format the dictionary to round the numbers to 2 decimal places
-            fmt_0 = {k: round(v, 2) for k, v in pos_0.items()}
-            fmt_1 = {k: round(v, 2) for k, v in pos_1.items()}
-            
-            # Print side-by-side cleanly in the terminal
-            print(f"ARM 0: {fmt_0} | ARM 1: {fmt_1}", end="\r", flush=True)
-            
-            # Sleep to prevent overloading the serial bus (10Hz loop)
-            time.sleep(0.1) 
-            
-    except KeyboardInterrupt:
-        print("\n\nStopped reading joint angles. Exiting...")
-        
+        start_time = time.time()
+        predictions = policy.predict(timeout=60)
+        inference_time = time.time() - start_time
+        prediction_horizon = convert_predictions_to_horizon(predictions)
+
+        horizon_length = (
+            len(next(iter(prediction_horizon.values()))) if prediction_horizon else 0
+        )
+        print(
+            f"  ✓ Got policy prediction in {inference_time:.2f}s with horizon length {horizon_length}"
+        )
+
+        if visualizer:
+            policy_state.set_execution_ratio(visualizer.get_prediction_ratio())
+
+        policy_state.set_prediction_horizon(prediction_horizon)
+
+        if visualizer:
+            visualizer.update_ghost_robot_visibility(True)
+
+        policy_state.set_ghost_robot_playing(True)
+        policy_state.reset_ghost_action_index()
+        return True
+    except Exception as e:
+        print(f"✗ Failed to get policy prediction: {e}")
+        return False
+
+
+def start_policy_execution(
+    data_manager: DataManager, policy_state: PolicyState
+) -> bool:
+    """Handle Execute Policy trigger to start policy execution."""
+    print("Starting policy execution...")
+    state = data_manager.get_robot_activity_state()
+
+    if (
+        state == RobotActivityState.POLICY_CONTROLLED
+        and not policy_state.get_continuous_play_active()
+    ):
+        print("⚠️ Policy execution already in progress")
+        return False
+    if state == RobotActivityState.DISABLED:
+        print("⚠️ Cannot execute policy: Robot is disabled")
+        return False
+
+    if policy_state.get_prediction_horizon_length() == 0:
+        print("⚠️ No prediction horizon available.")
+        return False
+
+    current_joint_angles = data_manager.get_current_joint_angles()
+    if current_joint_angles is None:
+        return False
+
+    prediction_horizon = policy_state.get_prediction_horizon()
+    first_targets = np.degrees([prediction_horizon[jn][0] for jn in JOINT_NAMES])
+
+    # Safety check: Prevent wild jumps
+    if np.any(np.abs(current_joint_angles - first_targets) > MAX_SAFETY_THRESHOLD):
+        print("⚠️ Cannot execute policy: Robot too far from first predicted action")
+        return False
+
+    policy_state.set_ghost_robot_playing(False)
+    data_manager.set_teleop_state(False, None, None)
+    policy_state.start_policy_execution()
+
+    if policy_state.get_locked_prediction_horizon_length() == 0:
+        policy_state.end_policy_execution()
+        return False
+
+    data_manager.set_robot_activity_state(RobotActivityState.POLICY_CONTROLLED)
+    return True
+
+
+def end_policy_play(
+    data_manager: DataManager,
+    policy_state: PolicyState,
+    visualizer: Optional[Any],
+    status_msg: str,
+) -> None:
+    """End continuous play and update system state."""
+    if policy_state.get_continuous_play_active():
+        policy_state.set_continuous_play_active(False)
+
+    if visualizer:
+        visualizer.set_ghost_robot_color((1.0, 0.65, 0.0, 0.25))
+        visualizer.update_play_policy_button_status(False)
+        visualizer.update_policy_status(status_msg)
+
+    policy_state.end_policy_execution()
+    data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+    data_manager.set_teleop_state(False, None, None)
+
+
+def continuous_prediction_worker(
+    data_manager: DataManager,
+    policy: Any,
+    policy_state: PolicyState,
+    visualizer: Optional[Any],
+    input_emb: dict,
+    continuous_mode: str,
+) -> None:
+    """Background thread for continuous receding horizon execution."""
+    colors = [
+        (1.0, 0.65, 0.0, 0.25),
+        (0.0, 1.0, 0.0, 0.25),
+        (1.0, 0.0, 0.0, 0.25),
+        (0.0, 0.0, 1.0, 0.25),
+    ]
+    c_idx = 0
+
+    print(f"\n🚀 Bootstrapping initial trajectory in '{continuous_mode}' mode...")
+    if run_policy(data_manager, policy, policy_state, visualizer, input_emb):
+        start_policy_execution(data_manager, policy_state)
+
+    while policy_state.get_continuous_play_active():
+        if policy_state.get_locked_prediction_horizon_length() == 0:
+            time.sleep(0.01)
+            continue
+
+        if continuous_mode == "pipeline":
+            # Predict next horizon in the background while moving
+            success = run_policy(
+                data_manager, policy, policy_state, visualizer, input_emb
+            )
+            if not success:
+                time.sleep(0.05)
+                continue
+
+            # Wait until current trajectory is almost finished before hot-swapping
+            while policy_state.get_continuous_play_active():
+                rem = (
+                    policy_state.get_locked_prediction_horizon_length()
+                    - policy_state.get_execution_action_index()
+                )
+                if rem <= 5 or policy_state.get_locked_prediction_horizon_length() == 0:
+                    break
+                time.sleep(0.01)
+
+        elif continuous_mode == "sequential":
+            # Wait for current trajectory to fully finish before querying network
+            while policy_state.get_continuous_play_active():
+                if (
+                    policy_state.get_execution_action_index()
+                    >= policy_state.get_locked_prediction_horizon_length()
+                ):
+                    break
+                time.sleep(0.01)
+
+            if not policy_state.get_continuous_play_active():
+                break
+
+            success = run_policy(
+                data_manager, policy, policy_state, visualizer, input_emb
+            )
+            if not success:
+                time.sleep(0.05)
+                continue
+
+        if not policy_state.get_continuous_play_active():
+            break
+
+        policy_state.end_policy_execution()
+        if start_policy_execution(data_manager, policy_state):
+            c_idx = (c_idx + 1) % len(colors)
+            if visualizer:
+                visualizer.set_ghost_robot_color(colors[c_idx])
+        else:
+            time.sleep(0.01)
+
+
+def play_policy(
+    data_manager: DataManager,
+    policy: Any,
+    policy_state: PolicyState,
+    visualizer: Optional[Any],
+    input_emb: dict,
+    continuous_mode: str = "pipeline",
+) -> None:
+    """Toggle for starting/stopping continuous policy mode."""
+    if not policy_state.get_continuous_play_active():
+        print(f"▶️ Starting {continuous_mode.capitalize()} Mode...")
+        policy_state.set_continuous_play_active(True)
+        if visualizer:
+            visualizer.update_play_policy_button_status(True)
+        threading.Thread(
+            target=continuous_prediction_worker,
+            args=(
+                data_manager,
+                policy,
+                policy_state,
+                visualizer,
+                input_emb,
+                continuous_mode,
+            ),
+            daemon=True,
+        ).start()
+    else:
+        print("⏹️ Stopping continuous policy execution...")
+        end_policy_play(
+            data_manager, policy_state, visualizer, "Policy execution stopped"
+        )
+
+
+def policy_execution_thread(
+    policy: Any,
+    data_manager: DataManager,
+    policy_state: PolicyState,
+    robot_controller: Any,
+    visualizer: Optional[Any],
+    input_emb: dict,
+) -> None:
+    """The thread that continuously reads the locked horizon and sends joint commands."""
+    dt_execution = 1.0 / POLICY_EXECUTION_RATE
+    last_vis_update = 0.0
+
+    while True:
+        start_time = time.time()
+
+        if (
+            data_manager.get_robot_activity_state()
+            == RobotActivityState.POLICY_CONTROLLED
+        ):
+            locked_horizon = policy_state.get_locked_prediction_horizon()
+            exec_idx = policy_state.get_execution_action_index()
+            locked_len = policy_state.get_locked_prediction_horizon_length()
+
+            if exec_idx < locked_len:
+                current_angles = data_manager.get_current_joint_angles()
+
+                # Check target pose tracking if in pose-execution mode
+                if (
+                    exec_idx > 0
+                    and current_angles is not None
+                    and policy_state.get_execution_mode()
+                    == PolicyState.ExecutionMode.TARGETING_POSE
+                ):
+                    t_start = time.time()
+                    while (time.time() - t_start) < TARGETING_POSE_TIME_THRESHOLD:
+                        prev_targs = np.degrees(
+                            [locked_horizon[jn][exec_idx - 1] for jn in JOINT_NAMES]
+                        )
+                        if np.any(
+                            np.abs(current_angles - prev_targs)
+                            <= MAX_ACTION_ERROR_THRESHOLD
+                        ):
+                            break
+                        time.sleep(0.001)
+
+                if all(jn in locked_horizon for jn in JOINT_NAMES):
+                    targs_deg = np.degrees(
+                        [locked_horizon[jn][exec_idx] for jn in JOINT_NAMES]
+                    )
+                    data_manager.set_target_joint_angles(targs_deg)
+                    if robot_controller.is_robot_enabled():
+                        robot_controller.set_target_joint_angles(targs_deg)
+
+                if GRIPPER_NAME in locked_horizon:
+                    robot_controller.set_gripper_open_value(
+                        locked_horizon[GRIPPER_NAME][exec_idx]
+                    )
+
+                policy_state.increment_execution_action_index()
+                if visualizer:
+                    visualizer.update_policy_status(
+                        f"Executing: {exec_idx + 1}/{locked_len}"
+                    )
+            else:
+                if not policy_state.get_continuous_play_active():
+                    end_policy_play(
+                        data_manager, policy_state, visualizer, "Execution completed"
+                    )
+                elif (
+                    all(jn in locked_horizon for jn in JOINT_NAMES)
+                    and robot_controller.is_robot_enabled()
+                ):
+                    # Hold last position while waiting for background thread to swap horizon
+                    robot_controller.set_target_joint_angles(
+                        np.degrees([locked_horizon[jn][-1] for jn in JOINT_NAMES])
+                    )
+
+        # Throttle visualizer updates to 30Hz
+        if visualizer and (time.time() - last_vis_update >= 1.0 / 30.0):
+            _update_visualization(data_manager, policy_state, visualizer)
+            last_vis_update = time.time()
+
+        time.sleep(max(0, dt_execution - (time.time() - start_time)))
+
+
+def _update_visualization(
+    data_manager: DataManager, policy_state: PolicyState, visualizer: Any
+) -> None:
+    """Sync the visualizer UI with the DataManager's internal state."""
+    current_joints = data_manager.get_current_joint_angles()
+    if current_joints is not None:
+        visualizer.update_robot_pose(np.radians(current_joints))
+
+    rgb_image = data_manager.get_rgb_image(CAMERA_NAMES[0])
+    if rgb_image is not None:
+        visualizer.update_rgb_image(rgb_image)
+
+    state = data_manager.get_robot_activity_state()
+    if state == RobotActivityState.POLICY_CONTROLLED:
+        visualizer.update_ghost_robot_visibility(True)
+        t_joints = data_manager.get_target_joint_angles()
+        if t_joints is not None:
+            visualizer.update_ghost_robot_pose(np.radians(t_joints))
+        visualizer.set_run_policy_button_disabled(True)
+        visualizer.set_play_policy_button_disabled(False)
+
+    elif state == RobotActivityState.ENABLED and data_manager.get_teleop_active():
+        visualizer.update_ghost_robot_visibility(True)
+        t_joints = data_manager.get_target_joint_angles()
+        if t_joints is not None:
+            visualizer.update_ghost_robot_pose(np.radians(t_joints))
+
+    elif (
+        policy_state.get_ghost_robot_playing()
+        and policy_state.get_prediction_horizon_length() > 0
+    ):
+        visualizer.set_start_policy_execution_button_disabled(False)
+        visualizer.update_ghost_robot_visibility(True)
+        g_idx = policy_state.get_ghost_action_index()
+        horizon = policy_state.get_prediction_horizon()
+
+        if g_idx < policy_state.get_prediction_horizon_length() and all(
+            jn in horizon for jn in JOINT_NAMES
+        ):
+            visualizer.update_ghost_robot_pose(
+                np.array([horizon[jn][g_idx] for jn in JOINT_NAMES])
+            )
+            policy_state.set_ghost_action_index(
+                (g_idx + 1) % policy_state.get_prediction_horizon_length()
+            )
+        else:
+            policy_state.reset_ghost_action_index()
+    else:
+        visualizer.update_ghost_robot_visibility(False)
+        has_horizon = policy_state.get_prediction_horizon_length() > 0
+        enabled = state == RobotActivityState.ENABLED
+
+        visualizer.set_start_policy_execution_button_disabled(
+            not (enabled and has_horizon)
+        )
+        visualizer.set_run_policy_button_disabled(not enabled)
+        visualizer.set_play_policy_button_disabled(not enabled)
+
+
+
+==================================================
+FILE: src/common/one_euro_filter.py
+==================================================
+
+"""1€ Filter (One Euro Filter) for adaptive low-pass filtering."""
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+
+class OneEuroFilter:
+    """1€ Filter (One Euro Filter) for adaptive low-pass filtering.
+
+    The 1€ Filter adapts its smoothing based on signal velocity:
+    - Fast motion: Low smoothing (low latency, responsive)
+    - Slow motion: High smoothing (high stability, reduces jitter)
+    """
+
+    def __init__(
+        self,
+        t0: float,
+        x0: float,
+        min_cutoff: float = 1.0,
+        beta: float = 0.0,
+        d_cutoff: float = 1.0,
+    ):
+        """Initialize 1€ Filter.
+
+        Args:
+            t0: Initial timestamp (in seconds)
+            x0: Initial value
+            min_cutoff: Minimum cutoff frequency (stabilizes when holding still)
+                       Higher = less lag, more jitter
+            beta: Speed coefficient (reduces lag when moving)
+                  Higher = less lag, but more jitter during motion
+            d_cutoff: Cutoff frequency for derivative (speed) filtering
+        """
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self.x_prev = x0
+        self.dx_prev = 0.0
+        self.t_prev = t0
+
+    def smoothing_factor(self, t_e: float, cutoff: float) -> float:
+        """Calculate smoothing factor for exponential smoothing.
+
+        Args:
+            t_e: Time elapsed since last update (in seconds)
+            cutoff: Cutoff frequency
+
+        Returns:
+            Smoothing factor (0.0-1.0)
+        """
+        r = 2 * np.pi * cutoff * t_e
+        return r / (r + 1)
+
+    def exponential_smoothing(self, a: float, x: float, x_prev: float) -> float:
+        """Apply exponential smoothing.
+
+        Args:
+            a: Smoothing factor (0.0-1.0)
+            x: Current value
+            x_prev: Previous smoothed value
+
+        Returns:
+            Smoothed value
+        """
+        return a * x + (1 - a) * x_prev
+
+    def __call__(self, timestamp: float, x: float) -> float:
+        """Filter a new value.
+
+        Args:
+            t: Current timestamp (in seconds)
+            x: Current noisy value
+
+        Returns:
+            Filtered value
+        """
+        t_e = timestamp - self.t_prev
+
+        # Avoid division by zero in rare cases
+        if t_e <= 0.0:
+            return self.x_prev
+
+        # Calculate the derivative (speed) of the signal
+        dx = (x - self.x_prev) / t_e
+        dx_hat = self.exponential_smoothing(
+            self.smoothing_factor(t_e, self.d_cutoff), dx, self.dx_prev
+        )
+
+        # Calculate the adaptive cutoff frequency
+        # This is the magic part: Cutoff increases with speed
+        cutoff = self.min_cutoff + self.beta * abs(dx_hat)
+
+        # Filter the signal using the adaptive cutoff
+        x_hat = self.exponential_smoothing(
+            self.smoothing_factor(t_e, cutoff), x, self.x_prev
+        )
+
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        self.t_prev = timestamp
+
+        return x_hat
+
+    def update_params(self, min_cutoff: float, beta: float, d_cutoff: float) -> None:
+        """Update filter parameters without resetting state.
+
+        Args:
+            min_cutoff: Minimum cutoff frequency
+            beta: Speed coefficient
+            d_cutoff: Cutoff frequency for derivative filtering
+        """
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+
+
+class OneEuroFilterTransform:
+    """1€ Filter for 4x4 transformation matrices.
+
+    Applies separate 1€ Filters to position (3D) and orientation (quaternion).
+    """
+
+    def __init__(
+        self,
+        t0: float,
+        transform: np.ndarray,
+        min_cutoff: float = 1.0,
+        beta: float = 0.0,
+        d_cutoff: float = 1.0,
+    ):
+        """Initialize 1€ Filter for transforms.
+
+        Args:
+            t0: Initial timestamp (in seconds)
+            transform: Initial 4x4 transformation matrix
+            min_cutoff: Minimum cutoff frequency
+            beta: Speed coefficient
+            d_cutoff: Cutoff frequency for derivative filtering
+        """
+        # Extract position and orientation
+        position = transform[:3, 3]
+        rotation = Rotation.from_matrix(transform[:3, :3])
+        quat = rotation.as_quat()  # [x, y, z, w]
+
+        # Create filters for position (3 components)
+        self.position_filters = [
+            OneEuroFilter(t0, pos, min_cutoff, beta, d_cutoff) for pos in position
+        ]
+
+        # Create filters for quaternion (4 components)
+        self.quat_filters = [
+            OneEuroFilter(t0, q, min_cutoff, beta, d_cutoff) for q in quat
+        ]
+
+        # Store previous quaternion for sign correction
+        self.quat_prev = quat.copy()
+
+        self.t_prev = t0
+
+    def __call__(self, timestamp: float, transform: np.ndarray) -> np.ndarray:
+        """Filter a new transform.
+
+        Args:
+            t: Current timestamp (in seconds)
+            transform: Current 4x4 transformation matrix
+
+        Returns:
+            Filtered 4x4 transformation matrix
+        """
+        # Extract position and orientation
+        position = transform[:3, 3]
+        rotation = Rotation.from_matrix(transform[:3, :3])
+        quat = rotation.as_quat()  # [x, y, z, w]
+
+        # Fix quaternion sign to avoid sudden flips (q and -q represent same rotation)
+        # Choose the quaternion closest to the previous one
+        if np.dot(quat, self.quat_prev) < 0:
+            quat = -quat
+
+        # Filter position components
+        filtered_position = np.array(
+            [
+                filter(timestamp, pos)
+                for filter, pos in zip(self.position_filters, position)
+            ]
+        )
+
+        # Filter quaternion components
+        filtered_quat = np.array(
+            [filter(timestamp, q) for filter, q in zip(self.quat_filters, quat)]
+        )
+
+        # Normalize quaternion (important!)
+        filtered_quat = filtered_quat / np.linalg.norm(filtered_quat)
+
+        # Convert back to rotation matrix
+        filtered_rotation = Rotation.from_quat(filtered_quat)
+
+        # Build filtered transform
+        filtered_transform = np.eye(4)
+        filtered_transform[:3, 3] = filtered_position
+        filtered_transform[:3, :3] = filtered_rotation.as_matrix()
+
+        self.quat_prev = filtered_quat.copy()
+        self.t_prev = timestamp
+
+        return filtered_transform
+
+    def update_params(self, min_cutoff: float, beta: float, d_cutoff: float) -> None:
+        """Update filter parameters for all sub-filters without resetting state.
+
+        Args:
+            min_cutoff: Minimum cutoff frequency
+            beta: Speed coefficient
+            d_cutoff: Cutoff frequency for derivative filtering
+        """
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        for filter in self.position_filters + self.quat_filters:
+            filter.update_params(min_cutoff, beta, d_cutoff)
+
+
+
+==================================================
+FILE: src/common/robot_visualizer.py
+==================================================
+
+#!/usr/bin/env python3
+"""Shared robot visualizer for Piper robot demos.
+
+This module acts as a facade, delegating 3D rendering to RobotVisualizerCore
+and 2D UI elements to RobotVisualizerGUI.
+"""
+
+from typing import Any
+
+from .visualizer_core import RobotVisualizerCore
+from .visualizer_gui import RobotVisualizerGUI
+
+
+class RobotVisualizer:
+    """Shared visualizer facade for robot demos."""
+
+    def __init__(self, urdf_path: str) -> None:
+        """Initialize the visualizer components."""
+        self._core = RobotVisualizerCore(urdf_path)
+        self._gui = RobotVisualizerGUI(self._core.server)
+
+    def __getattr__(self, name: str) -> Any:
+        """Dynamically delegates method calls to the Core or GUI modules.
+
+        If a top-level script calls `visualizer.add_basic_controls()`,
+        this routes it to `_gui.add_basic_controls()`.
+        """
+        if hasattr(self._core, name):
+            return getattr(self._core, name)
+        if hasattr(self._gui, name):
+            return getattr(self._gui, name)
+
+        raise AttributeError(f"'RobotVisualizer' object has no attribute '{name}'")
+
+
+
+==================================================
+FILE: src/common/states.py
+==================================================
+
+"""State containers used by the Piper example suite."""
+
+import threading
+from enum import Enum
+
+import numpy as np
+
+from so101_garment.src.common.one_euro_filter import OneEuroFilterTransform
+
+
+class RobotActivityState(Enum):
+    """Robot activity state enumeration."""
+
+    ENABLED = "ENABLED"
+    HOMING = "HOMING"
+    DISABLED = "DISABLED"
+    POLICY_CONTROLLED = "POLICY_CONTROLLED"
+
+
+class ControllerState:
+    """Controller input state - Quest Reader writes, IK/Joint reads."""
+
+    def __init__(self) -> None:
+        """Initialize controller input state and filtering state."""
+        self._lock = threading.Lock()
+        self.min_cutoff: float = 1.0
+        self.beta: float = 0.0
+        self.d_cutoff: float = 1.0
+        self.transform_raw: np.ndarray | None = None
+        self.transform: np.ndarray | None = None
+        self.grip_value: float = 0.0
+        self.trigger_value: float = 0.0
+        self._filter: OneEuroFilterTransform | None = None
+
+
+class TeleopState:
+    """Teleop activation state - manages teleop start/stop."""
+
+    def __init__(self) -> None:
+        """Initialize teleop activation and scaling state."""
+        self._lock = threading.Lock()
+        self.active: bool = False
+        self.controller_initial_transform: np.ndarray | None = None
+        self.robot_initial_transform: np.ndarray | None = None
+        self.translation_scale: float = 1.0
+        self.rotation_scale: float = 1.0
+        self.slow_scaling_mode_enabled: bool = False
+
+
+class RobotState:
+    """Current robot state - joint angles, end effector pose, activity state."""
+
+    def __init__(self) -> None:
+        """Initialize robot telemetry and activity state."""
+        self._lock = threading.Lock()
+        self.joint_angles: np.ndarray | None = None
+        self.joint_torques: np.ndarray | None = None
+        self.end_effector_pose: np.ndarray | None = None
+        self.current_gripper_open_value: float | None = None
+        self.target_gripper_open_value: float | None = None
+        self.activity_state: RobotActivityState = RobotActivityState.DISABLED
+
+
+class IKState:
+    """IK solution state - target joint angles, pose, metrics."""
+
+    def __init__(self) -> None:
+        """Initialize IK target and status information."""
+        self._lock = threading.Lock()
+        self.target_joint_angles: np.ndarray | None = None
+        self.target_pose: np.ndarray | None = None
+        self.solve_time_ms: float = 0.0
+        self.success: bool = True
+
+
+class CameraState:
+    """Camera state - RGB images for one or more cameras."""
+
+    def __init__(self) -> None:
+        """Initialize camera image storage."""
+        self._lock = threading.Lock()
+        self.rgb_images: dict[str, np.ndarray] = {}
+
+
+
+==================================================
+FILE: src/common/utils.py
+==================================================
+
+"""Utility functions for the examples."""
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+
+def scale_and_add_delta_transform(
+    delta_position: np.ndarray,
+    delta_orientation: np.ndarray,
+    translation_scale: float,
+    rotation_scale: float,
+    initial_transform: np.ndarray,
+) -> np.ndarray:
+    """Scale and add delta position and orientation to an initial transform.
+
+    Args:
+        delta_position: 3D position vector
+        delta_orientation: 3x3 rotation matrix
+        translation_scale: translation scale
+        rotation_scale: rotation scale
+        initial_transform: 4x4 transformation matrix
+
+    Returns:
+        4x4 transformation matrix
+    """
+    scaled_delta_position = delta_position * translation_scale
+
+    # Scale the delta rotation by converting to axis-angle, scaling the angle, then converting back
+    delta_rotation = Rotation.from_matrix(delta_orientation)
+    delta_axis_angle = delta_rotation.as_rotvec()
+    scaled_delta_axis_angle = delta_axis_angle * rotation_scale
+    scaled_delta_rotation = Rotation.from_rotvec(scaled_delta_axis_angle).as_matrix()
+
+    # Compose rotations by matrix multiplication (correct way to combine rotations)
+    initial_rotation = initial_transform[:3, :3]
+    new_rotation = initial_rotation @ scaled_delta_rotation
+
+    target_transform = np.eye(4)
+    target_transform[:3, 3] = initial_transform[:3, 3] + scaled_delta_position
+    target_transform[:3, :3] = new_rotation
+
+    return target_transform
+
+
+
+==================================================
+FILE: src/common/dataset_helpers.py
+==================================================
+
+"""Helpers for loading and synchronizing Neuracore datasets."""
+
+from typing import Any
+
+import neuracore as nc
+from neuracore.core.utils.robot_data_spec_utils import (
+    merge_cross_embodiment_description,
+)
+from neuracore_types import CrossEmbodimentDescription, DataType
+
+
+def load_and_sync_dataset(
+    dataset_name: str,
+    frequency: int,
+    input_modalities: list[DataType] | None = None,
+    output_modalities: list[DataType] | None = None,
+    prefetch_videos: bool = False,
+) -> Any:
+    """Loads a Neuracore dataset and synchronizes the specified modalities across embodiments."""
+    print(f"\n🔍 Getting dataset '{dataset_name}' from Neuracore...")
+    dataset = nc.get_dataset(dataset_name)
+
+    print("🔁 Building cross_embodiment_union for synchronization...")
+    input_cross_embodiment: CrossEmbodimentDescription = {}
+    output_cross_embodiment: CrossEmbodimentDescription = {}
+
+    for robot_id in dataset.robot_ids:
+        full = dataset.get_full_embodiment_description(robot_id)
+        if input_modalities:
+            input_cross_embodiment[robot_id] = {
+                dt: full[dt] for dt in input_modalities if dt in full
+            }
+        if output_modalities:
+            output_cross_embodiment[robot_id] = {
+                dt: full[dt] for dt in output_modalities if dt in full
+            }
+
+    cross_embodiment_union = merge_cross_embodiment_description(
+        input_cross_embodiment, output_cross_embodiment
+    )
+
+    print("🔁 Synchronizing dataset...")
+
+    # Dynamically build arguments to avoid passing 0 workers to the ThreadPoolExecutor
+    sync_kwargs = {
+        "frequency": frequency,
+        "cross_embodiment_union": cross_embodiment_union,
+        "prefetch_videos": prefetch_videos,
+    }
+
+    if prefetch_videos:
+        sync_kwargs["max_prefetch_workers"] = 2
+
+    synced_dataset = dataset.synchronize(**sync_kwargs)
+
+    print(f"  ✓ Dataset synchronized: {len(synced_dataset)} episodes")
+    return synced_dataset
+
+
+
+==================================================
+FILE: src/common/policy_state.py
+==================================================
+
+"""Policy state - policy prediction, policy action, policy action index."""
+
+import threading
+from enum import Enum
+
+import numpy as np
+
+
+class PolicyState:
+    """Policy state - policy prediction, policy action, policy action index."""
+
+    class ExecutionMode(Enum):
+        """Execution mode enumeration."""
+
+        TARGETING_TIME = "targeting_time"
+        TARGETING_POSE = "targeting_pose"
+
+    def __init__(self) -> None:
+        """Initialize PolicyState with default values."""
+        # Prediction horizon stored as dict[str, list[float]] where keys are joint/gripper names
+        self._prediction_horizon: dict[str, list[float]] = {}
+        self._prediction_horizon_lock = threading.Lock()
+        self._execution_ratio: float = 0.5  # Default to executing 50% of the predicted horizon, TODO: we need to set it in
+
+        self._policy_rgb_image_input: np.ndarray | None = None
+        self._policy_rgb_image_input_lock = threading.Lock()
+
+        self._policy_state_input: np.ndarray | None = None
+        self._policy_state_input_lock = threading.Lock()
+
+        self._ghost_robot_playing: bool = False
+        self._ghost_action_index: int = 0
+
+        # Policy execution state
+        self._policy_inputs_locked: bool = False
+        self._locked_prediction_horizon: dict[str, list[float]] = {}
+        self._execution_action_index: int = 0
+        self._execution_lock = threading.Lock()
+
+        # Continuous play and execution mode
+        self._continuous_play_active: bool = False
+        self._execution_mode: PolicyState.ExecutionMode = (
+            PolicyState.ExecutionMode.TARGETING_TIME
+        )
+
+    def get_prediction_horizon_length(self) -> int:
+        """Get prediction horizon length (thread-safe)."""
+        with self._prediction_horizon_lock:
+            if not self._prediction_horizon:
+                return 0
+            # Get length from first list (all should have same length)
+            first_key = next(iter(self._prediction_horizon.keys()))
+            return len(self._prediction_horizon[first_key])
+
+    def get_prediction_horizon(self) -> dict[str, list[float]]:
+        """Get prediction horizon (thread-safe)."""
+        with self._prediction_horizon_lock:
+            # Return a deep copy to prevent external modifications
+            return {
+                key: list(values) for key, values in self._prediction_horizon.items()
+            }
+
+    def set_prediction_horizon(self, horizon: dict[str, list[float]]) -> None:
+        """Set prediction horizon (thread-safe)."""
+        with self._prediction_horizon_lock:
+            # Store a deep copy to prevent external modifications
+            self._prediction_horizon = {
+                key: list(values) for key, values in horizon.items()
+            }
+
+    def set_execution_ratio(self, ratio: float) -> None:
+        """Set execution ratio used when locking prediction horizon."""
+        # Clamp to (0, 1] to avoid zero-length horizons
+        clamped_ratio = float(np.clip(ratio, 1e-6, 1.0))
+        with self._prediction_horizon_lock:
+            self._execution_ratio = clamped_ratio
+
+    def get_execution_ratio(self) -> float:
+        """Get execution ratio (thread-safe)."""
+        with self._prediction_horizon_lock:
+            return self._execution_ratio
+
+    def get_policy_rgb_image_input(self) -> np.ndarray | None:
+        """Get policy RGB image (thread-safe)."""
+        with self._policy_rgb_image_input_lock:
+            return (
+                self._policy_rgb_image_input.copy()
+                if self._policy_rgb_image_input is not None
+                else None
+            )
+
+    def set_policy_rgb_image_input(self, image: np.ndarray) -> None:
+        """Set policy RGB image (thread-safe)."""
+        with self._policy_rgb_image_input_lock:
+            self._policy_rgb_image_input = image.copy() if image is not None else None
+
+    def get_policy_state_input(self) -> np.ndarray | None:
+        """Get policy state input (thread-safe)."""
+        with self._policy_state_input_lock:
+            return (
+                self._policy_state_input.copy()
+                if self._policy_state_input is not None
+                else None
+            )
+
+    def set_policy_state_input(self, input: np.ndarray) -> None:
+        """Set policy state input (thread-safe)."""
+        with self._policy_state_input_lock:
+            self._policy_state_input = input.copy() if input is not None else None
+
+    def get_ghost_robot_playing(self) -> bool:
+        """Get ghost robot playing (thread-safe)."""
+        return self._ghost_robot_playing
+
+    def set_ghost_robot_playing(self, playing: bool) -> None:
+        """Set ghost robot playing (thread-safe)."""
+        self._ghost_robot_playing = playing
+
+    def get_ghost_action_index(self) -> int:
+        """Get ghost action index (thread-safe)."""
+        return self._ghost_action_index
+
+    def set_ghost_action_index(self, index: int) -> None:
+        """Set ghost action index (thread-safe)."""
+        self._ghost_action_index = index
+
+    def reset_ghost_action_index(self) -> None:
+        """Reset ghost action index (thread-safe)."""
+        self._ghost_action_index = 0
+
+    # Policy execution methods
+    def start_policy_execution(self) -> None:
+        """Start policy execution by locking inputs and storing horizon (thread-safe)."""
+        with self._prediction_horizon_lock:
+            source_horizon = {
+                key: list(values) for key, values in self._prediction_horizon.items()
+            }
+            # Calculate length directly from source_horizon instead of calling get_prediction_horizon_length()
+            # which would try to acquire the same lock again (deadlock!)
+            if not source_horizon:
+                total = 0
+            else:
+                first_key = next(iter(source_horizon.keys()))
+                total = len(source_horizon[first_key])
+
+            if total == 0:
+                locked_horizon = {}
+            else:
+                num_actions = int(total * self._execution_ratio)
+                num_actions = max(1, min(num_actions, total))
+                # Slice each list in the horizon
+                locked_horizon = {
+                    key: values[:num_actions] for key, values in source_horizon.items()
+                }
+        with self._execution_lock:
+            self._policy_inputs_locked = True
+            self._execution_action_index = 0
+            self._locked_prediction_horizon = locked_horizon
+
+    def end_policy_execution(self) -> None:
+        """Stop policy execution and unlock inputs (thread-safe)."""
+        with self._execution_lock:
+            self._policy_inputs_locked = False
+            self._locked_prediction_horizon = {}
+            self._execution_action_index = 0
+
+    def get_locked_prediction_horizon(self) -> dict[str, list[float]]:
+        """Get locked prediction horizon (thread-safe)."""
+        with self._execution_lock:
+            # Return a deep copy to prevent external modifications
+            return {
+                key: list(values)
+                for key, values in self._locked_prediction_horizon.items()
+            }
+
+    def get_locked_prediction_horizon_length(self) -> int:
+        """Get locked prediction horizon length (thread-safe)."""
+        with self._execution_lock:
+            if not self._locked_prediction_horizon:
+                return 0
+            # Get length from first list (all should have same length)
+            first_key = next(iter(self._locked_prediction_horizon.keys()))
+            return len(self._locked_prediction_horizon[first_key])
+
+    def get_locked_prediction_horizon_sync_points(self) -> dict[str, list[float]]:
+        """Get locked prediction horizon (legacy method name, calls get_locked_prediction_horizon)."""
+        return self.get_locked_prediction_horizon()
+
+    def get_execution_action_index(self) -> int:
+        """Get current execution action index (thread-safe)."""
+        with self._execution_lock:
+            return self._execution_action_index
+
+    def increment_execution_action_index(self) -> None:
+        """Increment execution action index (thread-safe)."""
+        with self._execution_lock:
+            self._execution_action_index += 1
+
+    def get_continuous_play_active(self) -> bool:
+        """Get continuous play active state (thread-safe)."""
+        return self._continuous_play_active
+
+    def set_continuous_play_active(self, active: bool) -> None:
+        """Set continuous play active state (thread-safe)."""
+        self._continuous_play_active = active
+
+    def get_execution_mode(self) -> ExecutionMode:
+        """Get execution mode (thread-safe)."""
+        return self._execution_mode
+
+    def set_execution_mode(self, mode: ExecutionMode) -> None:
+        """Set execution mode (thread-safe)."""
+        self._execution_mode = mode
+
+
+
+==================================================
+FILE: src/common/configs.py
+==================================================
+
+"""Configuration parameters for AgileX Piper robot demos."""
+
+from pathlib import Path
+
+# Hardware & Kinematics Paths
+URDF_PATH = str(
+    Path(__file__).parent.parent.parent
+    / "piper_description"
+    / "urdf"
+    / "piper_description.urdf"
+)
+GRIPPER_FRAME_NAME = "gripper_center"
+
+# IK Solver
+SOLVER_NAME = "quadprog"
+
+# Teleoperation Thresholds
+GRIP_THRESHOLD = 0.9
+
+# Thread Execution Rates (Hz)
+CONTROLLER_DATA_RATE = 50.0
+IK_SOLVER_RATE = 100
+VISUALIZATION_RATE = 60.0
+ROBOT_RATE = 100.0
+JOINT_STATE_STREAMING_RATE = 100.0
+CAMERA_FRAME_STREAMING_RATE = 30.0
+
+# Hardware Context
+META_QUEST_AXIS_MASK = [1, 1, 1, 1, 1, 1]
+CAMERA_DEVICE_INDEX = 5
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+CAMERA_NAMES = ["rgb_scene", "rgb_wrist"]
+
+# Default Robot Poses
+NEUTRAL_JOINT_ANGLES = [-1.6, 52.2, -54.3, -3.2, 43.1, 4.7]
+NEUTRAL_END_EFFECTOR_POSE = [455.257, -46.344, 172.213, 176.205, -14.545, 29.621]
+# NEUTRAL_JOINT_ANGLES = [-9.3, 86.7, -86.6, 1.8, 61.7, -5.1] #Lemon pick task pruthvi
+
+# AI Policy Execution Parameters
+POLICY_EXECUTION_RATE = 20.0
+PREDICTION_HORIZON_EXECUTION_RATIO = 1.0
+MAX_SAFETY_THRESHOLD = 200.0
+MAX_ACTION_ERROR_THRESHOLD = 3.0
+TARGETING_POSE_TIME_THRESHOLD = 1.0
+
+GRIPPER_NAME = "gripper"
+GRIPPER_LOGGING_NAME = GRIPPER_NAME
+JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+
+
+
+==================================================
+FILE: src/common/system_bootstrap.py
+==================================================
+
+"""Bootstrap robot subsystems for the AgileX Piper example suite."""
+
+import threading
+from typing import List, Optional, Tuple
+
+import numpy as np
+from pink_ik_solver import PinkIKSolver
+from piper_controller import PiperController
+
+from so101_garment.src.common.configs import (
+    GRIPPER_FRAME_NAME,
+    IK_SOLVER_RATE,
+    NEUTRAL_END_EFFECTOR_POSE,
+    NEUTRAL_JOINT_ANGLES,
+    ROBOT_RATE,
+    SOLVER_NAME,
+    URDF_PATH,
+)
+from so101_garment.src.common.data_manager import DataManager
+from so101_garment.src.common.threads.ik_solver import ik_solver_thread
+from so101_garment.src.common.threads.joint_state import joint_state_thread
+from so101_garment.src.common.threads.realsense_camera import camera_thread
+
+
+def bootstrap_robot_system(
+    config: dict, start_ik: bool = True, start_camera: bool = True
+) -> Tuple[
+    DataManager, PiperController, Optional[PinkIKSolver], List[threading.Thread]
+]:
+    """Create and start the shared robot subsystems used by deployment scripts."""
+    # Extract config sections safely
+    filt_p = config.get("filter_parameters", {})
+    tele_p = config.get("teleop_parameters", {})
+    ik_p = config.get("ik_parameters", {})
+
+    # 1. Initialize Data Manager
+    data_manager = DataManager()
+    data_manager.set_controller_filter_params(
+        filt_p.get("controller_min_cutoff", 0.8),
+        filt_p.get("controller_beta", 0.05),
+        filt_p.get("controller_d_cutoff", 0.9),
+    )
+    data_manager.set_teleop_scaling(
+        tele_p.get("translation_scale", 1.5), tele_p.get("rotation_scale", 1.2)
+    )
+
+    # 2. Initialize Robot Controller
+    print("\n🤖 Initializing Piper robot controller...")
+    robot_controller = PiperController(
+        can_interface="can0",
+        robot_rate=ROBOT_RATE,
+        control_mode=PiperController.ControlMode.JOINT_SPACE,
+        neutral_joint_angles=NEUTRAL_JOINT_ANGLES,
+        neutral_end_effector_pose=NEUTRAL_END_EFFECTOR_POSE,
+        enable_joint_angle_limits=False,
+        debug_mode=False,
+    )
+    robot_controller.start_control_loop()
+
+    # 3. Start Threads
+    active_threads = []
+    print("\n📊 Starting joint state thread...")
+    js_thread = threading.Thread(
+        target=joint_state_thread, args=(data_manager, robot_controller), daemon=True
+    )
+    js_thread.start()
+    active_threads.append(js_thread)
+
+    ik_solver = None
+    if start_ik:
+        print("\n🔧 Creating Pink IK solver...")
+        current_angles = data_manager.get_current_joint_angles()
+        init_angles = (
+            np.radians(current_angles)
+            if current_angles is not None
+            else np.radians(NEUTRAL_JOINT_ANGLES)
+        )
+
+        ik_solver = PinkIKSolver(
+            urdf_path=URDF_PATH,
+            end_effector_frame=GRIPPER_FRAME_NAME,
+            solver_name=SOLVER_NAME,
+            position_cost=ik_p.get("position_cost", 1.0),
+            orientation_cost=ik_p.get("orientation_cost", 0.75),
+            frame_task_gain=ik_p.get("frame_task_gain", 0.4),
+            lm_damping=ik_p.get("lm_damping", 0.01),
+            damping_cost=ik_p.get("damping_cost", 0.25),
+            solver_damping_value=ik_p.get("solver_damping_value", 1e-4),
+            integration_time_step=1 / IK_SOLVER_RATE,
+            initial_configuration=init_angles,
+            posture_cost_vector=np.array(
+                ik_p.get("posture_cost_vector", [0.0, 0.0, 0.0, 0.05, 0.0, 0.0])
+            ),
+        )
+        print("\n🧮 Starting IK solver thread...")
+        ik_thread = threading.Thread(
+            target=ik_solver_thread, args=(data_manager, ik_solver), daemon=True
+        )
+        ik_thread.start()
+        active_threads.append(ik_thread)
+
+    if start_camera:
+        print("\n📷 Starting camera thread...")
+        cam_thread = threading.Thread(
+            target=camera_thread, args=(data_manager,), daemon=True
+        )
+        cam_thread.start()
+        active_threads.append(cam_thread)
+
+    return data_manager, robot_controller, ik_solver, active_threads
+
+
+
+==================================================
+FILE: src/common/shared_actions.py
+==================================================
+
+"""Common robot action helpers shared by example scripts."""
+
+from typing import Any
+
+from piper_controller import PiperController
+
+from so101_garment.src.common.data_manager import DataManager, RobotActivityState
+
+
+def toggle_robot_enabled(
+    data_manager: DataManager,
+    robot_controller: PiperController,
+    visualizer: Any = None,
+) -> None:
+    """Safely toggles the robot between ENABLED and DISABLED states."""
+    state = data_manager.get_robot_activity_state()
+
+    if state == RobotActivityState.ENABLED:
+        data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
+        if robot_controller:
+            robot_controller.graceful_stop()
+        data_manager.set_teleop_state(False, None, None)
+        if visualizer:
+            visualizer.update_toggle_robot_enabled_status(False)
+        print("✓ 🔴 Robot disabled")
+
+    elif state in (RobotActivityState.DISABLED, RobotActivityState.HOMING):
+        if not robot_controller:
+            data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+            print("✓ 🟢 Robot enabled (Headless)")
+            return
+
+        if robot_controller.resume_robot():
+            data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+            if visualizer:
+                visualizer.update_toggle_robot_enabled_status(True)
+            print("✓ 🟢 Robot enabled")
+        else:
+            print("✗ Failed to enable robot")
+
+
+def move_robot_home(
+    data_manager: DataManager, robot_controller: PiperController
+) -> None:
+    """Safely commands the robot to return to its home position."""
+    state = data_manager.get_robot_activity_state()
+
+    if state == RobotActivityState.ENABLED:
+        print("🏠 Moving to home position...")
+        data_manager.set_robot_activity_state(RobotActivityState.HOMING)
+        data_manager.set_teleop_state(False, None, None)
+
+        if robot_controller:
+            if not robot_controller.move_to_home():
+                print("✗ Failed to initiate home move")
+                data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+        else:
+            print("✓ 🏠 Robot homed (Headless)")
+            data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+    else:
+        print("⚠️ Robot is not enabled, cannot go home")
+
+
+
+==================================================
+FILE: src/common/data_manager.py
+==================================================
+
+#!/usr/bin/env python3
+"""Thread-safe teleoperation state management.
+
+This module provides shared state classes for teleoperation systems that need
+to coordinate between multiple threads (data collection, IK solving, visualization).
+"""
+import queue  # Added for async queueing
+import threading
+import time
+from enum import Enum
+from typing import Any, Callable
+
+import numpy as np
+
+from .configs import GRIPPER_NAME, JOINT_NAMES
+from .one_euro_filter import OneEuroFilterTransform
+
+
+class RobotActivityState(Enum):
+    """Robot activity state enumeration."""
+
+    ENABLED = "ENABLED"
+    HOMING = "HOMING"
+    DISABLED = "DISABLED"
+    POLICY_CONTROLLED = "POLICY_CONTROLLED"
+
+
+class ControllerState:
+    """Controller input state - Quest Reader writes, IK/Joint reads."""
+
+    def __init__(self) -> None:
+        """Initialize ControllerState with default values."""
+        self._lock = threading.Lock()
+
+        # 1€ Filter parameters
+        self.min_cutoff: float = 1.0  # Minimum cutoff frequency
+        self.beta: float = 0.0  # Speed coefficient
+        self.d_cutoff: float = 1.0  # Derivative cutoff frequency
+
+        # Controller data
+        self.transform_raw: np.ndarray | None = None
+        self.transform: np.ndarray | None = None  # Smoothed transform
+        self.grip_value: float = 0.0
+        self.trigger_value: float = 0.0
+        self._filter: OneEuroFilterTransform | None = None
+
+
+class TeleopState:
+    """Teleop activation state - manages teleop start/stop."""
+
+    def __init__(self) -> None:
+        """Initialize TeleopState with default values."""
+        self._lock = threading.Lock()
+
+        self.active: bool = False
+        self.controller_initial_transform: np.ndarray | None = None
+        self.robot_initial_transform: np.ndarray | None = None
+        # Teleoperation scaling parameters (how much controller motion maps to robot motion)
+        self.translation_scale: float = 1.0
+        self.rotation_scale: float = 1.0
+        self.slow_scaling_mode_enabled: bool = False
+
+
+class RobotState:
+    """Current robot state - joint angles, end effector pose, activity state."""
+
+    def __init__(self) -> None:
+        """Initialize RobotState with default values."""
+        self._lock = threading.Lock()
+
+        self.joint_angles: np.ndarray | None = None
+        self.joint_torques: np.ndarray | None = None
+        self.end_effector_pose: np.ndarray | None = None
+        self.current_gripper_open_value: float | None = None
+        self.target_gripper_open_value: float | None = None
+        self.activity_state: RobotActivityState = RobotActivityState.DISABLED
+
+
+class IKState:
+    """IK solution state - target joint angles, pose, metrics."""
+
+    def __init__(self) -> None:
+        """Initialize IKState with default values."""
+        self._lock = threading.Lock()
+
+        self.target_joint_angles: np.ndarray | None = None
+        self.target_pose: np.ndarray | None = None
+        self.solve_time_ms: float = 0.0
+        self.success: bool = True
+
+
+class CameraState:
+    """Camera state - RGB images for one or more cameras."""
+
+    def __init__(self) -> None:
+        """Initialize CameraState with default values."""
+        self._lock = threading.Lock()
+
+        # Map from camera name -> latest RGB image
+        self.rgb_images: dict[str, np.ndarray] = {}
+
+
+class DataManager:
+    """Main state container coordinating all state groups.
+
+    This class manages shared data between threads:
+    - Data collection thread: updates controller data
+    - IK solver thread: reads controller data, updates joint solutions
+    - Main thread: reads everything for visualization
+
+    Uses separate locks for each state group to reduce contention.
+    """
+
+    def __init__(self) -> None:
+        """Initialize DataManager with background callback processing."""
+        self._controller_state = ControllerState()
+        self._teleop_state = TeleopState()
+        self._robot_state = RobotState()
+        self._ik_state = IKState()
+        self._camera_state = CameraState()
+
+        self._shutdown_event = threading.Event()
+
+        # Asynchronous processing elements
+        self._on_change_callback: (
+            Callable[[str, dict[str, Any], float], None] | None
+        ) = None
+
+        # Maxsize 60 matches ~1 second of video frames buffer if disk spikes
+        self._callback_queue: queue.Queue = queue.Queue(maxsize=60)
+
+    def set_on_change_callback(
+        self, on_change_callback: Callable[[str, dict[str, Any], float], None]
+    ) -> None:
+        """Set on change callback (thread-safe)."""
+        self._on_change_callback = on_change_callback
+
+    def _queue_callback(
+        self, name: str, payload: dict[str, Any], timestamp: float
+    ) -> None:
+        """Helper to push payloads into the execution queue without blocking."""
+        if self._on_change_callback is None:
+            return
+
+        try:
+            # put_nowait drops data into the memory queue instantly (0.0ms blocking)
+            self._callback_queue.put_nowait((name, payload, timestamp))
+        except queue.Full:
+            # Prevents out-of-memory if disk halts completely, without freezing telemetry loops
+            print(f"⚠️ Neuracore background queue full! Dropping log packet: {name}")
+
+    def _callback_worker_loop(self) -> None:
+        """Background thread worker loop dedicated solely to performing slow disk IO updates."""
+        while not self._shutdown_event.is_set() or not self._callback_queue.empty():
+            try:
+                # Wait up to 100ms for a logging event
+                name, payload, timestamp = self._callback_queue.get(timeout=0.1)
+
+                if self._on_change_callback is not None:
+                    # Execute Neuracore disk operation safely here on a separate core
+                    self._on_change_callback(name, payload, timestamp)
+
+                self._callback_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"❌ Error in background logging callback: {e}")
+
+    # ============================================================================
+    # Camera State Methods
+    # ============================================================================
+
+    def get_rgb_image(self, camera_name: str) -> np.ndarray | None:
+        """Get RGB image for a specific camera (thread-safe)."""
+        with self._camera_state._lock:
+            if not self._camera_state.rgb_images:
+                return None
+            img = self._camera_state.rgb_images.get(camera_name)
+            return img.copy() if img is not None else None
+
+    def set_rgb_image(self, image: np.ndarray, camera_name: str) -> None:
+        """Set RGB image for a specific camera (thread-safe and non-blocking)."""
+        with self._camera_state._lock:
+            self._camera_state.rgb_images[camera_name] = image.copy()
+
+        if self._on_change_callback:
+            img_copy = self._camera_state.rgb_images[camera_name].copy()
+            # Queue it instead of executing directly! Camera loop returns immediately.
+            self._queue_callback("log_rgb", {camera_name: img_copy}, time.time())
+
+    # ============================================================================
+    # Controller State Methods
+    # ============================================================================
+
+    def get_controller_data(self) -> tuple[np.ndarray | None, float, float]:
+        """Return the latest controller pose, grip, and trigger values."""
+        with self._controller_state._lock:
+            return (
+                (
+                    self._controller_state.transform.copy()
+                    if self._controller_state.transform is not None
+                    else None
+                ),
+                self._controller_state.grip_value,
+                self._controller_state.trigger_value,
+            )
+
+    def set_controller_data(
+        self, transform: np.ndarray | None, grip: float, trigger: float
+    ) -> None:
+        """Update the controller transform and button values."""
+        if transform is not None and transform.shape != (4, 4):
+            raise ValueError("Transform must be a 4x4 matrix")
+        if grip < 0.0 or grip > 1.0:
+            raise ValueError("Grip value must be between 0.0 and 1.0")
+        if trigger < 0.0 or trigger > 1.0:
+            raise ValueError("Trigger value must be between 0.0 and 1.0")
+
+        with self._controller_state._lock:
+            self._controller_state.grip_value = grip
+            self._controller_state.trigger_value = trigger
+
+            if transform is not None:
+                current_time = time.time()
+                self._controller_state.transform_raw = transform.copy()
+
+                if self._controller_state._filter is None:
+                    self._controller_state._filter = OneEuroFilterTransform(
+                        current_time,
+                        transform,
+                        self._controller_state.min_cutoff,
+                        self._controller_state.beta,
+                        self._controller_state.d_cutoff,
+                    )
+                    self._controller_state.transform = transform.copy()
+                else:
+                    self._controller_state._filter.update_params(
+                        self._controller_state.min_cutoff,
+                        self._controller_state.beta,
+                        self._controller_state.d_cutoff,
+                    )
+                    self._controller_state.transform = self._controller_state._filter(
+                        current_time, transform
+                    )
+            else:
+                self._controller_state.transform = None
+                self._controller_state.transform_raw = None
+                self._controller_state._filter = None
+
+    def set_controller_filter_params(
+        self, min_cutoff: float, beta: float, d_cutoff: float
+    ) -> None:
+        """Set the filter parameters used to smooth controller motion."""
+        with self._controller_state._lock:
+            self._controller_state.min_cutoff = min_cutoff
+            self._controller_state.beta = beta
+            self._controller_state.d_cutoff = d_cutoff
+
+    def get_controller_filter_params(self) -> tuple[float, float, float]:
+        """Return the current controller filter parameters."""
+        with self._controller_state._lock:
+            return (
+                self._controller_state.min_cutoff,
+                self._controller_state.beta,
+                self._controller_state.d_cutoff,
+            )
+
+    # ============================================================================
+    # Teleop State Methods
+    # ============================================================================
+
+    def set_teleop_state(
+        self,
+        active: bool,
+        controller_initial: np.ndarray | None,
+        robot_initial: np.ndarray | None,
+    ) -> None:
+        """Enable or disable teleoperation and store initial transforms."""
+        with self._teleop_state._lock:
+            self._teleop_state.active = active
+            self._teleop_state.controller_initial_transform = (
+                controller_initial.copy() if controller_initial is not None else None
+            )
+            self._teleop_state.robot_initial_transform = (
+                robot_initial.copy() if robot_initial is not None else None
+            )
+
+    def set_teleop_scaling(
+        self, translation_scale: float, rotation_scale: float
+    ) -> None:
+        """Update the teleoperation scaling factors."""
+        if translation_scale <= 0.0 or rotation_scale <= 0.0:
+            return
+        with self._teleop_state._lock:
+            self._teleop_state.translation_scale = translation_scale
+            self._teleop_state.rotation_scale = rotation_scale
+
+    def get_teleop_scaling(self) -> tuple[float, float]:
+        """Return the current teleoperation scaling settings."""
+        with self._teleop_state._lock:
+            return (
+                self._teleop_state.translation_scale,
+                self._teleop_state.rotation_scale,
+            )
+
+    def get_teleop_active(self) -> bool:
+        """Return whether teleoperation is currently active."""
+        with self._teleop_state._lock:
+            return self._teleop_state.active
+
+    def set_slow_scaling_mode_enabled(self, enabled: bool) -> None:
+        """Enable or disable slow scaling mode."""
+        with self._teleop_state._lock:
+            self._teleop_state.slow_scaling_mode_enabled = enabled
+
+    def toggle_slow_scaling_mode_enabled(self) -> bool:
+        """Toggle slow scaling mode and return the new state."""
+        with self._teleop_state._lock:
+            self._teleop_state.slow_scaling_mode_enabled = (
+                not self._teleop_state.slow_scaling_mode_enabled
+            )
+            return self._teleop_state.slow_scaling_mode_enabled
+
+    def get_slow_scaling_mode_enabled(self) -> bool:
+        """Return whether slow scaling mode is enabled."""
+        with self._teleop_state._lock:
+            return self._teleop_state.slow_scaling_mode_enabled
+
+    def get_initial_robot_controller_transforms(
+        self,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Return the initial controller and robot transforms for teleop."""
+        with self._teleop_state._lock:
+            return (
+                (
+                    self._teleop_state.controller_initial_transform.copy()
+                    if self._teleop_state.controller_initial_transform is not None
+                    else None
+                ),
+                (
+                    self._teleop_state.robot_initial_transform.copy()
+                    if self._teleop_state.robot_initial_transform is not None
+                    else None
+                ),
+            )
+
+    # ============================================================================
+    # Robot State Methods
+    # ============================================================================
+
+    def get_robot_activity_state(self) -> RobotActivityState:
+        """Return the current robot activity state."""
+        with self._robot_state._lock:
+            return self._robot_state.activity_state
+
+    def set_robot_activity_state(self, state: RobotActivityState) -> None:
+        """Change the robot activity state."""
+        with self._robot_state._lock:
+            self._robot_state.activity_state = state
+
+    def get_current_joint_angles(self) -> np.ndarray | None:
+        """Return the current robot joint angles in degrees."""
+        with self._robot_state._lock:
+            return (
+                self._robot_state.joint_angles.copy()
+                if self._robot_state.joint_angles is not None
+                else None
+            )
+
+    def set_current_joint_angles(self, angles: np.ndarray) -> None:
+        """Update the current joint angles and log them if callbacks are enabled."""
+        with self._robot_state._lock:
+            self._robot_state.joint_angles = angles.copy()
+        if self._on_change_callback:
+            angles = self._robot_state.joint_angles
+            if angles is not None:
+                payload = {
+                    jn: float(np.radians(angles[i])) for i, jn in enumerate(JOINT_NAMES)
+                }
+                self._queue_callback("log_joint_positions", payload, time.time())
+
+    def get_current_joint_torques(self) -> np.ndarray | None:
+        """Return the current robot joint torques."""
+        with self._robot_state._lock:
+            return (
+                self._robot_state.joint_torques.copy()
+                if self._robot_state.joint_torques is not None
+                else None
+            )
+
+    def set_current_joint_torques(self, torques: np.ndarray) -> None:
+        """Update current robot joint torque readings."""
+        with self._robot_state._lock:
+            self._robot_state.joint_torques = torques.copy()
+        if self._on_change_callback:
+            torques = self._robot_state.joint_torques
+            if torques is not None:
+                payload = {jn: float(torques[i]) for i, jn in enumerate(JOINT_NAMES)}
+                self._queue_callback("log_joint_torques", payload, time.time())
+
+    def get_current_end_effector_pose(self) -> np.ndarray | None:
+        """Return the current end effector pose."""
+        with self._robot_state._lock:
+            return (
+                self._robot_state.end_effector_pose.copy()
+                if self._robot_state.end_effector_pose is not None
+                else None
+            )
+
+    def set_current_end_effector_pose(self, pose: np.ndarray) -> None:
+        """Update the current end effector pose."""
+        with self._robot_state._lock:
+            self._robot_state.end_effector_pose = pose.copy()
+
+    def get_current_gripper_open_value(self) -> float | None:
+        """Return the current gripper open amount."""
+        with self._robot_state._lock:
+            return self._robot_state.current_gripper_open_value
+
+    def set_current_gripper_open_value(self, value: float) -> None:
+        """Update the current gripper open value."""
+        with self._robot_state._lock:
+            self._robot_state.current_gripper_open_value = value
+        if self._on_change_callback:
+            self._queue_callback(
+                "log_parallel_gripper_open_amounts",
+                {GRIPPER_NAME: value},
+                time.time(),
+            )
+
+    def get_target_gripper_open_value(self) -> float | None:
+        """Return the target gripper open amount."""
+        with self._robot_state._lock:
+            return self._robot_state.target_gripper_open_value
+
+    def set_target_gripper_open_value(self, value: float) -> None:
+        """Update the target gripper open amount."""
+        with self._robot_state._lock:
+            self._robot_state.target_gripper_open_value = value
+        if self._on_change_callback:
+            self._queue_callback(
+                "log_parallel_gripper_target_open_amounts",
+                {GRIPPER_NAME: self._robot_state.target_gripper_open_value},
+                time.time(),
+            )
+
+    # ============================================================================
+    # IK State Methods
+    # ============================================================================
+
+    def get_target_joint_angles(self) -> np.ndarray | None:
+        """Return the latest target joint angles from the IK solver."""
+        with self._ik_state._lock:
+            return (
+                self._ik_state.target_joint_angles.copy()
+                if self._ik_state.target_joint_angles is not None
+                else None
+            )
+
+    def set_target_joint_angles(self, angles: np.ndarray) -> None:
+        """Store the target joint angle command from the IK solver."""
+        with self._ik_state._lock:
+            self._ik_state.target_joint_angles = angles.copy()
+        if self._on_change_callback:
+            angles = self._ik_state.target_joint_angles
+            if angles is not None:
+                payload = {
+                    jn: float(np.radians(angles[i])) for i, jn in enumerate(JOINT_NAMES)
+                }
+                self._queue_callback("log_joint_target_positions", payload, time.time())
+
+    def set_target_pose(self, transform: np.ndarray | None) -> None:
+        """Store the latest IK target end effector pose."""
+        with self._ik_state._lock:
+            self._ik_state.target_pose = (
+                transform.copy() if transform is not None else None
+            )
+
+    def get_target_pose(self) -> np.ndarray | None:
+        """Return the latest IK target pose."""
+        with self._ik_state._lock:
+            return (
+                self._ik_state.target_pose.copy()
+                if self._ik_state.target_pose is not None
+                else None
+            )
+
+    def set_ik_solve_time_ms(self, time_ms: float) -> None:
+        """Record the latest IK solve duration in milliseconds."""
+        with self._ik_state._lock:
+            self._ik_state.solve_time_ms = time_ms
+
+    def set_ik_success(self, success: bool) -> None:
+        """Record whether the last IK solve succeeded."""
+        with self._ik_state._lock:
+            self._ik_state.success = success
+
+    def get_ik_solve_time_ms(self) -> float:
+        """Return the last IK solve time in milliseconds."""
+        with self._ik_state._lock:
+            return self._ik_state.solve_time_ms
+
+    def get_ik_success(self) -> bool:
+        """Return whether the last IK solve succeeded."""
+        with self._ik_state._lock:
+            return self._ik_state.success
+
+    # ============================================================================
+    # System State Methods
+    # ============================================================================
+
+    def request_shutdown(self) -> None:
+        """Request shutdown of all threads."""
+        self._shutdown_event.set()
+
+    def is_shutdown_requested(self) -> bool:
+        """Check if shutdown is requested."""
+        return self._shutdown_event.is_set()
+
+
+
+==================================================
+FILE: src/common/threads/__init__.py
+==================================================
+
+"""Shared thread functions for teleoperation examples."""
+
+
+
+==================================================
+FILE: src/common/threads/quest_reader.py
+==================================================
+
+"""Quest reader thread - reads controller data and manages teleop state."""
+
+import time
+import traceback
+
+from meta_quest_teleop.reader import MetaQuestReader
+
+from so101_garment.src.common.configs import CONTROLLER_DATA_RATE, GRIP_THRESHOLD
+from so101_garment.src.common.data_manager import DataManager, RobotActivityState
+
+
+def quest_reader_thread(
+    data_manager: DataManager, quest_reader: MetaQuestReader
+) -> None:
+    """Quest reader thread - reads controller data and manages teleop state.
+
+    This thread runs at high frequency to ensure responsive controller input.
+    Handles:
+    - Reading Meta Quest controller data
+    - Processing grip button (dead man's switch)
+    - Managing teleop activation/deactivation
+    - Capturing initial poses when teleop activates
+
+    Args:
+        data_manager: DataManager object for thread-safe communication
+        quest_reader: MetaQuestReader instance
+    """
+    print("🎮 Quest Controller thread started")
+
+    dt: float = 1.0 / CONTROLLER_DATA_RATE
+    prev_grip_active: bool = False
+
+    try:
+        while not data_manager.is_shutdown_requested():
+            iteration_start = time.time()
+
+            # Get controller data
+            grip_value = quest_reader.get_grip_value("right")
+            trigger_value = quest_reader.get_trigger_value("right")
+            controller_transform = quest_reader.get_hand_controller_transform_ros(
+                hand="right"
+            )
+
+            # Update shared state with controller data
+            data_manager.set_controller_data(
+                controller_transform, grip_value, trigger_value
+            )
+
+            # Grip button logic (dead man's switch)
+            robot_activity_state = data_manager.get_robot_activity_state()
+            # Teleop can only be activated if robot is ENABLED (not HOMING or DISABLED)
+            grip_active = (
+                grip_value >= GRIP_THRESHOLD
+                and robot_activity_state == RobotActivityState.ENABLED
+            )
+
+            # Rising edge - grip just pressed AND robot is enabled
+            if (
+                grip_active
+                and not prev_grip_active
+                and controller_transform is not None
+            ):
+                # Start teleop control
+                # capture initial poses
+                controller_initial_transform = controller_transform.copy()
+
+                # Capture initial robot end-effector pose
+                robot_initial_transform = data_manager.get_current_end_effector_pose()
+
+                data_manager.set_teleop_state(
+                    True, controller_initial_transform, robot_initial_transform
+                )
+
+                print("✓ Teleop control activated")
+                print(
+                    f"  Controller initial position: {controller_initial_transform[:3, 3]}"
+                )
+                if robot_initial_transform is not None:
+                    print(f"  Robot initial position: {robot_initial_transform[:3, 3]}")
+                else:
+                    print("  Robot initial position: None")
+
+            # Falling edge - grip just released OR robot disabled
+            elif not grip_active and prev_grip_active:
+                # Stop teleop control
+                data_manager.set_teleop_state(False, None, None)
+                print("✗ Teleop control deactivated")
+
+            prev_grip_active = grip_active
+
+            # Sleep to maintain loop rate (check shutdown more frequently)
+            elapsed = time.time() - iteration_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    except Exception as e:
+        print(f"❌ Quest reader thread error: {e}")
+        traceback.print_exc()
+        data_manager.request_shutdown()
+    finally:
+        # Ensure clean exit - deactivate teleop
+        data_manager.set_teleop_state(False, None, None)
+        print("🎮 Quest Controller thread stopped")
+
+
+
+==================================================
+FILE: src/common/threads/joint_state.py
+==================================================
+
+"""Joint state thread - reads joint state and sends commands."""
+
+import sys
+import time
+import traceback
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from piper_controller import PiperController
+
+from so101_garment.src.common.configs import JOINT_STATE_STREAMING_RATE
+from so101_garment.src.common.data_manager import DataManager, RobotActivityState
+
+
+def joint_state_thread(
+    data_manager: DataManager, robot_controller: PiperController
+) -> None:
+    """Joint state thread - reads joint state and sends commands."""
+    print("🔧 Joint state thread started")
+
+    dt: float = 1.0 / JOINT_STATE_STREAMING_RATE
+
+    try:
+        while not data_manager.is_shutdown_requested():
+            iteration_start: float = time.time()
+
+            # Get current joint angles and gripper value
+            current_joint_angles = robot_controller.get_current_joint_angles()
+            if current_joint_angles is not None:
+                data_manager.set_current_joint_angles(current_joint_angles)
+
+            # Use measured joint currents as torque proxy for NeuraCore logging
+            current_joint_currents = robot_controller.get_current_joint_currents()
+            if current_joint_currents is not None:
+                data_manager.set_current_joint_torques(current_joint_currents)
+
+            # Get current gripper open value and set in state
+            gripper_open_value = robot_controller.get_current_gripper_open_value()
+            if gripper_open_value is not None:
+                data_manager.set_current_gripper_open_value(gripper_open_value)
+
+            target_joint_angles = data_manager.get_target_joint_angles()
+            _, _, trigger_value = data_manager.get_controller_data()
+
+            # Check if robot is homing
+            robot_activity_state = data_manager.get_robot_activity_state()
+            if robot_activity_state == RobotActivityState.HOMING:
+                if robot_controller.is_robot_homed():
+                    data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+                    print("✓ Robot reached home position and is re-enabled")
+
+            elif robot_activity_state == RobotActivityState.ENABLED:
+                if target_joint_angles is not None and data_manager.get_teleop_active():
+                    robot_controller.set_target_joint_angles(target_joint_angles)
+
+                if data_manager.get_teleop_active():
+                    target_gripper_open_value = max(0.0, min(1.0, 1.0 - trigger_value))
+                    robot_controller.set_gripper_open_value(target_gripper_open_value)
+                elif gripper_open_value is not None:
+                    target_gripper_open_value = gripper_open_value
+                else:
+                    target_gripper_open_value = None
+
+                if target_gripper_open_value is not None:
+                    data_manager.set_target_gripper_open_value(
+                        target_gripper_open_value
+                    )
+
+            # Sleep to maintain streaming rate
+            elapsed = time.time() - iteration_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    except Exception as e:
+        print(f"❌ Joint state thread error: {e}")
+        traceback.print_exc()
+        data_manager.request_shutdown()
+    finally:
+        print("🔧 Joint state thread stopped")
+
+
+
+==================================================
+FILE: src/common/threads/ik_solver.py
+==================================================
+
+"""IK solver thread - solves IK and updates state."""
+
+import sys
+import time
+import traceback
+from pathlib import Path
+
+import numpy as np
+
+# Add parent directory to path to import pink_ik_solver
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pink_ik_solver import PinkIKSolver
+
+from so101_garment.src.common.configs import IK_SOLVER_RATE
+from so101_garment.src.common.data_manager import DataManager, RobotActivityState
+from so101_garment.src.common.utils import scale_and_add_delta_transform
+
+
+def ik_solver_thread(data_manager: DataManager, ik_solver: PinkIKSolver) -> None:
+    """IK solver thread - solves IK and updates state."""
+    print("🧮 IK solver thread started")
+
+    dt: float = 1.0 / IK_SOLVER_RATE
+    DIVERGENCE_TOLERANCE = 0.1
+
+    try:
+        while not data_manager.is_shutdown_requested():
+            iteration_start: float = time.time()
+
+            # Get current robot joint angles from state
+            current_joint_angles = data_manager.get_current_joint_angles()
+
+            # Get current end effector pose from IK solver and set in state
+            ik_ee_pose = ik_solver.get_current_end_effector_pose()
+            data_manager.set_current_end_effector_pose(ik_ee_pose)
+
+            # Get current state
+            robot_activity_state = data_manager.get_robot_activity_state()
+            controller_transform, _, _ = data_manager.get_controller_data()
+            teleop_active = data_manager.get_teleop_active()
+
+            # Keep IK anchored to the real robot whenever teleop is not actively solving.
+            # This avoids stale IK state after manual joint commands (e.g., Button Y toggle).
+            if current_joint_angles is not None:
+                if not teleop_active:
+                    ik_solver.set_configuration_no_task_update(
+                        np.radians(current_joint_angles)
+                    )
+                else:
+                    current_ik_joint_angles = np.degrees(
+                        ik_solver.get_current_configuration()
+                    )
+                    # During active teleop, only hard-sync when IK and hardware are already close.
+                    if current_ik_joint_angles is not None and np.all(
+                        np.abs(current_joint_angles - current_ik_joint_angles)
+                        <= DIVERGENCE_TOLERANCE
+                    ):
+                        ik_solver.set_configuration_no_task_update(
+                            np.radians(current_joint_angles)
+                        )
+
+            # Skip teleop-based IK if in POLICY_CONTROLLED state
+            # NOTE: During policy execution, the policy execution thread manages target joint angles
+            # We only update IK solver configuration to keep it in sync, but don't override targets
+            if robot_activity_state == RobotActivityState.POLICY_CONTROLLED:
+                if current_joint_angles is not None:
+                    ik_solver.set_configuration(np.radians(current_joint_angles))
+                    current_end_effector_pose = (
+                        data_manager.get_current_end_effector_pose()
+                    )
+                    data_manager.set_target_pose(current_end_effector_pose)
+                    data_manager.set_ik_solve_time_ms(0.0)
+                    data_manager.set_ik_success(True)
+
+            elif teleop_active and controller_transform is not None:
+                (
+                    controller_initial,
+                    robot_initial,
+                ) = data_manager.get_initial_robot_controller_transforms()
+                if controller_initial is None or robot_initial is None:
+                    elapsed = time.time() - iteration_start
+                    sleep_time = dt - elapsed
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    continue
+
+                # Calculate delta transform
+                delta_position = controller_transform[:3, 3] - controller_initial[:3, 3]
+                delta_orientation = (
+                    controller_transform[:3, :3] @ controller_initial[:3, :3].T
+                )
+
+                # Get current teleop scaling factors (from GUI via DataManager)
+                translation_scale, rotation_scale = data_manager.get_teleop_scaling()
+
+                T_robot_target = scale_and_add_delta_transform(
+                    delta_position,
+                    delta_orientation,
+                    translation_scale,
+                    rotation_scale,
+                    robot_initial,
+                )
+
+                ik_solver.set_target_pose(T_robot_target[:3, 3], T_robot_target[:3, :3])
+                data_manager.set_target_pose(T_robot_target)
+
+                # Solve IK
+                success = ik_solver.solve_ik()
+
+                if success:
+                    joint_config = np.degrees(ik_solver.get_current_configuration())
+                    stats = ik_solver.get_statistics()
+                    solve_time_ms = stats["last_solve_time_ms"]
+
+                    data_manager.set_target_joint_angles(joint_config)
+                    data_manager.set_ik_solve_time_ms(solve_time_ms)
+                    data_manager.set_ik_success(success)
+                else:
+                    data_manager.set_ik_solve_time_ms(0.0)
+                    data_manager.set_ik_success(False)
+
+            else:  # robot is HOMING or DISABLED
+                if current_joint_angles is not None:
+                    ik_solver.set_configuration(np.radians(current_joint_angles))
+                    current_end_effector_pose = (
+                        data_manager.get_current_end_effector_pose()
+                    )
+                    data_manager.set_target_pose(current_end_effector_pose)
+                    data_manager.set_target_joint_angles(current_joint_angles)
+                    data_manager.set_ik_solve_time_ms(0.0)
+                    data_manager.set_ik_success(True)
+
+            # Sleep to maintain loop rate
+            elapsed = time.time() - iteration_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    except Exception as e:
+        print(f"❌ IK solver thread error: {e}")
+        traceback.print_exc()
+        data_manager.request_shutdown()
+    finally:
+        print("🧮 IK solver thread stopped")
+
+
+
+==================================================
+FILE: src/common/threads/realsense_camera.py
+==================================================
+
+"""Camera thread - captures RGB images from RealSense with drop detection."""
+
+import time
+import traceback
+from collections import deque
+
+import numpy as np
+import pyrealsense2 as rs
+
+from so101_garment.src.common.configs import CAMERA_FRAME_STREAMING_RATE, CAMERA_NAMES
+from so101_garment.src.common.data_manager import DataManager
+
+
+def camera_thread(data_manager: DataManager) -> None:
+    """Camera thread - captures RGB images from RealSense and monitors health."""
+    print("📷 Camera thread started")
+
+    camera_name = CAMERA_NAMES[0]
+    pipeline: rs.pipeline | None = None
+
+    # Diagnostic variables
+    last_frame_number = None
+    total_dropped_frames = 0
+    fps_timer = time.time()
+    frame_count = 0
+    # Store the last 100 frame intervals to check for extreme jitter
+    intervals: deque[float] = deque(maxlen=100)
+    last_frame_time = time.time()
+
+    try:
+        # Configure RealSense pipeline
+        pipeline = rs.pipeline()
+        config = rs.config()
+
+        config.enable_stream(
+            rs.stream.color,
+            640,
+            480,
+            rs.format.rgb8,
+            int(CAMERA_FRAME_STREAMING_RATE),
+        )
+
+        print(f"Starting RealSense pipeline at {CAMERA_FRAME_STREAMING_RATE} Hz...")
+        pipeline.start(config)
+
+        while not data_manager.is_shutdown_requested():
+            try:
+                # wait_for_frames naturally blocks at the target framerate (e.g., 60Hz)
+                frames = pipeline.wait_for_frames(timeout_ms=500)
+            except Exception as e:
+                print(f"⚠️  RealSense wait for frames error (Timeout?): {e}")
+                continue
+
+            color_frame = frames.get_color_frame()
+            if not color_frame:
+                continue
+
+            current_time = time.time()
+            intervals.append(current_time - last_frame_time)
+            last_frame_time = current_time
+
+            # ---------------------------------------------------------
+            # DIAGNOSTICS: Check for dropped frames via hardware ID
+            # ---------------------------------------------------------
+            current_frame_number = color_frame.get_frame_number()
+
+            if last_frame_number is not None:
+                # If frame numbers are not sequential, we missed something in software
+                drops = (current_frame_number - last_frame_number) - 1
+                if drops > 0:
+                    total_dropped_frames += drops
+                    print(
+                        f"⚠️  DROPPED {drops} FRAME(S)! (Hardware ID: {current_frame_number}) | Total dropped: {total_dropped_frames}"
+                    )
+
+            last_frame_number = current_frame_number
+
+            # ---------------------------------------------------------
+            # DIAGNOSTICS: Calculate software-side FPS and Jitter
+            # ---------------------------------------------------------
+            frame_count += 1
+            if current_time - fps_timer >= 5.0:  # Report every 5 seconds
+                effective_fps = frame_count / (current_time - fps_timer)
+
+                # Calculate jitter (max variance between frame arrivals)
+                max_interval = max(intervals) * 1000  # in ms
+                min_interval = min(intervals) * 1000  # in ms
+
+                print(
+                    f"📊 Camera Health: {effective_fps:.1f} FPS | "
+                    f"Jitter: {min_interval:.1f}ms - {max_interval:.1f}ms | "
+                    f"Total Drops: {total_dropped_frames}"
+                )
+
+                # Reset counters for the next 5-second window
+                fps_timer = current_time
+                frame_count = 0
+
+            # ---------------------------------------------------------
+            # IMAGE PROCESSING
+            # ---------------------------------------------------------
+            # color_image = np.asanyarray(color_frame.get_data())
+            # color_image = np.rot90(color_image, k=3)  # Rotate 270 degrees
+            # data_manager.set_rgb_image(color_image, camera_name)
+
+            color_image = np.asanyarray(color_frame.get_data())
+            color_image = np.rot90(color_image, k=3)  # Rotate 270 degrees
+            data_manager.set_rgb_image(color_image, camera_name)
+
+            # Notice: The time.sleep() has been completely removed.
+            # wait_for_frames() manages the loop pace perfectly.
+
+    except Exception as e:
+        print(f"❌ Camera thread error: {e}")
+        traceback.print_exc()
+        data_manager.request_shutdown()
+    finally:
+        if pipeline is not None:
+            try:
+                pipeline.stop()
+                print("  ✓ RealSense pipeline stopped")
+            except Exception as e:
+                print(f"⚠️  Error stopping pipeline: {e}")
+        print("📷 Camera thread stopped")
+
+
+
+==================================================
+FILE: src/common/threads/camera_usb.py
+==================================================
+
+"""Camera thread - captures RGB images from a USB webcam (OpenCV)."""
+
+import time
+import traceback
+
+import cv2
+
+from so101_garment.src.common.configs import (
+    CAMERA_DEVICE_INDEX,
+    CAMERA_FRAME_STREAMING_RATE,
+    CAMERA_HEIGHT,
+    CAMERA_NAMES,
+    CAMERA_WIDTH,
+)
+from so101_garment.src.common.data_manager import DataManager
+
+
+def camera_thread(data_manager: DataManager) -> None:
+    """Camera thread - captures RGB images from a USB webcam."""
+    print("📷 Camera thread started (USB webcam)")
+
+    dt: float = 1.0 / CAMERA_FRAME_STREAMING_RATE
+    cap: cv2.VideoCapture | None = None
+    camera_name = CAMERA_NAMES[1]
+
+    try:
+        cap = cv2.VideoCapture(CAMERA_DEVICE_INDEX)
+        if not cap.isOpened():
+            print(
+                f"❌ Could not open USB webcam (device index {CAMERA_DEVICE_INDEX}). "
+                "Check connection and permissions."
+            )
+            data_manager.request_shutdown()
+            return
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, CAMERA_FRAME_STREAMING_RATE)
+
+        # Read back actual resolution (some webcams don't support requested size)
+        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(
+            f"  Webcam opened: {actual_w}x{actual_h} @ ~{CAMERA_FRAME_STREAMING_RATE} Hz"
+        )
+
+        while not data_manager.is_shutdown_requested():
+            iteration_start = time.time()
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                print("⚠️  Webcam read failed, skipping frame")
+                time.sleep(dt)
+                continue
+
+            # OpenCV returns BGR; convert to RGB for consistency with pipeline
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Camera may be mounted upside down; rotate 180° to keep images upright
+            rgb_image = cv2.rotate(rgb_image, cv2.ROTATE_180)
+            # Treat USB webcam as wrist camera
+            data_manager.set_rgb_image(rgb_image, camera_name)
+
+            elapsed = time.time() - iteration_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    except Exception as e:
+        print(f"❌ Camera thread error: {e}")
+        traceback.print_exc()
+        data_manager.request_shutdown()
+    finally:
+        if cap is not None:
+            cap.release()
+            print("  ✓ USB webcam released")
+        print("📷 Camera thread stopped")
+
+
+
+==================================================
+FILE: test/test_ee_pose.py
+==================================================
+
+import yaml
+
+from so101_garment.src.so101_dual_arm import SO101DualArm
+
+
+# 1. Create a dummy IK solver for testing purposes
+class DummyIKSolver:
+    """
+    A placeholder class. In production, replace the 'compute_ik' method
+    with a library like Pinocchio, PyBullet, or a custom Jacobian solver.
+    """
+
+    def compute_ik(self, ee_pose):
+        # Simply returns a hardcoded joint state for testing communication
+        return {
+            "shoulder_pan": 0.0,
+            "shoulder_lift": 0.0,
+            "elbow_flex": 45.0,
+            "wrist_flex": 0.0,
+            "wrist_roll": 0.0,
+            "gripper": 20.0,
+        }
+
+
+def load_yaml(filepath):
+    with open(filepath, "r") as file:
+        return yaml.safe_load(file)
+
+
+def main():
+    # Load configuration
+    config = {
+        "robot": load_yaml("conf/robot.yaml"),
+        "rest_pos": load_yaml("conf/rest_pos.yaml"),
+        "mid_pos": load_yaml("conf/mid_pos.yaml"),
+    }
+
+    # Initialize
+    dual_arm = SO101DualArm(config)
+    ik_solver = DummyIKSolver()
+
+    # Define dummy Cartesian poses
+    # Note: These values are arbitrary; your real IK solver will dictate the units.
+    test_pose = {"x": 0.2, "y": 0.1, "z": 0.3}
+
+    print("Testing Cartesian End-Effector movement...")
+    try:
+        # Move both arms to the calculated IK position
+        dual_arm.move_to_ee_pose(
+            test_pose, test_pose, duration=2.0, ik_solver=ik_solver
+        )
+        print("Movement command sent successfully.")
+
+    except Exception as e:
+        print(f"Error during EE pose test: {e}")
+    finally:
+        dual_arm.disable_torque()
+
+
 if __name__ == "__main__":
     main()
 
 
+
 ==================================================
-FILE: send_middle_and_rest.py
+FILE: test/train_vla_lerobot.py
+==================================================
+
+#!/usr/bin/env python3
+"""
+Test script for locally training a VLA model using LeRobot.
+Designed for high-frequency tactile and visual datasets (e.g., cloth manipulation).
+"""
+
+import os
+
+# SURGICAL CHANGE: Updated to target the pi05 policy configuration per LeRobot specs
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.scripts.train import train
+
+
+def main():
+    print("Initiating LeRobot VLA Local Training Sequence...")
+
+    # Define the PI05 configuration
+    # Optimized for precise, high-dimensional dexterous tasks
+    config = PI05Config(
+        dataset_repo_id="lerobot/aloha_sim_insertion_human",  # Replace with local cloth/tactile dataset
+        training_steps=50000,
+        batch_size=8,
+        learning_rate=1e-5,
+        vision_backbone="resnet18",
+        chunk_size=100,  # Receding horizon chunk size
+        n_action_steps=100,
+        device="cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu",
+    )
+
+    try:
+        # Execute the LeRobot training pipeline
+        train(config)
+        print("✓ Training completed successfully.")
+    except Exception as e:
+        print(f"❌ Training failed: {e}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE: test/test_core_logic.py
+==================================================
+
+#!/usr/bin/env python3
+"""
+Unit tests for hardware-independent mathematical and filtering utilities.
+Run via: python3 -m unittest test/test_core_logic.py
+"""
+
+import unittest
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from src.common.one_euro_filter import OneEuroFilter
+from src.common.utils import scale_and_add_delta_transform
+
+
+class TestCoreLogic(unittest.TestCase):
+    def test_one_euro_filter_smoothing(self):
+        """Verify the 1€ filter properly smooths noisy scalar signals."""
+        filter_1e = OneEuroFilter(t0=0.0, x0=0.0, min_cutoff=1.0, beta=0.0)
+
+        # Inject a sudden spike (noise)
+        noisy_val = 10.0
+        smoothed_val = filter_1e(timestamp=0.1, x=noisy_val)
+
+        # The smoothed value should resist the sudden jump
+        self.assertLess(smoothed_val, noisy_val)
+        self.assertGreater(smoothed_val, 0.0)
+
+    def test_scale_and_add_delta_transform(self):
+        """Verify Cartesian deltas are scaled and applied correctly to a base transform."""
+        initial_transform = np.eye(4)
+
+        # Move 1 unit in X, rotate 90 degrees around Z
+        delta_position = np.array([1.0, 0.0, 0.0])
+        delta_orientation = Rotation.from_euler("z", 90, degrees=True).as_matrix()
+
+        # Apply a 2.0x translation scale, and 0.5x rotation scale
+        target_transform = scale_and_add_delta_transform(
+            delta_position=delta_position,
+            delta_orientation=delta_orientation,
+            translation_scale=2.0,
+            rotation_scale=0.5,
+            initial_transform=initial_transform,
+        )
+
+        # Verify position was doubled (1.0 * 2.0 = 2.0)
+        self.assertAlmostEqual(target_transform[0, 3], 2.0)
+        self.assertAlmostEqual(target_transform[1, 3], 0.0)
+        self.assertAlmostEqual(target_transform[2, 3], 0.0)
+
+        # Verify rotation was halved (90 * 0.5 = 45 degrees)
+        resulting_rot = Rotation.from_matrix(target_transform[:3, :3])
+        euler_angles = resulting_rot.as_euler("xyz", degrees=True)
+        self.assertAlmostEqual(euler_angles[2], 45.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+
+==================================================
+FILE: test/send_middle_and_rest.py
 ==================================================
 
 import yaml
-from pathlib import Path
-from so101_dual_arm import SO101DualArm
+
+from so101_garment.src.so101_dual_arm import SO101DualArm
+
 
 def load_yaml(filepath):
     """Helper function to load a YAML file as a dictionary."""
-    with open(filepath, 'r') as file:
+    with open(filepath, "r") as file:
         return yaml.safe_load(file)
+
 
 def main():
     # 1. Build the comprehensive config dictionary
@@ -203,7 +3749,7 @@ def main():
     config = {
         "robot": load_yaml("conf/robot.yaml"),
         "rest_pos": load_yaml("conf/rest_pos.yaml"),
-        "mid_pos": load_yaml("conf/mid_pos.yaml")
+        "mid_pos": load_yaml("conf/mid_pos.yaml"),
     }
 
     # 2. Initialize the dual arm class with the unified config
@@ -211,8 +3757,8 @@ def main():
     dual_arm = SO101DualArm(config)
 
     # Configuration for movement
-    move_time = 2.0  
-    hold_time = 2.0  
+    move_time = 2.0
+    hold_time = 2.0
 
     # 3. Execute movement sequence using the new class methods!
     dual_arm.send_to_rest(move_time)
@@ -222,131 +3768,365 @@ def main():
     dual_arm.hold_position(hold_time)
 
     dual_arm.send_to_rest(move_time)
-    
+
     # 4. Finish
     print("Sequence complete.")
     dual_arm.disable_torque()
+
 
 if __name__ == "__main__":
     main()
 
 
-==================================================
-FILE: check_motor_5.py
-==================================================
-
-from lerobot.motors.feetech import FeetechMotorsBus
-from lerobot.motors import Motor
-import sys
-
-# Dynamically grab the enum from the same module where Motor lives
-# This avoids needing to guess the exact import path
-MotorNormMode = sys.modules[Motor.__module__].MotorNormMode
-
-# Use the port you confirmed
-port = "/dev/ttyACM0"
-
-# 1. Define the motor configuration with the newly required 'norm_mode'
-motors_config = {
-    "wrist_roll": Motor(id=5, model="sts3215", norm_mode=MotorNormMode.DEGREES) 
-}
-
-# 2. Initialize the bus
-bus = FeetechMotorsBus(port=port, motors=motors_config)
-
-try:
-    # Open the serial port
-    bus.connect(handshake=False)
-    
-    # Explicitly set baudrate to 1,000,000 for SO-101 motors
-    bus.set_baudrate(1_000_000)
-
-    # 3. Read the raw position. 
-    # normalize=False is crucial here because we haven't loaded calibration files!
-    pos = bus.read("Present_Position", "wrist_roll", normalize=False)
-    
-    print(f"\n✅ Success! Wrist Roll (ID 5) is communicating.")
-    print(f"Raw position value: {pos}\n")
-    
-except Exception as e:
-    print(f"\n❌ Failed to communicate with ID 5: {e}\n")
-finally:
-    # Use the proper disconnect method for the new class
-    if bus.is_connected:
-        bus.disconnect()
-
 
 ==================================================
-FILE: combine_files.py
+FILE: test/sim_pipeline_pi05.py
 ==================================================
 
-import os
-import glob
+#!/usr/bin/env python3
+"""
+End-to-End Simulation Pipeline for PI05.
+Orchestrates training and evaluation entirely within native Python, without CLI wrappers.
+"""
 
-def combine_files_recursively(directory_path, output_filename="combined_code.txt"):
-    """
-    Recursively finds all .py, .json, and .yaml/.yml files in a directory 
-    and its subdirectories, combining them into a single text file.
-    """
-    # Define the file extensions you want to capture
-    extensions = ["*.py", "*.json", "*.yaml", "*.yml", "*.md"]
-    matched_files = []
-    
-    # Search for each extension recursively
-    for ext in extensions:
-        # The "**" tells glob to look in all subdirectories
-        search_pattern = os.path.join(directory_path, "**", ext)
-        
-        # We must explicitly set recursive=True for the "**" to work
-        matched_files.extend(glob.glob(search_pattern, recursive=True))
+from pathlib import Path
 
-    # Check if any files were found
-    if not matched_files:
-        print(f"No target files found in '{directory_path}' or its subdirectories.")
-        return
+# Evaluation Imports
+import torch
+
+# LeRobot Dataset & Feature Imports
+from lerobot.configs import FeatureType
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.envs.factory import make_env
+
+# PI05 Specific Imports
+from lerobot.policies.pi05 import PI05Config, PI05Policy, make_pi05_pre_post_processors
+from lerobot.utils.feature_utils import dataset_to_policy_features
+from torch.utils.data import DataLoader
+
+# --- Configuration ---
+SIM_ENV = "gym_aloha"
+DATASET_NAME = "lerobot/aloha_sim_insertion_scripted"
+OUTPUT_DIR = Path("outputs/train/pi05_sim_test")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def train_pi05():
+    """Trains the PI05 policy natively using a manual PyTorch training loop."""
+    print("==========================================")
+    print(f"1. Training PI05 Policy on {DEVICE}")
+    print("==========================================")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    training_steps = 10000
+    log_freq = 100
+
+    # 1. Load Dataset Metadata & Configure Features
+    dataset_metadata = LeRobotDatasetMetadata(DATASET_NAME)
+    features = dataset_to_policy_features(dataset_metadata.features)
+
+    output_features = {
+        key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION
+    }
+    input_features = {
+        key: ft for key, ft in features.items() if key not in output_features
+    }
+
+    # 2. Configure PI05 Policy
+    cfg = PI05Config(
+        input_features=input_features,
+        output_features=output_features,
+        chunk_size=100,
+        n_action_steps=100,
+    )
+
+    policy = PI05Policy(cfg)
+    policy.train()
+    policy.to(DEVICE)
+
+    # Use the dedicated PI05 processor pipeline
+    preprocessor, postprocessor = make_pi05_pre_post_processors(
+        cfg, dataset_stats=dataset_metadata.stats
+    )
+
+    # 3. Define Temporal Delta Indices (Frame Chunking)
+    # PI05 returns None for observation_delta_indices, so we only map actions
+    delta_timestamps = {
+        "action": [i / dataset_metadata.fps for i in cfg.action_delta_indices],
+    }
+
+    # 4. Initialize Dataset and Dataloader
+    dataset = LeRobotDataset(DATASET_NAME, delta_timestamps=delta_timestamps)
+
+    dataloader = DataLoader(
+        dataset,
+        num_workers=4,
+        batch_size=8,
+        shuffle=True,
+        pin_memory=DEVICE.type != "cpu",
+        drop_last=True,
+    )
+
+    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-5)
+
+    # 5. Native Training Loop
+    step = 0
+    done = False
+    while not done:
+        for batch in dataloader:
+            # Shift tensors to target device
+            batch = {
+                k: v.to(DEVICE) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            batch = preprocessor(batch)
+
+            loss, _ = policy.forward(batch)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if step % log_freq == 0:
+                print(f"Step: {step}/{training_steps} | Loss: {loss.item():.4f}")
+
+            step += 1
+            if step >= training_steps:
+                done = True
+                break
+
+    # Save artifacts
+    policy.save_pretrained(OUTPUT_DIR)
+    preprocessor.save_pretrained(OUTPUT_DIR)
+    postprocessor.save_pretrained(OUTPUT_DIR)
+    print("✓ PI05 Training completed.")
+
+
+def evaluate_in_sim():
+    """Evaluates the trained PI05 policy directly in the simulation environment."""
+    print("\n==========================================")
+    print("2. Evaluating Policy in Simulation")
+    print("==========================================")
+
+    # 1. Load the trained policy
+    policy = PI05Policy.from_pretrained(OUTPUT_DIR)
+    policy.eval()
+    policy.to(DEVICE)
+
+    # 2. Instantiate the environment natively
+    env = make_env(SIM_ENV)
+
+    n_episodes = 10
+    for ep in range(n_episodes):
+        obs, info = env.reset()
+        done = False
+        step = 0
+
+        # Reset policy internal state for the new episode (receding horizon)
+        policy.reset()
+
+        while not done and step < 1000:  # 1000-step safeguard
+            # Format observation for the model (add batch dimension)
+            policy_obs = {
+                k: torch.tensor(v).unsqueeze(0).to(DEVICE) for k, v in obs.items()
+            }
+
+            with torch.no_grad():
+                action = policy.select_action(policy_obs)
+
+            # Squeeze batch dimension to feed into the environment
+            action_np = action.squeeze(0).cpu().numpy()
+
+            obs, reward, terminated, truncated, info = env.step(action_np)
+            done = terminated or truncated
+            step += 1
+
+        print(
+            f"Episode {ep + 1}/{n_episodes} completed in {step} steps. Reward: {reward}"
+        )
+
+    env.close()
+    print("✓ Simulation Evaluation completed.")
+
+
+if __name__ == "__main__":
+    try:
+        # Step 1: Train
+        train_pi05()
+
+        # Step 2: Evaluate
+        evaluate_in_sim()
+
+        print("\n✓ Full native simulation pipeline executed successfully.")
+    except Exception as e:
+        print(f"\n❌ Pipeline halted due to error: {e}")
+
+
+
+==================================================
+FILE: tool/read_joints.py
+==================================================
+
+import time
+
+from send_position import SO101DualArm
+
+# Assuming you save the class from the file above as 'so101_dual_arm.py'
+# you could just do: `from so101_dual_arm import SO101DualArm`
+# But for completeness, I will assume the class is accessible here.
+
+
+# --- CONFIGURATION VARIABLES ---
+PORT_ID_0 = "/dev/ttyACM0"
+PORT_ID_1 = "/dev/ttyACM1"
+ROBOT_NAME_0 = "follower_0"
+ROBOT_NAME_1 = "follower_1"
+
+
+def main():
+    print("Initializing Dual Arm Reader...")
+    dual_arm = SO101DualArm(PORT_ID_0, PORT_ID_1, ROBOT_NAME_0, ROBOT_NAME_1)
+
+    # Disable torque so you can move the motors freely by hand
+    dual_arm.disable_torque()
+
+    print("\nTorque disabled! You can now physically move both robot arms.")
+    print("Reading joint positions... (Press Ctrl+C to stop)\n")
 
     try:
-        # Open the output file in write mode
-        with open(output_filename, 'w', encoding='utf-8') as outfile:
-            for file_path in matched_files:
-                # We use the full relative path instead of just the basename
-                # This helps you know exactly which subfolder the code came from!
-                filename = os.path.relpath(file_path, directory_path)
-                
-                # Write a clear visual header for each file
-                outfile.write(f"{'='*50}\n")
-                outfile.write(f"FILE: {filename}\n")
-                outfile.write(f"{'='*50}\n\n")
-                
-                # Read the contents of the current file and write it
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as infile:
-                        outfile.write(infile.read())
-                except Exception as e:
-                    outfile.write(f"# Error reading {filename}: {e}\n")
-                
-                # Add some blank space before the next file begins
-                outfile.write("\n\n\n")
-                
-        print(f"Success! Combined {len(matched_files)} files into '{output_filename}'.")
-    
-    except Exception as e:
-        print(f"An error occurred while writing the output file: {e}")
+        while True:
+            # Read the current position of all joints from our class
+            pos_0, pos_1 = dual_arm.read_positions()
 
-# --- Execution ---
+            # Format the dictionary to round the numbers to 2 decimal places
+            fmt_0 = {k: round(v, 2) for k, v in pos_0.items()}
+            fmt_1 = {k: round(v, 2) for k, v in pos_1.items()}
+
+            # Print side-by-side cleanly in the terminal
+            print(f"ARM 0: {fmt_0} | ARM 1: {fmt_1}", end="\r", flush=True)
+
+            # Sleep to prevent overloading the serial bus (10Hz loop)
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n\nStopped reading joint angles. Exiting...")
+
+
 if __name__ == "__main__":
-    # The directory you want to scan. 
-    # "." means the current directory where this script is located.
-    target_directory = "." 
-    
-    # The name of the text file you want to generate
-    output_file = "all_my_code_recursive.txt"
-    
-    combine_files_recursively(target_directory, output_file)
+    main()
+
 
 
 ==================================================
-FILE: calibration_files/follower_0.json
+FILE: tool/meta_quest_teleopration.py
+==================================================
+
+#!/usr/bin/env python3
+"""Dual-arm SO101 teleoperation with Meta Quest.
+Left Quest hand -> left SO101 arm. Right Quest hand -> right SO101 arm.
+"""
+
+import argparse
+import sys
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+
+_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "examples"))
+
+import yaml
+from meta_quest_teleop.reader import MetaQuestReader
+
+# Unified imports
+from common.configs import (
+    DUAL_URDF_PATH,
+    END_EFFECTOR_FRAME_NAMES,
+    IK_SOLVER_RATE,
+    NEUTRAL_JOINT_ANGLES_DUAL,
+    SOLVER_NAME,
+)
+from common.data_manager import DataManager
+from common.pink_ik_solver import PinkIKSolver
+from common.threads.ik_solver import ik_solver_thread
+from src.so101_dual_arm import SO101DualArm
+
+
+def load_yaml(filepath):
+    with open(filepath, "r") as file:
+        return yaml.safe_load(file)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
+    parser.add_argument("--ip-address", type=str, default=None)
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("DUAL-ARM SO101 TELEOPERATION (LeRobot Backend)")
+    print("=" * 60)
+
+    # 1. Initialize State Manager
+    data_manager = DataManager()
+
+    # 2. Initialize LeRobot Dual Arm Hardware
+    config = {
+        "robot": load_yaml("src/conf/robot.yaml"),
+        "rest_pos": load_yaml("src/conf/rest_pos.yaml"),
+        "mid_pos": load_yaml("src/conf/mid_pos.yaml"),
+    }
+    dual_arm = SO101DualArm(config)
+
+    # 3. Initialize Pink IK Solver
+    ik_solver = PinkIKSolver(
+        urdf_path=DUAL_URDF_PATH,
+        end_effector_frames=END_EFFECTOR_FRAME_NAMES,
+        solver_name=SOLVER_NAME,
+        integration_time_step=1.0 / IK_SOLVER_RATE,
+        initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
+    )
+
+    # 4. Initialize Quest Reader & Threads
+    quest_reader = MetaQuestReader(ip_address=args.ip_address, port=5555, run=True)
+
+    ik_thread = threading.Thread(
+        target=ik_solver_thread,
+        args=(data_manager, ik_solver),
+        daemon=True,
+    )
+    ik_thread.start()
+
+    print("\n🚀 Ready. Hold LEFT + RIGHT GRIP to activate teleoperation.")
+
+    try:
+        while True:
+            # Main sync loop mapping VR to LeRobot hardware
+            if data_manager.get_teleop_active():
+                target_pose = data_manager.get_target_pose()
+                if target_pose is not None:
+                    # Pass the computed IK directly to the dual arm Cartesian wrapper
+                    dual_arm.move_to_ee_pose(
+                        target_pose, target_pose, duration=0.02, ik_solver=ik_solver
+                    )
+            time.sleep(0.02)
+
+    except KeyboardInterrupt:
+        print("\n👋 Shutting down...")
+    finally:
+        data_manager.request_shutdown()
+        quest_reader.stop()
+        dual_arm.disable_torque()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+==================================================
+FILE: src/calibration_files/follower_0.json
 ==================================================
 
 {
@@ -395,8 +4175,9 @@ FILE: calibration_files/follower_0.json
 }
 
 
+
 ==================================================
-FILE: calibration_files/follower_1.json
+FILE: src/calibration_files/follower_1.json
 ==================================================
 
 {
@@ -445,18 +4226,114 @@ FILE: calibration_files/follower_1.json
 }
 
 
+
 ==================================================
-FILE: conf/robot.yaml
+FILE: src/ik_conf/default.yaml
+==================================================
+
+# =================================================================================
+# PIPER TELEOPERATION & IK CONFIGURATION
+# =================================================================================
+
+ik_parameters:
+  # POSITION & ORIENTATION
+  # These weights dictate how the robot prioritizes reaching the exact XYZ coordinate
+  # versus matching the exact wrist rotation when it can't perfectly do both.
+  # Tune: Increase position_cost if the robot struggles to reach far XYZ coordinates.
+  #       Increase orientation_cost if you need strict tool alignment (e.g., pouring).
+  position_cost: 1.0
+  orientation_cost: 0.75
+
+  # KINEMATIC AGGRESSIVENESS
+  # How quickly the robot tries to close the distance between its current pose
+  # and the VR controller's target pose.
+  # Tune: Decrease to 0.1-0.2 for smoother, delayed, robotic movement.
+  #       Increase to 0.7-0.9 for highly aggressive, snappy tracking.
+  frame_task_gain: 0.4
+
+  # SINGULARITY & MATHEMATICAL DAMPING
+  # These parameters prevent the robot from violently flailing or crashing when
+  # it reaches the absolute edge of its workspace (singularities).
+  # Tune: Increase lm_damping (e.g., 0.05) if the robot twitches at full extension.
+  #       solver_damping_value is strict math regularization; usually leave as 0.0001.
+  lm_damping: 0.01
+  damping_cost: 0.25
+  solver_damping_value: 0.0001
+
+  # POSTURE PREFERENCE
+  # A 6-value array (one for each joint). Non-zero values act like a rubber band,
+  # gently pulling that specific joint back toward its default "neutral" angle.
+  # Tune: We put 0.05 on Joint 4 (the elbow) to stop the arm from bending backward
+  #       into awkward, unnatural shapes during complex rotations.
+  posture_cost_vector:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.05  # Gentle pull on the elbow
+  - 0.0
+  - 0.0
+
+filter_parameters:
+  # 1-EURO FILTER (VR Controller Smoothing)
+  # VR controllers inherently have micro-jitters (from your hands or sensor noise).
+
+  # controller_min_cutoff: Handles slow movements and holding completely still.
+  # Tune: Lower it (e.g., 0.1) to completely eliminate hand shaking (but adds lag).
+  #       Raise it (e.g., 1.5) if you want zero lag, but the robot will vibrate more.
+  controller_min_cutoff: 0.8
+
+  # controller_beta: Handles fast, sweeping movements.
+  # Tune: Increase (e.g., 0.5) to make the robot instantly snap to fast hand swipes.
+  #       Decrease (e.g., 0.01) if fast movements feel too jerky.
+  controller_beta: 0.05
+
+  # controller_d_cutoff: Internal speed calculation filter. Best left at 0.9-1.0.
+  controller_d_cutoff: 0.9
+
+teleop_parameters:
+  # STANDARD MOVEMENT SCALING
+  # Maps how physical VR movement translates to actual robot movement.
+  # Tune: A translation_scale of 1.5 means moving your hand 10cm moves the robot 15cm.
+  #       A rotation_scale of 1.2 means twisting your wrist 90° twists the robot 108°.
+  translation_scale: 1.5
+  rotation_scale: 1.2
+
+  # PRECISION MOVEMENT SCALING (SLOW MODE)
+  # The alternate scaling profile used when you toggle the left joystick.
+  # Tune: Keep these below 1.0 for delicate tasks like thread insertion or grasping tiny objects.
+  slow_translation_scale: 0.6
+  slow_rotation_scale: 0.6
+
+  # MANUAL WRIST OVERRIDE
+  # How many degrees the 6th joint (wrist roll) rotates when you press the X or Y buttons.
+  # Tune: Adjust based on how fast you need to manually spin the gripper.
+  wrist_joint_button_step_degrees: 5.0
+
+
+
+==================================================
+FILE: src/conf/robot.yaml
 ==================================================
 
 PORT_ID_0: "/dev/ttyACM0"
-PORT_ID_1: "/dev/ttyACM1"  
-ROBOT_NAME_0: "follower_0" 
-ROBOT_NAME_1: "follower_1" 
+PORT_ID_1: "/dev/ttyACM1"
+ROBOT_NAME_0: "follower_0"
+ROBOT_NAME_1: "follower_1"
+
+# Used by move_to_norm_pose to map [-1.0, 1.0] inputs to safe degrees.
+# Format: [min_degree, max_degree]
+joint_limits_deg:
+  shoulder_pan: [-180.0, 180.0]
+  shoulder_lift: [-180.0, 180.0]
+  elbow_flex: [-180.0, 180.0]
+  wrist_flex: [-180.0, 180.0]
+  wrist_roll: [-180.0, 180.0]
+  gripper: [0.0, 100.0] # Gripper operates on a 0-100 scale
+
 
 
 ==================================================
-FILE: conf/rest_pos.yaml
+FILE: src/conf/rest_pos.yaml
 ==================================================
 
 shoulder_pan: -6.02
@@ -467,8 +4344,9 @@ wrist_roll: -0.48
 gripper: 1.39
 
 
+
 ==================================================
-FILE: conf/mid_pos.yaml
+FILE: src/conf/mid_pos.yaml
 ==================================================
 
 shoulder_pan: 0
@@ -479,41 +4357,102 @@ wrist_roll: 0
 gripper: 0
 
 
-==================================================
-FILE: CODE.md
-==================================================
-
-Keep industrial-level documentation.
-
-Reduce redundancy between files.
-
-Keep good level of modularisation.
-
-Be surgical of your changes.
-
 
 ==================================================
 FILE: README.md
 ==================================================
 
+# Vision-Tactile World Model with Dual SO-101 Garment Manipulation
 
-This repository provide garment manipulation using dual Sov101 models with tactile sensors.
+This repository provides an independent, industrial-grade pipeline for dexterous garment manipulation using dual SO-101 robotic arms equipped with tactile sensors. The framework facilitates Meta-Quest teleoperation, autonomous data collection, and direct integration with Vision-Language-Action (VLA) models via the LeRobot ecosystem.
 
-The pipeline provides the meta-ques tele-opration of the dual arm based on actoris harena framework.
+**Author:** Abudureyimu Halite
+**Framework Status:** Active Development
+**Dependencies:** LeRobot 0.5.1, Pink IK, pyrealsense2
 
-1. Build data collection pipeline.
+## 🚀 System Architecture
 
-2. Build data visusaliser
+1. **Hardware Interface:** Direct `sts3215` serial bus control utilizing `lerobot.motors` for SO-101 leader/follower synchronization.
+2. **Teleoperation:** Meta-Quest VR tracking mapped to dual-arm Cartesian poses via Pink IK, filtered through adaptive 1€ smoothing.
+3. **Data Pipeline:** Synchronized, offline collection of RGB feeds, joint states, and tactile data formatted natively for Hugging Face LeRobot dataset standards.
 
-3. Build the training on pi 0.5 on simulated evnvironiment.
+## ⚙️ Installation
 
-4. Build the meta-quest data collection and collect some data to visualise it.
+1. Clone the repository and navigate to the root directory.
+2. Create and activate a Python 3.10+ virtual environment.
+3. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install 'lerobot[dataset,pi]==0.5.1'
+   pip install pre-commit
+   pre-commit install
 
-We need an external device to save data.
 
 
-We nee to build lerobot locally. (version LeRobot 0.5.2)
+==================================================
+FILE: markdowns/TODO.md
+==================================================
 
-The version used by YongQiang is 0.1.0
+* Create Unit Test for the functionality that can be tested without hardware.
+* Create a script that collect robot manipulation data in simulation and train pi0.5 and test it in simulation, put this script under test folder. use LeRobot evaluation and trianing functionalities.
 
 
+
+==================================================
+FILE: markdowns/Problem.md
+==================================================
+
+Testing & Architectural Tracking
+
+## Untested Functionality (Requires Physical Hardware)
+1. **Serial Bus Latency (`sts3215_bus.py`)**: Cannot guarantee 1,000,000 baud rate stability over extended dual-arm teleoperation sessions without physical SO-101 units.
+2. **Meta Quest Input (`quest_reader.py`)**: Cannot verify UDP/TCP data packet drops from the Meta Quest headset.
+3. **IK Divergence (`ik_solver.py`)**: Pink IK solving times and singularity handling near joint limits cannot be safely validated without physical execution to ensure the robot does not self-collide.
+
+## Architectural Debt & Redundancy (Targeted for Refactor)
+1. **Duplicate Controllers:** `so101_dual_arm.py` and `common/so101_dual_controller.py` implement overlapping logic for dual-arm orchestration. `so101_dual_arm.py` relies on `lerobot.motors` while the `common/` modules rely on a custom `sts3215_bus.py`. We must standardize on one driver.
+2. **Configuration Sprawl:** `meta_quest_teleopration.py` hardcodes configurations at the top of the file, while `so101_dual_arm.py` loads from `conf/robot.yaml`.
+
+
+
+==================================================
+FILE: markdowns/AGENT.md
+==================================================
+
+# AI Agent Interaction Guidelines
+
+This document provides strict operational constraints and architectural context for any AI agent modifying this codebase.
+
+## 🏗️ Directory Structure
+```text
+.
+├── src/
+│   ├── common/                 # Shared teleoperation state, threading, and utilities
+│   ├── conf/                   # Hardware mappings and default poses
+│   ├── ik_conf/                # Inverse Kinematics tuning parameters
+│   ├── calibration_files/      # Feetech servo JSON calibrations
+│   └── so101_dual_arm.py       # Primary LeRobot hardware wrapper
+├── tool/                       # Execution scripts (teleop, data reading, VLA training)
+├── test/                       # Isolated component testing
+├── markdowns/                  # Project tracking and agent instructions
+├── install.sh                  # Automated environment setup
+└── setup.sh                    # PYTHONPATH configuration for tools
+```
+
+## General Instruction
+
+* Keep industrial-level documentation.
+
+* Reduce redundancy between files.
+
+* Keep good level of modularisation.
+
+* Be surgical of your changes.
+
+* Do not make changes if it is unnecessary
+
+* Keep an industrial-level README file for installation and running.
+
+* Keep an industrial-level testing for all functionality and report the ones that you cannot deal with in the Problem.md file.
+
+* Keep the project files organised.
