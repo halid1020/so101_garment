@@ -46,6 +46,7 @@ class TeleopState:
         self.translation_scale: float = 1.0
         self.rotation_scale: float = 1.0
         self.mirror_control_enabled: bool = False
+        self.height_lock_enabled: bool = False
         self.gizmo_target_poses: dict[str, np.ndarray | None] = {
             "left": None,
             "right": None,
@@ -225,6 +226,19 @@ class DualDataManager:
     def get_mirror_control_enabled(self) -> bool:
         with self._teleop_state._lock:
             return self._teleop_state.mirror_control_enabled
+
+    def toggle_height_lock(self) -> bool:
+        """Toggle the height lock (targets keep their current z). Returns
+        the new state."""
+        with self._teleop_state._lock:
+            self._teleop_state.height_lock_enabled = (
+                not self._teleop_state.height_lock_enabled
+            )
+            return self._teleop_state.height_lock_enabled
+
+    def get_height_lock_enabled(self) -> bool:
+        with self._teleop_state._lock:
+            return self._teleop_state.height_lock_enabled
 
     def set_gizmo_target_pose(self, side: str, transform: np.ndarray | None) -> None:
         if side not in ("left", "right"):

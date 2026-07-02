@@ -13,17 +13,20 @@ import traceback
 from typing import Any
 
 import numpy as np
+import pinocchio as pin
 
 from common.configs import (
     IK_SOLVER_RATE,
     LEFT_END_EFFECTOR_FRAME_NAME,
+    ORIENTATION_BLEND_TIME_S,
     RIGHT_END_EFFECTOR_FRAME_NAME,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.pink_ik_solver import PinkIKSolver
 from common.utils import (
+    blend_rotations,
     compute_hand_to_robot_calibration,
-    map_head_frame_hand_to_robot_target,
+    hand_to_gripper_orientation_armplane,
     map_quest_hands_to_robot_arms,
 )
 
@@ -59,17 +62,69 @@ def dual_ik_solver_thread(
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
     print(f"🧮 Dual IK solver thread started ({input_label})")
 
+    # Fixed base positions of each arm (for the tip-azimuth computation)
+    _m = ik_solver.urdf_model
+    _d = _m.createData()
+    _q0 = pin.neutral(_m)
+    pin.forwardKinematics(_m, _d, _q0)
+    pin.updateFramePlacements(_m, _d)
+    base_xy = {
+        side: _d.oMf[_m.getFrameId(f"{side}_base_link")].translation[:2].copy()
+        for side in ("left", "right")
+    }
+    # Arm azimuths (compass direction of the EE from its base), kept between
+    # cycles so a near-vertical/retracted pose doesn't produce noise.
+    azimuths: dict[str, float] = {}
+    last_debug_time = 0.0
+
+    # Handle axes are captured PER HAND at the FIRST grip of the session:
+    # the operator holds both handles pointing straight down, and whatever
+    # body-frame direction is "world down" at that instant is that hand's
+    # handle axis. (The two Quest controllers are mirrored hardware, and
+    # their body frames are not stable across app sessions, so a config
+    # constant cannot express this.)
+    handle_axes: dict[str, np.ndarray] = {}
+    knuckle_axes: dict[str, np.ndarray] = {}
+    # Height lock: when toggled on, target z freezes at each arm's current
+    # height — hand z is ignored, so table-plane strokes stay perfectly flat.
+    height_lock_prev = False
+    locked_z: dict[str, float] = {}
+    _WORLD_DOWN = np.array([0.0, 0.0, -1.0])
+    if quest_reader is not None:
+        print(
+            "🖐️  FIRST GRIP CALIBRATES: when you first hold both grips, "
+            "point both HANDLES straight down (like two nails) — "
+            "handle-down = gripper-down for the rest of the session."
+        )
+
+    def _update_azimuth(side: str, ee_pose: np.ndarray | None) -> float:
+        if ee_pose is not None:
+            vec = ee_pose[:2, 3] - base_xy[side]
+            if np.linalg.norm(vec) > 0.04:
+                azimuths[side] = float(np.arctan2(vec[1], vec[0]))
+        return azimuths.get(side, 0.0)
+
     dt: float = 1.0 / IK_SOLVER_RATE
     left_hand_to_robot: np.ndarray | None = None
     right_hand_to_robot: np.ndarray | None = None
     left_hand_reference: np.ndarray | None = None
     right_hand_reference: np.ndarray | None = None
+    # Orientation blend state: EE rotations at activation, ramped toward the
+    # absolute hand orientation over ORIENTATION_BLEND_TIME_S.
+    left_rot_at_activation: np.ndarray | None = None
+    right_rot_at_activation: np.ndarray | None = None
+    activation_time: float | None = None
     teleop_active_prev = False
     mirror_control_prev = False
 
     def _reset_teleop_calibration() -> None:
         nonlocal left_hand_to_robot, right_hand_to_robot
         nonlocal left_hand_reference, right_hand_reference
+        nonlocal left_rot_at_activation, right_rot_at_activation
+        nonlocal activation_time
+        left_rot_at_activation = None
+        right_rot_at_activation = None
+        activation_time = None
         left_hand_to_robot = None
         right_hand_to_robot = None
         left_hand_reference = None
@@ -122,26 +177,19 @@ def dual_ik_solver_thread(
             if quest_reader is not None:
                 left_grip = quest_reader.get_grip_value("left")
                 right_grip = quest_reader.get_grip_value("right")
-                quest_left_tf = quest_reader.get_hand_controller_transform_ros(
-                    hand="left"
-                )
-                quest_right_tf = quest_reader.get_hand_controller_transform_ros(
-                    hand="right"
-                )
                 teleop_active = (
-                    quest_left_tf is not None
-                    and quest_right_tf is not None
+                    left_tf_for_dm is not None
+                    and right_tf_for_dm is not None
                     and left_grip >= 0.9
                     and right_grip >= 0.9
                 )
                 data_manager.set_teleop_state(teleop_active)
-                if quest_left_tf is not None and quest_right_tf is not None:
-                    left_tf, right_tf = map_quest_hands_to_robot_arms(
-                        quest_left_tf, quest_right_tf, mirror_control=mirror_control
-                    )
-                else:
-                    left_tf = None
-                    right_tf = None
+                # Use the One-Euro-FILTERED transforms from the DataManager
+                # for target mapping (set_controller_state above filtered
+                # them). Using the raw reader transforms here would bypass
+                # the smoothing entirely and shake the arms.
+                left_tf, _, _ = data_manager.get_controller_state("left")
+                right_tf, _, _ = data_manager.get_controller_state("right")
             else:
                 teleop_active = data_manager.get_teleop_active()
                 left_tf = None
@@ -201,10 +249,47 @@ def dual_ik_solver_thread(
                     translation_scale,
                     rotation_scale,
                 )
+                # Blend from the EE's orientation at activation toward the
+                # absolute hand orientation, so activation never jerks.
+                left_rot_at_activation = left_pose[:3, :3].copy()
+                right_rot_at_activation = right_pose[:3, :3].copy()
+                activation_time = time.time()
+                # First grip of the session: capture each hand's handle axis
+                # (operator is holding the handles pointing straight down)
+                # and its roll reference ("knuckle" axis) — a horizontal
+                # world direction taken from the gripper's current roll, so
+                # it is perpendicular to the handle by construction and the
+                # roll response is strong in every session.
+                if "left" not in handle_axes:
+                    for _key, _tf, _pose in (
+                        ("left", left_tf, left_pose),
+                        ("right", right_tf, right_pose),
+                    ):
+                        handle_axes[_key] = _tf[:3, :3].T @ _WORLD_DOWN
+                        khat = _pose[:3, 2].copy()
+                        khat[2] = 0.0
+                        n = np.linalg.norm(khat)
+                        khat = khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+                        knuckle_axes[_key] = _tf[:3, :3].T @ khat
+                    print(
+                        "🖐️  Handle axes captured (handles assumed pointing "
+                        f"straight down): L={np.round(handle_axes['left'], 2)} "
+                        f"R={np.round(handle_axes['right'], 2)}"
+                    )
                 mode = "mirror" if mirror_control else "direct"
-                print(
-                    f"✓ Dual-arm teleop activated (absolute head-frame mapping, {mode})"
-                )
+                print(f"✓ Dual-arm teleop activated (absolute handle mapping, {mode})")
+                # Mapping diagnostics: the world direction each handle axis
+                # maps to right now (at first grip this is exactly [0,0,-1]
+                # by construction; on re-grips it shows the true reading).
+                for _side, _key, _tf, _pose in (
+                    ("L", "left", left_tf, left_pose),
+                    ("R", "right", right_tf, right_pose),
+                ):
+                    _hd = _tf[:3, :3] @ handle_axes[_key]
+                    print(
+                        f"  🧭 {_side}: handle world dir={np.round(_hd, 2)} "
+                        f"(z<0=down) | current tip={np.round(_pose[:3, 0], 2)}"
+                    )
 
             if quest_reader is not None and not teleop_active and teleop_active_prev:
                 _reset_teleop_calibration()
@@ -227,23 +312,71 @@ def dual_ik_solver_thread(
                 and right_hand_to_robot is not None
                 and left_hand_reference is not None
                 and right_hand_reference is not None
+                and left_rot_at_activation is not None
+                and right_rot_at_activation is not None
+                and activation_time is not None
             ):
                 translation_scale, rotation_scale = data_manager.get_teleop_scaling()
 
-                left_target = map_head_frame_hand_to_robot_target(
-                    left_tf,
-                    left_hand_to_robot,
-                    left_hand_reference,
-                    translation_scale,
-                    rotation_scale,
+                # Orientation: absolute and reachable-by-construction — tip
+                # elevation from the handle, tip azimuth following the arm,
+                # roll from the hand twist. Blended in over
+                # ORIENTATION_BLEND_TIME_S after activation to avoid a jerk.
+                left_abs_rot = hand_to_gripper_orientation_armplane(
+                    left_tf[:3, :3],
+                    _update_azimuth("left", left_pose),
+                    0.0,
+                    handle_axes["left"],
+                    knuckle_axes.get("left"),
                 )
-                right_target = map_head_frame_hand_to_robot_target(
-                    right_tf,
-                    right_hand_to_robot,
-                    right_hand_reference,
-                    translation_scale,
-                    rotation_scale,
+                right_abs_rot = hand_to_gripper_orientation_armplane(
+                    right_tf[:3, :3],
+                    _update_azimuth("right", right_pose),
+                    0.0,
+                    handle_axes["right"],
+                    knuckle_axes.get("right"),
                 )
+                blend_alpha = min(
+                    1.0, (time.time() - activation_time) / ORIENTATION_BLEND_TIME_S
+                )
+                left_target_rot = blend_rotations(
+                    left_rot_at_activation, left_abs_rot, blend_alpha
+                )
+                right_target_rot = blend_rotations(
+                    right_rot_at_activation, right_abs_rot, blend_alpha
+                )
+
+                # Position: world-frame delta from the calibration anchor.
+                left_target = np.eye(4)
+                left_target[:3, 3] = (
+                    left_hand_to_robot[:3, 3]
+                    + (left_tf[:3, 3] - left_hand_reference[:3, 3]) * translation_scale
+                )
+                left_target[:3, :3] = left_target_rot
+                right_target = np.eye(4)
+                right_target[:3, 3] = (
+                    right_hand_to_robot[:3, 3]
+                    + (right_tf[:3, 3] - right_hand_reference[:3, 3])
+                    * translation_scale
+                )
+                right_target[:3, :3] = right_target_rot
+
+                # Height lock: freeze target z at the height each arm had
+                # when the lock was engaged — flat table strokes for free.
+                height_lock = data_manager.get_height_lock_enabled()
+                if height_lock and not height_lock_prev:
+                    locked_z["left"] = float(left_target[2, 3])
+                    locked_z["right"] = float(right_target[2, 3])
+                    print(
+                        f"📏 Height locked (L z={locked_z['left']:.3f} m, "
+                        f"R z={locked_z['right']:.3f} m)"
+                    )
+                elif not height_lock and height_lock_prev:
+                    print("📏 Height unlocked")
+                height_lock_prev = height_lock
+                if height_lock:
+                    left_target[2, 3] = locked_z["left"]
+                    right_target[2, 3] = locked_z["right"]
 
                 ik_solver.set_target_poses(
                     {
@@ -271,6 +404,22 @@ def dual_ik_solver_thread(
                 else:
                     data_manager.set_ik_success(False)
                     data_manager.set_ik_solve_time_ms(0.0)
+
+                # Periodic mapping diagnostics (2 s): target tip direction vs
+                # the tip the solver currently achieves. Divergent target =
+                # mapping/frame problem; matching-but-wrong-on-robot =
+                # hardware-side problem.
+                if time.time() - last_debug_time > 2.0:
+                    last_debug_time = time.time()
+                    cur = ik_solver.get_current_end_effector_poses()
+                    lc = cur[LEFT_END_EFFECTOR_FRAME_NAME][:3, 0]
+                    rc = cur[RIGHT_END_EFFECTOR_FRAME_NAME][:3, 0]
+                    print(
+                        f"🧭 tip target L={np.round(left_target[:3, 0], 2)} "
+                        f"ik L={np.round(lc, 2)} | "
+                        f"target R={np.round(right_target[:3, 0], 2)} "
+                        f"ik R={np.round(rc, 2)} (z<0=down)"
+                    )
 
             elif (
                 quest_reader is None

@@ -10,6 +10,7 @@ Controls:
   Hold triggers           - close grippers
   Button A                - enable / disable both arms
   Button B                - move both arms to middle pose
+  Button Y                - toggle height lock (flat table strokes)
   Ctrl+C                  - exit
 """
 
@@ -35,6 +36,7 @@ from common.configs import (
     CONTROLLER_MIN_CUTOFF,
     DAMPING_COST,
     DUAL_URDF_PATH,
+    EE_ORIENTATION_COST_MASK,
     END_EFFECTOR_FRAME_NAMES,
     FRAME_TASK_GAIN,
     IK_SOLVER_RATE,
@@ -81,8 +83,11 @@ def main():
         "robot": load_yaml(_root / "src/conf/robot.yaml"),
         "rest_pos": load_yaml(_root / "src/conf/rest_pos.yaml"),
         "mid_pos": load_yaml(_root / "src/conf/mid_pos.yaml"),
+        "ready_pos": load_yaml(_root / "src/conf/ready_pos.yaml"),
     }
     dual_arm = SO101DualArm(config)
+    ready_pos = config["ready_pos"]
+    rest_pos = config["rest_pos"]
 
     # 3. Dual-arm Pink IK solver (10 body DOF, grippers locked)
     print("\n🔧 Creating dual-arm Pink IK solver...")
@@ -91,7 +96,8 @@ def main():
         end_effector_frames=END_EFFECTOR_FRAME_NAMES,
         solver_name=SOLVER_NAME,
         position_cost=POSITION_COST,
-        orientation_cost=ORIENTATION_COST,
+        # Anisotropic: zero cost on the EE-local yaw axis (no wrist-yaw joint)
+        orientation_cost=ORIENTATION_COST * np.asarray(EE_ORIENTATION_COST_MASK),
         frame_task_gain=FRAME_TASK_GAIN,
         lm_damping=LM_DAMPING,
         damping_cost=DAMPING_COST,
@@ -129,24 +135,57 @@ def main():
     right_joint_thread.start()
     ik_thread.start()
 
-    # 6. Quest button callbacks
+    # 6. Quest button callbacks.
+    # MUST be crash-proof: the quest reader dispatches callbacks without an
+    # except clause, so a raised exception kills its thread (no more buttons
+    # OR hand tracking), and a crash mid-move would leave the state stuck in
+    # HOMING, making the A button silently dead.
+    def _safe_button(name, fn):
+        def wrapped() -> None:
+            print(
+                f"[{name}] pressed "
+                f"(state={data_manager.get_robot_activity_state().value})"
+            )
+            try:
+                fn()
+            except Exception:
+                traceback.print_exc()
+                print(
+                    f"❌ [{name}] handler failed (see traceback above). "
+                    "Torque off, state reset to DISABLED — press A to retry."
+                )
+                try:
+                    with left_bus_lock, right_bus_lock:
+                        dual_arm.disable_torque()
+                except Exception:
+                    traceback.print_exc()
+                data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
+
+        return wrapped
+
     def toggle_robot_enabled_status() -> None:
         state = data_manager.get_robot_activity_state()
         if state == RobotActivityState.ENABLED:
-            data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
+            # HOMING first so the joint threads stop sending teleop commands
+            # while we drive the arms to the rest pose, then cut torque.
+            data_manager.set_robot_activity_state(RobotActivityState.HOMING)
             data_manager.set_teleop_state(False)
-            with left_bus_lock:
+            print("🔴 Disabling: moving both arms to rest pose...")
+            with left_bus_lock, right_bus_lock:
+                dual_arm.move_to_joint_pose(rest_pos, rest_pos, 2.0)
                 dual_arm.bus_0.disable_torque()
-            with right_bus_lock:
                 dual_arm.bus_1.disable_torque()
-            print("✓ 🔴 Both arms disabled (torque off)")
-        elif state in (RobotActivityState.DISABLED, RobotActivityState.HOMING):
-            with left_bus_lock:
+            data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
+            print("✓ 🔴 Both arms at rest and disabled (torque off)")
+        elif state == RobotActivityState.DISABLED:
+            data_manager.set_robot_activity_state(RobotActivityState.HOMING)
+            print("🟢 Enabling: moving both arms to ready pose...")
+            with left_bus_lock, right_bus_lock:
                 dual_arm.bus_0.enable_torque()
-            with right_bus_lock:
                 dual_arm.bus_1.enable_torque()
+                dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
             data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
-            print("✓ 🟢 Both arms enabled")
+            print("✓ 🟢 Both arms at ready pose and enabled")
 
     def on_go_home() -> None:
         state = data_manager.get_robot_activity_state()
@@ -161,8 +200,18 @@ def main():
         else:
             print("⚠️  Cannot home: arms not enabled")
 
-    quest_reader.on("button_a_pressed", toggle_robot_enabled_status)
-    quest_reader.on("button_b_pressed", on_go_home)
+    def toggle_height_lock() -> None:
+        enabled = data_manager.toggle_height_lock()
+        print(
+            "📏 Height lock "
+            + ("ON — hand height ignored, strokes stay flat" if enabled else "OFF")
+        )
+
+    quest_reader.on(
+        "button_a_pressed", _safe_button("Button A", toggle_robot_enabled_status)
+    )
+    quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
+    quest_reader.on("button_y_pressed", _safe_button("Button Y", toggle_height_lock))
 
     print()
     print("🚀 Dual-arm teleoperation ready.")
@@ -171,6 +220,7 @@ def main():
     print("   3. Move controllers — arms follow!")
     print("   4. Hold triggers to close grippers")
     print("   5. Press BUTTON B to move both arms to the middle pose")
+    print("   6. Press BUTTON Y to lock/unlock the height (flat strokes)")
     print("⚠️  Press Ctrl+C to exit")
     print()
 

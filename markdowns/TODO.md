@@ -1,2 +1,2 @@
-* Create Unit Test for the functionality that can be tested without hardware.
-* Create a script that collect robot manipulation data in simulation and train pi0.5 and test it in simulation, put this script under test folder. use LeRobot evaluation and trianing functionalities.
+1. In the webview of the tune_teleop script. The gripper orietnation is approximately 90 percept off.
+2. When control-C the prgram, the robot should goes to the rest position and exit.

@@ -34,10 +34,65 @@ NEUTRAL_JOINT_ANGLES_DUAL = [*NEUTRAL_JOINT_ANGLES, *NEUTRAL_JOINT_ANGLES]
 POSTURE_COST_VECTOR_DUAL = [*POSTURE_COST_VECTOR, *POSTURE_COST_VECTOR]
 
 
+# Hardware -> URDF joint zero offsets (degrees), one list per arm:
+# [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll].
+# The LeRobot calibration zero does not coincide with the URDF zero
+# (observed: wrist_roll reads 90 deg off in the visualizer; the lift /
+# elbow / wrist_flex values were measured per arm with
+# tool/fit_joint_offsets.py on 2026-07-02 — table-drag fit, model error
+# reduced from +-8.5/13.8 mm to +-4 mm).
+# urdf_deg = hw_deg + offset ; hw_deg = urdf_deg - offset.
+LEFT_ARM_HW_TO_URDF_OFFSETS_DEG = [0.0, -3.45, 12.26, -9.72, 90.0]
+RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG = [0.0, -3.97, -5.43, -1.02, 90.0]
+
+# Per-joint direction signs for the same mapping (+1 or -1):
+# urdf_deg = sign * hw_deg + offset ; hw_deg = sign * (urdf_deg - offset).
+# A -1 means the servo's positive direction is OPPOSITE to the URDF's for
+# that joint (the LeRobot calibration does not guarantee they agree).
+# Check with `python tool/check_mirror.py`: bend each joint by hand and
+# flip the sign of any joint where the on-screen robot moves the WRONG way.
+# NOTE: after changing a sign, re-run tool/fit_joint_offsets.py — offsets
+# fitted under the wrong sign are invalid for that joint.
+LEFT_ARM_HW_TO_URDF_SIGNS = [1.0, 1.0, 1.0, 1.0, 1.0]
+RIGHT_ARM_HW_TO_URDF_SIGNS = [1.0, 1.0, 1.0, 1.0, 1.0]
+
 # IK Solver
 SOLVER_NAME = "quadprog"
 POSITION_COST = 1.0
 ORIENTATION_COST = 0.75
+
+# Per-axis orientation cost mask, in the eef_link LOCAL frame.
+# All axes are costed. (An earlier design zero-costed local z so "yaw
+# follows the arm", but the zero-cost family R_target*Rz(phi) includes
+# phi=180 deg — a full tip flip, so the gripper could face UP when the
+# hand said down. Yaw-follows-arm is now achieved by constructing the
+# target inside the arm's reachable set instead: see
+# hand_to_gripper_orientation_armplane in common/utils.py.)
+EE_ORIENTATION_COST_MASK = [1.0, 1.0, 1.0]
+
+# Absolute hand->gripper orientation mapping. The gripper's long axis
+# (wrist -> tip) mirrors the controller's HANDLE axis (top -> bottom).
+# The Quest's tracked aim pose has local -z along the POINTER ray and -y
+# roughly along the handle; the physical handle is tilted backward from
+# -y by about this angle. With it, holding the handle plumb-vertical
+# (natural upright fist) points the gripper straight down at the table.
+# Tune: this angle sets the gripper's neutral fore/aft tilt one-to-one.
+# If at your natural grip the gripper leans N degrees toward the FRONT of
+# the setup, ADD N here (it should lean toward the operator, like the
+# handle does); if it leans too far back toward you, subtract.
+HANDLE_PITCH_OFFSET_DEG = 65.0
+
+# Measured handle top->bottom axis in the controller body frame.
+# Run `python tool/calibrate_handle.py` and paste its output here; when
+# set, it overrides HANDLE_PITCH_OFFSET_DEG entirely.
+# Measured 2026-07-02 (right controller, 148 samples, 4.7 deg spread).
+# Note the dominant +x: the tracked frame's axes are nothing like the
+# OpenXR aim convention we first assumed — measuring was the right call.
+HANDLE_AXIS = [0.8242, 0.2110, -0.5255]
+
+# Seconds to blend from the gripper's orientation at grip-press to the
+# absolute hand orientation, so activating teleop never jerks the wrist.
+ORIENTATION_BLEND_TIME_S = 1.0
 FRAME_TASK_GAIN = 0.4
 LM_DAMPING = 0.0
 DAMPING_COST = 0.25

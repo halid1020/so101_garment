@@ -12,7 +12,13 @@ import traceback
 
 import numpy as np
 
-from common.configs import JOINT_STATE_STREAMING_RATE
+from common.configs import (
+    JOINT_STATE_STREAMING_RATE,
+    LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
+    LEFT_ARM_HW_TO_URDF_SIGNS,
+    RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG,
+    RIGHT_ARM_HW_TO_URDF_SIGNS,
+)
 from common.data_manager_dual import DualDataManager, RobotActivityState
 
 _BODY_DOF = 5  # SO101 has 5 actuated body joints per arm
@@ -23,6 +29,19 @@ _BODY_JOINTS = [
     "wrist_flex",
     "wrist_roll",
 ]
+# Everything in DualDataManager / IK / visualizer lives in URDF joint space;
+# only this thread talks to the motors, so the hw<->URDF sign+zero-offset
+# conversion happens here on read and write. Both are per arm (each servo
+# was zeroed and oriented independently during LeRobot calibration).
+# urdf = sign * hw + offset ; hw = sign * (urdf - offset)  [sign is +-1]
+_HW_TO_URDF_OFFSETS = {
+    "left": np.array(LEFT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
+    "right": np.array(RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
+}
+_HW_TO_URDF_SIGNS = {
+    "left": np.array(LEFT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
+    "right": np.array(RIGHT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
+}
 
 
 def dual_joint_state_thread(
@@ -47,6 +66,8 @@ def dual_joint_state_thread(
 
     print(f"🔧 Dual joint state thread started ({arm_side})")
     dt: float = 1.0 / JOINT_STATE_STREAMING_RATE
+    hw_to_urdf = _HW_TO_URDF_OFFSETS[arm_side]
+    hw_signs = _HW_TO_URDF_SIGNS[arm_side]
 
     try:
         while not data_manager.is_shutdown_requested():
@@ -55,8 +76,10 @@ def dual_joint_state_thread(
             # ── Read current state from hardware ─────────────────────────────
             with bus_lock:
                 positions = bus.sync_read("Present_Position")
-            current_joint_angles = np.array(
-                [positions[j] for j in _BODY_JOINTS], dtype=np.float64
+            current_joint_angles = (
+                hw_signs
+                * np.array([positions[j] for j in _BODY_JOINTS], dtype=np.float64)
+                + hw_to_urdf
             )
 
             combined = data_manager.get_current_joint_angles()
@@ -92,7 +115,9 @@ def dual_joint_state_thread(
                     else:
                         arm_targets = target_joint_angles[_BODY_DOF:]
 
-                    goal = dict(zip(_BODY_JOINTS, arm_targets))
+                    goal = dict(
+                        zip(_BODY_JOINTS, hw_signs * (arm_targets - hw_to_urdf))
+                    )
 
                     # Trigger controls gripper: fully pressed = fully closed.
                     gripper_target = 1.0 - trigger_value

@@ -1,0 +1,66 @@
+# =================================================================================
+# SO101 DUAL-ARM TELEOPERATION & IK CONFIGURATION
+# =================================================================================
+# Tuned for two SO-101s (5-DOF each). Key idea: the arm cannot track full
+# 6-DOF orientation, so position must dominate orientation, and the wrist
+# joints must stay free (no posture pull) since they are the only
+# orientation DOFs.
+
+ik_parameters:
+  # Position accuracy dominates. On a 5-DOF arm a high orientation cost
+  # makes the solver sacrifice XYZ accuracy chasing orientations the arm
+  # physically cannot reach -> feels "inaccurate". Keep the ratio
+  # orientation/position around 0.1-0.2.
+  position_cost: 2.0
+  # With the yaw axis zero-costed (EE_ORIENTATION_COST_MASK) the remaining
+  # pitch/roll axes are fully controllable, so a firmer weight is safe and
+  # makes the wrist track hand pitch/roll decisively (e.g. facing the table).
+  orientation_cost: 0.5
+
+  # Low-pass on target tracking: lower = smoother but laggier.
+  # 0.3 tames shake; raise toward 0.5-0.7 once the rig is stiff.
+  frame_task_gain: 0.3
+
+  # Damping against twitching near workspace edges / singularities.
+  lm_damping: 0.1
+  damping_cost: 0.25
+  solver_damping_value: 1.0e-6
+
+  # Per body joint (left x5 then right x5):
+  # [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll].
+  # Keep these near zero. Radial motion (toward/away from the base) swings
+  # lift+elbow through large angles, so posture cost on them makes the QP
+  # trade table-height accuracy against the posture pull — straight radial
+  # lines bend while pan-driven arcs stay easy (pan is uncosted). Units:
+  # with position_cost 2.0, a posture cost c means the solver accepts
+  # ~c/2 meters of position error per radian of posture deviation, so even
+  # 0.02 buys visible centimeters. 0.005 keeps a whisper of
+  # anti-contortion bias; set to 0.0 if lines still bend.
+  posture_cost_vector:
+    - 0.0
+    - 0.005
+    - 0.005
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.005
+    - 0.005
+    - 0.0
+    - 0.0
+
+filter_parameters:
+  # 1-Euro filter: min_cutoff governs jitter when holding still (lower =
+  # steadier, laggier), beta governs lag during fast sweeps (higher =
+  # snappier). 0.1/0.05 was so laggy that you end up over-correcting,
+  # which reads as inaccuracy.
+  controller_min_cutoff: 0.3
+  controller_beta: 2.0
+  controller_d_cutoff: 0.9
+
+teleop_parameters:
+  # Slight downscale: the SO-101 workspace is small (~35 cm reach), so
+  # 0.8 keeps hand motion inside it (saturated IK targets accumulate
+  # position error) and gives finer control. Rotation stays 1:1 so the
+  # wrist feels natural.
+  translation_scale: 0.8
+  rotation_scale: 1.0
