@@ -1,6 +1,13 @@
+import sys
+from pathlib import Path
+
 import yaml
 
-from so101_garment.src.so101_dual_arm import SO101DualArm
+_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "src"))
+
+from src.so101_dual_arm import SO101DualArm
 
 
 def load_yaml(filepath):
@@ -13,9 +20,9 @@ def main():
     # 1. Build the comprehensive config dictionary
     # This reads all three of your config files into one central state
     config = {
-        "robot": load_yaml("conf/robot.yaml"),
-        "rest_pos": load_yaml("conf/rest_pos.yaml"),
-        "mid_pos": load_yaml("conf/mid_pos.yaml"),
+        "robot": load_yaml(_root / "src/conf/robot.yaml"),
+        "rest_pos": load_yaml(_root / "src/conf/rest_pos.yaml"),
+        "mid_pos": load_yaml(_root / "src/conf/mid_pos.yaml"),
     }
 
     # 2. Initialize the dual arm class with the unified config

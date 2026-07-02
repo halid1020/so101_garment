@@ -317,10 +317,21 @@ from viser.extras import ViserUrdf
 
 
 class RobotVisualizerCore:
-    """Handles the 3D rendering of the robot, ghost robot, and target frames."""
+    """
+    Handles the 3D rendering of the robot, ghost robot, and target frames.
+
+    This class encapsulates the Viser server and provides a structured interface
+    for updating the visual state of the main robot, a semi-transparent 'ghost'
+    robot used for previews or targets, UI camera streams, and spatial controllers.
+    """
 
     def __init__(self, urdf_path: str) -> None:
-        """TODO: Document this method."""
+        """
+        Initializes the visualization server and loads the robot URDFs.
+
+        Args:
+            urdf_path (str): The file path to the robot's URDF model.
+        """
         self.server = viser.ViserServer()
         self.server.scene.add_grid("/ground", width=2, height=2, cell_size=0.1)
 
@@ -342,19 +353,32 @@ class RobotVisualizerCore:
         self.rgb_image_handle: Any = None
 
     def add_controller_visualization(self) -> None:
-        """TODO: Document this method."""
+        """
+        Adds an interactive 3D transform control widget to the scene.
+
+        This allows users to drag a 3D handle in the web UI, which can be
+        linked back to teleoperation or inverse kinematics targets.
+        """
         self.controller_handle = self.server.scene.add_transform_controls(
             "/controller", scale=0.15, position=(0, 0, 0), wxyz=(1, 0, 0, 0)
         )
 
     def add_target_frame_visualization(self) -> None:
-        """TODO: Document this method."""
+        """
+        Adds a static 3D coordinate frame representing a target or goal position.
+        """
         self.target_frame_handle = self.server.scene.add_frame(
             "/target_goal", axes_length=0.1, axes_radius=0.003
         )
 
     def add_rgb_image_placeholder(self, height: int = 480, width: int = 640) -> None:
-        """TODO: Document this method."""
+        """
+        Creates a 2D image panel in the Viser GUI to display camera streams.
+
+        Args:
+            height (int, optional): The height of the placeholder image. Defaults to 480.
+            width (int, optional): The width of the placeholder image. Defaults to 640.
+        """
         if self.rgb_image_handle is None:
             dummy_image = np.zeros((height, width, 3), dtype=np.uint8)
             self.rgb_image_handle = self.server.gui.add_image(
@@ -362,42 +386,80 @@ class RobotVisualizerCore:
             )
 
     def update_rgb_image(self, rgb_image: np.ndarray | None) -> None:
-        """TODO: Document this method."""
+        """
+        Updates the RGB camera panel in the GUI with a new image frame.
+
+        Args:
+            rgb_image (np.ndarray | None): A numpy array representing the image,
+                                           or None to skip updating.
+        """
         if rgb_image is None:
             return
         if self.rgb_image_handle is None:
             self.add_rgb_image_placeholder(
                 height=rgb_image.shape[0], width=rgb_image.shape[1]
             )
-        self.rgb_image_handle.image = rgb_image
+        # Type ignored because mypy cannot infer that the handle is initialized
+        self.rgb_image_handle.image = rgb_image  # type: ignore
 
     def update_robot_pose(self, joint_config: np.ndarray) -> None:
-        """TODO: Document this method."""
+        """
+        Updates the primary robot's joint configurations to render its current physical pose.
+
+        Args:
+            joint_config (np.ndarray): An array of joint positions in radians.
+        """
         self.urdf_vis.update_cfg(joint_config)
 
     def update_ghost_robot_pose(self, joint_config: np.ndarray) -> None:
-        """TODO: Document this method."""
+        """
+        Updates the ghost robot's joint configurations to reflect simulated or target poses.
+
+        Args:
+            joint_config (np.ndarray): An array of joint positions in radians.
+        """
         if self.ghost_robot_urdf:
             self.ghost_robot_urdf.update_cfg(joint_config)
 
     def update_ghost_robot_visibility(self, flag: bool) -> None:
-        """TODO: Document this method."""
+        """
+        Toggles the visibility of the ghost robot in the scene.
+
+        Args:
+            flag (bool): True to render the ghost robot, False to hide it.
+        """
         if self.ghost_robot_urdf:
             self.ghost_robot_urdf.show_visual = flag
 
     def get_ghost_robot_visibility(self) -> bool:
-        """TODO: Document this method."""
+        """
+        Retrieves the current visibility state of the ghost robot.
+
+        Returns:
+            bool: True if the ghost robot is currently visible, False otherwise.
+        """
         if self.ghost_robot_urdf:
             return self.ghost_robot_urdf.show_visual
         return False
 
     def set_ghost_robot_color(self, color: tuple[float, float, float, float]) -> None:
-        """TODO: Document this method."""
+        """
+        Overrides the mesh color of the ghost robot.
+
+        Args:
+            color (tuple[float, float, float, float]): An RGBA tuple representing
+                                                       the desired color.
+        """
         if self.ghost_robot_urdf:
             self.ghost_robot_urdf.mesh_color_override = color
 
     def update_controller_visualization(self, transform: np.ndarray | None) -> None:
-        """TODO: Document this method."""
+        """
+        Updates the physical location and rotation of the interactive 3D controller.
+
+        Args:
+            transform (np.ndarray | None): A 4x4 homogenous transformation matrix.
+        """
         if self.controller_handle is None or transform is None:
             return
         pos = transform[:3, 3]
@@ -406,7 +468,12 @@ class RobotVisualizerCore:
         self.controller_handle.wxyz = (rot[3], rot[0], rot[1], rot[2])
 
     def update_target_visualization(self, transform: np.ndarray | None) -> None:
-        """TODO: Document this method."""
+        """
+        Updates the physical location and rotation of the target goal frame.
+
+        Args:
+            transform (np.ndarray | None): A 4x4 homogenous transformation matrix.
+        """
         if self.target_frame_handle is None or transform is None:
             return
         pos = transform[:3, 3]
@@ -415,7 +482,9 @@ class RobotVisualizerCore:
         self.target_frame_handle.wxyz = (rot[3], rot[0], rot[1], rot[2])
 
     def stop(self) -> None:
-        """TODO: Document this method."""
+        """
+        Safely stops the Viser web server and releases background resources.
+        """
         self.server.stop()
 
 
@@ -2454,6 +2523,633 @@ def move_robot_home(
 
 
 ==================================================
+FILE: src/common/vectorised_posture_task.py
+==================================================
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2022 Stéphane Caron
+
+"""Posture task implementation."""
+
+
+import numpy as np
+import pinocchio as pin
+from pink.configuration import Configuration
+from pink.exceptions import TargetNotSet
+from pink.tasks import Task
+from pink.utils import get_root_joint_dim
+
+
+class VectorisedPostureTask(Task):
+    r"""Regulate joint angles to a desired posture.
+
+    A posture is a vector of actuated joint angles. Floating base coordinates
+    are not affected by this task.
+
+    Attributes:
+        target_q: Target vector in the configuration space. If the model has a
+            floating base, then this vector should include floating-base
+            coordinates (although they have no effect on the posture task).
+
+    A posture task is typically used for regularization as it has a steady
+    rank. For instance, when Upkie's legs are stretched and the Jacobian of its
+    contact frames becomes singular, the posture task will drive the knees
+    toward a preferred orientation.
+    """
+
+    target_q: np.ndarray | None
+
+    def __init__(
+        self,
+        cost: float | list[float] | None = None,
+        lm_damping: float = 0.0,
+        gain: float = 1.0,
+    ) -> None:
+        r"""Create task.
+
+        Args:
+            cost: Vector of cost values, can be a single value to be applied
+                to all joints :math:`[\mathrm{cost}] / [\mathrm{rad}]`.
+            lm_damping: Unitless scale of the Levenberg-Marquardt (only when
+                the error is large) regularization term, which helps when
+                targets are unfeasible. Increase this value if the task is too
+                jerky under unfeasible targets, but beware that too large a
+                damping can slow down the task.
+            gain: Task gain :math:`\alpha \in [0, 1]` for additional low-pass
+                filtering. Defaults to 1.0 (no filtering) for dead-beat
+                control.
+
+        Note:
+            We assume that the first seven coordinates of the configuration are
+            for the floating base.
+        """
+        super().__init__(cost=cost, gain=gain, lm_damping=lm_damping)
+        self.target_q = None
+
+    def set_target(self, target_q: np.ndarray) -> None:
+        """Set target posture.
+
+        Args:
+            target_q: Target vector in the configuration space. If the model
+                has a floating base, then this vector should include
+                floating-base coordinates (although they have no effect on the
+                posture task).
+        """
+        self.target_q = target_q.copy()
+
+    def set_target_from_configuration(self, configuration: Configuration) -> None:
+        """Set target posture from a robot configuration.
+
+        Args:
+            configuration: Robot configuration.
+        """
+        self.set_target(configuration.q)
+
+    def compute_error(self, configuration: Configuration) -> np.ndarray:
+        r"""Compute posture task error.
+
+        The posture task error is defined as:
+
+        .. math::
+
+            e(q) = q^* \ominus q
+
+        See :func:`pink.tasks.task.Task.compute_error` for more context.
+
+        Args:
+            configuration: Robot configuration :math:`q`.
+
+        Returns:
+            Posture task error :math:`e(q)`.
+        """
+        if self.target_q is None:
+            raise TargetNotSet("no posture target")
+        _, root_nv = get_root_joint_dim(configuration.model)
+        return pin.difference(
+            configuration.model,
+            self.target_q,
+            configuration.q,
+        )[root_nv:]
+
+    def compute_jacobian(self, configuration: Configuration) -> np.ndarray:
+        r"""Compute the posture task Jacobian.
+
+        The task Jacobian is the identity :math:`I_{n_v} \in \mathbb{R}^{n_v
+        \times n_v}`, with :math:`n_v` the dimension of the robot's tangent
+        space, so that the task dynamics are:
+
+        .. math::
+
+            J(q) \Delta q = \Delta q = \alpha (q^* \ominus q)
+
+        See :func:`pink.tasks.task.Task.compute_jacobian` for more context.
+
+        Args:
+            configuration: Robot configuration :math:`q`.
+
+        Returns:
+            Posture task Jacobian :math:`J(q)`.
+        """
+        _, nv = get_root_joint_dim(configuration.model)
+        return configuration.tangent.eye[nv:, :]
+
+    def __repr__(self) -> str:
+        """Human-readable representation of the task."""
+        return (
+            "PostureTask("
+            f"cost={self.cost}, "
+            f"gain={self.gain}, "
+            f"lm_damping={self.lm_damping})"
+        )
+
+
+
+==================================================
+FILE: src/common/pink_ik_solver.py
+==================================================
+
+"""Pink URDF Inverse Kinematics Solver.
+
+A generic class for performing inverse kinematics using Pink (Python inverse
+kinematics based on Pinocchio) with any URDF robot model.
+"""
+
+import time
+from typing import Any
+
+import numpy as np
+import pink
+import pinocchio as pin
+from pink.tasks import DampingTask, FrameTask
+from scipy.spatial.transform import Rotation
+
+from .vectorised_posture_task import VectorisedPostureTask
+
+
+class PinkIKSolver:
+    """A generic Pink-based inverse kinematics solver for URDF robots.
+
+    This class provides a clean interface for setting up and solving inverse
+    kinematics problems using Pink with configurable tasks, limits, and
+    parameters.
+    """
+
+    def __init__(
+        self,
+        urdf_path: str,
+        end_effector_frame: str | None = None,
+        end_effector_frames: list[str] | None = None,
+        solver_name: str = "quadprog",
+        position_cost: float = 1.0,
+        orientation_cost: float = 0.75,
+        frame_task_gain: float = 1.0,
+        lm_damping: float = 0.25,
+        damping_cost: float = 0.0,
+        solver_damping_value: float = 1e-12,
+        integration_time_step: float = 0.001,
+        initial_configuration: np.ndarray | None = None,
+        posture_cost_vector: np.ndarray | None = None,
+    ) -> None:
+        """Initialize the Pink IK solver.
+
+        Args:
+            urdf_path: Path to the URDF file
+            end_effector_frame: Name of the end effector frame
+            solver_name: Name of the QP solver to use
+            position_cost: Cost weight for position tracking
+            orientation_cost: Cost weight for orientation tracking
+            frame_task_gain: Gain for the frame task
+            lm_damping: Marquardt damping factor
+            damping_cost: Cost weight for velocity damping
+            solver_damping_value: Value for solver  Tikhonov regularization parameter
+            integration_time_step: Time step for integration
+            initial_configuration:Initial joint configuration (if None, uses neutral)
+            posture_cost_vector: Cost weights for posture task per joint (if None, uses zeros)
+        """
+        if end_effector_frame is None and end_effector_frames is None:
+            raise ValueError("Provide end_effector_frame or end_effector_frames")
+        self.urdf_path: str = urdf_path
+        # Multi-frame mode when end_effector_frames is provided.
+        self._multi_frame: bool = end_effector_frames is not None
+        self.end_effector_frames: list[str] = end_effector_frames or (
+            [end_effector_frame] if end_effector_frame else []
+        )
+        # Single-frame backward-compat attribute.
+        self.end_effector_frame: str = self.end_effector_frames[0] if not self._multi_frame else ""
+        self.solver_name: str = solver_name
+
+        # Task parameters
+        self.position_cost: float = position_cost
+        self.orientation_cost: float = orientation_cost
+        self.frame_task_gain: float = frame_task_gain
+        self.lm_damping: float = lm_damping
+        self.damping_cost: float = damping_cost
+        self.solver_damping_value: float = solver_damping_value
+        self.integration_time_step: float = integration_time_step
+
+        # Statistics
+        self.solve_times: list[float] = []
+        self.last_solve_time: float = 0.0
+
+        # Initialize the robot
+        self._build_robot_model()
+
+        # Validate end effector frame
+        self._validate_end_effector_frame()
+
+        # Set up tasks
+        self._setup_tasks(initial_configuration, posture_cost_vector)
+
+    def _build_robot_model(self) -> None:
+        """Build the robot model from URDF."""
+        print(f"📁 Loading URDF: {self.urdf_path}")
+        full_model = pin.buildModelFromUrdf(self.urdf_path)
+        q_ref = pin.neutral(full_model)
+        # Lock all joints whose name contains "gripper" so IK ignores them.
+        # Works for both single-arm (1 gripper) and dual-arm (2 grippers).
+        gripper_joint_ids = [
+            i for i in range(1, full_model.njoints)
+            if "gripper" in full_model.names[i]
+        ]
+        self.urdf_model: pin.Model = pin.buildReducedModel(full_model, gripper_joint_ids, q_ref)
+        self.urdf_model_data: pin.ModelData = self.urdf_model.createData()
+        print(f"✅ Robot loaded (reduced to {self.urdf_model.nq} DOF for IK)")
+
+    def _validate_end_effector_frame(self) -> None:
+        """Validate that all end effector frames exist."""
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        available_frames = [
+            self.urdf_model.frames[i].name for i in range(self.urdf_model.nframes)
+        ]
+        for frame in self.end_effector_frames:
+            try:
+                frame_id = self.urdf_model.getFrameId(frame)
+                if frame_id >= self.urdf_model.nframes:
+                    raise ValueError(f"Frame {frame} not found in URDF")
+            except Exception:
+                raise ValueError(
+                    f"Frame {frame} not found in URDF. Available frames: {available_frames}"
+                )
+
+    def _setup_tasks(
+        self,
+        initial_configuration: np.ndarray | None = None,
+        posture_cost_vector: np.ndarray | None = None,
+    ) -> None:
+        """Set up Pink tasks and configuration.
+
+        Args:
+            initial_configuration: Initial joint configuration (if None, uses neutral)
+            posture_cost_vector: Cost weights for posture task per joint (if None, uses zeros)
+
+        Raises:
+            ValueError: If the initial configuration is not valid (initial
+                configuration must have the same number of joints as the robot
+                model).
+        """
+        assert self.urdf_model is not None, "Robot model must be initialized"
+
+        # Initial configuration
+        self.initial_configuration = initial_configuration
+        self.posture_cost_vector = posture_cost_vector
+
+        if (
+            self.initial_configuration is not None
+            and len(self.initial_configuration) != self.urdf_model.nq
+        ):
+            raise ValueError(
+                f"Initial configuration must have {self.urdf_model.nq} values, got {len(self.initial_configuration)}"
+            )
+
+        print("🔧 Setting up Pink tasks and limits...")
+
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        assert self.urdf_model_data is not None, "Robot model data must be initialized"
+        self.initial_configuration = (
+            self.initial_configuration
+            if self.initial_configuration is not None
+            else pin.neutral(self.urdf_model)
+        )
+        self.configuration = pink.Configuration(
+            self.urdf_model, self.urdf_model_data, self.initial_configuration
+        )
+
+        # Set up end effector task(s).
+        # Multi-frame: ee_tasks_list contains all FrameTasks; ee_task is None.
+        # Single-frame: ee_task is the FrameTask; ee_tasks_list has one element.
+        self.ee_tasks_list: list[FrameTask] = []
+        for frame in self.end_effector_frames:
+            task = FrameTask(
+                frame,
+                position_cost=self.position_cost,
+                orientation_cost=self.orientation_cost,
+                lm_damping=self.lm_damping,
+                gain=self.frame_task_gain,
+            )
+            task.set_target_from_configuration(self.configuration)
+            self.ee_tasks_list.append(task)
+        # Single-frame backward-compat alias.
+        self.ee_task: FrameTask | None = self.ee_tasks_list[0] if not self._multi_frame else None
+
+        # Set up damping task
+        self.damping_task = DampingTask(cost=self.damping_cost)
+
+        # Set up posture task with vectorized cost
+        # Default to zeros if not provided, matching the number of joints
+        if self.posture_cost_vector is None:
+            self.posture_cost_vector = np.zeros(self.urdf_model.nq)
+        elif len(self.posture_cost_vector) != self.urdf_model.nq:
+            raise ValueError(
+                f"Posture cost vector must have {self.urdf_model.nq} values, got {len(self.posture_cost_vector)}"
+            )
+        else:
+            self.posture_cost_vector = np.array(self.posture_cost_vector).copy()
+
+        self.posture_task = VectorisedPostureTask(cost=self.posture_cost_vector)
+        self.posture_task.set_target_from_configuration(self.configuration)
+
+        print("✅ Tasks configured!")
+
+    def update_task_parameters(
+        self,
+        position_cost: float | None = None,
+        orientation_cost: float | None = None,
+        frame_task_gain: float | None = None,
+        lm_damping: float | None = None,
+        damping_cost: float | None = None,
+        solver_damping_value: float | None = None,
+        integration_time_step: float | None = None,
+        posture_cost_vector: np.ndarray | None = None,
+    ) -> None:
+        """Update task parameters dynamically.
+
+        Args:
+            position_cost: Cost weight for position tracking
+            orientation_cost: Cost weight for orientation tracking
+            frame_task_gain: Gain for the frame task
+            lm_damping: Marquardt damping factor
+            damping_cost: Cost weight for velocity damping
+            solver_damping_value: Value for solver damping - Tikhonov regularization parameter
+            integration_time_step: Time step for integration
+            posture_cost_vector: Cost weights for posture task per joint
+        """
+        assert self.damping_task is not None, "Damping task must be initialized"
+        if position_cost is not None:
+            self.position_cost = position_cost
+            for t in self.ee_tasks_list:
+                t.set_position_cost(position_cost)
+
+        if orientation_cost is not None:
+            self.orientation_cost = orientation_cost
+            for t in self.ee_tasks_list:
+                t.set_orientation_cost(orientation_cost)
+
+        if frame_task_gain is not None:
+            self.frame_task_gain = frame_task_gain
+            for t in self.ee_tasks_list:
+                t.gain = frame_task_gain
+
+        if lm_damping is not None:
+            self.lm_damping = lm_damping
+            for t in self.ee_tasks_list:
+                t.lm_damping = lm_damping
+
+        if damping_cost is not None:
+            self.damping_cost = damping_cost
+            self.damping_task.cost = damping_cost
+
+        if solver_damping_value is not None:
+            self.solver_damping_value = solver_damping_value
+
+        if integration_time_step is not None:
+            self.integration_time_step = integration_time_step
+
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        if posture_cost_vector is not None:
+            if len(posture_cost_vector) != self.urdf_model.nq:
+                raise ValueError(
+                    f"Posture cost vector must have {self.urdf_model.nq} values, got {len(posture_cost_vector)}"
+                )
+            self.posture_cost_vector = np.array(posture_cost_vector).copy()
+            assert self.posture_task is not None, "Posture task must be initialized"
+            self.posture_task.cost = self.posture_cost_vector
+
+    def set_target_pose(self, position: np.ndarray, orientation: np.ndarray) -> None:
+        """Set target pose from position and orientation.
+
+        Args:
+            position: 3D position vector
+            orientation: 3x3 rotation matrix or 4-element
+                quaternion (wxyz)
+
+        Raises:
+            ValueError: If the orientation is not a 3x3 matrix or 4-element
+                quaternion.
+        """
+        if orientation.shape == (4,):
+            # Quaternion (wxyz) to rotation matrix
+            target_rotation = Rotation.from_quat(
+                [orientation[1], orientation[2], orientation[3], orientation[0]]
+            )
+            rotation_matrix = target_rotation.as_matrix()
+        elif orientation.shape == (3, 3):
+            # Already a rotation matrix
+            rotation_matrix = orientation
+        else:
+            raise ValueError("Orientation must be a 3x3 matrix or 4-element quaternion")
+
+        target_transform = pin.SE3(rotation_matrix, position)
+        assert self.ee_task is not None, "Use set_target_poses() for multi-frame mode"
+        self.ee_task.set_target(target_transform)
+
+    def solve_ik(self, dt: float | None = None) -> bool:
+        """Solve inverse kinematics for current target.
+
+        Args:
+            dt: Integration time step (uses instance default if None).
+
+        Returns:
+            True if successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during the IK solve.
+        """
+        if dt is None:
+            dt = self.integration_time_step
+
+        start_time = time.time()
+
+        assert self.configuration is not None, "Configuration must be initialized"
+        assert self.damping_task is not None, "Damping task must be initialized"
+        assert self.posture_task is not None, "Posture task must be initialized"
+        try:
+            # Prepare tasks and limits
+            tasks = (
+                *self.ee_tasks_list,
+                self.damping_task,
+                self.posture_task,
+            )
+            limits = (
+                self.configuration.model.configuration_limit,
+                self.configuration.model.velocity_limit,
+            )
+
+            # Solve differential IK
+            velocity = pink.solve_ik(
+                self.configuration,
+                tasks,
+                dt,
+                solver=self.solver_name,
+                damping=self.solver_damping_value,
+                limits=limits,
+            )
+
+            # Integrate configuration
+            new_q = self.configuration.integrate(velocity, dt)
+
+            # update configuration
+            self.set_configuration_no_task_update(new_q)
+
+            # Update timing statistics
+            elapsed_time = time.time() - start_time
+            self.last_solve_time = elapsed_time * 1000  # Convert to ms
+            self.solve_times.append(self.last_solve_time)
+
+            # Keep only last 100 solve times for statistics
+            if len(self.solve_times) > 100:
+                self.solve_times = self.solve_times[-100:]
+
+            return True
+
+        except Exception as e:
+            print(f"❌ IK solve failed: {e}")
+            return False
+
+    def get_current_configuration(self) -> np.ndarray:
+        """Get current joint configuration (in radians)."""
+        assert self.configuration is not None, "Configuration must be initialized"
+        return self.configuration.q.copy()
+
+    def get_current_end_effector_pose(self) -> np.ndarray:
+        """Get current end effector pose.
+
+        Returns:
+            4x4 transform matrix.
+        """
+        assert self.configuration is not None, "Configuration must be initialized"
+        transform: pin.SE3 = self.configuration.get_transform_frame_to_world(
+            self.end_effector_frame
+        )
+        return transform.np.copy()
+
+    def get_statistics(self) -> dict[str, float | int]:
+        """Get solver timing statistics (in milliseconds)."""
+        if not self.solve_times:
+            return {
+                "last_solve_time_ms": 0.0,
+                "avg_solve_time_ms": 0.0,
+                "max_solve_time_ms": 0.0,
+            }
+
+        return {
+            "last_solve_time_ms": self.last_solve_time,
+            "avg_solve_time_ms": np.mean(self.solve_times),
+            "max_solve_time_ms": np.max(self.solve_times),
+            "solve_count": len(self.solve_times),
+        }
+
+    def set_configuration_no_task_update(self, joint_config: np.ndarray) -> None:
+        """Set the robot to a specific joint configuration without updating the task.
+
+        Args:
+            joint_config: Array of joint angles to set
+
+        Raises:
+            ValueError: If the joint configuration is not valid (joint
+                configuration must have the same number of joints as the robot
+                model).
+        """
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        assert self.configuration is not None, "Configuration must be initialized"
+        if len(joint_config) != self.urdf_model.nq:
+            raise ValueError(
+                f"Joint configuration must have {self.urdf_model.nq} values, got {len(joint_config)}"
+            )
+
+        # Clamp configuration to limits
+        q_max = self.urdf_model.upperPositionLimit
+        q_min = self.urdf_model.lowerPositionLimit
+        joint_config = np.clip(joint_config, q_min, q_max)
+
+        # Update configuration
+        self.configuration.update(joint_config)
+
+    def set_configuration(self, joint_config: np.ndarray) -> None:
+        """Set the robot to a specific joint configuration.
+
+        Args:
+            joint_config: Array of joint angles to set
+
+        Raises:
+            ValueError: If the joint configuration is not valid (joint
+                configuration must have the same number of joints as the robot
+                model).
+        """
+        self.set_configuration_no_task_update(joint_config)
+        for t in self.ee_tasks_list:
+            t.set_target_from_configuration(self.configuration)
+
+    def set_target_poses(
+        self, targets: dict[str, tuple[np.ndarray, np.ndarray]]
+    ) -> None:
+        """Set target poses for multiple end-effector frames (multi-frame mode).
+
+        Args:
+            targets: dict mapping frame_name to (position_3d, rotation_3x3)
+        """
+        tasks_by_frame = {t.frame: t for t in self.ee_tasks_list}
+        for frame, (position, rotation) in targets.items():
+            if frame not in tasks_by_frame:
+                raise ValueError(f"Frame {frame} not in configured end_effector_frames")
+            tasks_by_frame[frame].set_target(pin.SE3(rotation, position))
+
+    def get_current_end_effector_poses(self) -> dict[str, np.ndarray]:
+        """Get current 4x4 poses for all configured end-effector frames."""
+        assert self.configuration is not None, "Configuration must be initialized"
+        return {
+            frame: self.configuration.get_transform_frame_to_world(frame).np.copy()
+            for frame in self.end_effector_frames
+        }
+
+    def reset_to_neutral(self) -> None:
+        """Reset robot to neutral configuration."""
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        self.set_configuration(pin.neutral(self.urdf_model))
+
+    def _get_available_frames(self) -> list[str]:
+        """Get list of available frame names."""
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        return [self.urdf_model.frames[i].name for i in range(self.urdf_model.nframes)]
+
+    def get_robot_info(self) -> dict[str, Any]:
+        """Get robot information."""
+        assert self.urdf_model is not None, "Robot model must be initialized"
+        return {
+            "urdf_path": self.urdf_path,
+            "end_effector_frame": self.end_effector_frame,
+            "num_joints": self.urdf_model.nq,
+            "num_dof": self.urdf_model.nv,
+            "num_frames": self.urdf_model.nframes,
+            "solver_name": self.solver_name,
+            "available_frames": self._get_available_frames(),
+        }
+
+
+
+==================================================
 FILE: src/common/data_manager.py
 ==================================================
 
@@ -4033,9 +4729,9 @@ from pathlib import Path
 
 import numpy as np
 
-_root = Path(__file__).resolve().parent.parent.parent
+_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
-sys.path.insert(0, str(_root / "examples"))
+sys.path.insert(0, str(_root / "src"))
 
 import yaml
 from meta_quest_teleop.reader import MetaQuestReader
@@ -4456,3 +5152,284 @@ This document provides strict operational constraints and architectural context 
 * Keep an industrial-level testing for all functionality and report the ones that you cannot deal with in the Problem.md file.
 
 * Keep the project files organised.
+
+
+
+==================================================
+FILE: hardware/CLAUDE.md
+==================================================
+
+# Project: SO-101 dual-arm board rig
+
+Parametric OpenSCAD design for a 3D-printable rig that mounts two SO-101
+LeRobot arms plus an overhead camera tower on a shared board, for a
+teleoperation / imitation-learning setup. This file is background for you
+(Claude Code) — read it before making changes, and keep it in sync if the
+design changes.
+
+## What this actually is
+
+- A **board** (NOT printed — plywood/MDF/acrylic) drilled with a uniform
+  grid of plain through-holes, pegboard-style, so the arms and tower can
+  be repositioned later instead of being fixed in one spot. A printed
+  **nut plate** sits under the whole board holding captive M5 nuts.
+- Two **printed adapter plates**, one per arm, that bolt directly into each
+  SO-101 base's real (measured) mounting holes on top, and bolt into 4
+  adjacent grid holes on the board on the bottom.
+- A **printed modular camera tower** (base plate + stacked mast segments +
+  camera platform) that bolts to the board at the grid position centered
+  between the two arms, with an optional core spine rod for rigidity.
+
+The whole point of the grid + adapter approach: the SO-101 base's own hole
+pattern is a small irregular trapezoid that doesn't line up with any
+uniform grid, so a small fixed adapter bridges "the base's real holes" to
+"any position on a reconfigurable board."
+
+## Files
+
+- `config.scad` — single source of truth. Every dimension is a named,
+  commented variable here. **Always edit this file for parameter changes,
+  never hardcode a number in another file.**
+- `arm_mount_adapter.scad` — print x2. Includes `config.scad`.
+- `camera_tower.scad` — print x1 base_plate, N mast_segments, x1
+  camera_platform (all laid out side by side in one render). Includes
+  `config.scad`.
+- `drill_template.scad` — print x1 (renders as `plate_tiles` tiles, since
+  the full 450mm plate exceeds common print beds; tile cuts fall between
+  grid columns). Dual purpose: drill guide clamped to the board, then the
+  permanent under-board nut plate — every hole has a snug hex pocket on
+  its top (board-facing) face. Includes `config.scad`.
+- `README.md` — human-facing summary: what to print how many times,
+  assembly order, which numbers are placeholders. **Keep this updated
+  whenever you change geometry or hardware sizes** — it's the file the
+  user actually reads before printing.
+
+## Confirmed / measured values (config.scad) — do not casually change these
+
+These came from the user's own caliper measurements on the physical
+SO-101 base, not guesses:
+- `base_hole_dia = 3.8` mm
+- `front_hole_spacing = 55.419` mm (center-to-center)
+- `back_hole_spacing = 63.251` mm (center-to-center)
+- `front_to_back_dist = 70` mm
+
+If asked to change the adapter's top hole pattern, these are the values
+that must stay accurate — everything else in the adapter derives from
+them.
+
+## Placeholder / assumed values — flag these, don't silently trust them
+
+- `base_screw_head_dia` / `base_screw_head_h` — assumed M3 pan/socket
+  head, unconfirmed against the user's actual screws.
+- `min_arm_spacing` / `max_arm_spacing` (150-400mm) — a guessed
+  adjustability range, not a hard requirement.
+- `board_thickness` (18mm) — user's stated plan, not yet locked in.
+- `board_margin`, `grid_pitch` — design choices (25mm each), reasonable
+  defaults, freely adjustable.
+
+## Design decisions already made — don't relitigate without being asked
+
+1. **Bolts from the top, nuts captive in a printed nut plate under the
+   board.** Every board-to-part M5 bolt drops in from above (head
+   counterbored flush into the printed part's top face), passes through
+   the board, and threads into a hex nut sitting in a snug hex pocket
+   in the nut plate (`drill_template.scad` — it is the drill guide AND
+   the permanent under-board nut plate; pockets open toward the board,
+   plate bottom is solid). The hard requirement behind this: the
+   board+plate sandwich gets clamped flat to a table, so nothing may
+   protrude below it. The board itself needs only plain through-holes —
+   no recesses. Bolt lengths are stack-up-verified against standard
+   catalogue sizes in the README (M5x35 adapters, M5x30 tower —
+   **M5x35 on the tower would poke out the plate bottom**); re-verify
+   if any part thickness, `board_thickness`, or `nutplate_thick`
+   changes. (This scheme replaced bolts-from-below, then
+   recesses-drilled-into-the-board, both at the user's request.)
+2. **Grid, not fixed holes.** The board is a uniform hole grid so the rig
+   is reconfigurable. Don't replace this with fixed-position holes unless
+   explicitly asked.
+3. **Two-stage adapter, not a direct base-to-board bolt.** The SO-101
+   base's hole pattern is measured and irregular; it does not align to
+   the grid. The adapter plate is the bridge — top matches the base
+   exactly, board bolts are grid-pitch-spaced. The 4 board bolts form a
+   100x100mm square (`adapter_hole_spacing = 4*grid_pitch`) placed
+   fully *outside* the base's trapezoid, per explicit user request, so
+   the top-inserted bolt heads stay reachable with the base attached.
+   Assembly order matters and is documented in the README:
+   base-to-adapter M3 screws (from the adapter's underside) must be
+   installed *before* the adapter is bolted to the board, because the
+   underside becomes inaccessible afterward. Preserve this constraint
+   in any redesign.
+4. **M5 hardware for board/tower, M3 for base-to-adapter.** The user
+   initially asked for M5 everywhere including the base's own holes, but
+   an M5 shaft (5mm) physically cannot pass through a 3.8mm hole. This was
+   corrected and flagged rather than silently complied with — keep that
+   posture: if a future instruction is physically inconsistent with a
+   measured/confirmed value above, say so explicitly rather than forcing
+   it through.
+5. **Stability features present for a reason**, added because the rig
+   shakes during teleoperation/inference (dynamic torque loads, not just
+   static weight):
+   - 4-bolt square board mount per adapter (not 2 in a line) — resists
+     twisting, not just pull-off.
+   - Tapered triangular mast (per explicit user request): hollow
+     equilateral-triangle tube, 110mm side at the board tapering to
+     45mm at the top, 4mm wall — wide where the bending moment is
+     largest, triangular section against twist.
+   - Optional M5 core spine rod through the tower, tensioned base-to-top,
+     puts joints into compression instead of relying on joint screws
+     alone. Terminates below the camera_platform (doesn't pass through
+     it) so the tripod insert hole stays clear.
+   If asked to further improve rigidity, these are the levers that
+   already worked; consider extending them (e.g. spine rod through more
+   of the structure, wider adapter footprint) before inventing new
+   mechanisms.
+6. **Joint style in the tower**: every part has a solid triangular
+   spigot on top (a clearance-shrunk continuation of the tube's inner
+   cavity — it also locks rotation), and the hollow tube interior is
+   the socket, open at the bottom. The part above always sits down over
+   the part below's spigot. Each mast segment has a solid floor
+   (`cap_h`) under its spigot — without it the spigot is a
+   disconnected floating volume (this was a real rendered bug; the
+   `Volumes:` count in headless CGAL output is a cheap way to catch
+   it: it should be number-of-parts + 1). Keep this convention if
+   adding new tower parts.
+
+## Environment notes
+
+- OpenSCAD is installed locally and is on PATH as `openscad`. Verify with
+  `openscad --version` before assuming it's available.
+- If VS Code was installed via snap, spawning `openscad` from it may hit a
+  known snap/glibc symbol-lookup bug
+  (`undefined symbol: __libc_pthread_init`). If you hit this from a
+  headless render command, it's an environment issue, not a `.scad` bug —
+  don't start "fixing" the model in response to it.
+- Headless render/export from the command line, useful for verifying a
+  change actually renders without opening the GUI:
+  ```
+  openscad -o output.stl arm_mount_adapter.scad
+  ```
+  Use `--export-format=asciistl` or check `openscad --help` for current
+  flags if that fails — CLI flags have changed across versions.
+- No internet access should be assumed necessary for this project — it's
+  self-contained OpenSCAD, no external libraries.
+
+## What I'd like help with
+
+Open-ended — this is a living design. Typical asks going forward:
+- Parameter tuning (spacing ranges, hole sizes, tower height) — edit
+  `config.scad`, keep the README's numbers in sync.
+- New parts that follow the existing conventions (hidden bolts from
+  below, grid-pitch-aligned mounting where applicable).
+- Sanity-checking geometry (e.g. "does this hole collide with that one")
+  — this project has a history of exactly that kind of bug, so it's worth
+  actually computing coordinates rather than eyeballing them.
+- Rendering/exporting STLs once a design is stable.
+
+When a request conflicts with a physical constraint (bolt too big for a
+measured hole, part too big for the stated print bed, etc.), say so
+explicitly and propose the closest correct alternative — don't silently
+"fix" it without flagging, and don't silently comply with something that
+won't physically work either.
+
+
+
+==================================================
+FILE: hardware/README.md
+==================================================
+
+# SO-101 dual-arm board rig
+
+Parametric OpenSCAD files for mounting two SO-101 arms + an overhead camera
+tower on a shared board. Free software to open these: https://openscad.org
+Open any `.scad` file there, it renders in 3D, and File > Export > STL when
+you're ready to slice.
+
+## How the fastening works
+
+Every board-mount bolt drops in from the **top**: head counterbored flush
+into the printed part, shaft through the part and the board, threading
+into an M5 hex nut held **captive in a printed nut plate that lives under
+the board**. The nut pockets open toward the board; the plate's bottom
+face is solid and flat, so the whole board+plate sandwich clamps to a
+table. No recesses are drilled into the board — it only needs plain
+5.5mm through-holes, and since you drill them *through the nut plate
+itself* (it doubles as the drill guide), board holes and nut pockets
+align by construction.
+
+## Files
+
+| File | Prints | What it is |
+|---|---|---|
+| `config.scad` | — | Shared parameters. Edit this first; everything else reads from it. |
+| `arm_mount_adapter.scad` | **x2** | Top matches your SO-101 base's real screw holes (M3 from below). Bolts to the board with 4x M5x35 from the top, in a 100x100mm square fully outside the base's footprint. |
+| `camera_tower.scad` | x1 base + 3 mast segments + 1 platform | Tapered triangular tower (110mm side at the board → 45mm at the top); bolts down with 4x M5x30; optional core spine rod. |
+| `drill_template.scad` | x1 (3 tiles) | Drill guide **and** permanent under-board nut plate: every grid hole has a snug hex pocket facing the board. Tiles are ~163/150/138mm wide so they fit common print beds; butt them edge-to-edge in use. |
+
+## Shopping list (standard catalogue hardware)
+
+All lengths assume the 18mm board (`board_thickness`). If your board is
+different, bolt lengths change 1:1 with it.
+
+| Item | Qty | Where | Stack-up check |
+|---|---|---|---|
+| M5x35 socket head cap screw (DIN 912) | 8 | adapters → board (4 per arm) | grip = 16−5.5 (adapter below head) + 18 (board) = 28.5mm; nut adds 4.7 → needs ≥33.2. Tip ends 1.8mm past the nut, 1.5mm above the plate's bottom face. ✓ |
+| M5x30 socket head cap screw (DIN 912) | 4 | tower base → board | grip = 12−5.5 + 18 = 24.5mm; needs ≥29.2. Tip ends 0.8mm past the nut, 2.5mm above the plate bottom. ✓ (M5x35 would poke out the bottom — don't substitute.) |
+| M5 hex nut (ISO 4032, 4.7mm thick) | 14 | 12 in the nut plate pockets + 2 for the spine rod | pocket is 4.8mm deep x 9.4mm across corners — snug slip fit |
+| M5x10 pan/button head screw | 8 | tower joints, 2 per joint, thread-forming into the 4.5mm pilot | **max length 10mm** — at the narrow top joint the face-to-spine-rod distance is 10.25mm, so a 12mm screw would hit the rod channel |
+| M3x16 socket/pan head screw | 8 | SO-101 base → adapter (4 per arm), from below | 12.8mm through the adapter, ~3.2mm into the base. **Confirm how your base receives these** (thread into plastic vs. captive nut) — go M3x20 if it needs more engagement. |
+| M5 threaded rod, ~405mm (cut from 500mm stock) | 1 | optional core spine, with 2 of the nuts + 2 washers | runs from the base spigot pocket to the top segment's spigot pocket |
+| 1/4"-20 heat-set threaded insert | 1 | camera platform tripod hole (8.0mm bore, 12mm deep plate) | check your insert's OD against `tripod_insert_hole` |
+
+## The board itself
+
+Not printed — cut from plywood/MDF/acrylic, 18mm. Current size: **450 x
+150mm**, computed from `max_arm_spacing` (400mm) + edge margin. It only
+needs the plain 5.5mm grid holes, drilled through the clamped-on nut
+plate tiles. No counterbores, no recesses.
+
+## Assembly order (matters!)
+
+1. **Drill the board.** Butt the 3 nut plate tiles edge-to-edge on the
+   board, clamp, drill every grid hole with a 5.5mm bit through the
+   plate's bores.
+2. **Load the nut plate.** Lay the tiles pocket-side-up on the table,
+   drop an M5 nut into each pocket you'll use (they press in snugly),
+   and set the board on top, holes aligned.
+3. **Base to adapter.** Bolt each SO-101 base onto an
+   `arm_mount_adapter` using 4x M3 screws from the adapter's underside —
+   do this before the adapter touches the board, since those screws
+   become inaccessible afterward.
+4. **Adapter to board.** Set the adapter+base assembly over a 100x100mm
+   square of grid holes and drop 4x M5x35 in from the top — they thread
+   into the captive nuts below. Move to different grid positions later
+   to change arm spacing.
+5. **Tower base.** Bolt `base_plate` down the same way with 4x M5x30.
+   Drop a washer+nut into its spigot-top pocket and thread in the spine
+   rod.
+6. **Mast stack.** Slide each `mast_segment` down over the rod — widest
+   first, the taper only assembles one way — 2x M5x10 per joint.
+7. **Tension the spine.** At the top segment's spigot pocket, add a
+   washer and nut, and tighten — this puts the whole stack into
+   compression.
+8. **Platform.** Press the 1/4"-20 heat-set insert into
+   `camera_platform`'s center hole, then seat it on top (normal
+   spigot/socket fit — the rod stops below it).
+
+## Numbers to double-check before printing
+
+- `front_hole_spacing` (55.419mm), `back_hole_spacing` (63.251mm),
+  `front_to_back_dist` (70mm), `base_hole_dia` (3.8mm) — from your caliper
+  measurements.
+- `base_screw_head_dia` / `base_screw_head_h` — assumed M3 pan/socket
+  head. Confirm against your actual screws.
+- **Check the SO-101 base's outer footprint** against the adapter's bolt
+  counterbores: the bolt heads sit at the corners of a 100x100mm square
+  (~71mm from the adapter center). If the base's body overhangs those
+  spots you can't drop the bolts in — bump `adapter_hole_spacing` to
+  `5*grid_pitch` (125mm) and enlarge `adapter_w`/`adapter_d` to ~145.
+- `board_thickness` — set to your real board, and re-check the bolt
+  lengths in the shopping list if it isn't 18mm.
+- `min_arm_spacing` / `max_arm_spacing` — placeholder range (150-400mm).
+
+Everything else (bolt clearances, pocket sizes, grid pitch) is a named
+variable in `config.scad` — change a number, re-render, re-export.

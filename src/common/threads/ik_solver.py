@@ -11,9 +11,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pink_ik_solver import PinkIKSolver
 
-from so101_garment.src.common.configs import IK_SOLVER_RATE
-from so101_garment.src.common.data_manager import DataManager, RobotActivityState
-from so101_garment.src.common.utils import scale_and_add_delta_transform
+from common.configs import IK_SOLVER_RATE
+from common.data_manager import DataManager, RobotActivityState
+from common.utils import scale_and_add_delta_transform
 
 
 def ik_solver_thread(data_manager: DataManager, ik_solver: PinkIKSolver) -> None:

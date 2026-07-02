@@ -40,7 +40,24 @@ echo "=> Checking out git log hash 3dd19d043e2f3fe5673b13ea0ebe4f31884c0797.."
 git checkout 3dd19d043e2f3fe5673b13ea0ebe4f31884c0797
 
 echo "=> Installing LeRobot in editable mode with [dataset,pi] extras..."
-pip install -e ".[dataset,pi]"
+pip install -e ".[feetech, dataset,pi]"
+
+# Clone and install the Meta Quest reader
+echo "=> Setting up Meta Quest teleop reader..."
+cd ..
+if [ ! -d "meta_quest_teleop" ]; then
+    echo "=> Cloning meta_quest_teleop repository..."
+    git clone https://github.com/NeuracoreAI/meta_quest_teleop.git
+fi
+
+cd meta_quest_teleop
+pip install -e .
+
+# Install adb (Android Debug Bridge) — required to talk to the Meta Quest over USB
+if ! command -v adb &> /dev/null; then
+    echo "=> Installing adb (needed for Meta Quest USB connection, sudo may prompt)..."
+    sudo apt install -y android-tools-adb
+fi
 
 # Return to the main project directory
 cd ../so101_garment

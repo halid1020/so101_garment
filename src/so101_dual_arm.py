@@ -44,7 +44,7 @@ class SO101DualArm:
         self.bus_1 = self._setup_motors(self.calib_1, port_1)
 
     def _load_calibration(self, robot_name: str) -> MotorCalibration:
-        fpath = Path(f"calibration_files/{robot_name}.json")
+        fpath = Path(__file__).resolve().parent / f"calibration_files/{robot_name}.json"
         with open(fpath) as f, draccus.config_type("json"):
             return draccus.load(Dict[str, MotorCalibration], f)
 
