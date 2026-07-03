@@ -223,8 +223,43 @@ Visualizations:
   trajectory (top + side view) for scenario 0, all methods.
 - `outputs/teleop_benchmark_gifs/*.gif` — animated renders of every
   (trajectory, method) episode of Experiment 1 for visual comparison
-  (`<trajectory>_<method>.gif`).
+  (`<trajectory>_<method>.gif`), plus one handover trial per method
+  (`handover_s00_<method>.gif`).
 - Raw per-episode results: `outputs/teleop_benchmark/handover.json`.
+
+### 3.3 Head-to-head GIF gallery
+
+Panel order in every comparison strip, left → right:
+**pink_full · pink_relaxed · dls · mink · scipy_ls**.
+(Files live in `outputs/teleop_benchmark_gifs/`; regenerate with the
+commands in §3.2 and stitch with `sim_benchmark/combine_gifs.py`.)
+
+**Pick–handover–place, scenario 0** — watch `pink_full`, `dls` and `mink`
+descend *next to* the cube but never reach it (tracking error > grasp
+radius), while `pink_relaxed` and `scipy_ls` complete the pick, midline
+transfer, and placement:
+
+![handover head-to-head](../outputs/teleop_benchmark_gifs/compare_handover_s00.gif)
+
+**Circle, r = 5 cm** — the full-orientation methods trace visibly
+squashed ellipses; the position-first methods draw round circles:
+
+![circle head-to-head](../outputs/teleop_benchmark_gifs/compare_circle_r5cm.gif)
+
+**Line, 90° (pure sideways)** — the starkest case: `pink_full` and `mink`
+barely move sideways at all:
+
+![line head-to-head](../outputs/teleop_benchmark_gifs/compare_line_90deg.gif)
+
+Single-method trials for the handover task:
+
+| pink_full | pink_relaxed | scipy_ls |
+|---|---|---|
+| <img src="../outputs/teleop_benchmark_gifs/handover_s00_pink_full.gif" width="260"/> | <img src="../outputs/teleop_benchmark_gifs/handover_s00_pink_relaxed.gif" width="260"/> | <img src="../outputs/teleop_benchmark_gifs/handover_s00_scipy_ls.gif" width="260"/> |
+
+| dls | mink |
+|---|---|
+| <img src="../outputs/teleop_benchmark_gifs/handover_s00_dls.gif" width="260"/> | <img src="../outputs/teleop_benchmark_gifs/handover_s00_mink.gif" width="260"/> |
 
 Reproduce with:
 
@@ -236,8 +271,14 @@ venv/bin/python sim_benchmark/run_handover.py \
 # watch a single handover live
 venv/bin/python sim_benchmark/run_handover.py --view --methods scipy_ls --scenarios 0
 
-# regenerate the GIFs
+# regenerate the GIFs (tracking suite + one handover trial per method)
 venv/bin/python sim_benchmark/run_benchmark.py --gif outputs/teleop_benchmark_gifs
+venv/bin/python sim_benchmark/run_handover.py --scenarios 0 --gif outputs/teleop_benchmark_gifs
+
+# stitch a head-to-head strip (any set of episode GIFs)
+venv/bin/python sim_benchmark/combine_gifs.py \
+    outputs/teleop_benchmark_gifs/handover_s00_{pink_full,pink_relaxed,dls,mink,scipy_ls}.gif \
+    -o outputs/teleop_benchmark_gifs/compare_handover_s00.gif --panel-width 320
 ```
 
 ---

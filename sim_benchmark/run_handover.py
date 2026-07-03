@@ -46,6 +46,7 @@ def run_episode(
     method_factory: MethodFactory,
     scenario: Scenario,
     view: bool = False,
+    gif_path: Path | None = None,
 ) -> dict:
     """Run one scenario with one method; return episode results."""
     method = method_factory(sim.model)
@@ -75,6 +76,12 @@ def run_episode(
         import mujoco.viewer
 
         viewer_ctx = mujoco.viewer.launch_passive(sim.model, sim.data)
+
+    recorder = None
+    if gif_path is not None:
+        from sim_benchmark.gif import GifRecorder
+
+        recorder = GifRecorder(sim.model, label=gif_path.stem)
 
     try:
         for k in range(n_ticks):
@@ -116,6 +123,9 @@ def run_episode(
                 pos, _ = sim.eef_pose(side)
                 track_errs.append(float(np.linalg.norm(targets[side][0] - pos)))
 
+            if recorder is not None:
+                recorder.maybe_capture(sim.data, t)
+
             if viewer_ctx is not None:
                 if not viewer_ctx.is_running():
                     break
@@ -126,6 +136,10 @@ def run_episode(
     finally:
         if viewer_ctx is not None:
             viewer_ctx.close()
+        if recorder is not None and gif_path is not None:
+            recorder.save(gif_path)
+            recorder.close()
+            print(f"  saved {gif_path}")
 
     final = sim.payload_pos()
     place_err = float(np.linalg.norm(final[:2] - scenario.target_pos[:2]))
@@ -266,6 +280,13 @@ def main() -> None:
     parser.add_argument("--view", action="store_true", help="Live MuJoCo viewer")
     parser.add_argument("--save", type=str, default=None, help="Save results JSON")
     parser.add_argument("--plot", type=str, default=None, metavar="DIR")
+    parser.add_argument(
+        "--gif",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Record an animated GIF per (scenario, method) to DIR",
+    )
     args = parser.parse_args()
 
     print(f"Sampling {args.n_scenarios} feasible scenarios (seed {args.seed})...")
@@ -278,7 +299,12 @@ def main() -> None:
     for name in args.methods:
         episodes[name] = []
         for sc in scenarios:
-            ep = run_episode(sim, METHODS[name], sc, view=args.view)
+            gif_path = (
+                Path(args.gif) / f"handover_s{sc.index:02d}_{name}.gif"
+                if args.gif
+                else None
+            )
+            ep = run_episode(sim, METHODS[name], sc, view=args.view, gif_path=gif_path)
             status = "ok " if ep["success"] else "FAIL"
             print(
                 f"▶ {name:<13} #{sc.index:02d} [{status}] "
