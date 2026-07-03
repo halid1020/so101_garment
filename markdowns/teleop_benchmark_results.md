@@ -340,7 +340,44 @@ For garment-folding strokes on the table plane:
 - **Do not deploy the current production config (`pink_full`) for
   bimanual handovers** — it scored 0/30 in simulation.
 
-## 6. Reproducing
+## 6. Trying the methods with the real Meta Quest
+
+All five methods are wired into the production Quest pipeline via
+`sim_benchmark/method_adapter.py` (PinkIKSolver-compatible facade + a
+joint-space rate limiter, default 2–3 rad/s). Two entry points:
+
+```bash
+# 1. Headset -> MuJoCo sim: full production stack (One-Euro filter, grip
+#    clutch, handle calibration, armplane orientation) driving the
+#    simulated arms in a live viewer. Rehearse every method here first.
+venv/bin/python tool/quest_sim_teleop.py --method scipy_ls
+#    (--mock replaces the headset with a scripted device for smoke tests)
+
+# 2. Headset -> REAL arms: the standard teleop tool, IK layer selectable.
+#    Default remains the unchanged production solver.
+venv/bin/python tool/meta_quest_teleopration.py --method pink_relaxed
+```
+
+Pipeline smoke test (mock device, 10 s circles, sim tracking error):
+
+| method | mean (mm) | p95 (mm) |
+|---|---|---|
+| scipy_ls | 5.9 | 9.3 |
+| mink | 6.1 | 9.7 |
+| dls | 6.2 | 10.1 |
+| pink_relaxed | 8.2 | 13.0 |
+| pink_full | 11.0 | 19.8 |
+
+Note how much closer the methods are here than in the open-loop benchmark:
+the production pipeline's **armplane orientation mapping** builds
+orientation targets that are reachable by construction, largely neutralizing
+the 5-DoF orientation conflict that dominated Experiments 1–2. The
+open-loop benchmark ranks the raw IK layers; with the production mapping on
+top, method choice becomes a smoothness/robustness trade rather than a
+pass/fail one — which is exactly what to evaluate hands-on with the
+headset.
+
+## 7. Reproducing
 
 ```bash
 # full sweep + report table

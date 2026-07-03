@@ -284,12 +284,20 @@ class DualArmSim:
         Used to isolate pure IK error (commanded q vs target) from the
         servo-tracking error measured in the stepped physics.
         """
+        return {side: pose[:3, 3] for side, pose in self.fk_eef_pose(q).items()}
+
+    def fk_eef_pose(self, q: np.ndarray) -> dict[str, np.ndarray]:
+        """Full 4x4 EE poses for an arm configuration (scratch data only)."""
         if not hasattr(self, "_fk_data"):
             self._fk_data = mujoco.MjData(self.model)
         self._fk_data.qpos[:] = 0.0
         self._fk_data.qpos[self.arm_qpos_idx] = q
         mujoco.mj_kinematics(self.model, self._fk_data)
-        return {
-            side: self._fk_data.site_xpos[self.eef_site_id[side]].copy()
-            for side in SIDES
-        }
+        poses = {}
+        for side in SIDES:
+            sid = self.eef_site_id[side]
+            pose = np.eye(4)
+            pose[:3, :3] = self._fk_data.site_xmat[sid].reshape(3, 3)
+            pose[:3, 3] = self._fk_data.site_xpos[sid]
+            poses[side] = pose
+        return poses

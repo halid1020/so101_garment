@@ -65,6 +65,24 @@ def load_yaml(filepath):
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="production",
+        choices=["production", "pink_full", "pink_relaxed", "dls", "mink", "scipy_ls"],
+        help=(
+            "IK layer: 'production' is the tuned Pink solver this tool has "
+            "always used; the others are the sim-benchmark methods, wrapped "
+            "in a joint-space rate limiter. Rehearse in simulation first "
+            "with tool/quest_sim_teleop.py."
+        ),
+    )
+    parser.add_argument(
+        "--max-joint-vel",
+        type=float,
+        default=2.0,
+        help="Joint-space rate limit (rad/s) applied to benchmark methods",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -89,23 +107,35 @@ def main():
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
 
-    # 3. Dual-arm Pink IK solver (10 body DOF, grippers locked)
-    print("\n🔧 Creating dual-arm Pink IK solver...")
-    ik_solver = PinkIKSolver(
-        urdf_path=DUAL_URDF_PATH,
-        end_effector_frames=END_EFFECTOR_FRAME_NAMES,
-        solver_name=SOLVER_NAME,
-        position_cost=POSITION_COST,
-        # Anisotropic: zero cost on the EE-local yaw axis (no wrist-yaw joint)
-        orientation_cost=ORIENTATION_COST * np.asarray(EE_ORIENTATION_COST_MASK),
-        frame_task_gain=FRAME_TASK_GAIN,
-        lm_damping=LM_DAMPING,
-        damping_cost=DAMPING_COST,
-        solver_damping_value=SOLVER_DAMPING_VALUE,
-        integration_time_step=1.0 / IK_SOLVER_RATE,
-        initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
-        posture_cost_vector=np.array(POSTURE_COST_VECTOR_DUAL, dtype=float),
-    )
+    # 3. IK layer (10 body DOF, grippers locked): production Pink solver or
+    # one of the sim-benchmark methods behind the PinkIKSolver interface.
+    if args.method == "production":
+        print("\n🔧 Creating dual-arm Pink IK solver (production)...")
+        ik_solver = PinkIKSolver(
+            urdf_path=DUAL_URDF_PATH,
+            end_effector_frames=END_EFFECTOR_FRAME_NAMES,
+            solver_name=SOLVER_NAME,
+            position_cost=POSITION_COST,
+            # Anisotropic: zero cost on the EE-local yaw axis (no wrist-yaw joint)
+            orientation_cost=ORIENTATION_COST * np.asarray(EE_ORIENTATION_COST_MASK),
+            frame_task_gain=FRAME_TASK_GAIN,
+            lm_damping=LM_DAMPING,
+            damping_cost=DAMPING_COST,
+            solver_damping_value=SOLVER_DAMPING_VALUE,
+            integration_time_step=1.0 / IK_SOLVER_RATE,
+            initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
+            posture_cost_vector=np.array(POSTURE_COST_VECTOR_DUAL, dtype=float),
+        )
+    else:
+        from sim_benchmark.method_adapter import MethodIKAdapter
+
+        print(f"\n🔧 Creating benchmark IK method '{args.method}'...")
+        ik_solver = MethodIKAdapter(
+            args.method,
+            dt=1.0 / IK_SOLVER_RATE,
+            max_joint_vel=args.max_joint_vel,
+            initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
+        )
 
     # 4. Quest reader (IK thread reads it directly)
     print("\n🎮 Initializing Meta Quest reader...")

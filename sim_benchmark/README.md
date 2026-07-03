@@ -89,6 +89,28 @@ venv/bin/python sim_benchmark/run_handover.py \
     --view --methods scipy_ls --scenarios 0
 ```
 
+## Driving the methods with the real Meta Quest
+
+`sim_benchmark/method_adapter.py` wraps any registered method in the
+PinkIKSolver interface the production Quest pipeline expects, so all five
+methods run behind the *unchanged* production stack (One-Euro filtering,
+grip clutch, handle-axis calibration, armplane orientation mapping), with
+a joint-space rate limiter for safety.
+
+```bash
+# headset -> MuJoCo sim (rehearse here first; viewer shows the arms)
+venv/bin/python tool/quest_sim_teleop.py --method scipy_ls
+venv/bin/python tool/quest_sim_teleop.py --method dls --ip-address <QUEST_IP>
+
+# no headset: scripted mock device, pipeline smoke test
+venv/bin/python tool/quest_sim_teleop.py --method mink --mock --duration 15
+
+# headset -> REAL dual arms (same tool as always; default is the
+# unchanged production solver)
+venv/bin/python tool/meta_quest_teleopration.py --method pink_relaxed
+venv/bin/python tool/meta_quest_teleopration.py            # production
+```
+
 ## Key findings so far
 
 1. On a 5-DoF arm, **holding full 6D orientation while translating sideways
