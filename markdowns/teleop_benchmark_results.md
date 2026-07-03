@@ -8,7 +8,7 @@ real robots.
 
 ---
 
-## 1. Experiment design
+## 1. Experiment 1: tracking benchmark — design
 
 ### 1.1 Simulation environment
 
@@ -76,7 +76,7 @@ same settled neutral pose `[0, −10, 20, 25, 0]°` per arm.
 
 ---
 
-## 2. Results
+## 2. Experiment 1: results
 
 ### 2.1 Summary (mean measured error across all 7 trajectories)
 
@@ -168,7 +168,81 @@ Top-view path plots (target vs IK command vs measured, per method and arm):
 
 ---
 
-## 3. Findings
+## 3. Experiment 2: bimanual pick–handover–place
+
+### 3.1 Design
+
+A coordination task requiring both arms: a 2.2 cm payload cube starts on
+one arm's side of the table and must end up on the *other* arm's side, so
+the picker arm grasps it and carries it to a midline handover point
+(x = 0.26, y = 0), the placer arm takes it there, carries it to the target
+and releases it. The mocked human motion is minimum-jerk between keyposes
+at 8 cm/s with 0.5 s dwells around grasp/transfer/release; orientation is
+held at the latched pose (clutch semantics, as in Experiment 1).
+
+- **Scenarios:** 30 seeded samples (`seed=0`) of payload position
+  (picker's side, x ∈ [0.22, 0.33], |y| ∈ [0.08, 0.20]) and target
+  position (mirrored range on the placer's side), alternating which arm
+  picks (15 left / 15 right). Every scenario is verified **physically
+  feasible** before use: position-only IK must reach all six keyposes
+  (grasp, hover, handover for both arms, place, retreat) within 6 mm for
+  the arm that must reach them.
+- **Mock grasp:** kinematic attach when a gripper is commanded closed
+  within 4.5 cm of the payload; released payloads fall under physics and
+  must *land* on the target. The generous radius and the object-alignment
+  correction (after the placer acquires the payload its targets are
+  shifted by the measured EE↔object offset) stand in for the visual
+  servoing a human teleoperator performs — the script is open-loop.
+- **Success:** payload within 2 cm (XY) of the target after release and a
+  1.2 s settle.
+
+### 3.2 Results (30 scenarios × 5 methods)
+
+| method | success | handover | place err mean (mm) | place err p95 (mm) | track err mean (mm) | solve (ms) |
+|---|---|---|---|---|---|---|
+| `scipy_ls` | **30/30 (100%)** | 100% | 12.7 | 16.5 | 11.7 | 1.55 |
+| `pink_relaxed` | **29/30 (96.7%)** | 100% | 16.4 | 19.7 | 13.3 | 0.19 |
+| `pink_full` (production) | 0/30 | 0% | 278.2 | 351.0 | 65.5 | 0.19 |
+| `dls` | 0/30 | 0% | 254.0 | 322.8 | 54.6 | 0.11 |
+| `mink` | 0/30 | 0% | 276.2 | 350.4 | 62.7 | 0.18 |
+
+The failure mode of the full-orientation methods is total: their 55–65 mm
+tracking error exceeds the 4.5 cm grasp radius, so the **pick never
+succeeds** — the payload simply never moves (place error ≈ the raw
+pick-to-target distance). This is Experiment 1's orientation-vs-position
+finding expressed as task outcome instead of tracking error: handover
+scenarios inherently demand sideways (y) reaches across the midline,
+exactly the direction a 5-DoF arm cannot serve while holding full 6D
+orientation.
+
+Visualizations:
+
+- `outputs/teleop_benchmark_plots/handover_success_map.png` — pick→target
+  arrows for all 30 scenarios, per method, green/red by success.
+- `outputs/teleop_benchmark_plots/handover_payload_paths.png` — payload
+  trajectory (top + side view) for scenario 0, all methods.
+- `outputs/teleop_benchmark_gifs/*.gif` — animated renders of every
+  (trajectory, method) episode of Experiment 1 for visual comparison
+  (`<trajectory>_<method>.gif`).
+- Raw per-episode results: `outputs/teleop_benchmark/handover.json`.
+
+Reproduce with:
+
+```bash
+venv/bin/python sim_benchmark/run_handover.py \
+    --save outputs/teleop_benchmark/handover.json \
+    --plot outputs/teleop_benchmark_plots
+
+# watch a single handover live
+venv/bin/python sim_benchmark/run_handover.py --view --methods scipy_ls --scenarios 0
+
+# regenerate the GIFs
+venv/bin/python sim_benchmark/run_benchmark.py --gif outputs/teleop_benchmark_gifs
+```
+
+---
+
+## 4. Findings
 
 1. **Full 6D orientation tracking is over-constrained on a 5-DoF arm.**
    The SO-101 has no wrist yaw, so any sideways (y) translation requires
@@ -202,20 +276,30 @@ Top-view path plots (target vs IK command vs measured, per method and arm):
    kp = 25) on top of IK error — visible as the gap between `ik_err` and
    `err_mean` for the accurate methods.
 
-## 4. Recommendation
+5. **The handover task turns the tracking gap into a pass/fail cliff.**
+   Methods above ~45 mm tracking error score 0/30 (cannot even pick);
+   methods below ~15 mm score 29–30/30. Task-level success is far less
+   forgiving than average tracking error suggests — worth remembering
+   when reading Experiment 1's tables.
+
+## 5. Recommendation
 
 For garment-folding strokes on the table plane:
 
 - **First choice: `pink_relaxed`** — a one-line config change to the
   production stack (orientation cost 0.75 → ~0.05), 2× accuracy gain,
-  smooth everywhere, inherits the existing safety behavior.
-- **If tighter tracking is needed:** `scipy_ls` wrapped in a joint-space
-  rate limiter (clamp Δq per tick), or a hybrid: `scipy_ls` targets fed
-  through the Pink velocity-damped QP.
+  smooth everywhere, inherits the existing safety behavior, and 29/30 on
+  the bimanual handover task.
+- **If tighter tracking is needed:** `scipy_ls` (30/30 on handover, best
+  place accuracy) wrapped in a joint-space rate limiter (clamp Δq per
+  tick), or a hybrid: `scipy_ls` targets fed through the Pink
+  velocity-damped QP.
 - Keep a **velocity limit in any QP-based method** and a workspace clamp
   on targets before they reach the IK layer.
+- **Do not deploy the current production config (`pink_full`) for
+  bimanual handovers** — it scored 0/30 in simulation.
 
-## 5. Reproducing
+## 6. Reproducing
 
 ```bash
 # full sweep + report table

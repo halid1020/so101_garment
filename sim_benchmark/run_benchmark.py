@@ -51,6 +51,7 @@ def run_episode(
     method_factory: MethodFactory,
     trajectory: MockTrajectory,
     view: bool = False,
+    gif_path: Path | None = None,
 ) -> tuple[dict, RunLog]:
     """Run one (method, trajectory) episode; return (metrics, raw log)."""
     method = method_factory(sim.model)
@@ -71,6 +72,12 @@ def run_episode(
         import mujoco.viewer
 
         viewer_ctx = mujoco.viewer.launch_passive(sim.model, sim.data)
+
+    recorder = None
+    if gif_path is not None:
+        from sim_benchmark.gif import GifRecorder
+
+        recorder = GifRecorder(sim.model, label=gif_path.stem)
 
     try:
         for k in range(n_ticks):
@@ -96,6 +103,9 @@ def run_episode(
                 solve_ms,
             )
 
+            if recorder is not None:
+                recorder.maybe_capture(sim.data, t)
+
             if viewer_ctx is not None:
                 if not viewer_ctx.is_running():
                     break
@@ -107,6 +117,10 @@ def run_episode(
     finally:
         if viewer_ctx is not None:
             viewer_ctx.close()
+        if recorder is not None and gif_path is not None:
+            recorder.save(gif_path)
+            recorder.close()
+            print(f"  saved {gif_path}")
 
     q_low = np.array([sim.model.joint(j).range[0] for j in ARM_JOINTS])
     q_high = np.array([sim.model.joint(j).range[1] for j in ARM_JOINTS])
@@ -194,6 +208,13 @@ def main() -> None:
         metavar="DIR",
         help="Save top-view XY path plots (target vs IK vs measured) to DIR",
     )
+    parser.add_argument(
+        "--gif",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Record an animated GIF per (trajectory, method) to DIR",
+    )
     args = parser.parse_args()
 
     suite = default_suite()
@@ -214,7 +235,10 @@ def main() -> None:
         logs[traj.name] = {}
         for name in args.methods:
             print(f"▶ {traj.name} / {name} ...", flush=True)
-            metrics, log = run_episode(sim, METHODS[name], traj, view=args.view)
+            gif_path = Path(args.gif) / f"{traj.name}_{name}.gif" if args.gif else None
+            metrics, log = run_episode(
+                sim, METHODS[name], traj, view=args.view, gif_path=gif_path
+            )
             results[traj.name][name] = metrics
             logs[traj.name][name] = log
 

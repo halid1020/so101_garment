@@ -41,6 +41,29 @@ target-following quality.
 - `lim_margin` — worst-case distance to a joint limit (deg).
 - `solve` — per-tick compute cost (ms).
 
+## Experiment 2: pick–handover–place (`run_handover.py`)
+
+A bimanual coordination task on top of the same scene and methods: a 2.2 cm
+payload cube starts on one arm's side of the table and must end on the
+other arm's side, so the picker arm grasps and carries it to a midline
+handover point, the placer arm takes it and places it on the target.
+
+- **Scenarios:** N (default 30) seeded samples of (payload position,
+  target position), alternating pick side; each is kept only if
+  position-only IK confirms every keypose is reachable by the arm that
+  must reach it ("physically feasible for the two arms").
+- **Mock human:** minimum-jerk segments between keyposes at 8 cm/s, dwell
+  at grasp/transfer/release, orientation latched at start (clutch
+  semantics). After the placer acquires the object, its targets are
+  shifted by the measured EE↔object offset — a human aligns the *object*
+  over the target, not their hand.
+- **Mock grasp:** kinematic attach when the gripper is commanded closed
+  within 4.5 cm of the payload (stands in for grasp physics *and* the
+  visual servoing a human does; the script is open-loop). Released
+  payloads fall under physics and must land on the target.
+- **Success:** payload within 2 cm (XY) of the target after release +
+  settle. Also reported: handover rate, place error, tracking error.
+
 ## Usage
 
 ```bash
@@ -55,6 +78,15 @@ venv/bin/python sim_benchmark/run_benchmark.py \
 # watch one method live in the MuJoCo viewer
 venv/bin/python sim_benchmark/run_benchmark.py \
     --view --methods pink_relaxed --trajectories circle_r5cm
+
+# pick-handover-place: full 30-scenario sweep
+venv/bin/python sim_benchmark/run_handover.py \
+    --save outputs/teleop_benchmark/handover.json \
+    --plot outputs/teleop_benchmark_plots
+
+# watch one handover scenario live
+venv/bin/python sim_benchmark/run_handover.py \
+    --view --methods scipy_ls --scenarios 0
 ```
 
 ## Key findings so far

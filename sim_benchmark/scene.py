@@ -33,6 +33,9 @@ from sim_benchmark.constants import (
 
 TARGET_RGBA = {"left": (0.9, 0.2, 0.2, 0.5), "right": (0.2, 0.4, 0.9, 0.5)}
 
+# Payload cube half-extent (m); resting center height == PAYLOAD_HALF.
+PAYLOAD_HALF = 0.011
+
 
 def patched_urdf_path() -> str:
     """Return a temp URDF path with a MuJoCo compiler block injected."""
@@ -83,14 +86,29 @@ def build_spec() -> mujoco.MjSpec:
         conaffinity=0,
     )
     # Table slab whose top surface is the arms' mounting plane (z = 0).
+    # Collision group 2: table <-> payload only (robot geoms stay inert).
     spec.worldbody.add_geom(
         name="table",
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=[0.5, 0.45, 0.02],
         pos=[0.15, 0, -0.02],
         rgba=[0.55, 0.42, 0.30, 1.0],
-        contype=0,
-        conaffinity=0,
+        contype=2,
+        conaffinity=2,
+    )
+
+    # Payload cube for the pick-handover-place experiment. Grasping is
+    # mocked kinematically (see DualArmSim.attach), so it only needs
+    # contact with the table to rest and to land after release.
+    payload = spec.worldbody.add_body(name="payload", pos=[0.30, 0.15, PAYLOAD_HALF])
+    payload.add_freejoint(name="payload_free")
+    payload.add_geom(
+        name="payload_geom",
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=[PAYLOAD_HALF] * 3,
+        rgba=[1.0, 0.55, 0.1, 1.0],
+        contype=2,
+        conaffinity=2,
     )
 
     # End-effector tracking sites.
@@ -155,6 +173,17 @@ class DualArmSim:
             side: self.model.body(f"{side}_target").mocapid[0] for side in SIDES
         }
 
+        payload_joint = self.model.joint("payload_free")
+        qadr, vadr = payload_joint.qposadr[0], payload_joint.dofadr[0]
+        self._payload_pos_sl = slice(qadr, qadr + 3)
+        self._payload_quat_sl = slice(qadr + 3, qadr + 7)
+        self._payload_vel_sl = slice(vadr, vadr + 6)
+        # Mock-grasp state: which arm holds the payload, and the payload
+        # pose captured in that arm's EE-site frame at attach time.
+        self.attached_side: str | None = None
+        self._attach_offset_pos = np.zeros(3)
+        self._attach_offset_rot = np.eye(3)
+
     def neutral_q(self) -> np.ndarray:
         """Neutral arm configuration (radians, ARM_JOINTS order)."""
         return np.deg2rad(np.array(NEUTRAL_ARM_ANGLES_DEG * 2))
@@ -163,6 +192,7 @@ class DualArmSim:
         """Reset sim state to the given arm configuration (settled, zero vel)."""
         if q is None:
             q = self.neutral_q()
+        self.attached_side = None
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[self.arm_qpos_idx] = q
         self.data.ctrl[self.arm_ctrl_idx] = q
@@ -183,6 +213,59 @@ class DualArmSim:
     def step(self, n_substeps: int) -> None:
         for _ in range(n_substeps):
             mujoco.mj_step(self.model, self.data)
+            if self.attached_side is not None:
+                self._follow_gripper()
+
+    # ------------------------------------------------------------------
+    # Payload / mock grasp
+    # ------------------------------------------------------------------
+
+    def set_payload_pos(self, pos: np.ndarray) -> None:
+        """Place the payload (settled, zero velocity, identity attitude)."""
+        self.data.qpos[self._payload_pos_sl] = pos
+        self.data.qpos[self._payload_quat_sl] = [1, 0, 0, 0]
+        self.data.qvel[self._payload_vel_sl] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
+    def payload_pos(self) -> np.ndarray:
+        return self.data.qpos[self._payload_pos_sl].copy()
+
+    def try_attach(self, side: str, radius: float = 0.045) -> bool:
+        """Mock grasp: attach the payload to `side`'s gripper if it is
+        within `radius` of the EE site. No-op if the other arm holds it.
+
+        Returns True if the payload is (now) held by `side`.
+        """
+        if self.attached_side == side:
+            return True
+        if self.attached_side is not None:
+            return False
+        ee_pos, ee_rot = self.eef_pose(side)
+        if np.linalg.norm(self.payload_pos() - ee_pos) > radius:
+            return False
+        self.attached_side = side
+        self._attach_offset_pos = ee_rot.T @ (self.payload_pos() - ee_pos)
+        quat = self.data.qpos[self._payload_quat_sl]
+        rot = np.empty(9)
+        mujoco.mju_quat2Mat(rot, quat)
+        self._attach_offset_rot = ee_rot.T @ rot.reshape(3, 3)
+        return True
+
+    def release(self, side: str) -> None:
+        """Release the payload if `side` is holding it (it falls freely)."""
+        if self.attached_side == side:
+            self.attached_side = None
+
+    def _follow_gripper(self) -> None:
+        """Kinematically pin the held payload to the gripper frame."""
+        assert self.attached_side is not None
+        ee_pos, ee_rot = self.eef_pose(self.attached_side)
+        self.data.qpos[self._payload_pos_sl] = ee_pos + ee_rot @ self._attach_offset_pos
+        rot = ee_rot @ self._attach_offset_rot
+        quat = np.empty(4)
+        mujoco.mju_mat2Quat(quat, rot.reshape(9))
+        self.data.qpos[self._payload_quat_sl] = quat
+        self.data.qvel[self._payload_vel_sl] = 0.0
 
     def eef_pose(self, side: str) -> tuple[np.ndarray, np.ndarray]:
         """Measured EE pose: (position(3), rotation(3,3)) in world frame."""
