@@ -37,3 +37,10 @@ CONTROL_RATE_HZ = 50.0
 # Position-servo gains for the simulated STS3215 bus servos.
 ACTUATOR_KP = 25.0
 ACTUATOR_KV = 1.5
+
+# Joint dynamics matching the official SO-ARM100 MJCF (STS3215 servos).
+# The URDF carries none; both the benchmark scene and the sim twin apply
+# these programmatically.
+JOINT_DAMPING = 0.60
+JOINT_ARMATURE = 0.028
+JOINT_FRICTIONLOSS = 0.05

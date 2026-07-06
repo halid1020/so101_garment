@@ -36,7 +36,7 @@ include <config.scad>
 
 k_off        = 2*sqrt(3); // triangle side-length change per unit of inward offset
 spigot_clear = 1.4;       // side-length clearance on spigots (~0.4mm per face)
-spigot_h     = 20;
+spigot_h     = tower_spigot_h; // from config.scad (sim twin needs it too)
 
 seg_count  = ceil(tower_height_total / tower_segment_max);
 seg_height = tower_height_total / seg_count;
@@ -126,7 +126,7 @@ module mast_segment(i) {
 }
 
 module camera_platform() {
-    plate_thick = 12;
+    plate_thick = camera_platform_thick; // from config.scad
     zt = tower_height_total; // sits over the topmost segment's spigot
     difference() {
         union() {

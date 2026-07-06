@@ -27,6 +27,9 @@ from sim_benchmark.constants import (
     DUAL_URDF_PATH,
     EE_FRAMES,
     GRIPPER_JOINTS,
+    JOINT_ARMATURE,
+    JOINT_DAMPING,
+    JOINT_FRICTIONLOSS,
     NEUTRAL_ARM_ANGLES_DEG,
     SIDES,
 )
@@ -70,9 +73,9 @@ def build_spec() -> mujoco.MjSpec:
     # servos oscillate unboundedly. Values match the official SO-ARM100 MJCF
     # (STS3215 bus servos).
     for joint in spec.joints:
-        joint.damping[0] = 0.60
-        joint.armature = 0.028
-        joint.frictionloss = 0.05
+        joint.damping[0] = JOINT_DAMPING
+        joint.armature = JOINT_ARMATURE
+        joint.frictionloss = JOINT_FRICTIONLOSS
 
     # Lighting and floor.
     spec.worldbody.add_light(pos=[0, 0, 1.5], dir=[0, 0, -1], castshadow=False)
