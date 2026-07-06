@@ -59,6 +59,14 @@ if ! command -v adb &> /dev/null; then
     sudo apt install -y android-tools-adb
 fi
 
+# IK + visualization dependencies:
+#   pin-pink   - Pink IK solver on Pinocchio (pulls pin/eigenpy)
+#   quadprog   - QP solver used by Pink (SOLVER_NAME in configs)
+#   viser      - web-based 3D visualizer for the tuning UI
+#   yourdfpy   - URDF loading for the visualizer
+echo "=> Installing IK and visualization dependencies..."
+pip install pin-pink quadprog viser yourdfpy
+
 # Return to the main project directory
 cd ../so101_garment
 

@@ -92,27 +92,154 @@ def map_head_frame_hand_to_robot_target(
     Translation: world-frame delta from the calibration reference, scaled and
     added to the robot EE position at calibration — no rotation of the delta.
 
-    Rotation: controller rotation delta from reference, scaled and composed
-    onto the robot EE rotation at calibration.
+    Rotation: phosphobot-style scalar Euler mapping using only the two DOFs a
+    human wrist shares with the SO-101 wrist — pitch and roll. Hand pitch and
+    roll deltas (yaw-pitch-roll / intrinsic 'zyx' decomposition) are added to
+    the EE's calibration pitch and roll; the hand's yaw is discarded and the
+    target yaw is held at its calibration value. The SO-101 has no wrist-yaw
+    joint — yaw comes only from panning the whole arm — so the IK task's yaw
+    axis is also zero-costed (EE_ORIENTATION_COST_MASK) and the gripper's yaw
+    simply follows the arm.
     """
     # Translation — world-frame delta, added directly (matches single-arm ik_solver.py)
     delta_pos = hand_in_head_frame[:3, 3] - hand_reference_at_calibration[:3, 3]
     target_pos = hand_to_robot_calibration[:3, 3] + delta_pos * translation_scale
 
-    # Rotation — delta from reference, scaled, composed onto EE rotation at calib
-    rotation_hand = hand_in_head_frame[:3, :3]
-    rotation_ref = hand_reference_at_calibration[:3, :3]
-    rotation_delta = rotation_hand @ rotation_ref.T
-    if rotation_scale != 1.0:
-        rotation_delta = Rotation.from_rotvec(
-            Rotation.from_matrix(rotation_delta).as_rotvec() * rotation_scale
-        ).as_matrix()
-    target_rot = hand_to_robot_calibration[:3, :3] @ rotation_delta
+    # Rotation — scalar pitch/roll deltas, yaw dropped
+    hand_ypr = Rotation.from_matrix(hand_in_head_frame[:3, :3]).as_euler("zyx")
+    ref_ypr = Rotation.from_matrix(hand_reference_at_calibration[:3, :3]).as_euler(
+        "zyx"
+    )
+    calib_ypr = Rotation.from_matrix(hand_to_robot_calibration[:3, :3]).as_euler("zyx")
+
+    def _wrap(angle: float) -> float:
+        return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+    delta_pitch = _wrap(hand_ypr[1] - ref_ypr[1]) * rotation_scale
+    delta_roll = _wrap(hand_ypr[2] - ref_ypr[2]) * rotation_scale
+    target_rot = Rotation.from_euler(
+        "zyx",
+        [calib_ypr[0], calib_ypr[1] + delta_pitch, calib_ypr[2] + delta_roll],
+    ).as_matrix()
 
     target = np.eye(4)
     target[:3, 3] = target_pos
     target[:3, :3] = target_rot
     return target
+
+
+def _handle_to_gripper_offset(
+    handle_pitch_offset_deg: float,
+    handle_axis: Sequence[float] | None = None,
+) -> np.ndarray:
+    """Fixed body-frame rotation mapping the Quest controller frame to the
+    gripper (EE) frame.
+
+    The reader's "ros" transform converts only the WORLD basis; the
+    controller's local columns remain OpenXR aim-pose axes:
+    x = right, y = up, z = backward (pointer = -z).
+
+    ``handle_axis``, when given (measured with tool/calibrate_handle.py),
+    is the handle's top->bottom direction in that body frame and overrides
+    the analytic guess of -y tilted backward by ``handle_pitch_offset_deg``.
+    We build an orthonormal triad and re-label:
+      EE x (wrist->tip)  <- handle axis
+      EE z (free/yaw)    <- pointer direction, orthogonalized to the handle
+      EE y (pitch axis)  <- completes the right-handed frame
+    """
+    if handle_axis is not None:
+        e1 = np.asarray(handle_axis, dtype=float)
+        e1 = e1 / np.linalg.norm(e1)
+    else:
+        theta = np.radians(handle_pitch_offset_deg)
+        e1 = np.array([0.0, -np.cos(theta), np.sin(theta)])
+    pointer = np.array([0.0, 0.0, -1.0])
+    e3 = pointer - (pointer @ e1) * e1
+    norm = np.linalg.norm(e3)
+    if norm < 1e-6:
+        raise ValueError("handle axis is parallel to the pointer axis")
+    e3 = e3 / norm
+    e2 = np.cross(e3, e1)
+    return np.column_stack([e1, e2, e3])
+
+
+def hand_to_gripper_orientation(
+    hand_rot: np.ndarray,
+    handle_pitch_offset_deg: float,
+    handle_axis: Sequence[float] | None = None,
+) -> np.ndarray:
+    """Absolute hand->gripper orientation: the gripper's long axis (EE local
+    x, wrist -> tip) mirrors the controller's handle axis (top -> bottom),
+    1:1 and independent of grip-press history.
+    """
+    return hand_rot @ _handle_to_gripper_offset(handle_pitch_offset_deg, handle_axis)
+
+
+def hand_to_gripper_orientation_armplane(
+    hand_rot: np.ndarray,
+    azimuth: float,
+    handle_pitch_offset_deg: float,
+    handle_axis: Sequence[float] | None = None,
+    knuckle_axis: Sequence[float] | None = None,
+) -> np.ndarray:
+    """Build a FULLY-REACHABLE gripper orientation target for a 5-DOF arm.
+
+    The SO-101 wrist can only point the gripper within the vertical plane
+    the arm is panned to. So the target is assembled from three sources:
+      - tip ELEVATION (up/down angle): from the controller handle axis,
+      - tip AZIMUTH (compass direction): the arm's own current ``azimuth``
+        (yaw follows the arm; the hand cannot and need not command it),
+      - ROLL about the tip: from the controller's twist.
+
+    Because the target always lies in the arm's reachable orientation set,
+    all three orientation axes can be fully costed — unlike a zero-costed
+    local axis, which silently permits a 180-degree tip flip (tip up when
+    the hand says down).
+
+    Hold the handle vertically -> gripper points straight down; twist the
+    wrist -> the gripper rolls; lift the handle -> the gripper rises to
+    face forward, in whatever direction the arm is panned.
+
+    ``knuckle_axis``, when given (captured at first grip, perpendicular to
+    the handle axis by construction), is the body-frame roll reference.
+    Without it the reference is derived from an assumed pointer axis, which
+    can be nearly parallel to the handle axis — the orthogonalized residual
+    is then tiny and the roll response becomes weak and noisy.
+    """
+    if knuckle_axis is not None and handle_axis is not None:
+        h = np.asarray(handle_axis, dtype=float)
+        handle_world = hand_rot @ (h / np.linalg.norm(h))
+        knuckle_world = hand_rot @ np.asarray(knuckle_axis, dtype=float)
+    else:
+        offset = _handle_to_gripper_offset(handle_pitch_offset_deg, handle_axis)
+        handle_world = hand_rot @ offset[:, 0]
+        knuckle_world = hand_rot @ offset[:, 2]
+
+    # Tip: handle elevation, arm azimuth
+    elev = np.arctan2(handle_world[2], max(np.linalg.norm(handle_world[:2]), 1e-9))
+    ce, se = np.cos(elev), np.sin(elev)
+    tip = np.array([ce * np.cos(azimuth), ce * np.sin(azimuth), se])
+
+    # Roll: hand knuckle direction, orthogonalized against the tip
+    z_axis = knuckle_world - (knuckle_world @ tip) * tip
+    norm = np.linalg.norm(z_axis)
+    if norm < 1e-6:
+        # Degenerate (knuckles along the tip); fall back to world up
+        z_axis = np.array([0.0, 0.0, 1.0]) - tip[2] * tip
+        norm = np.linalg.norm(z_axis)
+    z_axis = z_axis / norm
+    y_axis = np.cross(z_axis, tip)
+    return np.column_stack([tip, y_axis, z_axis])
+
+
+def blend_rotations(
+    rot_from: np.ndarray, rot_to: np.ndarray, alpha: float
+) -> np.ndarray:
+    """Geodesic interpolation between two rotation matrices (alpha in [0, 1])."""
+    if alpha >= 1.0:
+        return rot_to.copy()
+    delta = Rotation.from_matrix(rot_from.T @ rot_to).as_rotvec()
+    return rot_from @ Rotation.from_rotvec(alpha * delta).as_matrix()
 
 
 def scale_and_add_delta_transform(

@@ -1,22 +1,34 @@
+import sys
 import time
+from pathlib import Path
 
-from send_position import SO101DualArm
+import yaml
 
-# Assuming you save the class from the file above as 'so101_dual_arm.py'
-# you could just do: `from so101_dual_arm import SO101DualArm`
-# But for completeness, I will assume the class is accessible here.
+_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "src"))
+
+from src.so101_dual_arm import SO101DualArm
 
 
-# --- CONFIGURATION VARIABLES ---
-PORT_ID_0 = "/dev/ttyACM0"
-PORT_ID_1 = "/dev/ttyACM1"
-ROBOT_NAME_0 = "follower_0"
-ROBOT_NAME_1 = "follower_1"
+def load_yaml(filepath):
+    """Helper function to load a YAML file as a dictionary."""
+    with open(filepath, "r") as file:
+        return yaml.safe_load(file)
 
 
 def main():
-    print("Initializing Dual Arm Reader...")
-    dual_arm = SO101DualArm(PORT_ID_0, PORT_ID_1, ROBOT_NAME_0, ROBOT_NAME_1)
+    # 1. Build the comprehensive config dictionary
+    # This reads all three of your config files into one central state
+    config = {
+        "robot": load_yaml(_root / "src/conf/robot.yaml"),
+        "rest_pos": load_yaml(_root / "src/conf/rest_pos.yaml"),
+        "mid_pos": load_yaml(_root / "src/conf/mid_pos.yaml"),
+    }
+
+    # 2. Initialize the dual arm class with the unified config
+    print("Initializing Dual Arms...")
+    dual_arm = SO101DualArm(config)
 
     # Disable torque so you can move the motors freely by hand
     dual_arm.disable_torque()

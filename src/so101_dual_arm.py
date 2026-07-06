@@ -69,7 +69,11 @@ class SO101DualArm:
             bus.configure_motors()
             for motor in bus.motors:
                 bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                bus.write("P_Coefficient", motor, 16)
+                # P=32 (Feetech default). The earlier soft P=16 halves
+                # stiffness, so gravity sag grows with arm extension and
+                # bends radial strokes downward at far reach. Drop back
+                # toward 16 only if the arms buzz/oscillate.
+                bus.write("P_Coefficient", motor, 32)
                 bus.write("I_Coefficient", motor, 0)
                 bus.write("D_Coefficient", motor, 32)
         return bus

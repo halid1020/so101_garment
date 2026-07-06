@@ -22,10 +22,13 @@ repos:
         args: ["--profile", "black"]
 
   - repo: https://github.com/PyCQA/flake8
-    rev: 6.0.0
+    # >=7.1 needed on Python 3.12: older pycodestyle tokenizes inside
+    # f-strings (PEP 701) and false-positives E221/E702/E713 on them
+    rev: 7.1.1
     hooks:
       - id: flake8
-        args: ['--extend-ignore=E501,E231,E402']
+        # E203: whitespace before ':' — conflicts with black's slice style
+        args: ['--extend-ignore=E501,E231,E402,E203']
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.4.1

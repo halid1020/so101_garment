@@ -36,13 +36,19 @@ module plate_hole() {
         cylinder(h=nut_pocket_depth+1, d=nut_dia_corners, $fn=6);
 }
 
-difference() {
-    cube([board_width, board_depth, nutplate_thick]);
-    for (c = [0:cols-1])
-        for (r = [0:rows-1])
-            translate([x_off + c*grid_pitch, y_off + r*grid_pitch, 0])
-                plate_hole();
+// wrapped in a module so export.scad can render it via `use <>`;
+// the call below keeps this file working when opened directly
+module nut_plate() {
+    difference() {
+        cube([board_width, board_depth, nutplate_thick]);
+        for (c = [0:cols-1])
+            for (r = [0:rows-1])
+                translate([x_off + c*grid_pitch, y_off + r*grid_pitch, 0])
+                    plate_hole();
+    }
 }
+
+nut_plate();
 
 echo(str("board_width = ", board_width, "mm, board_depth = ", board_depth, "mm"));
 echo(str("grid: ", cols, " columns x ", rows, " rows at ", grid_pitch, "mm pitch"));

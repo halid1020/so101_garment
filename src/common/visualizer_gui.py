@@ -76,6 +76,10 @@ class RobotVisualizerGUI:
         )
         self._save_config_button = self.server.gui.add_button("💾 Save Config to YAML")
 
+    def add_save_config_button(self) -> None:
+        """Adds the save button on its own, without the advanced tuning sliders."""
+        self._save_config_button = self.server.gui.add_button("💾 Save Config to YAML")
+
     def get_slow_translation_scale(self) -> float:
         """TODO: Document this method."""
         return self._slow_translation_scale_handle.value
@@ -443,3 +447,37 @@ class RobotVisualizerGUI:
         if self._play_policy_button:
             """TODO: Document this method."""
             self._play_policy_button.disabled = disabled
+
+    def add_ee_pose_displays(self) -> None:
+        """Adds text readouts for the Target and IK End-Effector poses."""
+        self._ee_pose_handles = {}
+        self._ee_pose_handles["left_target"] = self.server.gui.add_text(
+            "Left Target EE (Quest)", "Waiting..."
+        )
+        self._ee_pose_handles["left_ik"] = self.server.gui.add_text(
+            "Left IK EE (Calculated)", "Waiting..."
+        )
+        self._ee_pose_handles["right_target"] = self.server.gui.add_text(
+            "Right Target EE (Quest)", "Waiting..."
+        )
+        self._ee_pose_handles["right_ik"] = self.server.gui.add_text(
+            "Right IK EE (Calculated)", "Waiting..."
+        )
+
+    def update_ee_poses_display(
+        self, side: str, target_pose: np.ndarray | None, ik_pose: np.ndarray | None
+    ) -> None:
+        """Updates the text values for the End-Effector readouts."""
+        if (
+            not hasattr(self, "_ee_pose_handles")
+            or side + "_target" not in self._ee_pose_handles
+        ):
+            return
+
+        def fmt_pose(p):
+            if p is None:
+                return "None"
+            return f"Pos: [{p[0,3]:.3f}, {p[1,3]:.3f}, {p[2,3]:.3f}]"
+
+        self._ee_pose_handles[side + "_target"].value = fmt_pose(target_pose)
+        self._ee_pose_handles[side + "_ik"].value = fmt_pose(ik_pose)
