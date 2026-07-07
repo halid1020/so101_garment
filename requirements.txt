@@ -1,0 +1,37 @@
+# Project-level dependencies for so101_garment.
+#
+# The heavy ML stack (torch, transformers, the LeRobot policies/datasets/
+# envs, pi05, LIBERO, PushT) is installed by install.sh from the LeRobot
+# source checkout with the right extras — do NOT duplicate those here or
+# the pins will fight. This file holds only what THIS repo's own code
+# imports on top of LeRobot: the MuJoCo digital twin, the teleop tuning
+# UI, camera I/O, and plotting. Loose lower bounds keep pip's resolver
+# free to satisfy LeRobot's tighter pins.
+
+# --- Simulation twin + teleop benchmark (sim_twin/, sim_benchmark/, tool/) ---
+mujoco>=3.1
+mink>=0.0.5                 # weighted-task QP IK benchmark method
+trimesh>=4.0               # SCAD mesh -> sim scaling in sim_twin/assets.py
+
+# --- Cameras / media (tool/quest_sim_teleop.py, sim_benchmark gif export) ---
+opencv-python>=4.8         # cv2, the --cameras live view
+imageio>=2.30              # camera-tile PNGs and GIF export
+pyrealsense2>=2.54         # RealSense capture on the real rig
+
+# --- Plotting / drawings (tool/part_drawings.py, benchmark plots) ---
+matplotlib>=3.7
+
+# --- IK + visualization (Pink solver + the Viser tuning UI) ---
+pin-pink>=3.1              # Pink IK on Pinocchio (pulls pin/eigenpy)
+quadprog>=0.1.11           # QP backend used by Pink (SOLVER_NAME=quadprog)
+viser>=0.2                 # web 3D visualizer for tool/tune_teleop.py
+yourdfpy>=0.0.56           # URDF loading for the visualizer
+
+# --- Misc runtime ---
+pyyaml>=6.0                # src/conf/*.yaml configs
+tqdm>=4.65                 # progress bars in the pipeline test script
+
+# gym_pusht (the smoke-test env, pulled by LeRobot's `pusht` extra) still
+# uses the pymunk 6.x collision API; pymunk 7 removed add_collision_handler.
+# Pin defensively so a stray upgrade can't break test/smoke_test_pipeline.sh.
+pymunk>=6.6.0,<7.0.0
