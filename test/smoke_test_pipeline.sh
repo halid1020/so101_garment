@@ -156,6 +156,7 @@ lerobot-train \
     --policy.type="$POLICY" \
     --dataset.repo_id="$DATASET" \
     --dataset.episodes="$EPISODES" \
+    --dataset.video_backend=pyav \
     --output_dir="$RUN_DIR" \
     --steps="$STEPS" \
     --batch_size="$BATCH" \

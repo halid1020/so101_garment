@@ -16,9 +16,15 @@ set -euo pipefail
 # Pin LeRobot to the commit this project was validated against.
 LEROBOT_COMMIT="3dd19d043e2f3fe5673b13ea0ebe4f31884c0797"
 # LeRobot install extras. libero/pusht give the simulation benchmarks;
-# pi = pi0/pi0.5 policies; feetech = SO-101 bus; dataset = LeRobotDataset.
+# pi = pi0/pi0.5 policies; feetech = SO-101 bus; dataset = LeRobotDataset;
+# training = accelerate + wandb, required by `lerobot-train` for ANY policy;
+# diffusion = diffusers, required by the small diffusion policy used in
+# test/smoke_test_pipeline.sh; peft = LoRA fine-tuning (`--peft.*`), needed
+# to finetune pi0.5 (a ~4B-param model) on GPUs too small for full-parameter
+# AdamW (full finetuning's optimizer state alone needs >30 GB — LoRA keeps
+# only a small adapter's worth of params trainable).
 # (libero is linux-only; pip silently skips its marker off-linux.)
-LEROBOT_EXTRAS="feetech,dataset,pi,libero,pusht"
+LEROBOT_EXTRAS="feetech,dataset,pi,libero,pusht,training,diffusion,peft"
 
 echo "=================================================="
 echo "🚀 Initializing Workspace Installation..."

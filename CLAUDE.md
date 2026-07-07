@@ -21,11 +21,16 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 - **`bash install.sh`** is the one-shot installer (idempotent).
 - **LeRobot is a source checkout** at `../lerobot` (parallel to this
   repo), installed editable at a pinned commit with extras
-  `feetech,dataset,pi,libero,pusht`. To inspect the real train/eval API,
-  read `../lerobot/src/lerobot/...` — do not guess CLI flags.
-- **Hardware here:** RTX 3050 Laptop, **4 GB VRAM** — too small for pi0.5
-  train/eval. Do heavy VLA work on a bigger machine; keep local runs to
-  the diffusion smoke test.
+  `feetech,dataset,pi,libero,pusht,training,diffusion,peft`. To inspect the real
+  train/eval API, read `../lerobot/src/lerobot/...` — do not guess CLI
+  flags.
+- **Hardware varies by machine — check, don't assume.** `source setup.sh`
+  prints the live GPU/VRAM readout; trust that over any note here. Two
+  machines seen so far: a laptop with an RTX 3050 (4 GB VRAM, too small
+  for pi0.5 train/eval — keep local runs to the diffusion smoke test) and
+  a remote box with an RTX 3090 Ti (~24 GB VRAM, no sudo access — enough
+  headroom for real pi0.5 LIBERO *evaluation*, though finetuning still
+  wants datacenter-scale GPUs).
 
 ## Layout
 
@@ -67,6 +72,46 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     so the smoke script auto-selects CPU unless VRAM ≥ 8 GB.
   - `gym_pusht` needs **pymunk < 7** (7.x dropped `add_collision_handler`);
     LeRobot's `pusht` extra pins it, and requirements.txt re-pins it.
+  - LeRobot's `requires-python = ">=3.12"`. `install.sh` runs `python3 -m
+    venv venv` — if `python3` on `$PATH` resolves to something older
+    (e.g. an Anaconda `python3.9` ahead of `/usr/bin` in `PATH`), the venv
+    silently builds on the wrong interpreter and the LeRobot editable
+    install fails its Python-version check. Force it if needed:
+    `/usr/bin/python3.12 -m venv venv`.
+  - `lerobot-train` needs the `training` extra (`accelerate`+`wandb`) and,
+    for the `diffusion` policy the smoke test uses, the `diffusion` extra
+    (`diffusers`) — neither is pulled in by `feetech,dataset,pi,libero,pusht`
+    alone. `install.sh`'s `LEROBOT_EXTRAS` includes both now.
+  - **Video decoding / no sudo:** LeRobotDataset videos (PushT, LIBERO) are
+    AV1-encoded. The default `torchcodec` backend dlopen's the *system*
+    FFmpeg shared libs — on a box with no `ffmpeg` installed (or no sudo to
+    install one) this fails, and even a stray old FFmpeg (e.g. bundled with
+    an Anaconda install) is usually too old to decode AV1. Fix: pass
+    `--dataset.video_backend=pyav` to every `lerobot-train` call — PyAV's
+    wheel bundles its own modern, AV1-capable FFmpeg (`libdav1d`), so it
+    needs nothing from the system. (`lerobot-eval` doesn't load a dataset,
+    so it never needs this flag.)
+  - `hf_libero` prompts on stdin ("custom dataset path? Y/N") the *first*
+    time anything imports `libero.libero`, if `~/.libero/config.yaml`
+    doesn't exist yet — hangs any non-interactive script with `EOFError`.
+    `setup.sh` pre-writes that config (via `importlib.util.find_spec`, to
+    avoid importing the package before the file exists) so this never
+    blocks. LIBERO's object/asset meshes aren't in the pip package either;
+    they auto-download from HF Hub (~586 files) the first time a
+    `LiberoEnv` is actually built.
+  - **pi0.5 full finetuning OOMs a 24 GB GPU** — it's a ~4.1B-param model;
+    plain AdamW's optimizer state (exp_avg + exp_avg_sq, same dtype/size as
+    the params) alone needs >16 GB on top of the ~17 GB params+grads+
+    activations already in use. Fix: LoRA via the `peft` extra —
+    `--peft.r=16` (pi0.5 has built-in default target modules: the action
+    expert's q/v attention projections + the small state/action projection
+    heads) cuts trainable params to ~1.3M, and the whole run fits in
+    ~9 GB. VERIFIED: `--policy.path=lerobot/pi05_libero_finetuned
+    --peft.r=16 --dataset.repo_id=HuggingFaceVLA/libero
+    --dataset.streaming=true --dataset.video_backend=pyav` finetuned for
+    10 steps in ~3.5 min, then `lerobot-eval` on the resulting checkpoint
+    got 2/2 (100%) success on LIBERO-Spatial task 0 with real rollout
+    videos written to `<run>/eval/videos/`.
 - The **smoke test** (`test/smoke_test_pipeline.sh`, VERIFIED end-to-end on
   CPU: train→checkpoint→eval all pass) uses a small `diffusion` policy on a
   few PushT episodes — validates plumbing, not skill. Real pi0.5+LIBERO
