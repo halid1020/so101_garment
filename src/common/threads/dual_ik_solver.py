@@ -20,15 +20,19 @@ from common.configs import (
     LEFT_END_EFFECTOR_FRAME_NAME,
     ORIENTATION_BLEND_TIME_S,
     RIGHT_END_EFFECTOR_FRAME_NAME,
+    WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.pink_ik_solver import PinkIKSolver
 from common.utils import (
     blend_rotations,
     compute_hand_to_robot_calibration,
+    compute_operator_frame,
     hand_to_gripper_orientation_armplane,
     map_quest_hands_to_robot_arms,
+    to_operator_frame,
 )
+from common.workspace_envelope import build_envelopes, make_policies
 
 _DIVERGENCE_TOLERANCE_DEG = 0.1
 
@@ -51,6 +55,7 @@ def dual_ik_solver_thread(
     data_manager: DualDataManager,
     ik_solver: PinkIKSolver,
     quest_reader: Any | None = None,
+    oob_mode: str | None = None,
 ) -> None:
     """Dual-arm IK solver thread.
 
@@ -58,6 +63,10 @@ def dual_ik_solver_thread(
     TCP targets each frame. A one-time calibration at grip-press aligns head
     frame to the robot. Left hand → left arm, right hand → right arm.
     Without quest_reader: Viser gizmos drive absolute TCP targets via DataManager.
+
+    oob_mode selects the out-of-envelope policy applied to every target
+    position before it reaches the IK ("warn"|"project"|"freeze"|"slow",
+    see common/workspace_envelope.py); None uses WORKSPACE_OOB_MODE.
     """
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
     print(f"🧮 Dual IK solver thread started ({input_label})")
@@ -77,14 +86,28 @@ def dual_ik_solver_thread(
     azimuths: dict[str, float] = {}
     last_debug_time = 0.0
 
-    # Handle axes are captured PER HAND at the FIRST grip of the session:
-    # the operator holds both handles pointing straight down, and whatever
-    # body-frame direction is "world down" at that instant is that hand's
-    # handle axis. (The two Quest controllers are mirrored hardware, and
-    # their body frames are not stable across app sessions, so a config
-    # constant cannot express this.)
+    # Workspace envelope + out-of-envelope policy (per arm). Applied to every
+    # target position right before it is handed to the IK.
+    oob_mode = oob_mode if oob_mode is not None else WORKSPACE_OOB_MODE
+    oob_policies = make_policies(oob_mode, build_envelopes(_m))
+    print(f"🛡️  Out-of-envelope policy: {oob_mode}")
+
+    # Handle axes are captured PER HAND at EVERY grip: the operator holds
+    # both handles pointing straight down, and whatever body-frame direction
+    # is "world down" at that instant is that hand's handle axis. (The two
+    # Quest controllers are mirrored hardware, and their body frames are not
+    # stable across app sessions, so a config constant cannot express this.)
+    # Re-capturing on every re-grip means a bad calibration is fixed by
+    # simply releasing and gripping again.
     handle_axes: dict[str, np.ndarray] = {}
     knuckle_axes: dict[str, np.ndarray] = {}
+    # Operator control frame (headset-anywhere): derived from the two handle
+    # poses at every grip — origin behind/above the handle midpoint, x
+    # forward, y toward the operator's left, z up. All control happens in
+    # this frame, so the headset's own placement/yaw never matters.
+    # Identity until the first grip.
+    op_frame_rot = np.eye(3)
+    op_frame_origin = np.zeros(3)
     # Height lock: when toggled on, target z freezes at each arm's current
     # height — hand z is ignored, so table-plane strokes stay perfectly flat.
     height_lock_prev = False
@@ -92,9 +115,11 @@ def dual_ik_solver_thread(
     _WORLD_DOWN = np.array([0.0, 0.0, -1.0])
     if quest_reader is not None:
         print(
-            "🖐️  FIRST GRIP CALIBRATES: when you first hold both grips, "
+            "🖐️  EVERY GRIP CALIBRATES: whenever you press both grips, "
             "point both HANDLES straight down (like two nails) — "
-            "handle-down = gripper-down for the rest of the session."
+            "handle-down = gripper-down until the next re-grip. The "
+            "headset can sit anywhere: the control frame comes from the "
+            "handles themselves."
         )
 
     def _update_azimuth(side: str, ee_pose: np.ndarray | None) -> float:
@@ -129,6 +154,8 @@ def dual_ik_solver_thread(
         right_hand_to_robot = None
         left_hand_reference = None
         right_hand_reference = None
+        for policy in oob_policies.values():
+            policy.reset()
 
     try:
         while not data_manager.is_shutdown_requested():
@@ -190,6 +217,30 @@ def dual_ik_solver_thread(
                 # the smoothing entirely and shake the arms.
                 left_tf, _, _ = data_manager.get_controller_state("left")
                 right_tf, _, _ = data_manager.get_controller_state("right")
+                # On every grip, re-derive the operator control frame from
+                # the handle poses themselves (headset-anywhere).
+                if (
+                    teleop_active
+                    and not teleop_active_prev
+                    and left_tf is not None
+                    and right_tf is not None
+                ):
+                    op_frame_rot, op_frame_origin = compute_operator_frame(
+                        left_tf, right_tf
+                    )
+                    fwd = np.round(op_frame_rot[:, 0], 2)
+                    print(
+                        "🧿 Operator frame captured: origin="
+                        f"{np.round(op_frame_origin, 2)} forward={fwd} "
+                        "(reader coords)"
+                    )
+                # All downstream control math sees operator-frame poses.
+                if left_tf is not None:
+                    left_tf = to_operator_frame(left_tf, op_frame_rot, op_frame_origin)
+                if right_tf is not None:
+                    right_tf = to_operator_frame(
+                        right_tf, op_frame_rot, op_frame_origin
+                    )
             else:
                 teleop_active = data_manager.get_teleop_active()
                 left_tf = None
@@ -254,28 +305,36 @@ def dual_ik_solver_thread(
                 left_rot_at_activation = left_pose[:3, :3].copy()
                 right_rot_at_activation = right_pose[:3, :3].copy()
                 activation_time = time.time()
-                # First grip of the session: capture each hand's handle axis
+                # EVERY grip recalibrates: capture each hand's handle axis
                 # (operator is holding the handles pointing straight down)
                 # and its roll reference ("knuckle" axis) — a horizontal
                 # world direction taken from the gripper's current roll, so
                 # it is perpendicular to the handle by construction and the
-                # roll response is strong in every session.
-                if "left" not in handle_axes:
-                    for _key, _tf, _pose in (
-                        ("left", left_tf, left_pose),
-                        ("right", right_tf, right_pose),
-                    ):
-                        handle_axes[_key] = _tf[:3, :3].T @ _WORLD_DOWN
-                        khat = _pose[:3, 2].copy()
-                        khat[2] = 0.0
-                        n = np.linalg.norm(khat)
-                        khat = khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
-                        knuckle_axes[_key] = _tf[:3, :3].T @ khat
-                    print(
-                        "🖐️  Handle axes captured (handles assumed pointing "
-                        f"straight down): L={np.round(handle_axes['left'], 2)} "
-                        f"R={np.round(handle_axes['right'], 2)}"
-                    )
+                # roll response is strong in every session. Re-gripping is
+                # therefore always a full, fresh calibration.
+                for _key, _tf, _pose in (
+                    ("left", left_tf, left_pose),
+                    ("right", right_tf, right_pose),
+                ):
+                    handle_axes[_key] = _tf[:3, :3].T @ _WORLD_DOWN
+                    khat = _pose[:3, 2].copy()
+                    khat[2] = 0.0
+                    n = np.linalg.norm(khat)
+                    khat = khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+                    knuckle_axes[_key] = _tf[:3, :3].T @ khat
+                print(
+                    "🖐️  Handle axes captured (handles assumed pointing "
+                    f"straight down): L={np.round(handle_axes['left'], 2)} "
+                    f"R={np.round(handle_axes['right'], 2)}"
+                )
+                # Publish the notional headset center in ROBOT coordinates
+                # for visualization: the operator-frame origin (0 in op
+                # coords) mapped through each arm's clutch correspondence.
+                headset_center = 0.5 * (
+                    (left_hand_to_robot[:3, 3] - left_hand_reference[:3, 3])
+                    + (right_hand_to_robot[:3, 3] - right_hand_reference[:3, 3])
+                )
+                data_manager.set_frame_marker("headset_center", headset_center)
                 mode = "mirror" if mirror_control else "direct"
                 print(f"✓ Dual-arm teleop activated (absolute handle mapping, {mode})")
                 # Mapping diagnostics: the world direction each handle axis
@@ -378,6 +437,16 @@ def dual_ik_solver_thread(
                     left_target[2, 3] = locked_z["left"]
                     right_target[2, 3] = locked_z["right"]
 
+                # Out-of-envelope policy — runs AFTER height lock so a locked
+                # z below the floor still gets clamped (safety wins).
+                now = time.time()
+                left_target[:3, 3], left_oob = oob_policies["left"].apply(
+                    left_target[:3, 3], now
+                )
+                right_target[:3, 3], right_oob = oob_policies["right"].apply(
+                    right_target[:3, 3], now
+                )
+
                 ik_solver.set_target_poses(
                     {
                         LEFT_END_EFFECTOR_FRAME_NAME: (
@@ -418,7 +487,9 @@ def dual_ik_solver_thread(
                         f"🧭 tip target L={np.round(left_target[:3, 0], 2)} "
                         f"ik L={np.round(lc, 2)} | "
                         f"target R={np.round(right_target[:3, 0], 2)} "
-                        f"ik R={np.round(rc, 2)} (z<0=down)"
+                        f"ik R={np.round(rc, 2)} (z<0=down) | "
+                        f"envelope margin L={left_oob.margin_m * 1000:+.0f}mm "
+                        f"R={right_oob.margin_m * 1000:+.0f}mm"
                     )
 
             elif (
@@ -429,6 +500,15 @@ def dual_ik_solver_thread(
                 left_target = data_manager.get_gizmo_target_pose("left")
                 right_target = data_manager.get_gizmo_target_pose("right")
                 if left_target is not None and right_target is not None:
+                    now = time.time()
+                    left_target = left_target.copy()
+                    right_target = right_target.copy()
+                    left_target[:3, 3], _ = oob_policies["left"].apply(
+                        left_target[:3, 3], now
+                    )
+                    right_target[:3, 3], _ = oob_policies["right"].apply(
+                        right_target[:3, 3], now
+                    )
                     ik_solver.set_target_poses(
                         {
                             LEFT_END_EFFECTOR_FRAME_NAME: (

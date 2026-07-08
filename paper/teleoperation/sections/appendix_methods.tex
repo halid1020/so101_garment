@@ -1,0 +1,100 @@
+\section{Implementation details of all teleoperation methods}
+\label{app:methods}
+
+All methods implement one interface: \texttt{reset(q0)} and
+\texttt{solve(targets, dt)} mapping absolute EE pose targets (robot base
+frame, both arms) to a 10-DoF joint command in a fixed joint order. The
+\texttt{MethodIKAdapter} wraps any of them behind the production solver
+interface and applies a joint-space rate limiter
+\(\lvert\Delta q\rvert \le \dot q_{\max}\,\Delta t\) after every solve
+(\(\dot q_{\max}=3\)~rad/s in simulation, 2~rad/s on hardware)~--- the
+benchmark showed \texttt{scipy\_ls} and \texttt{mink} can jump between IK
+branches near the workspace edge, and the limiter bounds the jump rate.
+Grippers are excluded from IK everywhere (locked in the reduced models).
+
+\subsection{\texttt{pink\_full} — production QP, full orientation cost}
+\label{app:pink-full}
+
+Differential IK with Pink over the reduced Pinocchio model. Tasks: a
+6D \texttt{FrameTask} per EE (position cost 1.0, orientation cost 0.75,
+task gain 0.4, Levenberg–Marquardt damping 0), a \texttt{DampingTask}
+(cost 0.25), and a vectorized posture task (zero cost by default). The QP
+solves for joint velocities under configuration and velocity limits
+(solver \texttt{quadprog}, Tikhonov damping \(10^{-12}\)), then integrates
+with \(\Delta t = 10\)~ms. This is the tracker the production thread has
+always used; on the 5-DoF arm its full orientation cost trades position
+error for unreachable-orientation error (Section~\ref{sec:exp-tracking}).
+In production the armplane construction (Section~\ref{sec:armplane})
+feeds it only reachable orientations, which largely neutralizes the
+trade-off.
+
+\subsection{\texttt{pink\_relaxed} — QP with relaxed orientation}
+\label{app:pink-relaxed}
+
+Identical QP with the orientation cost lowered to 0.05: orientation becomes
+a soft preference and position dominates. Best all-round tracker of the
+original benchmark and the current recommended production setting when
+paired with the armplane mapping.
+
+\subsection{\texttt{dls} — damped least squares}
+\label{app:dls}
+
+Per arm and per tick, the 6D task error
+\(e = [\,p^\ast - p;\ w_o \log(R^\ast R^\top)\,]\) (orientation weight
+\(w_o=0.5\)) and the site Jacobian \(J\) (weighted likewise) give
+\(\Delta q = J^\top (J J^\top + \lambda^2 I_6)^{-1} e\) with
+\(\lambda = 0.05\), applied with per-tick gain 0.4, velocity clamp
+3~rad/s, and joint-range clamp. Runs directly on the MuJoCo model
+(vr-teleop-kit style), so it also cross-checks the Pinocchio methods
+against the simulator's kinematics.
+
+\subsection{\texttt{mink} — MuJoCo-native QP}
+\label{app:mink}
+
+The mink library's differential IK over the MuJoCo model: per-EE 6D frame
+tasks with the production cost ratio, solved as a QP with joint limits and
+an added velocity cap matching \texttt{dls}. Behaviorally close to
+\texttt{pink\_full} (same task structure, different modeling backend).
+
+\subsection{\texttt{scipy\_ls} — bounded nonlinear least squares}
+\label{app:scipy-ls}
+
+Per tick, a \texttt{scipy.optimize.least\_squares} solve (Trust Region
+Reflective) over the arm joints with joint bounds, minimizing the stacked
+position and (weighted) orientation residuals from the previous solution as
+the initial guess. Accurate but the most expensive per tick, and prone to
+branch jumps near the workspace edge~--- the adapter's rate limiter is
+mandatory.
+
+\subsection{\texttt{telegrip} — split IK, direct wrist}
+\label{app:telegrip}
+
+Port of Telegrip's control scheme (Section~\ref{sec:telegrip}). Wrist
+first: \(q_4\) from the affine elevation model
+\(\theta = e_0 + s_2 q_2 + s_3 q_3 + s_4 q_4\) evaluated with the currently
+commanded \(q_2, q_3\); \(q_5\) from the affine roll model
+\(\psi = r_0 + s_5 q_5\) (previous roll held when the tip is within
+\(5.7^\circ\) of vertical). Coefficients calibrated by finite differences
+on the simulator's kinematics at construction; slopes are validated to be
+exactly \(\pm1\) and the affine models to \(<1^\circ\) by unit tests.
+Then position: DLS on the \(3\times3\) position Jacobian of
+\(q_1..q_3\) with \(\lambda=0.05\), per-tick gain 0.6. All joints
+velocity-clamped (3~rad/s) and range-clamped. Differences from upstream
+Telegrip: PyBullet is replaced by the benchmark scene's kinematics; the
+wrist angles are recovered from the absolute target rotation rather than
+integrated from controller deltas (equivalent under the clutch mapping,
+but stateless); and the shoulder pan participates in the position DLS
+rather than being wrapped separately~--- the \(\pm110^\circ\) pan range
+makes the differential step's implicit wrapping sufficient.
+
+\subsection{Production input processing (common to all methods)}
+
+One-Euro filtering of controller transforms
+(\(f_{c,\min}=0.8\)~Hz, \(\beta=5.0\), \(f_{c,d}=0.9\)~Hz; position and
+quaternion filtered separately with a sign-consistency guard); grip
+threshold 0.9 on both hands for the clutch; per-session handle-axis
+calibration at first grip; orientation blend-in over 1~s after activation;
+optional height lock (freezes target \(z\) per arm) and mirror mode (swaps
+and laterally reflects the hands); workspace-envelope policy
+(Section~\ref{sec:envelope}) applied after the height lock, immediately
+before targets reach the IK.

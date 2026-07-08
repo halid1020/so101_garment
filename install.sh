@@ -55,6 +55,23 @@ fi
 cd lerobot
 git fetch --quiet origin || true
 git checkout --quiet "$LEROBOT_COMMIT"
+# egl_probe / hf-egl-probe (LIBERO deps) shell out to `cmake` while
+# building, and break two ways:
+#  1. If the venv contains the pip `cmake` package, its venv/bin/cmake SHIM
+#     shadows the system cmake on PATH — and under pip's build isolation
+#     (PYTHONPATH pointing into the isolated env) the shim's `from cmake
+#     import cmake` crashes, failing the wheels with "cmake --version
+#     returned non-zero". Pre-building WITHOUT isolation runs the build in
+#     the venv environment, where the shim actually works.
+#  2. CMake 4.x removed compatibility with the packages' ancient
+#     `cmake_minimum_required(<3.5)`. Pin the venv cmake to 3.x and set
+#     CMAKE_POLICY_VERSION_MINIMUM as belt-and-braces for machines whose
+#     system cmake is already 4.x.
+# Idempotent: no-ops once the wheels are installed/cached.
+pip install "cmake<4" setuptools wheel
+CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    pip install --no-build-isolation egl_probe hf-egl-probe || \
+    echo "⚠️  egl_probe pre-build skipped (non-linux or already satisfied)."
 pip install -e ".[${LEROBOT_EXTRAS}]"
 
 # 3. Project requirements ----------------------------------------------

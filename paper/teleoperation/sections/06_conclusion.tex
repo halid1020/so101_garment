@@ -1,0 +1,27 @@
+\section{Conclusion and outlook}
+\label{sec:conclusion}
+
+We documented the Meta-Quest teleoperation stack of the
+\texttt{so101\_garment} dual SO-101 rig: clutched absolute-position
+retargeting, the armplane orientation construction that sidesteps the 5-DoF
+over-constraint, an analytic workspace envelope with four out-of-envelope
+policies, and a pluggable IK layer now including a Telegrip-style split IK.
+Simulation results support two concrete recommendations:
+\begin{itemize}
+  \item \textbf{Wrist agility.} The Telegrip split IK halves roll lag and
+  reduces orientation error relative to the production QP at every tested
+  frequency, and simultaneously improves position tracking; its higher
+  command jerk argues for hardware validation (servo wear, audible
+  chatter) before promotion to the production default. Tuning the QP
+  alternative (frame-task gain, One-Euro \(\beta\)) along the wrist-agility
+  suite is the complementary path.
+  \item \textbf{Out-of-envelope handling.} \texttt{project} should replace
+  the legacy pass-through: bounded error, boundary sliding, seamless
+  re-entry, negligible cost. \texttt{freeze} is a useful conservative
+  alternative for delicate scenes; \texttt{slow} adds a tuning burden for
+  marginal benefit at teleop speeds.
+\end{itemize}
+Next steps: hardware A/B of \texttt{telegrip} vs.\ \texttt{pink\_relaxed}
+on garment-handling primitives; folding the envelope margin into operator
+feedback (controller vibration); and extending the envelope to a
+self-collision-aware region for bimanual work near the rig center.

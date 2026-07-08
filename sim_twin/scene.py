@@ -119,7 +119,16 @@ def _visual_mesh(body, name, mesh, pos=(0, 0, 0), quat=(1, 0, 0, 0), rgba=PRINT_
     )
 
 
-def build_spec(params: TwinParams | None = None) -> mujoco.MjSpec:
+def build_spec(
+    params: TwinParams | None = None, all_collisions: bool = False
+) -> mujoco.MjSpec:
+    """Assemble the twin scene.
+
+    all_collisions=True puts every geom in one collision group (robot vs
+    robot included, parent-child pairs excluded by MuJoCo as usual) — used
+    by the teleop rehearsal tool so arm-arm and arm-rig contact is felt.
+    Default False keeps the original robot-vs-world-only model.
+    """
     p = params or TwinParams.load()
     mm = 1e-3
 
@@ -130,6 +139,8 @@ def build_spec(params: TwinParams | None = None) -> mujoco.MjSpec:
     spec.visual.global_.offheight = 960
 
     # Robot geoms: collide with the world group only (see module doc).
+    # (When all_collisions is set, a final pass below flattens every
+    # colliding geom into one group instead.)
     for geom in spec.geoms:
         geom.contype = ROBOT_CONTYPE
         geom.conaffinity = ROBOT_CONAFFINITY
@@ -309,6 +320,55 @@ def build_spec(params: TwinParams | None = None) -> mujoco.MjSpec:
             size=[0.008, 0.008, 0.008],
             rgba=[0, 1, 0, 0.4],
         )
+
+    # ---- Teleop visualization: target spheres, headset-center marker,
+    # and coordinate-frame triads (sim world frame at the origin; the VR
+    # operator frame rides on the headset marker — robot-aligned axes by
+    # construction of the operator-frame mapping) ----
+    target_rgba = {"left": (0.9, 0.2, 0.2, 0.5), "right": (0.2, 0.4, 0.9, 0.5)}
+    for side in SIDES:
+        target = world.add_body(name=f"{side}_target", mocap=True)
+        target.add_geom(
+            name=f"{side}_target_geom",
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=[0.012, 0, 0],
+            rgba=list(target_rgba[side]),
+            contype=0,
+            conaffinity=0,
+        )
+
+    def _axis_triad(body, prefix: str, length: float = 0.06) -> None:
+        colors = {
+            "x": ([1.0, 0.1, 0.1, 0.9], [length / 2, 0, 0], [length / 2, 0.003, 0.003]),
+            "y": ([0.1, 0.8, 0.1, 0.9], [0, length / 2, 0], [0.003, length / 2, 0.003]),
+            "z": (
+                [0.15, 0.3, 1.0, 0.9],
+                [0, 0, length / 2],
+                [0.003, 0.003, length / 2],
+            ),
+        }
+        for axis, (rgba, pos, half) in colors.items():
+            body.add_geom(
+                name=f"{prefix}_{axis}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=half,
+                pos=pos,
+                rgba=rgba,
+                contype=0,
+                conaffinity=0,
+            )
+
+    _axis_triad(world, "world_frame", length=0.10)
+    headset = world.add_body(name="headset_marker", mocap=True)
+    headset.add_geom(
+        name="headset_marker_geom",
+        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+        size=[0.03, 0, 0],
+        rgba=[0.15, 0.15, 0.18, 0.7],
+        contype=0,
+        conaffinity=0,
+    )
+    _axis_triad(headset, "vr_frame", length=0.08)
     for joint_name in (*ARM_JOINTS, *GRIPPER_JOINTS):
         act = spec.add_actuator(
             name=f"act_{joint_name}",
@@ -322,19 +382,40 @@ def build_spec(params: TwinParams | None = None) -> mujoco.MjSpec:
         act.biasprm[1] = -ACTUATOR_KP
         act.biasprm[2] = -ACTUATOR_KV
 
+    if all_collisions:
+        # Flatten every colliding geom into one group: arm-arm, arm-rig,
+        # arm-table contacts all become live. Pure-visual geoms (0/0)
+        # stay visual.
+        for geom in spec.geoms:
+            if geom.contype or geom.conaffinity:
+                geom.contype = 1
+                geom.conaffinity = 1
+        # The base shell and the rotating shoulder NEST on real hardware —
+        # their raw meshes interpenetrate by design. MuJoCo's automatic
+        # parent-child contact exclusion does not cover them because the
+        # base is static (welded to the world), so exclude explicitly.
+        for side in SIDES:
+            spec.add_exclude(
+                bodyname1=f"{side}_base_link", bodyname2=f"{side}_shoulder_link"
+            )
+
     return spec
 
 
-def build_model(params: TwinParams | None = None) -> mujoco.MjModel:
-    return build_spec(params).compile()
+def build_model(
+    params: TwinParams | None = None, all_collisions: bool = False
+) -> mujoco.MjModel:
+    return build_spec(params, all_collisions=all_collisions).compile()
 
 
 class TwinSim:
     """Compiled twin with the same driving interface as DualArmSim."""
 
-    def __init__(self, params: TwinParams | None = None) -> None:
+    def __init__(
+        self, params: TwinParams | None = None, all_collisions: bool = False
+    ) -> None:
         self.params = params or TwinParams.load()
-        self.model = build_model(self.params)
+        self.model = build_model(self.params, all_collisions=all_collisions)
         self.data = mujoco.MjData(self.model)
         self.arm_qpos_idx = np.array(
             [self.model.joint(j).qposadr[0] for j in ARM_JOINTS]
@@ -342,9 +423,16 @@ class TwinSim:
         self.arm_ctrl_idx = np.array(
             [self.model.actuator(f"act_{j}").id for j in ARM_JOINTS]
         )
+        self.gripper_ctrl_idx = np.array(
+            [self.model.actuator(f"act_{j}").id for j in GRIPPER_JOINTS]
+        )
         self.eef_site_id = {
             side: self.model.site(f"{side}_eef_site").id for side in SIDES
         }
+        self.target_mocap_id = {
+            side: self.model.body(f"{side}_target").mocapid[0] for side in SIDES
+        }
+        self.headset_mocap_id = self.model.body("headset_marker").mocapid[0]
 
     def neutral_q(self) -> np.ndarray:
         return np.deg2rad(np.array(NEUTRAL_ARM_ANGLES_DEG * 2))
@@ -355,10 +443,27 @@ class TwinSim:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[self.arm_qpos_idx] = q
         self.data.ctrl[self.arm_ctrl_idx] = q
+        # Park the headset marker behind the rig until calibration places it.
+        self.data.mocap_pos[self.headset_mocap_id] = [-0.45, 0.0, 0.45]
         mujoco.mj_forward(self.model, self.data)
 
     def set_arm_targets(self, q: np.ndarray) -> None:
         self.data.ctrl[self.arm_ctrl_idx] = q
+
+    def arm_q(self) -> np.ndarray:
+        """Measured arm joint angles (radians, ARM_JOINTS order)."""
+        return self.data.qpos[self.arm_qpos_idx].copy()
+
+    def set_target_markers(
+        self, targets: dict[str, tuple[np.ndarray, np.ndarray]]
+    ) -> None:
+        """Move the target mocap spheres (positions in twin world coords)."""
+        for side, (pos, _rot) in targets.items():
+            self.data.mocap_pos[self.target_mocap_id[side]] = pos
+
+    def set_headset_marker(self, pos: np.ndarray) -> None:
+        """Place the notional headset-center marker (twin world coords)."""
+        self.data.mocap_pos[self.headset_mocap_id] = pos
 
     def step(self, n_substeps: int = 1) -> None:
         for _ in range(n_substeps):

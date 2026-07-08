@@ -60,6 +60,7 @@ published/community solution for Quest → SO-101 teleop:
 | `dls` | damped least-squares differential IK on the MuJoCo Jacobian, 3 rad/s clamp | Dream-Machines vr-teleop-kit |
 | `mink` | weighted-task QP on the MuJoCo model (pos 1.0 / ori 0.75, 3 rad/s velocity limit) | mink-based LeRobot teleop stacks |
 | `scipy_ls` | bounded nonlinear least-squares absolute pose IK per tick, warm-started, ori weight 0.1 | telegrip-style position-first IK |
+| `telegrip` | split IK: analytic wrist (elevation/roll → wrist_flex/wrist_roll) + 3-joint position-only DLS | faithful port of DipFlip/telegrip's actual algorithm (added later; see §8) |
 
 ### 1.4 Metrics
 
@@ -83,6 +84,7 @@ same settled neutral pose `[0, −10, 20, 25, 0]°` per arm.
 | method | mean err (mm) | verdict |
 |---|---|---|
 | `scipy_ls` | **12.0** | most accurate; jerk spikes at workspace edge — needs rate limiting before hardware |
+| `telegrip` | **13.1** | added later (§8): near-`scipy_ls` accuracy at 13× lower solve cost (0.19 ms); jerky at the 3 rad/s clamp |
 | `pink_relaxed` | **20.3** | best accuracy/smoothness balance; drop-in change to production config |
 | `dls` | 30.3 | cheapest (0.10 ms/tick); mid-pack accuracy |
 | `mink` | 33.7 | comparable to dls after adding a velocity limit |
@@ -336,7 +338,10 @@ For garment-folding strokes on the table plane:
   tick), or a hybrid: `scipy_ls` targets fed through the Pink
   velocity-damped QP.
 - Keep a **velocity limit in any QP-based method** and a workspace clamp
-  on targets before they reach the IK layer.
+  on targets before they reach the IK layer. → **Now implemented**: an
+  analytic workspace envelope with four selectable out-of-envelope
+  policies (`--oob-mode`, `WORKSPACE_OOB_MODE` in `configs.py`) sits in
+  the IK thread ahead of every solver; benchmark in §9.
 - **Do not deploy the current production config (`pink_full`) for
   bimanual handovers** — it scored 0/30 in simulation.
 
@@ -389,3 +394,130 @@ venv/bin/python sim_benchmark/run_benchmark.py \
 venv/bin/python sim_benchmark/run_benchmark.py \
     --view --methods scipy_ls --trajectories circle_r5cm
 ```
+
+---
+
+## 8. Experiment 3: wrist-agility benchmark
+
+Motivation: the reported "wrist is not agile" feel of the production
+teleop. Seven new trajectories hold the EE position at the latch point
+while oscillating the target orientation: roll ±45° and flex ±30° at
+0.5/1/2 Hz, plus a combined slow-circle + 1 Hz-roll case
+(`sim_benchmark/mock_quest.py::default_suite`). Two new metrics
+(`sim_benchmark/metrics.py`): **ori err** — geodesic angle between target
+and measured EE rotation — and **roll lag** — the cross-correlation peak
+between commanded and measured roll about the tip axis (flex tables show
+"—": no roll content). The suite also motivated a sixth method,
+**`telegrip`** (`sim_benchmark/methods/telegrip_split.py`): a faithful
+port of DipFlip/telegrip's split IK — the wrist joints are set
+*analytically* from the target orientation (tip elevation → wrist_flex,
+roll about tip → wrist_roll, via FD-calibrated affine models), and only
+the 3 proximal joints run position-DLS.
+
+### 8.1 Results — 1 Hz roll (the headline case)
+
+| method | err (mm) | ori mean/p95 (deg) | lag (ms) | jerk | qd max | solve (ms) |
+|---|---|---|---|---|---|---|
+| `scipy_ls` | 9.9 | 11.9 / 19.6 | 80 | 61 | 4.92 | 2.45 |
+| `pink_full` | 10.7 | 16.9 / 28.1 | 100 | 58 | 4.72 | 0.21 |
+| `telegrip` | 9.9 | 19.5 / 33.9 | 120 | 373 | 3.00 | 0.19 |
+| `mink` | 24.7 | 20.7 / 34.1 | 140 | 241 | 3.00 | 0.21 |
+| `dls` | 9.9 | 22.0 / 37.4 | 140 | 211 | 3.00 | 0.11 |
+| `pink_relaxed` | 9.8 | 27.8 / 46.4 | 300 | 7 | 0.61 | 0.22 |
+
+Full tables for all seven trajectories are in
+`outputs/teleop_bench_full.json` (`export_latex_tables.py` renders them
+into `paper/teleoperation/tables/`).
+
+### 8.2 Findings
+
+1. **The complaint is real and quantified: `pink_relaxed` is the wrist
+   bottleneck.** Its low orientation cost (0.05) — exactly what makes its
+   *position* tracking good — caps wrist joint velocity at ~0.6 rad/s, so
+   a ±45° 1 Hz roll lags by ~300 ms (a third of the period) with 28° mean
+   error. The current production config `pink_full` is actually fine here
+   (100 ms), confirming the wrist/position trade is a single scalar knob
+   in the QP cost.
+2. **Direct wrist mapping works.** `telegrip` cuts lag to 120 ms and
+   error to 19.5° while keeping `pink_relaxed`-class position accuracy
+   (§2.1: 13.1 mm) — but slams the 3 rad/s clamp (jerk 373 rad/s³): the
+   ±45°@1 Hz profile peaks at 4.9 rad/s, beyond the clamp by design.
+3. **`scipy_ls` again leads raw tracking** (80 ms lag, 11.9°) but needs
+   its usual rate limiter, and costs 13× more compute than `telegrip`
+   (2.45 vs 0.19 ms/tick).
+4. At 2 Hz every method saturates — that regime needs faster servos, not
+   better IK.
+
+Reproduce: `venv/bin/python sim_benchmark/run_benchmark.py --trajectories
+wrist_roll_f1hz wrist_flex_f1hz wrist_combo_f1hz`.
+
+---
+
+## 9. Experiment 4: out-of-envelope target handling
+
+The workspace clamp recommended in §5 is now implemented and benchmarked.
+`src/common/workspace_envelope.py` gives each arm an analytic annulus
+envelope — `r_min ≤ ‖p − pivot(azimuth)‖ ≤ r_max` plus a z-floor, radii
+derived numerically from the URDF (re-verified by
+`test/test_workspace_envelope.py`) — and four selectable policies for
+targets outside it:
+
+- **`warn`** — legacy behavior: pass through, throttled console warning.
+- **`project`** — closest feasible point on the boundary.
+- **`freeze`** — hold the last feasible target until the hand re-enters.
+- **`slow`** — outward motion damped smoothly to zero near the boundary
+  (tangential motion unaffected); degrades to `project` outside.
+
+The policy runs in the IK thread (`dual_ik_solver.py`) ahead of *every*
+solver, after the height lock; selectable via `--oob-mode` on both teleop
+tools, default `WORKSPACE_OOB_MODE` in `configs.py`. Three deliberately
+infeasible trajectories (`mock_quest.envelope_suite`): `envelope_radial`
+(0.30 m forward push + dwell), `envelope_swoop` (0.20 m below the floor),
+`envelope_slide` (exit radially, slide laterally while outside, return —
+the case that separates `freeze` from the tracking policies).
+
+### 9.1 Results — `envelope_slide` / `pink_relaxed`
+
+| policy | oob (s) | err vs emitted (mm) | err vs raw (mm) | qd_oob | jerk |
+|---|---|---|---|---|---|
+| `warn` | 6.2 | 129.9 | 129.9 | 0.99 | 2 |
+| `project` | 6.2 | 26.9 | 147.7 | 0.87 | 3 |
+| `freeze` | 6.2 | 24.9 | 156.7 | 0.82 | 3 |
+| `slow` | 6.2 | 26.8 | 148.0 | 0.77 | 2 |
+
+(Full sweep — 3 trajectories × 3 methods × 4 policies — in
+`outputs/teleop_envelope_bench.json`; plots in
+`outputs/teleop_envelope_plots/`.)
+
+### 9.2 Findings
+
+1. **`warn` (the old behavior) grinds the arm 130–184 mm from its own
+   commanded target** while the hand is outside — the solver chases an
+   impossible point and parks at joint limits. Every active policy keeps
+   the *emitted*-target error at ~25–61 mm with lower peak velocity.
+2. **`project` is the recommended default for data collection**: on the
+   slide trajectory it keeps tracking the lateral hand motion (raw-target
+   error lower than `freeze`'s 156.7 mm) and re-enters seamlessly
+   (recovery ≈ 1.74 s on `envelope_radial`, measured to raw-error
+   < 10 mm sustained 0.2 s).
+3. **`freeze` minimizes motion but loses the operator** during lateral
+   OOB movement; good for safety-critical demos, worse for teleop feel.
+4. **`slow` behaves like `project` with slightly lower peak velocities** —
+   the soft-boundary shaping matters most for slow approaches, not the
+   fast excursions tested here.
+5. The policy layer is method-agnostic: `telegrip`'s higher OOB jerk
+   (~85 rad/s³) is the method's clamp behavior, not the policy's.
+
+Reproduce: `venv/bin/python sim_benchmark/run_envelope.py --save
+outputs/teleop_envelope_bench.json --plot outputs/teleop_envelope_plots`.
+
+### 9.3 Related fix: gravity-sag ratchet in the sim rehearsal tool
+
+While validating with the mock device, circles reported an impossible
+−23 mm envelope margin: with teleop *idle*, `quest_sim_teleop.py` streamed
+the IK thread's idle targets (synced from *measured* joints) back to the
+position servos, so gravity sag ratcheted the arms ~13 cm downward in 2 s
+before the activation anchor latched. The tool now streams targets only
+while teleop is active and holds the last active command otherwise —
+mirroring what the real-robot thread already did. Sim EE tracking with the
+production stack: 11.6 mm mean (`pink_relaxed`), 7.0 mm (`telegrip`).

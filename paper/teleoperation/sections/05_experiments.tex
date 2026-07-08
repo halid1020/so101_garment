@@ -1,0 +1,109 @@
+\section{Experiments}
+\label{sec:experiments}
+
+All experiments run in the MuJoCo digital twin (\SI{500}{Hz} physics,
+\SI{50}{Hz} control) with scripted mock-hand trajectories that reproduce the
+clutch semantics of Eq.~\eqref{eq:clutch}: the trajectory is defined by a
+delta curve applied to the EE pose latched at ``grip press.'' Unless noted,
+metrics aggregate both arms.
+
+\paragraph{Metrics.}
+Position error (\(\mathrm{mm}\), target vs.\ measured EE, mean/p95/max) and
+its IK-only counterpart (target vs.\ commanded-configuration FK);
+orientation error as the geodesic angle between target and measured EE
+rotations (\(^\circ\)); \emph{roll lag} (\(\mathrm{ms}\)) as the
+cross-correlation peak between commanded and measured roll about the tip
+axis; command jerk RMS (\(\mathrm{rad/s^3}\)); peak joint velocity; minimum
+joint-limit margin; and solver time. The out-of-envelope suite adds:
+time outside, tracking error against the \emph{emitted} (post-policy)
+target and against the \emph{raw} operator target while outside, peak joint
+velocity while outside, and the re-entry recovery time (raw-target error
+\(<\SI{10}{mm}\) sustained \SI{0.2}{s}).
+
+\subsection{Tracking suite}
+\label{sec:exp-tracking}
+
+Three circle radii (3/5/\SI{8}{cm}) and four line-stroke directions on the
+table plane, orientation held. Results in
+Table~\ref{tab:tracking} (see also the per-trajectory tables in
+\texttt{tables/}). The headline finding of the earlier benchmark holds:
+full-cost 6D tracking (\texttt{pink\_full}) pays a large position penalty
+on a 5-DoF arm (\SI{34.1}{mm} mean across the full suite vs.\
+\SI{15.3}{mm} for \texttt{pink\_relaxed}), while \texttt{scipy\_ls}
+(\SI{11.2}{mm}) and the new \texttt{telegrip} split IK (\SI{11.7}{mm})
+lead the sweep. \texttt{telegrip}'s position subproblem is 3-DoF and
+cannot be disturbed by orientation terms, giving it sub-millimeter
+commanded-FK error at a solver cost 13\(\times\) below
+\texttt{scipy\_ls} (\SI{0.19}{ms} vs.\ \SI{2.5}{ms} per tick).
+
+\begin{table}[h]
+  \centering
+  \caption{Tracking suite, representative trajectory
+  (\texttt{circle\_r5cm}). Full sweep in \texttt{tables/}.}
+  \label{tab:tracking}
+  \small
+  \input{tables/bench_circle_r5cm}
+\end{table}
+
+\subsection{Wrist-agility suite}
+\label{sec:exp-wrist}
+
+Position held at the latch point while the target orientation oscillates:
+roll (\(\pm45^\circ\)) and flex (\(\pm30^\circ\)) at 0.5/1/\SI{2}{Hz}, plus
+a combined slow-circle + \SI{1}{Hz}-roll trajectory. This suite quantifies
+the ``wrist is not agile'' complaint directly.
+Table~\ref{tab:wrist} shows the \SI{1}{Hz} roll oscillation: the production
+QP tracker lags the roll by \(\approx\)\SI{300}{ms} (about a third of the
+oscillation period) with \(28^\circ\) mean orientation error, while the
+Telegrip split IK cuts the lag to \(\approx\)\SI{120}{ms} and the error to
+\(19^\circ\)~--- at the price of an order of magnitude more command jerk,
+as the direct wrist mapping slams into the \SI{3}{rad/s} rate limit that
+the \(\pm45^\circ\)@\SI{1}{Hz} profile (peak \SI{4.9}{rad/s}) exceeds by
+design.
+
+\begin{table}[h]
+  \centering
+  \caption{Wrist-agility suite, \SI{1}{Hz} roll oscillation
+  (\texttt{wrist\_roll\_f1hz}).}
+  \label{tab:wrist}
+  \small
+  \input{tables/bench_wrist_roll_f1hz}
+\end{table}
+
+\subsection{Out-of-envelope suite}
+\label{sec:exp-envelope}
+
+Three excursions: \texttt{envelope\_radial} (forward stroke \SI{0.30}{m},
+\SI{2}{s} dwell far past \(r_{\max}\), smooth return),
+\texttt{envelope\_swoop} (\SI{0.20}{m} dip below the floor), and
+\texttt{envelope\_slide} (exit radially, translate laterally while outside,
+return)~--- the last distinguishes policies that keep tracking the lateral
+component (\texttt{project}, \texttt{slow}) from \texttt{freeze}, which
+holds a fixed anchor. Representative results in
+Table~\ref{tab:envelope}. With the legacy \texttt{warn} behavior the arm
+grinds at its limits \(\approx\)\SI{131}{mm} from its own commanded target;
+every active policy keeps the emitted-target error at
+\(\approx\)\SI{26}{mm} with bounded joint velocity and \(\le\)\SI{1.8}{s}
+recovery. \texttt{project} is the recommended default for data collection:
+it minimizes raw-target deviation on the slide trajectory and re-enters
+seamlessly.
+
+\begin{table}[h]
+  \centering
+  \caption{Out-of-envelope suite, \texttt{envelope\_slide} with
+  \texttt{pink\_relaxed} (policy comparison; full sweep in
+  \texttt{tables/}).}
+  \label{tab:envelope}
+  \small
+  \input{tables/envelope_envelope_slide_pink_relaxed}
+\end{table}
+
+\subsection{End-to-end rehearsal}
+
+The full production stack (One-Euro filter, clutch, armplane mapping,
+envelope policy, IK thread) is exercised against the digital twin with the
+scripted mock device: circles (\SI{11.6}{mm} mean EE tracking with
+\texttt{pink\_relaxed}, \SI{7.0}{mm} with \texttt{telegrip}), wrist
+oscillation, and envelope excursions with each policy. These runs validate
+the wiring rather than the methods; the suites above are the controlled
+comparison.

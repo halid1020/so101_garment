@@ -101,6 +101,19 @@ SOLVER_DAMPING_VALUE = 1e-12
 # Teleoperation Thresholds
 GRIP_THRESHOLD = 0.9
 
+# Workspace envelope (see common/workspace_envelope.py). The annulus radii
+# are the EE-to-shoulder-lift-pivot distance extremes from a FK grid sweep
+# of elbow_flex x wrist_flex over the URDF limits (invariant to
+# shoulder_lift). Re-derived by test/test_workspace_envelope.py so URDF
+# edits cannot silently stale them. Values from robot.urdf, 2026-07-08.
+WORKSPACE_R_MIN = 0.0837  # m, swept minimum reach from the lift pivot
+WORKSPACE_R_MAX = 0.4110  # m, swept maximum reach from the lift pivot
+WORKSPACE_Z_FLOOR = 0.01  # m, table clearance floor for EE targets
+WORKSPACE_SAFETY_MARGIN = 0.01  # m, shaved off both radii in build_envelopes
+WORKSPACE_SOFT_MARGIN = 0.04  # m, slowdown band width ("slow" policy)
+# Default out-of-envelope policy: "warn" | "project" | "freeze" | "slow".
+WORKSPACE_OOB_MODE = "warn"
+
 # One-Euro filter parameters for controller pose smoothing
 CONTROLLER_MIN_CUTOFF = 0.8
 CONTROLLER_BETA = 5.0

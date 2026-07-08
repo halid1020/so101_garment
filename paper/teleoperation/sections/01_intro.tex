@@ -1,0 +1,49 @@
+\section{Introduction}
+\label{sec:intro}
+
+Garment manipulation is a contact-rich, bimanual task that remains difficult
+to automate directly; learning-based approaches (e.g.\ vision-language-action
+policies such as $\pi_{0.5}$) depend on high-quality demonstration data,
+which in turn depends on a teleoperation interface that is precise,
+low-latency, and comfortable enough for long collection sessions. This paper
+documents the teleoperation stack of the \texttt{so101\_garment} rig: two
+SO-101 arms (the LeRobot/SO-ARM100 lineage~\citep{soarm100}) mounted on a 3D-printed
+platform, teleoperated with Meta Quest hand controllers, with a MuJoCo
+digital twin used both for operator rehearsal and for quantitative
+benchmarking of design alternatives.
+
+Three properties of the SO-101 shape every design decision. First, each arm
+has only five degrees of freedom (shoulder pan, shoulder lift, elbow flex,
+wrist flex, wrist roll): there is no wrist-yaw joint, so full 6D pose
+tracking is structurally over-constrained~--- a naive 6D tracker trades
+position error against an orientation error it can never eliminate. Second,
+the arm is small (\(\approx\)\SI{0.41}{m} maximal reach from the shoulder-lift
+pivot) while a human operator's natural gestures easily exceed that reach, so
+out-of-envelope hand targets are the norm, not the exception. Third, the
+STS3215 bus servos are position-controlled with modest stiffness, so command
+smoothness directly affects hardware wear and tracking fidelity.
+
+This document makes four contributions:
+\begin{enumerate}
+  \item a description of the production retargeting pipeline: grip-clutched
+        absolute-position mapping with One-Euro filtering and the
+        \emph{armplane} orientation construction, which builds only
+        orientations the 5-DoF arm can actually realize
+        (Section~\ref{sec:method});
+  \item an analytic \emph{workspace envelope} for the SO-101 with four
+        selectable out-of-envelope target policies~--- warn, project,
+        freeze, and slowdown~--- applied uniformly to every teleoperation
+        input source (Section~\ref{sec:envelope});
+  \item the integration of a \emph{Telegrip-style split IK}
+        \citep{telegrip} as a pluggable method: position-only damped least
+        squares on the three proximal joints with a direct analytic wrist
+        mapping, targeting wrist agility (Section~\ref{sec:telegrip});
+  \item a simulation benchmark comparing six IK methods on tracking,
+        wrist-agility, and out-of-envelope suites, with metrics that
+        include orientation error and roll phase lag
+        (Section~\ref{sec:experiments}).
+\end{enumerate}
+
+The paper is a \emph{living document}: it is the canonical reference for the
+teleoperation side of the repository and is updated in the same branch as
+any change to the methods, mappings, envelope, or benchmark results.

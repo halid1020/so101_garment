@@ -1,0 +1,11 @@
+# LaTeX build litter (the PDF is a build artifact; sources are canonical)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.pdf
+*.synctex.gz
+*.toc

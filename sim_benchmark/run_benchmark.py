@@ -39,6 +39,8 @@ METRIC_COLUMNS = [
     ("ik_err_mean_mm", "ik_err(mm)"),
     ("pos_err_mean_mm", "err_mean(mm)"),
     ("pos_err_p95_mm", "err_p95(mm)"),
+    ("ori_err_mean_deg", "ori(deg)"),
+    ("roll_lag_ms", "lag(ms)"),
     ("cmd_jerk_rms_rad_s3", "jerk_rms"),
     ("joint_vel_max_rad_s", "qd_max"),
     ("limit_margin_min_deg", "lim_margin(deg)"),

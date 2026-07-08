@@ -1,0 +1,61 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+
+\title{Meta-Quest Teleoperation of a Dual SO-101 Arm Rig for Garment
+Manipulation: Retargeting, Workspace-Envelope Handling, and a Comparison of
+Inverse-Kinematics Strategies}
+
+\author{so101\_garment project\thanks{Living document: this paper is the
+canonical description of the teleoperation stack in the
+\texttt{so101\_garment} repository and MUST be updated whenever the
+teleoperation methods, orientation mapping, workspace envelope, or benchmark
+results change. See \texttt{CLAUDE.md}.}}
+
+\date{Last updated: \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe the teleoperation stack of a dual-arm SO-101 (LeRobot) rig for
+garment manipulation, driven by Meta Quest hand controllers. The stack
+combines a clutched absolute-pose retargeting scheme with a
+reachable-by-construction orientation mapping (``armplane'') tailored to the
+5-DoF kinematics of the SO-101, One-Euro input filtering, and a pluggable
+inverse-kinematics layer with six interchangeable methods (two Pink QP
+variants, damped least squares, mink, bounded nonlinear least squares, and a
+Telegrip-style split IK with a direct wrist mapping). We introduce an
+analytic workspace envelope with four selectable out-of-envelope target
+policies (warn, project, freeze, slowdown) and evaluate all components in a
+MuJoCo digital twin: a tracking suite, a new wrist-agility suite that
+quantifies orientation lag, and a new out-of-envelope suite that measures
+behavior while the operator's hand exceeds the arm's reach. The Telegrip
+split IK reduces roll tracking lag from \SI{300}{ms} to \SI{120}{ms} at
+\SI{1}{Hz} wrist oscillation relative to the production QP tracker, at the
+cost of higher command jerk, and the projection policy keeps boundary
+tracking error bounded (\(\approx\)\SI{26}{mm} versus \SI{131}{mm} for the
+legacy no-op behavior) with seamless re-entry. Implementation details of all
+methods are given in the appendix.
+\end{abstract}
+
+\input{sections/01_intro}
+\input{sections/02_related}
+\input{sections/03_system}
+\input{sections/04_method}
+\input{sections/05_experiments}
+\input{sections/06_conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\input{sections/appendix_methods}
+
+\end{document}

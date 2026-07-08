@@ -1,0 +1,66 @@
+\section{System overview}
+\label{sec:system}
+
+\paragraph{Hardware.}
+Two SO-101 arms are mounted \SI{0.30}{m} apart (bases at
+\(y=\pm\SI{0.15}{m}\)) on a 3D-printed platform whose geometry is generated
+from a single OpenSCAD configuration; a MuJoCo/Isaac digital twin is
+generated from the same source. Each arm has five revolute body joints~---
+\texttt{shoulder\_pan}, \texttt{shoulder\_lift}, \texttt{elbow\_flex},
+\texttt{wrist\_flex}, \texttt{wrist\_roll}~--- plus a gripper. The
+\texttt{wrist\_roll} axis coincides with the gripper's long (tip) axis, and
+the lift, elbow, and flex axes are parallel, a fact exploited by both the
+armplane mapping and the Telegrip wrist recovery. STS3215 serial bus servos
+are position-controlled; the digital twin models them with position
+actuators (\(k_p=25\), \(k_v=1.5\)) plus joint damping, armature, and
+friction matching the official SO-ARM100 MJCF.
+
+\paragraph{Software pipeline.}
+A reader thread streams Meta Quest controller poses (\SI{50}{Hz}), buttons,
+grips, and triggers. Controller transforms are One-Euro filtered
+(\(f_{c,\min}=0.8\), \(\beta=5.0\), \(f_{c,d}=0.9\)) in a shared data
+manager. The IK solver thread (\SI{100}{Hz}) performs the retargeting of
+Section~\ref{sec:method} and hands 10-DoF joint targets to per-arm joint
+threads (real robot) or to the MuJoCo scene (simulation rehearsal). Holding
+both grips activates teleoperation (\emph{clutch}); the first grip of a
+session calibrates the handle axes; buttons toggle enable/home/height-lock
+states; triggers drive the grippers.
+
+\paragraph{Pluggable IK methods.}
+The IK layer is a narrow interface (anchor to measured joints, accept
+per-frame EE pose targets, solve, expose the configuration). The production
+implementation is a Pink QP; a \texttt{MethodIKAdapter} exposes the same
+interface over any of the six registered benchmark methods
+(Appendix~\ref{app:methods}) and adds a joint-space rate limiter
+(\(\dot q_{\max}=\SI{3}{rad/s}\) in simulation, \SI{2}{rad/s} on hardware).
+Every method can therefore be driven by the real headset on the real arms,
+by the headset against the digital twin, or by scripted mock trajectories in
+the benchmark~--- without touching the production thread. Independently of
+this registry, the \emph{unmodified upstream} Telegrip stack (web UI,
+WebXR streaming, PyBullet IK) can also drive the two arms directly for
+head-to-head comparison: \texttt{tool/telegrip\_native.py} is a thin entry
+point that bridges this rig's serial ports and motor calibrations into a
+Telegrip checkout and then defers entirely to its CLI
+(\texttt{markdowns/telegrip\_native.md}).
+
+\paragraph{Simulation rehearsal and benchmark harness.}
+\texttt{tool/quest\_sim\_teleop.py} runs the \emph{production} thread
+against the digital twin, with either the real headset or a scripted mock
+device (patterns: table circles, wrist oscillation, envelope excursion).
+By default it loads the full twin rig scene~--- printed board, adapter
+plates, camera tower, wrist C310s~--- with \emph{all} collisions enabled
+(arm--arm, arm--rig, arm--table; the nested base/shoulder mesh pair is
+explicitly excluded since those parts interpenetrate by design), renders
+the three mounted cameras (\texttt{rgb\_scene},
+\texttt{rgb\_wrist\_left/right}) into live view windows, and draws the
+world-frame triad plus the calibrated ``headset center'' marker so the
+operator can see exactly where the system thinks the VR frame sits.
+\texttt{sim\_benchmark/run\_benchmark.py} sweeps mock trajectories across
+methods and reports the metrics of Section~\ref{sec:experiments};
+\texttt{sim\_benchmark/run\_envelope.py} does the same for the
+out-of-envelope policy sweep. During this work we found and fixed a
+rehearsal-harness artifact: while teleoperation was idle, the harness fed
+measured (gravity-sagged) joints back as servo targets, letting the arms
+ratchet \(\approx\)\SI{13}{cm} downward before activation; idle targets are
+now held constant, matching the real robot's behavior (which only writes
+servo goals while teleoperation is active).

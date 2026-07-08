@@ -1,0 +1,42 @@
+\section{Related work}
+\label{sec:related}
+
+\paragraph{VR teleoperation of low-cost arms.}
+Telegrip~\citep{telegrip} teleoperates SO-100 arms from WebXR controllers
+with a deliberately minimal scheme: PyBullet position-only IK on the three
+proximal joints and a direct mapping from controller rotation deltas to the
+two wrist joints, with joint limits clamped after the solve. Its wrist
+feels agile precisely because the wrist path bypasses any task-space
+optimization. Our \texttt{telegrip} method (Section~\ref{sec:telegrip})
+ports this split-IK idea to our benchmark interface, replacing PyBullet
+with the simulator's own kinematics and recovering the wrist angles
+analytically from the absolute target orientation. Other VR pipelines for
+hobby-class arms (e.g.\ Dream-Machines' vr-teleop-kit, whose damped
+least-squares strategy our \texttt{dls} baseline reproduces) typically
+track the full 6D pose and inherit the over-constraint problem on 5-DoF
+hardware.
+
+\paragraph{Differential IK and task-space control.}
+Our production solver builds on Pink~\citep{pink}, a task-based
+differential-IK library over Pinocchio~\citep{pinocchio}, solving a QP with
+frame-tracking, damping, and posture tasks under joint limits;
+mink~\citep{mink} solves the analogous problem over MuJoCo models. Damped
+least squares is the classical singularity-robust baseline
+\citep{wampler1986,nakamura1986}. The benchmark also includes a per-tick
+bounded nonlinear least-squares solve (\texttt{scipy\_ls}) as an
+optimization-based reference.
+
+\paragraph{Input filtering.}
+Controller pose noise is attenuated with the One-Euro
+filter~\citep{oneeuro}, the de-facto standard for interactive input: a
+first-order low-pass whose cutoff adapts to signal speed, trading jitter at
+rest against lag during fast motion. Filter parameters interact directly
+with wrist agility (Section~\ref{sec:experiments}).
+
+\paragraph{Workspace awareness.}
+Commercial teleoperation stacks commonly project infeasible targets onto a
+precomputed reachability approximation; we adopt the same philosophy with
+an analytic annulus-plus-floor envelope derived from the URDF
+(Section~\ref{sec:envelope}), and additionally compare \emph{freeze} and
+\emph{velocity-shaping} alternatives, which to our knowledge have not been
+compared head-to-head on low-cost 5-DoF hardware.

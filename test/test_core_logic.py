@@ -54,5 +54,72 @@ class TestCoreLogic(unittest.TestCase):
         self.assertAlmostEqual(euler_angles[2], 45.0)
 
 
+class TestOperatorFrame(unittest.TestCase):
+    """Headset-anywhere invariance of the operator control frame."""
+
+    @staticmethod
+    def _hand_pair():
+        left = np.eye(4)
+        left[:3, 3] = [0.35, 0.15, -0.25]
+        left[:3, :3] = Rotation.from_euler(
+            "xyz", [5, -10, 20], degrees=True
+        ).as_matrix()
+        right = np.eye(4)
+        right[:3, 3] = [0.32, -0.17, -0.22]
+        right[:3, :3] = Rotation.from_euler(
+            "xyz", [-8, 6, -15], degrees=True
+        ).as_matrix()
+        return left, right
+
+    def test_invariant_to_headset_yaw_and_position(self):
+        """Yawing/translating the reader frame (i.e. placing the headset
+        anywhere) must not change the operator-frame hand poses."""
+        from src.common.utils import compute_operator_frame, to_operator_frame
+
+        left, right = self._hand_pair()
+        rot0, org0 = compute_operator_frame(left, right)
+        ref_left = to_operator_frame(left, rot0, org0)
+        ref_right = to_operator_frame(right, rot0, org0)
+
+        for yaw_deg, offset in ((45, [1.0, -2.0, 0.3]), (-120, [0.2, 5.0, -1.0])):
+            world_shift = np.eye(4)
+            world_shift[:3, :3] = Rotation.from_euler(
+                "z", yaw_deg, degrees=True
+            ).as_matrix()
+            world_shift[:3, 3] = offset
+            left_s = world_shift @ left
+            right_s = world_shift @ right
+            rot_s, org_s = compute_operator_frame(left_s, right_s)
+            np.testing.assert_allclose(
+                to_operator_frame(left_s, rot_s, org_s), ref_left, atol=1e-9
+            )
+            np.testing.assert_allclose(
+                to_operator_frame(right_s, rot_s, org_s), ref_right, atol=1e-9
+            )
+
+    def test_frame_axes_and_origin(self):
+        """y axis follows the left-right handle line, z is up, and the
+        origin sits 20 cm behind and above the handle midpoint."""
+        from src.common.utils import (
+            OPERATOR_FRAME_BACK_M,
+            OPERATOR_FRAME_UP_M,
+            compute_operator_frame,
+        )
+
+        left, right = self._hand_pair()
+        rot, org = compute_operator_frame(left, right)
+        # Right-handed, unit, z-up.
+        np.testing.assert_allclose(rot.T @ rot, np.eye(3), atol=1e-12)
+        np.testing.assert_allclose(rot[:, 2], [0, 0, 1], atol=1e-12)
+        self.assertGreater(rot[:2, 1] @ (left[:2, 3] - right[:2, 3]), 0.0)
+        midpoint = 0.5 * (left[:3, 3] + right[:3, 3])
+        expected = (
+            midpoint
+            - OPERATOR_FRAME_BACK_M * rot[:, 0]
+            + OPERATOR_FRAME_UP_M * rot[:, 2]
+        )
+        np.testing.assert_allclose(org, expected, atol=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()

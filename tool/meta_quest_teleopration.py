@@ -49,11 +49,13 @@ from common.configs import (
     SOLVER_DAMPING_VALUE,
     SOLVER_NAME,
     TRANSLATION_SCALE,
+    WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.pink_ik_solver import PinkIKSolver
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
+from common.workspace_envelope import OOE_POLICIES
 from src.so101_dual_arm import SO101DualArm
 
 
@@ -69,7 +71,15 @@ def main():
         "--method",
         type=str,
         default="production",
-        choices=["production", "pink_full", "pink_relaxed", "dls", "mink", "scipy_ls"],
+        choices=[
+            "production",
+            "pink_full",
+            "pink_relaxed",
+            "dls",
+            "mink",
+            "scipy_ls",
+            "telegrip",
+        ],
         help=(
             "IK layer: 'production' is the tuned Pink solver this tool has "
             "always used; the others are the sim-benchmark methods, wrapped "
@@ -82,6 +92,13 @@ def main():
         type=float,
         default=2.0,
         help="Joint-space rate limit (rad/s) applied to benchmark methods",
+    )
+    parser.add_argument(
+        "--oob-mode",
+        type=str,
+        default=WORKSPACE_OOB_MODE,
+        choices=sorted(OOE_POLICIES),
+        help="Out-of-envelope target policy (see common/workspace_envelope.py)",
     )
     args = parser.parse_args()
 
@@ -159,6 +176,7 @@ def main():
     ik_thread = threading.Thread(
         target=dual_ik_solver_thread,
         args=(data_manager, ik_solver, quest_reader),
+        kwargs={"oob_mode": args.oob_mode},
         daemon=True,
     )
     left_joint_thread.start()

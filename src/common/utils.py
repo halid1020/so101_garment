@@ -50,6 +50,57 @@ def mirror_head_frame_pose(transform: np.ndarray) -> np.ndarray:
     return _MIRROR_HEAD_FRAME_Y @ transform @ _MIRROR_HEAD_FRAME_Y
 
 
+# Offset of the operator-frame origin from the handle midpoint at grip:
+# 20 cm behind (toward the operator) and 20 cm above — roughly where the
+# operator's head sits, making the origin a natural "headset center" proxy.
+OPERATOR_FRAME_BACK_M = 0.20
+OPERATOR_FRAME_UP_M = 0.20
+
+
+def compute_operator_frame(
+    left_hand_tf: np.ndarray, right_hand_tf: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Operator control frame from the two handle poses at grip time.
+
+    The Quest app streams controller poses in a reference frame whose yaw
+    and origin depend on where the HEADSET was when the app started — so
+    with raw poses, the operator has to place the headset carefully or
+    "forward" on the hand stops being "forward" on the robot. This frame
+    removes that dependence: at every grip, a robot-aligned frame is built
+    from the handles themselves (gravity gives z; the left→right handle
+    line gives the lateral axis), and all control happens in it. The
+    headset can sit anywhere.
+
+    Returns (rotation, origin) in the reader frame: `rotation` columns are
+    the operator frame's x (forward, away from the operator), y (operator's
+    left), z (up); `origin` sits OPERATOR_FRAME_BACK_M behind and
+    OPERATOR_FRAME_UP_M above the handle midpoint — a headset-center proxy.
+    Assumes the reader frame's z is gravity-aligned (OpenXR spaces are).
+    """
+    p_left = left_hand_tf[:3, 3]
+    p_right = right_hand_tf[:3, 3]
+    midpoint = 0.5 * (p_left + p_right)
+    y_axis = p_left - p_right
+    y_axis[2] = 0.0  # lateral axis is horizontal by construction
+    norm = np.linalg.norm(y_axis)
+    y_axis = y_axis / norm if norm > 1e-6 else np.array([0.0, 1.0, 0.0])
+    z_axis = np.array([0.0, 0.0, 1.0])
+    x_axis = np.cross(y_axis, z_axis)  # forward, right-handed with y left
+    rotation = np.column_stack([x_axis, y_axis, z_axis])
+    origin = midpoint - OPERATOR_FRAME_BACK_M * x_axis + OPERATOR_FRAME_UP_M * z_axis
+    return rotation, origin
+
+
+def to_operator_frame(
+    hand_tf: np.ndarray, frame_rot: np.ndarray, frame_origin: np.ndarray
+) -> np.ndarray:
+    """Re-express a reader-frame hand pose in the operator control frame."""
+    out = np.eye(4)
+    out[:3, :3] = frame_rot.T @ hand_tf[:3, :3]
+    out[:3, 3] = frame_rot.T @ (hand_tf[:3, 3] - frame_origin)
+    return out
+
+
 def map_quest_hands_to_robot_arms(
     left_hand_transform: np.ndarray,
     right_hand_transform: np.ndarray,

@@ -51,6 +51,9 @@ class TeleopState:
             "left": None,
             "right": None,
         }
+        # Named 3D points (robot/world coords) for visualization — e.g. the
+        # notional headset center published by the IK thread at calibration.
+        self.frame_markers: dict[str, np.ndarray] = {}
 
 
 class RobotState:
@@ -239,6 +242,17 @@ class DualDataManager:
     def get_height_lock_enabled(self) -> bool:
         with self._teleop_state._lock:
             return self._teleop_state.height_lock_enabled
+
+    def set_frame_marker(self, name: str, position: np.ndarray) -> None:
+        """Publish a named 3D point (robot/world coords) for visualization."""
+        with self._teleop_state._lock:
+            self._teleop_state.frame_markers[name] = np.asarray(
+                position, dtype=float
+            ).copy()
+
+    def get_frame_markers(self) -> dict[str, np.ndarray]:
+        with self._teleop_state._lock:
+            return {k: v.copy() for k, v in self._teleop_state.frame_markers.items()}
 
     def set_gizmo_target_pose(self, side: str, transform: np.ndarray | None) -> None:
         if side not in ("left", "right"):

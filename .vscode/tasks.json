@@ -1,0 +1,31 @@
+{
+  // Fallback for building the paper without the LaTeX Workshop extension:
+  // Terminal > Run Task > "Build teleoperation paper" (or Ctrl+Shift+B).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build teleoperation paper",
+      "type": "shell",
+      "command": "latexmk",
+      "args": ["-pdf", "-interaction=nonstopmode", "main.tex"],
+      "options": {
+        "cwd": "${workspaceFolder}/paper/teleoperation"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean paper build files",
+      "type": "shell",
+      "command": "latexmk",
+      "args": ["-C"],
+      "options": {
+        "cwd": "${workspaceFolder}/paper/teleoperation"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
