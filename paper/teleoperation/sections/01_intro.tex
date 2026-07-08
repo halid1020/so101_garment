@@ -23,7 +23,7 @@ out-of-envelope hand targets are the norm, not the exception. Third, the
 STS3215 bus servos are position-controlled with modest stiffness, so command
 smoothness directly affects hardware wear and tracking fidelity.
 
-This document makes four contributions:
+This document makes five contributions:
 \begin{enumerate}
   \item a description of the production retargeting pipeline: grip-clutched
         absolute-position mapping with One-Euro filtering and the
@@ -41,7 +41,12 @@ This document makes four contributions:
   \item a simulation benchmark comparing six IK methods on tracking,
         wrist-agility, and out-of-envelope suites, with metrics that
         include orientation error and roll phase lag
-        (Section~\ref{sec:experiments}).
+        (Section~\ref{sec:experiments});
+  \item a within-subjects \emph{user study protocol} (\(n\approx 5\))
+        pairing the objective benchmark with subjective evaluation~---
+        NASA-TLX workload, system usability, custom teleoperation-feel
+        scales, and semi-structured interviews~--- on a bimanual
+        coordination task (Section~\ref{sec:exp-userstudy}).
 \end{enumerate}
 
 The paper is a \emph{living document}: it is the canonical reference for the

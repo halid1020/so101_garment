@@ -521,3 +521,17 @@ before the activation anchor latched. The tool now streams targets only
 while teleop is active and holds the last active command otherwise —
 mirroring what the real-robot thread already did. Sim EE tracking with the
 production stack: 11.6 mm mean (`pink_relaxed`), 7.0 mm (`telegrip`).
+
+---
+
+## 10. Planned: bimanual user study (subjective evaluation)
+
+Everything above is objective and open-loop. A within-subjects user study
+(~5 participants, pick–handover–place + towel half-fold, conditions
+`pink_full`/`pink_relaxed`/`telegrip` with `project` OOE + the upstream
+Telegrip stack via `tool/telegrip_native.py`) adds the subjective side:
+NASA-TLX workload, SUS, custom teleop-feel Likert items, and interviews,
+alongside per-trial objective logs. Design in
+`paper/teleoperation/` §"Bimanual user study (protocol)"; step-by-step
+runbook in `markdowns/user_study_protocol.md`. Results land here and in
+the paper once sessions are run.
