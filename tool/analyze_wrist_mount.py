@@ -4,7 +4,7 @@ Extracts the two M3 screw positions (and the flat mating face) that the
 official SO-ARM100 wrist camera mounts use on the wrist-roll follower
 element, and expresses them in the URDF ``gripper_link`` frame. The printed
 ``src/platform/wrist_camera_mount.scad`` and the camera poses in
-``sim_twin`` are derived from these numbers; re-run this script if the
+``src/sim_twin`` are derived from these numbers; re-run this script if the
 upstream meshes ever change and update ``config.scad`` accordingly.
 
 Method: slice the mesh with planes perpendicular to the screw axis and fit

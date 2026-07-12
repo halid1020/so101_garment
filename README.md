@@ -13,6 +13,16 @@ This repository provides an independent, industrial-grade pipeline for dexterous
 3. **Data Pipeline:** Synchronized, offline collection of RGB feeds, joint states, and tactile data formatted natively for Hugging Face LeRobot dataset standards.
 4. **Digital Twin:** The 3D-printed rig (board, adapters, camera tower, C310 holders) is parametrized in OpenSCAD and mirrored 1:1 in MuJoCo and Isaac Lab from the same config — see [Digital twin & printed rig](#-digital-twin--printed-rig-openscad--mujoco--isaac-lab).
 
+## 📚 Documentation
+
+- [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md) — teleop IK-method benchmark results (tracking, wrist, handover, out-of-envelope sweeps).
+- [`documents/user_study_protocol.md`](documents/user_study_protocol.md) — bimanual teleoperation user-study runbook.
+- [`documents/telegrip_native.md`](documents/telegrip_native.md) — driving the arms with the unmodified upstream Telegrip stack.
+- [`documents/paper/teleoperation/`](documents/paper/teleoperation/) — the living teleoperation paper (LaTeX). Build it with `make paper`.
+- [`src/platform/README.md`](src/platform/README.md) — printed-rig design, hardware shopping list, assembly.
+- [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md) — IK-method benchmark harness and options.
+- [`src/sim_twin/isaac/README.md`](src/sim_twin/isaac/README.md) — portable Isaac Lab package (asset conversion + demo).
+
 ## ⚙️ Installation
 
 Everything installs with **one script**. From the repo root:
@@ -59,8 +69,8 @@ Five IK methods are available behind the same production pipeline
 (One-Euro filtering, grip clutch, handle calibration, armplane orientation
 mapping): `production` (the tuned Pink solver), `pink_full`,
 `pink_relaxed`, `dls`, `mink`, `scipy_ls`. Benchmark results and method
-details: [`markdowns/teleop_benchmark_results.md`](markdowns/teleop_benchmark_results.md)
-and [`sim_benchmark/README.md`](sim_benchmark/README.md).
+details: [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md)
+and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
 
 **Prerequisites**
 
@@ -112,12 +122,12 @@ Offline benchmark of the five methods on mocked hand trajectories
 with plots and animated GIF comparisons:
 
 ```bash
-python sim_benchmark/run_benchmark.py --plot outputs/teleop_benchmark_plots
-python sim_benchmark/run_handover.py --plot outputs/teleop_benchmark_plots
-python sim_benchmark/package_report.py   # shareable zip of all results
+python src/sim_benchmark/run_benchmark.py --plot outputs/teleop_benchmark_plots
+python src/sim_benchmark/run_handover.py --plot outputs/teleop_benchmark_plots
+python src/sim_benchmark/package_report.py   # shareable zip of all results
 ```
 
-See [`sim_benchmark/README.md`](sim_benchmark/README.md) for all options.
+See [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md) for all options.
 
 ## 🧠 Policy training & evaluation (LeRobot · pi0.5 · LIBERO)
 
@@ -132,9 +142,9 @@ few episodes of the lightweight PushT dataset — it runs in minutes and
 will not freeze a laptop:
 
 ```bash
-bash test/smoke_test_pipeline.sh                 # auto device, tiny run
-bash test/smoke_test_pipeline.sh --device cpu    # force CPU
-bash test/smoke_test_pipeline.sh --steps 100 --eval-episodes 3
+bash test/system/smoke_test_pipeline.sh                 # auto device, tiny run
+bash test/system/smoke_test_pipeline.sh --device cpu    # force CPU
+bash test/system/smoke_test_pipeline.sh --steps 100 --eval-episodes 3
 ```
 
 It **auto-selects the device**: CUDA only if the GPU has ≥8 GB VRAM,
@@ -315,7 +325,7 @@ python -m sim_twin.assets --package-isaac   # -> build/so101_twin_isaac.zip
 ```
 
 Unzip there, run `convert_assets.py` (URDF/STL → USD), then
-`run_demo.py` — see [`sim_twin/isaac/`](sim_twin/isaac/README.md).
+`run_demo.py` — see [`src/sim_twin/isaac/`](src/sim_twin/isaac/README.md).
 
 The asset pipeline (`python -m sim_twin.assets`, SCAD → meshes → URDF →
 `twin_params.json`, content-hash cached) runs automatically inside the

@@ -1,6 +1,6 @@
 {
   // LaTeX Workshop (install the "latex-workshop" extension): builds
-  // paper/teleoperation/main.tex with latexmk automatically on save.
+  // documents/paper/teleoperation/main.tex with latexmk automatically on save.
   "latex-workshop.latex.autoBuild.run": "onSave",
   "latex-workshop.latex.recipe.default": "latexmk",
   "latex-workshop.latex.tools": [
@@ -27,7 +27,7 @@
   // build the root document, never the fragment being edited.
   "latex-workshop.latex.rootFile.useSubFile": false,
   "latex-workshop.latex.search.rootFiles.include": [
-    "paper/**/main.tex"
+    "documents/paper/**/main.tex"
   ],
   "latex-workshop.view.pdf.viewer": "tab",
   "latex-workshop.latex.autoClean.run": "onBuilt",

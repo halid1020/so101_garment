@@ -45,7 +45,7 @@ the old wooden board and the separate under-board nut plate
 
 | File | Prints | What it is |
 |---|---|---|
-| `config.scad` | — | Shared parameters. Edit this first; everything else reads from it. The **sim digital twin** (`sim_twin/`) also reads this file — change a number here, rebuild the twin, see it in simulation. |
+| `config.scad` | — | Shared parameters. Edit this first; everything else reads from it. The **sim digital twin** (`src/sim_twin/`) also reads this file — change a number here, rebuild the twin, see it in simulation. |
 | `board.scad` | 3 tiles + 2 splice bars | The printed perforated board described above. |
 | `arm_mount_adapter.scad` | **x2** | Top matches your SO-101 base's real screw holes (M3 from below). Bolts to the board with 4x M5x25 from the top, in a 100x100mm square fully outside the base's footprint. |
 | `camera_tower.scad` | x1 base + 3 mast segments + 1 platform | Tapered triangular tower (110mm side at the board → 45mm at the top), one corner facing the front (+X, `tower_yaw_deg`); bolts down with 4x M5x20; optional core spine rod. |
@@ -53,7 +53,7 @@ the old wooden board and the separate under-board nut plate
 | `tower_camera_cradle.scad` | x1 | C310 cradle for the tower's top platform (the C310 has no tripod thread) — see "Camera holders" below. |
 | `cam_tray_lib.scad` | — | Shared tray/pedestal modules for the two camera holders. |
 | `cam_body.scad` | **never** | Simplified C310 visual mesh for the simulation twin only. |
-| `export.scad` | — | Headless export dispatcher: `openscad -o out.stl -D 'part="adapter"' export.scad`. Used by `sim_twin/assets.py`. |
+| `export.scad` | — | Headless export dispatcher: `openscad -o out.stl -D 'part="adapter"' export.scad`. Used by `src/sim_twin/assets.py`. |
 | `drill_template.scad` | legacy — don't print | Drill guide / under-board nut plate for the original **wooden**-board rig. Superseded by `board.scad`; kept for reference. |
 
 ## Shopping list (standard catalogue hardware)
@@ -140,7 +140,7 @@ tighten. Zip ties last, same as the wrist.
 **Caliper-check the `cam_*` values in `config.scad` before printing**
 (defaults are C310 datasheet numbers; the clip-less body depth
 especially). The same values drive the simulation digital twin
-(`sim_twin/` at the repo root): camera poses, tilt angles, and the
+(`src/sim_twin/`): camera poses, tilt angles, and the
 C310's 60° diagonal FOV in MuJoCo/Isaac all derive from this file —
 `python -m sim_twin.verify` renders what each camera actually sees, and
 the overview render draws the tower camera's view frustum.

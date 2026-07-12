@@ -16,7 +16,7 @@ comes from the unmodified Telegrip checkout. All this wrapper does is
 Arm mapping (load-bearing, see CLAUDE.md): follower_0 = RIGHT arm
 (PORT_ID_0), follower_1 = LEFT arm (PORT_ID_1).
 
-Usage (see markdowns/telegrip_native.md for full instructions):
+Usage (see documents/telegrip_native.md for full instructions):
     venv/bin/python tool/telegrip_native.py                 # full stack
     venv/bin/python tool/telegrip_native.py --no-viz        # headless PyBullet
     venv/bin/python tool/telegrip_native.py --autoconnect --log-level info

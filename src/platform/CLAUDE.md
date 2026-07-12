@@ -68,7 +68,7 @@ uniform grid, so a small fixed adapter bridges "the base's real holes" to
 - `export.scad` — headless per-part export dispatcher
   (`-D 'part="..."'`, plus `-D seg=N` for mast segments). `use <>`s
   every part file, so their top-level print layouts don't execute.
-  `sim_twin/assets.py` drives it; keep part names in sync there.
+  `src/sim_twin/assets.py` drives it; keep part names in sync there.
 
 ## Confirmed / measured values (config.scad) — do not casually change these
 
@@ -93,10 +93,10 @@ do-not-casually-change status):
 
 ## The sim digital twin reads this directory
 
-`sim_twin/` (repo root) parses `config.scad` and headless-exports parts
+`src/sim_twin/` parses `config.scad` and headless-exports parts
 via `export.scad` to build MuJoCo/Isaac Lab scenes. Consequences:
 - Adding/renaming a part module: update `export.scad`'s dispatch AND
-  the part table in `sim_twin/assets.py`.
+  the part table in `src/sim_twin/assets.py`.
 - The `RIG PLACEMENT` / C310 / tray / anchor sections in `config.scad`
   exist for the twin; keep them parseable as plain `name = number;`
   assignments (simple arithmetic is fine, no conditionals).

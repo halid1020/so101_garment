@@ -17,6 +17,8 @@ Run:  python tool/fit_joint_offsets.py --arm left
 then again with --arm right. The script guides you through the rest.
 """
 
+# TODO: do we really need this script?
+
 import argparse
 import sys
 import time

@@ -9,7 +9,7 @@
       "command": "latexmk",
       "args": ["-pdf", "-interaction=nonstopmode", "main.tex"],
       "options": {
-        "cwd": "${workspaceFolder}/paper/teleoperation"
+        "cwd": "${workspaceFolder}/documents/paper/teleoperation"
       },
       "group": {
         "kind": "build",
@@ -23,7 +23,7 @@
       "command": "latexmk",
       "args": ["-C"],
       "options": {
-        "cwd": "${workspaceFolder}/paper/teleoperation"
+        "cwd": "${workspaceFolder}/documents/paper/teleoperation"
       },
       "problemMatcher": []
     }

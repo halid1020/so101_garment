@@ -10,7 +10,7 @@ Controls:
   Hold triggers           - close grippers
   Button A                - enable / disable both arms
   Button B                - move both arms to middle pose
-  Button Y                - toggle height lock (flat table strokes)
+  Button Y                - toggle height lock (flat table strokes) # TODO: remove this functionality
   Ctrl+C                  - exit
 """
 

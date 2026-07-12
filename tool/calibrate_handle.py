@@ -30,6 +30,8 @@ from meta_quest_teleop.reader import MetaQuestReader  # noqa: E402
 
 WORLD_DOWN = np.array([0.0, 0.0, -1.0])  # reader's ROS world frame, z up
 
+# TODO: do we actually need this script?
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Calibrate Quest handle axis")
