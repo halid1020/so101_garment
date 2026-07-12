@@ -77,3 +77,6 @@ Then:
   every launch so a stale yaml can't flip the arms.
 - The firewall must allow TCP 8443 (HTTPS/UI) and 8442 (VR WebSocket) on
   the LAN for the headset to connect.
+
+
+[TODO: please clearly outline the difference between running telegrip with integration and running telegrip directlry with an entrace program.]

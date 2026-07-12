@@ -10,7 +10,7 @@ generated from the same source. Each arm has five revolute body joints~---
 \texttt{wrist\_flex}, \texttt{wrist\_roll}~--- plus a gripper. The
 \texttt{wrist\_roll} axis coincides with the gripper's long (tip) axis, and
 the lift, elbow, and flex axes are parallel, a fact exploited by both the
-armplane mapping and the Telegrip wrist recovery. STS3215 serial bus servos
+armplane mapping and the Telegrip wrist recovery \textbf{TODO: I do not understand here, please explain.}. STS3215 serial bus servos
 are position-controlled; the digital twin models them with position
 actuators (\(k_p=25\), \(k_v=1.5\)) plus joint damping, armature, and
 friction matching the official SO-ARM100 MJCF.

@@ -158,6 +158,8 @@ episode for post-hoc EE smoothness analysis with `sim_benchmark/metrics.py`.
   (user-study subsection) and cross-link from
   `markdowns/teleop_benchmark_results.md`.
 
+[TODO: create an experiment document for each interviewers, so that I can work on these experimetn documents later.]
+
 ## 10. Safety & ethics checklist
 
 - [ ] Torque-disable (Ctrl+C / kill switch) within experimenter's reach

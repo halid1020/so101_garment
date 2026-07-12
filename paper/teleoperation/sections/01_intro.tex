@@ -21,12 +21,12 @@ the arm is small (\(\approx\)\SI{0.41}{m} maximal reach from the shoulder-lift
 pivot) while a human operator's natural gestures easily exceed that reach, so
 out-of-envelope hand targets are the norm, not the exception. Third, the
 STS3215 bus servos are position-controlled with modest stiffness, so command
-smoothness directly affects hardware wear and tracking fidelity.
+smoothness directly affects hardware wear and tracking fidelity. \textbf{TODO: explain the third point in more details.}
 
 This document makes five contributions:
 \begin{enumerate}
   \item a description of the production retargeting pipeline: grip-clutched
-        absolute-position mapping with One-Euro filtering and the
+        absolute-position mapping with One-Euro filtering \textbf{TODO: what is this filtering. please explain briefly here and put detailed information in other sections.} and the
         \emph{armplane} orientation construction, which builds only
         orientations the 5-DoF arm can actually realize
         (Section~\ref{sec:method});
@@ -34,7 +34,7 @@ This document makes five contributions:
         selectable out-of-envelope target policies~--- warn, project,
         freeze, and slowdown~--- applied uniformly to every teleoperation
         input source (Section~\ref{sec:envelope});
-  \item the integration of a \emph{Telegrip-style split IK}
+  \item the integration of a \emph{Telegrip-style split IK} \textbf{TODO: introduce the method used in Telegrip repository in great detailes.}
         \citep{telegrip} as a pluggable method: position-only damped least
         squares on the three proximal joints with a direct analytic wrist
         mapping, targeting wrist agility (Section~\ref{sec:telegrip});
@@ -44,7 +44,7 @@ This document makes five contributions:
         (Section~\ref{sec:experiments});
   \item a within-subjects \emph{user study protocol} (\(n\approx 5\))
         pairing the objective benchmark with subjective evaluation~---
-        NASA-TLX workload, system usability, custom teleoperation-feel
+        NASA-TLX workload \textbf{TODO: what is this, explain.}, system usability, custom teleoperation-feel
         scales, and semi-structured interviews~--- on a bimanual
         coordination task (Section~\ref{sec:exp-userstudy}).
 \end{enumerate}
@@ -52,3 +52,8 @@ This document makes five contributions:
 The paper is a \emph{living document}: it is the canonical reference for the
 teleoperation side of the repository and is updated in the same branch as
 any change to the methods, mappings, envelope, or benchmark results.
+
+
+\textbf{TODO: create a preliminary section to introduce the common teleopration details in other system in details. The math formulas, the system data follow. Focus on using meta-quest to contron single or dual arms with 5,6 or 7 DoF. The common teleoperation system design, the common IK methods, the common orientation mapping (wrist control), the common out-of-envelope handling.}
+
+\textbf{TODO: do not put code related document path and class paths in the paper. add this to paper writing guideline.}

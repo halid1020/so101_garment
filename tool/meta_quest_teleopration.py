@@ -259,7 +259,9 @@ def main():
         "button_a_pressed", _safe_button("Button A", toggle_robot_enabled_status)
     )
     quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
-    quest_reader.on("button_y_pressed", _safe_button("Button Y", toggle_height_lock))
+    quest_reader.on(
+        "button_y_pressed", _safe_button("Button Y", toggle_height_lock)
+    )  # TODO: let's remove this functionality.
 
     print()
     print("🚀 Dual-arm teleoperation ready.")

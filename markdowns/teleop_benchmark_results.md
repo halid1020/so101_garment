@@ -1,11 +1,15 @@
 # Meta-Quest Teleop Method Benchmark — Simulation Results
 
-**Branch:** `teleop-benchmark` · **Date:** 2026-07-03 · **Code:** `sim_benchmark/`
+**Branch:** `teleop-benchmark` · **Date:** 2026-07-03 · **Code:** `sim_benchmark/` [TODO: change these information accordingly.]
 
 Goal: verify candidate Meta-Quest → dual SO-101 teleoperation pipelines in
 MuJoCo with mocked hand movements, *before* running the real headset on the
 real robots.
 
+
+[TODO: also add the results of the telegrip method]
+[TODO: in simulation visualisation, please also draw the axsi for ee pos, target ee pos, teleop world pos, and robot world pos]
+[TODO: my wrist canno roll 360, but I would like to control the gripper to roll through multiple wrist movement by gripping and realsing the teleop holder. so that I can adjust the gripper orientation to grap and hand-over objects.]
 ---
 
 ## 1. Experiment 1: tracking benchmark — design
@@ -16,14 +20,14 @@ real robots.
   loads our existing URDF directly, milliseconds to reset).
 - **Robot:** the repo's dual-arm URDF (`src/so101_dual_description/robot.urdf`),
   two 5-DoF SO-101 arms (grippers locked for IK) with bases 0.30 m apart
-  (y = ±0.15 m), mounted on a table whose surface is the z = 0 plane.
+  (y = ±0.15 m), mounted on a table whose surface is the z = 0 plane. [TODO: use the platform rig setup.]
 - **Servo model:** the URDF carries no joint dynamics, so STS3215-like
   values were added (damping 0.60, armature 0.028, frictionloss 0.05 —
   matching the official SO-ARM100 MJCF) plus position actuators
   (kp = 25, kv = 1.5). Without these the arms oscillate unboundedly.
-- **Collisions disabled** (tracking benchmark, not contact benchmark).
+- **Collisions disabled** (tracking benchmark, not contact benchmark). [TODO: enable all the Collision]
 - **Rates:** physics 500 Hz (2 ms), teleop/IK layer 50 Hz — matching the
-  real pipeline's `CONTROLLER_DATA_RATE`.
+  real pipeline's `CONTROLLER_DATA_RATE`. [TODO: these hyper-parameters should be saved in a yaml file with clear explanation]
 - Green sites mark the measured EE frames; red/blue mocap spheres show the
   commanded left/right targets in the viewer.
 
@@ -63,7 +67,7 @@ published/community solution for Quest → SO-101 teleop:
 | `telegrip` | split IK: analytic wrist (elevation/roll → wrist_flex/wrist_roll) + 3-joint position-only DLS | faithful port of DipFlip/telegrip's actual algorithm (added later; see §8) |
 
 ### 1.4 Metrics
-
+[TODO: please explain these metrics clearly] Why they are used and how exactly they are calulcated. What are the differences between these metrics]
 - **ik_err** — ‖FK(commanded q) − target‖: pure IK quality, no physics.
 - **err_mean / err_p95** — ‖measured EE − target‖ after stepping physics:
   includes servo lag and gravity sag (~5–9 mm floor at these gains).
@@ -80,6 +84,8 @@ same settled neutral pose `[0, −10, 20, 25, 0]°` per arm.
 ## 2. Experiment 1: results
 
 ### 2.1 Summary (mean measured error across all 7 trajectories)
+
+[TODO:; what does "jerk" mean here?]
 
 | method | mean err (mm) | verdict |
 |---|---|---|
@@ -172,6 +178,8 @@ Top-view path plots (target vs IK command vs measured, per method and arm):
 
 ## 3. Experiment 2: bimanual pick–handover–place
 
+[TODO: use the true contact model for this test. Do not use anchoring. Instead of grasping cubes try to grasp a longer rectangular cube, as the wrist of the robot hand is not flexible.]
+
 ### 3.1 Design
 
 A coordination task requiring both arms: a 2.2 cm payload cube starts on
@@ -199,6 +207,8 @@ held at the latched pose (clutch semantics, as in Experiment 1).
   1.2 s settle.
 
 ### 3.2 Results (30 scenarios × 5 methods)
+
+[TODO: please explain clelarly what are these error.]
 
 | method | success | handover | place err mean (mm) | place err p95 (mm) | track err mean (mm) | solve (ms) |
 |---|---|---|---|---|---|---|
@@ -230,6 +240,8 @@ Visualizations:
 - Raw per-episode results: `outputs/teleop_benchmark/handover.json`.
 
 ### 3.3 Head-to-head GIF gallery
+
+[TODO: update the visusaliseation and results.]
 
 Panel order in every comparison strip, left → right:
 **pink_full · pink_relaxed · dls · mink · scipy_ls**.
@@ -461,7 +473,7 @@ envelope — `r_min ≤ ‖p − pivot(azimuth)‖ ≤ r_max` plus a z-floor, ra
 derived numerically from the URDF (re-verified by
 `test/test_workspace_envelope.py`) — and four selectable policies for
 targets outside it:
-
+[TODO: please draw this envolop from different views in simulation.]
 - **`warn`** — legacy behavior: pass through, throttled console warning.
 - **`project`** — closest feasible point on the boundary.
 - **`freeze`** — hold the last feasible target until the hand re-enters.
@@ -490,7 +502,7 @@ the case that separates `freeze` from the tracking policies).
 `outputs/teleop_envelope_plots/`.)
 
 ### 9.2 Findings
-
+[Produce visualisations for these experiments.]
 1. **`warn` (the old behavior) grinds the arm 130–184 mm from its own
    commanded target** while the hand is outside — the solver chases an
    impossible point and parks at joint limits. Every active policy keeps
