@@ -19,12 +19,14 @@ from common.configs import (
     IK_SOLVER_RATE,
     LEFT_END_EFFECTOR_FRAME_NAME,
     ORIENTATION_BLEND_TIME_S,
+    RATCHET_LIMIT_GUARD_DEG,
     RIGHT_END_EFFECTOR_FRAME_NAME,
     WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.envelope_feedback import EnvelopeFeedback
 from common.pink_ik_solver import PinkIKSolver
+from common.roll_ratchet import KEEP, NEUTRAL, REWRAP, RollRatchet
 from common.utils import (
     blend_rotations,
     compute_hand_to_robot_calibration,
@@ -87,6 +89,37 @@ def dual_ik_solver_thread(
         side: _d.oMf[_m.getFrameId(f"{side}_base_link")].translation[:2].copy()
         for side in ("left", "right")
     }
+    # Wrist-roll ratcheting (see common/roll_ratchet.py): joint indices in
+    # the 10-DoF configuration ([left x5, right x5], roll is joint 5 of each
+    # arm), the roll joint limits from the model, and per-side decision state.
+    _roll_idx = {"left": 4, "right": 9}
+    _ee_fid = {
+        "left": _m.getFrameId(LEFT_END_EFFECTOR_FRAME_NAME),
+        "right": _m.getFrameId(RIGHT_END_EFFECTOR_FRAME_NAME),
+    }
+    roll_ratchet = RollRatchet(
+        lo=float(_m.lowerPositionLimit[_roll_idx["left"]]),
+        hi=float(_m.upperPositionLimit[_roll_idx["left"]]),
+        guard_rad=np.deg2rad(RATCHET_LIMIT_GUARD_DEG),
+    )
+
+    def _knuckle_at_neutral_roll(side: str) -> np.ndarray:
+        """World knuckle axis of this arm's EE with its wrist_roll zeroed.
+
+        Used by the operator-requested roll reset: anchoring the roll
+        reference here makes the commanded roll glide back to the joint's
+        neutral over the activation blend.
+        """
+        q = ik_solver.get_current_configuration().copy()
+        q[_roll_idx[side]] = 0.0
+        pin.forwardKinematics(_m, _d, q)
+        pin.updateFramePlacements(_m, _d)
+        rot = _d.oMf[_ee_fid[side]].rotation
+        khat = rot[:, 2].copy()
+        khat[2] = 0.0
+        n = np.linalg.norm(khat)
+        return khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+
     # Arm azimuths (compass direction of the EE from its base), kept between
     # cycles so a near-vertical/retracted pose doesn't produce noise.
     azimuths: dict[str, float] = {}
@@ -155,6 +188,7 @@ def dual_ik_solver_thread(
         nonlocal activation_time
         if envelope_feedback is not None:
             envelope_feedback.reset()
+        roll_ratchet.reset()
         left_rot_at_activation = None
         right_rot_at_activation = None
         activation_time = None
@@ -320,6 +354,7 @@ def dual_ik_solver_thread(
                 # it is perpendicular to the handle by construction and the
                 # roll response is strong in every session. Re-gripping is
                 # therefore always a full, fresh calibration.
+                _q_solved = ik_solver.get_current_configuration()
                 for _key, _tf, _pose in (
                     ("left", left_tf, left_pose),
                     ("right", right_tf, right_pose),
@@ -329,6 +364,34 @@ def dual_ik_solver_thread(
                     khat[2] = 0.0
                     n = np.linalg.norm(khat)
                     khat = khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+                    # Roll ratcheting: decide the roll anchor for this
+                    # engagement (see common/roll_ratchet.py). The activation
+                    # blend below glides any change, so nothing snaps.
+                    try:
+                        _trig = float(quest_reader.get_trigger_value(_key))
+                    except (AttributeError, TypeError):
+                        _trig = 0.0
+                    _action = roll_ratchet.decide_at_grip(
+                        _key,
+                        float(_q_solved[_roll_idx[_key]]),
+                        data_manager.consume_roll_reset(_key),
+                        _trig > 0.5,
+                    )
+                    if _action == NEUTRAL:
+                        khat = _knuckle_at_neutral_roll(_key)
+                        print(f"🔄 {_key} gripper roll gliding back to neutral")
+                    elif _action == REWRAP:
+                        # Jaw-equivalent half-turn: negating the horizontal
+                        # roll reference rotates the target roll by 180 deg,
+                        # which the parallel jaws cannot distinguish, and
+                        # restores wrist_roll headroom.
+                        khat = -khat
+                        print(
+                            f"↩️  {_key} wrist rolled back 180° (jaw-"
+                            "equivalent) — roll headroom restored"
+                        )
+                    else:
+                        assert _action == KEEP
                     knuckle_axes[_key] = _tf[:3, :3].T @ khat
                 print(
                     "🖐️  Handle axes captured (handles assumed pointing "
@@ -457,6 +520,20 @@ def dual_ik_solver_thread(
                 if envelope_feedback is not None:
                     envelope_feedback.notify("left", left_oob, now)
                     envelope_feedback.notify("right", right_oob, now)
+
+                # Wrist-roll limit hint: a hold that parks the roll in the
+                # guard band gets a throttled release-and-regrip reminder
+                # (the rewrap itself only ever happens at a grip edge).
+                _q_now = ik_solver.get_current_configuration()
+                for _side in ("left", "right"):
+                    if roll_ratchet.should_warn_mid_hold(
+                        _side, float(_q_now[_roll_idx[_side]]), now
+                    ):
+                        print(
+                            f"⚠️  {_side} wrist roll near its limit — "
+                            "release, untwist your wrist, and re-grip to "
+                            "keep rolling"
+                        )
 
                 ik_solver.set_target_poses(
                     {

@@ -47,6 +47,8 @@ class TeleopState:
         self.rotation_scale: float = 1.0
         self.mirror_control_enabled: bool = False
         self.height_lock_enabled: bool = False
+        # Pending per-hand roll-ratchet resets (consumed at the next grip).
+        self.roll_reset_requests: dict[str, bool] = {"left": False, "right": False}
         self.gizmo_target_poses: dict[str, np.ndarray | None] = {
             "left": None,
             "right": None,
@@ -242,6 +244,19 @@ class DualDataManager:
     def get_height_lock_enabled(self) -> bool:
         with self._teleop_state._lock:
             return self._teleop_state.height_lock_enabled
+
+    def request_roll_reset(self, side: str) -> None:
+        """Queue a wrist-roll reset for one hand; the IK thread consumes it
+        at the next clutch engagement (see common/roll_ratchet.py)."""
+        with self._teleop_state._lock:
+            self._teleop_state.roll_reset_requests[side] = True
+
+    def consume_roll_reset(self, side: str) -> bool:
+        """Return-and-clear the pending roll-reset flag for one hand."""
+        with self._teleop_state._lock:
+            pending = self._teleop_state.roll_reset_requests[side]
+            self._teleop_state.roll_reset_requests[side] = False
+            return pending
 
     def set_frame_marker(self, name: str, position: np.ndarray) -> None:
         """Publish a named 3D point (robot/world coords) for visualization."""

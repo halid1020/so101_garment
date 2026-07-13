@@ -22,6 +22,12 @@ S2  Clutch (expanded):
         ⚠ unjustified: grip threshold value flagged as convention
 S3  Armplane orientation construction (kept; add explicit statement
     of what happens at engagement — see S5)
+S3b Roll ratcheting subsection: the clutch already ratchets roll
+    (re-anchoring at every grip); the ~320° wrist-roll joint is the
+    ceiling; jaw-equivalence rewrap at engagement edges restores
+    headroom (blend glides it, trigger suppresses it); mid-hold hint;
+    per-hand joystick-click reset to neutral; guard band flagged
+    unjustified
 S4  Workspace envelope + policies (kept)
     P+  operator feedback paragraph: debounced OOE cues (edge, repeat,
         stop; intensity ∝ penetration depth); terminal bell today,

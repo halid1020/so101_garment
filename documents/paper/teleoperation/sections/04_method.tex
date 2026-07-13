@@ -6,7 +6,9 @@ after its orientation construction. Section~\ref{sec:opframe} derives
 the operator control frame, Section~\ref{sec:clutch} defines the clutch
 and its position mapping, Section~\ref{sec:armplane} constructs the
 orientation targets, Section~\ref{sec:engagement} states exactly what
-happens to the gripper pose at the moment teleoperation engages, and
+happens to the gripper pose at the moment teleoperation engages,
+Section~\ref{sec:ratchet} extends the clutch's ratcheting to unbounded
+gripper roll on the finite-range wrist joint, and
 Section~\ref{sec:envelope} adds the workspace envelope and its
 out-of-envelope policies. The Telegrip-style split IK, an alternative
 method served by the same pipeline, closes the section
@@ -154,6 +156,39 @@ differ only in how they track it. In particular, the \texttt{telegrip}
 method recovers its wrist angles analytically from this same blended
 target, so its engagement behaviour matches the others even though its
 steady-state tracking differs (Appendix~\ref{app:methods}).
+
+\subsection{Roll ratcheting and the wrist-roll limit}
+\label{sec:ratchet}
+
+Because the roll reference is re-captured from the gripper's current
+roll at every engagement (Section~\ref{sec:engagement}), repeated
+twist--release--untwist--re-grip cycles accumulate gripper roll: the
+clutch ratchets orientation exactly as it ratchets position. What stops
+the accumulation is the joint itself. The wrist-roll joint spans only
+about \(320^\circ\), so a few cycles in one direction park it at a
+limit, where further hand twist does nothing and the operator perceives
+the roll as stuck~--- a real obstacle when aligning the gripper to grasp
+or hand over an elongated object.
+
+The pipeline removes this ceiling with a \emph{jaw-equivalence rewrap}.
+A parallel-jaw gripper is functionally identical under a half-turn of
+roll: the jaws swap, and every grasp it could make it can still make.
+When an engagement finds the solved wrist-roll within a guard band of a
+joint limit, the engagement re-anchors the roll reference to the
+jaw-equivalent orientation half a turn away, restoring headroom at no
+functional cost; the activation blend (Section~\ref{sec:engagement})
+glides the wrist there, so nothing snaps. The rewrap never fires while
+the trigger is held~--- an object in the jaws is never spun uninvited
+--- and it only ever happens at an engagement edge, never mid-hold.
+While a hold sits inside the guard band, the operator instead receives a
+throttled reminder to release, untwist, and re-grip. A per-hand joystick
+click queues a \emph{roll reset}: the next engagement anchors the roll
+at the joint's neutral and the blend glides the gripper back.
+\unjustified{} the guard band (\(8^\circ\)) is a convention balancing
+early intervention against usable range; it has not been tuned against
+user data. The jaw-equivalence assumption also fails if the roll
+attitude of a wrist-mounted camera matters to the task; no such
+constraint exists on this rig today.
 
 \subsection{Workspace envelope and out-of-envelope policies}
 \label{sec:envelope}

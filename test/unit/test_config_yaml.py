@@ -76,6 +76,9 @@ class TestFrozenSharedValues(unittest.TestCase):
     def test_feedback(self):
         self.assertEqual(configs.FEEDBACK_REPEAT_PERIOD_S, 0.25)
 
+    def test_ratchet(self):
+        self.assertEqual(configs.RATCHET_LIMIT_GUARD_DEG, 8.0)
+
     def test_operator_height(self):
         self.assertEqual(configs.OPERATOR_HEIGHT_M, 1.71)
 
@@ -125,6 +128,7 @@ class TestSharedStrictValidation(unittest.TestCase):
                 "max_joint_vel_hw_rad_s": 2.0,
             },
             "feedback": {"repeat_period_s": 0.25},
+            "ratchet": {"limit_guard_deg": 8.0},
             "operator": {"height_m": 1.71},
         }
 

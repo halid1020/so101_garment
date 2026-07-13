@@ -138,5 +138,9 @@ MAX_JOINT_VEL_HW_RAD_S = _rate_limit["max_joint_vel_hw_rad_s"]
 _feedback = _SHARED["feedback"]
 FEEDBACK_REPEAT_PERIOD_S = _feedback["repeat_period_s"]
 
+# Wrist-roll ratcheting (see common/roll_ratchet.py).
+_ratchet = _SHARED["ratchet"]
+RATCHET_LIMIT_GUARD_DEG = _ratchet["limit_guard_deg"]
+
 # Operator anthropometry (see the YAML for the full derivation chain).
 OPERATOR_HEIGHT_M = _operator["height_m"]

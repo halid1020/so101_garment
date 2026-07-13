@@ -36,13 +36,22 @@ WRIST_FLEX_AMP_DEG = 25.0
 WRIST_FLEX_FREQ_HZ = 0.4
 EXCURSION_REACH = 0.45  # m of forward hand travel — far past the arm's reach
 EXCURSION_PERIOD_S = 10.0
+# roll_ratchet pattern: repeated grip-twist / release-untwist cycles. Each
+# cycle twists the handles by RATCHET_STEP_DEG while gripped, then releases
+# and untwists — so the commanded gripper roll accumulates one step per
+# cycle and eventually reaches the wrist_roll limit, exercising the
+# pi-equivalence rewrap (common/roll_ratchet.py).
+RATCHET_STEP_DEG = 60.0
+RATCHET_GRIP_S = 4.0  # gripped-and-twisting portion of each cycle
+RATCHET_RELEASE_S = 2.0  # released-and-untwisting portion
+RATCHET_PERIOD_S = RATCHET_GRIP_S + RATCHET_RELEASE_S
 # Nominal hand rest positions in the ROS head frame (x fwd, y left, z up).
 HAND_REST = {
     "left": np.array([0.35, 0.15, -0.25]),
     "right": np.array([0.35, -0.15, -0.25]),
 }
 
-MOCK_PATTERNS = ("circle", "wrist", "excursion")
+MOCK_PATTERNS = ("circle", "wrist", "excursion", "roll_ratchet")
 
 
 class MockQuestReader:
@@ -91,17 +100,39 @@ class MockQuestReader:
                 if hand == "left":
                     roll = -roll
                 tf[:3, :3] = Rotation.from_euler("zy", [roll, flex]).as_matrix()
-            else:  # excursion
+            elif self.pattern == "excursion":
                 # Slow forward push far past reach, hold, and pull back.
                 phase = 2 * np.pi * t_active / EXCURSION_PERIOD_S
                 s = 0.5 * (1 - np.cos(phase))  # 0 -> 1 -> 0 each period
                 ramp = min(t_active / (0.25 * EXCURSION_PERIOD_S), 1.0)
                 pos[0] += ramp * s * EXCURSION_REACH
+            else:  # roll_ratchet
+                # While gripped: twist the handle smoothly through one
+                # RATCHET_STEP; while released: untwist back to zero. The
+                # clutch re-anchors at each re-grip, so the gripper roll
+                # ratchets one step per cycle.
+                phase_t = t_active % RATCHET_PERIOD_S
+                if phase_t < RATCHET_GRIP_S:
+                    frac = 0.5 * (1 - np.cos(np.pi * phase_t / RATCHET_GRIP_S))
+                else:
+                    rel = (phase_t - RATCHET_GRIP_S) / RATCHET_RELEASE_S
+                    frac = 0.5 * (1 + np.cos(np.pi * rel))
+                roll = frac * np.deg2rad(RATCHET_STEP_DEG)
+                if hand == "left":
+                    roll = -roll
+                tf[:3, :3] = Rotation.from_euler("z", roll).as_matrix()
         tf[:3, 3] = pos
         return tf
 
     def get_grip_value(self, hand: str) -> float:
-        return 1.0 if self._elapsed() > GRIP_DELAY_S else 0.0
+        t_active = self._elapsed() - GRIP_DELAY_S
+        if t_active <= 0:
+            return 0.0
+        if self.pattern == "roll_ratchet":
+            # Cyclic clutch: gripped while twisting, released while
+            # untwisting (see get_hand_controller_transform_ros).
+            return 1.0 if (t_active % RATCHET_PERIOD_S) < RATCHET_GRIP_S else 0.0
+        return 1.0
 
     def get_trigger_value(self, hand: str) -> float:
         return 0.0

@@ -10,6 +10,8 @@ Controls:
   Hold triggers           - close grippers
   Button A                - enable / disable both arms
   Button B                - move both arms to middle pose
+  Joystick clicks (LJ/RJ) - glide that gripper's roll back to neutral
+                            at the next grip
   Ctrl+C                  - exit
 """
 
@@ -274,6 +276,20 @@ def main():
         "button_a_pressed", _safe_button("Button A", toggle_robot_enabled_status)
     )
     quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
+    quest_reader.on(
+        "button_lj_pressed",
+        _safe_button(
+            "Left joystick click",
+            lambda: data_manager.request_roll_reset("left"),
+        ),
+    )
+    quest_reader.on(
+        "button_rj_pressed",
+        _safe_button(
+            "Right joystick click",
+            lambda: data_manager.request_roll_reset("right"),
+        ),
+    )
 
     print()
     print("🚀 Dual-arm teleoperation ready.")

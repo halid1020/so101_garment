@@ -149,6 +149,19 @@ feedback:
   repeat_period_s: 0.25
 
 # ---------------------------------------------------------------------------
+# Wrist-roll ratcheting (src/common/roll_ratchet.py).
+# ---------------------------------------------------------------------------
+ratchet:
+  # Guard band (degrees) around the wrist_roll joint limits. A clutch
+  # engagement that finds the solved roll within this band re-anchors to the
+  # jaw-equivalent orientation half a turn away (parallel jaws are
+  # grasp-identical under a 180-degree roll), restoring headroom; a hold that
+  # enters the band prints a throttled release-and-regrip hint. Wider => the
+  # rewrap fires earlier (more headroom kept in reserve); narrower => the
+  # joint is allowed closer to its physical stop before intervention.
+  limit_guard_deg: 8.0
+
+# ---------------------------------------------------------------------------
 # Operator anthropometry. Only translation_scale is presently derived from
 # these; kept here so the derivation is auditable and re-runnable.
 # ---------------------------------------------------------------------------

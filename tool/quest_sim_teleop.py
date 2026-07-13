@@ -104,7 +104,8 @@ def main() -> None:
         choices=sorted(MOCK_PATTERNS),
         help="Motion pattern of the --mock device "
         "(circle = table circles, wrist = wrist oscillation, "
-        "excursion = deliberately out-of-envelope strokes)",
+        "excursion = deliberately out-of-envelope strokes, "
+        "roll_ratchet = repeated grip-twist/release-untwist cycles)",
     )
     parser.add_argument(
         "--scene",

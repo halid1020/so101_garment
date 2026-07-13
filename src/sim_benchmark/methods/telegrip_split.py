@@ -34,6 +34,7 @@ import mujoco
 import numpy as np
 
 from common.config_parser import load_method_params
+from common.roll_ratchet import gripper_roll_about_tip
 from sim_benchmark.constants import ARM_JOINT_SUFFIXES, ARM_JOINTS, SIDES
 from sim_benchmark.methods.base import Targets, TeleopMethod
 
@@ -50,20 +51,8 @@ def _tip_elevation(rot: np.ndarray) -> float:
     return float(np.arctan2(tip[2], np.hypot(tip[0], tip[1])))
 
 
-def _tip_roll(rot: np.ndarray) -> float | None:
-    """Signed angle of the EE local z about the tip axis vs horizontal.
-
-    Reference is the horizontal direction obtained by projecting world-z out
-    of the tip axis; returns None when the tip is near-vertical (reference
-    undefined) — the caller holds the previous roll in that case.
-    """
-    tip = rot[:, 0]
-    if abs(tip[2]) >= _DEG_TIP_Z:
-        return None
-    u = np.array([0.0, 0.0, 1.0]) - tip[2] * tip
-    u /= np.linalg.norm(u)
-    z_ax = rot[:, 2]
-    return float(np.arctan2(np.cross(u, z_ax) @ tip, u @ z_ax))
+# Shared with the production ratchet logic (common.roll_ratchet).
+_tip_roll = gripper_roll_about_tip
 
 
 class TelegripSplit(TeleopMethod):
