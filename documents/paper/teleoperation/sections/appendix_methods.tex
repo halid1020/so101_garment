@@ -202,3 +202,20 @@ height lock, immediately before targets reach the IK.
 \unjustified{} the One-Euro values (0.8, 5.0, 0.9) were
 tuned by feel on the rig; a principled sweep against the wrist-agility
 suite remains future work.
+
+\paragraph{Parameter provenance.}
+Every parameter above lives in commented configuration files in the
+repository (one shared file for the cross-method parameters, one file
+per method), which are the canonical source; the values quoted in this
+paper mirror them. The translation scale \(s=0.8\) is derived for the
+current operator (height \SI{1.71}{m}): standard body-segment
+proportions place the standing elbow \(\approx\SI{0.33}{m}\) above the
+\SI{0.75}{m} table, where a comfortable one-hand stroke spans roughly
+\SIrange{0.40}{0.50}{m}, while the arm's usable radial band is
+\(\approx\SI{0.31}{m}\); their ratio gives \(s\approx0.8\), and the same
+value was found independently by manual tuning before the derivation
+existed. \unjustified{} the anthropometric links in that chain
+(shoulder \(\approx0.82\times\) height, elbow \(\approx0.63\times\)
+height, and the comfortable-stroke span) are population estimates, not
+measurements of this operator; the convergence with the tuned value is
+the strongest evidence for \(s=0.8\).

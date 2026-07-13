@@ -1,0 +1,26 @@
+# =================================================================================
+# METHOD: telegrip — split IK (position-only DLS + direct analytic wrist)
+# =================================================================================
+# Port of Telegrip (https://github.com/DipFlip/telegrip): the three proximal
+# joints (shoulder_pan/lift, elbow_flex) track the hand POSITION with a
+# position-only DLS solve, while wrist_flex and wrist_roll are set DIRECTLY from
+# the target orientation (recovered analytically). The wrist bypasses every
+# task-space cost/damping trade-off — that direct 1:1 mapping is what makes the
+# wrist feel agile. See the paper appendix. British English throughout.
+
+# DLS damping factor lambda (dimensionless) in (J J^T + lambda^2 I) for the
+# 3-joint position solve. Higher => smoother/steadier but slower; lower =>
+# crisper but twitchier near singularities.
+damping: 0.05
+
+# Per-tick position-error feedback gain (dimensionless): fraction of the
+# position error fed back each tick to the proximal joints. Higher than dls
+# (0.6) because there is no orientation task competing for the same joints, so
+# position can be driven harder. Lower => smoother/laggier.
+gain: 0.6
+
+# Joint-velocity clamp (rad/s) applied to BOTH the proximal DLS joints and the
+# directly-driven wrist joints. Bounds motion near singularities and keeps the
+# direct wrist mapping from stepping too far in one tick. Lower for gentler
+# motion; raise for agility.
+max_joint_vel: 3.0

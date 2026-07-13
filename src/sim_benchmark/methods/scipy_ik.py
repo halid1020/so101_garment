@@ -16,6 +16,7 @@ import numpy as np
 import pinocchio as pin
 from scipy.optimize import least_squares
 
+from common.config_parser import load_method_params
 from sim_benchmark.constants import (
     ARM_JOINT_SUFFIXES,
     ARM_JOINTS,
@@ -25,8 +26,6 @@ from sim_benchmark.constants import (
 )
 from sim_benchmark.methods.base import Targets, TeleopMethod
 
-ORI_WEIGHT = 0.1
-
 
 class ScipyLeastSquares(TeleopMethod):
     """Per-arm bounded least-squares pose IK, warm-started each tick."""
@@ -35,6 +34,12 @@ class ScipyLeastSquares(TeleopMethod):
 
     def __init__(self, sim_model: mujoco.MjModel) -> None:
         super().__init__(sim_model)
+        # Orientation weight and solver caps from methods/scipy_ls.yaml.
+        params = load_method_params(self.name)
+        self.ori_weight = params["ori_weight"]
+        self.max_nfev = params["max_nfev"]
+        self.ftol = params["ftol"]
+        self.xtol = params["xtol"]
         full = pin.buildModelFromUrdf(str(DUAL_URDF_PATH))
         gripper_ids = [i for i in range(1, full.njoints) if "gripper" in full.names[i]]
         self.model = pin.buildReducedModel(full, gripper_ids, pin.neutral(full))
@@ -67,7 +72,7 @@ class ScipyLeastSquares(TeleopMethod):
         oMf = self.data.oMf[self._frame_id[side]]
         pos_err = oMf.translation - pos_t
         rot_err = pin.log3(rot_t.T @ oMf.rotation)
-        return np.concatenate([pos_err, ORI_WEIGHT * rot_err])
+        return np.concatenate([pos_err, self.ori_weight * rot_err])
 
     def reset(self, q0: np.ndarray) -> None:
         self.q_full = pin.neutral(self.model)
@@ -86,9 +91,9 @@ class ScipyLeastSquares(TeleopMethod):
                     self.model.upperPositionLimit[idx],
                 ),
                 method="trf",
-                max_nfev=25,
-                ftol=1e-6,
-                xtol=1e-6,
+                max_nfev=self.max_nfev,
+                ftol=self.ftol,
+                xtol=self.xtol,
             )
             self.q_full[idx] = result.x
         return self.q_full[self._arm_idx].copy()

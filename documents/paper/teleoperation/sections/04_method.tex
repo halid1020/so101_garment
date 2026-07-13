@@ -58,7 +58,11 @@ clutched, the target position is the anchored frame-aligned delta
   p^\ast(t) \;=\; p_E^0 + s\,\bigl(p_H(t) - p_H^0\bigr),
   \label{eq:clutch}
 \end{equation}
-with translation scale \(s\) (\(=1\) in the current configuration).
+with translation scale \(s\) (\(=0.8\) in the current configuration; the
+value is derived from the operator's height against the arm's usable
+radial band, and independently matches the value found by manual tuning
+--- Appendix~\ref{app:common-input} gives the derivation and flags its
+anthropometric links as estimates).
 Releasing the grips freezes the arms; re-gripping re-anchors, so the
 operator can reposition their hands (``ratcheting'') without moving the
 robot. Every re-grip is a \emph{full} recalibration~--- operator frame,

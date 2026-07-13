@@ -30,6 +30,7 @@ for _p in (str(_repo_root), str(_repo_root / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from common.configs import MAX_JOINT_VEL_SIM_RAD_S  # noqa: E402
 from sim_benchmark.constants import DUAL_URDF_PATH, EE_FRAMES, SIDES  # noqa: E402
 from sim_benchmark.methods import METHODS  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
@@ -44,7 +45,7 @@ class MethodIKAdapter:
         self,
         method_name: str,
         dt: float = 0.01,
-        max_joint_vel: float = 3.0,
+        max_joint_vel: float = MAX_JOINT_VEL_SIM_RAD_S,
         initial_configuration: np.ndarray | None = None,
     ) -> None:
         if method_name not in METHODS:

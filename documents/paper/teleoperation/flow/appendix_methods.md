@@ -17,4 +17,7 @@ telegrip), a fixed template:
     - failure modes / known limitations
 Final subsection: common input processing (kept, extended with the
 engagement behaviour cross-reference to the method section)
+Closing paragraph: parameter provenance — the commented configuration
+files are canonical; the 171 cm operator derivation of the translation
+scale, with its anthropometric links flagged as estimates
 ```

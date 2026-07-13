@@ -33,6 +33,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
+from common.config_parser import load_method_params
 from sim_benchmark.constants import ARM_JOINT_SUFFIXES, ARM_JOINTS, SIDES
 from sim_benchmark.methods.base import Targets, TeleopMethod
 
@@ -70,12 +71,15 @@ class TelegripSplit(TeleopMethod):
 
     name = "telegrip"
 
-    DAMPING = 0.05
-    GAIN = 0.6  # per-tick fraction of the position error fed back
-    MAX_JOINT_VEL = 3.0  # rad/s clamp (proximal DLS *and* wrist joints)
-
     def __init__(self, sim_model: mujoco.MjModel) -> None:
         super().__init__(sim_model)
+        # Damping, gain and clamp from src/ik_conf/methods/telegrip.yaml.
+        # gain is higher than dls (0.6) as no orientation task competes for the
+        # proximal joints; max_joint_vel clamps both DLS and wrist joints.
+        params = load_method_params(self.name)
+        self.DAMPING = params["damping"]
+        self.GAIN = params["gain"]
+        self.MAX_JOINT_VEL = params["max_joint_vel"]
         self.model = sim_model
         self.data = mujoco.MjData(sim_model)  # private kinematic scratchpad
         self.q = np.zeros(len(ARM_JOINTS))

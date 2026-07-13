@@ -1,0 +1,170 @@
+# =================================================================================
+# SO101 DUAL-ARM TELEOPERATION — SHARED (METHOD-INDEPENDENT) PARAMETERS
+# =================================================================================
+# Single source of truth for every teleop tuning constant that is NOT tied to a
+# particular IK method. src/common/configs.py binds these onto the historical
+# constant names at import time (strict load — an unknown or missing key here is
+# a hard error), so all ~18 importers keep working unchanged.
+#
+# Per-method IK weights live in methods/<name>.yaml alongside this file.
+# Per-machine calibration (HW->URDF joint offsets/signs) and model wiring
+# (URDF path, frame names) stay as plain Python in configs.py — they are not
+# teleop tuning.
+#
+# British English throughout. Every value carries: meaning, unit, the rationale
+# for the current value, and the direction to tune it.
+
+# ---------------------------------------------------------------------------
+# One-Euro controller-pose smoothing (src/common/one_euro_filter.py).
+# ---------------------------------------------------------------------------
+filtering:
+  # Baseline cut-off frequency (Hz) — governs jitter while the hand is held
+  # still. Lower => steadier but laggier hold; higher => twitchier but crisper.
+  min_cutoff: 0.8
+  # Speed coefficient (dimensionless) — governs lag during fast sweeps. Higher
+  # => the filter opens up sooner on quick motion (snappier, less lag) at the
+  # cost of letting more jitter through. 5.0 keeps fast strokes responsive
+  # without the over-correction seen at the old sluggish 0.05 setting.
+  beta: 5.0
+  # Cut-off frequency (Hz) applied to the derivative estimate used by beta.
+  # Rarely needs tuning; lower steadies the speed estimate itself.
+  d_cutoff: 0.9
+
+# ---------------------------------------------------------------------------
+# Grip clutch — engaging/disengaging teleoperation.
+# ---------------------------------------------------------------------------
+clutch:
+  # Normalised grip value (0..1) above which a controller counts as "gripped"
+  # and its arm is clutched in. Raise toward 1.0 to demand a firmer squeeze
+  # (fewer accidental engagements); lower for a lighter touch.
+  grip_threshold: 0.9
+  # Seconds to blend from the gripper's orientation at grip-press to the
+  # absolute hand orientation, so activating teleop never jerks the wrist.
+  # Longer => gentler but slower hand-off; shorter => snappier but riskier.
+  orientation_blend_time_s: 1.0
+
+# ---------------------------------------------------------------------------
+# Handle geometry — controller frame -> gripper (EE) orientation mapping.
+# ---------------------------------------------------------------------------
+handle:
+  # Absolute hand->gripper orientation mapping. The gripper's long axis
+  # (wrist -> tip) mirrors the controller's HANDLE axis (top -> bottom).
+  # The Quest's tracked aim pose has local -z along the POINTER ray and -y
+  # roughly along the handle; the physical handle is tilted backward from
+  # -y by about this angle (degrees). With it, holding the handle
+  # plumb-vertical (natural upright fist) points the gripper straight down at
+  # the table.
+  # Tune: this angle sets the gripper's neutral fore/aft tilt one-to-one.
+  # If at your natural grip the gripper leans N degrees toward the FRONT of
+  # the setup, ADD N here (it should lean toward the operator, like the
+  # handle does); if it leans too far back toward you, subtract.
+  # NOTE: superseded by `axis` below whenever `axis` is set.
+  pitch_offset_deg: 65.0
+  # Measured handle top->bottom axis in the controller body frame. Run
+  # `python tool/calibrate_handle.py` and paste its output here; when set, it
+  # overrides pitch_offset_deg entirely.
+  # Measured 2026-07-02 (right controller, 148 samples, 4.7 deg spread).
+  # Note the dominant +x: the tracked frame's axes are nothing like the
+  # OpenXR aim convention we first assumed — measuring was the right call.
+  axis: [0.8242, 0.2110, -0.5255]
+
+# ---------------------------------------------------------------------------
+# Operator control frame — the robot-aligned frame rebuilt at every grip
+# (src/common/utils.py compute_operator_frame).
+# ---------------------------------------------------------------------------
+operator_frame:
+  # Metres the frame origin sits BEHIND the handle midpoint (toward the
+  # operator), placing it roughly at head/headset centre. Cosmetic: it only
+  # positions a visualisation marker, so the value is weakly grounded.
+  back_m: 0.20
+  # Metres the frame origin sits ABOVE the handle midpoint. Same weak
+  # grounding and cosmetic role as back_m.
+  up_m: 0.20
+
+# ---------------------------------------------------------------------------
+# Workspace reach envelope (src/common/workspace_envelope.py). The annulus
+# radii are the EE-to-shoulder-lift-pivot distance extremes from an FK grid
+# sweep of elbow_flex x wrist_flex over the URDF limits (invariant to
+# shoulder_lift). Re-derived by test/unit/test_workspace_envelope.py so URDF
+# edits cannot silently stale them. Values from robot.urdf, 2026-07-08.
+# ---------------------------------------------------------------------------
+envelope:
+  r_min: 0.0837       # m, swept minimum reach from the lift pivot
+  r_max: 0.4110       # m, swept maximum reach from the lift pivot
+  z_floor: 0.01       # m, table clearance floor for EE targets
+  safety_margin: 0.01 # m, shaved off both radii in build_envelopes
+  soft_margin: 0.04   # m, slowdown band width ("slow" policy)
+  # Default out-of-envelope policy: "warn" | "project" | "freeze" | "slow".
+  oob_mode: "warn"
+
+# ---------------------------------------------------------------------------
+# Thread execution rates (Hz). Raise for tighter control at more CPU cost;
+# lower to relieve a loaded machine. These are wall-clock loop targets.
+# ---------------------------------------------------------------------------
+rates:
+  controller_data: 50.0          # Quest reader poll rate
+  ik_solver: 100                 # IK solve + integration rate (Hz)
+  visualization: 60.0            # Viser/GUI refresh rate
+  robot: 100.0                   # motor-bus command rate
+  joint_state_streaming: 100.0   # joint-state read/publish rate
+  camera_frame_streaming: 30.0   # camera capture/publish rate
+
+# ---------------------------------------------------------------------------
+# Teleop motion scaling (controller motion -> robot motion).
+# ---------------------------------------------------------------------------
+scaling:
+  # Downscale hand translation into robot translation. The SO-101 workspace is
+  # small (usable radial band ~0.31 m — see operator block), so <1.0 keeps hand
+  # motion inside it (saturated IK targets accumulate position error) and gives
+  # finer control. Changed 1.0 -> 0.8 (approved): 0.8 is the value tuned
+  # empirically in so101_dual_default.yaml AND the value derived from operator
+  # anthropometry below. Lower for finer control in a smaller footprint; raise
+  # toward 1.0 for 1:1 reach at the cost of clipping at the workspace edge.
+  translation_scale: 0.8
+  # Rotation stays 1:1 so the wrist feels natural. Rarely changed.
+  rotation_scale: 1.0
+
+# ---------------------------------------------------------------------------
+# Joint-space rate limiter (rad/s). Mandatory for scipy_ls/mink near the
+# workspace edge, where they can jump between IK solutions. Consumed as the
+# default clamp by the benchmark method adapter (sim value) and the real-robot
+# tool (hw value); the CLI --max-joint-vel still overrides either.
+# ---------------------------------------------------------------------------
+rate_limit:
+  # Simulation default — a touch faster; the sim has no motor dynamics to
+  # protect, so the extra speed just rehearses the mapping.
+  max_joint_vel_sim_rad_s: 3.0
+  # Real-robot default — more conservative to spare the STS3215 servos and the
+  # 3D-printed structure. Lower for gentler, safer motion; raise cautiously.
+  max_joint_vel_hw_rad_s: 2.0
+
+# ---------------------------------------------------------------------------
+# Operator anthropometry. Only translation_scale is presently derived from
+# these; kept here so the derivation is auditable and re-runnable.
+# ---------------------------------------------------------------------------
+# Operator-derived parameters. Derivation for a 171 cm operator:
+#   height 1.71 m                                   [MEASURED]
+#   table top at 0.750 m above the floor            [RIG: config.scad table_height]
+#   shoulder height ~ 0.818 x H = 1.40 m            [ESTIMATE — Drillis–Contini
+#     body-segment proportions; population average, +-3-4 cm individual
+#     variation; weakly grounded]
+#   elbow height    ~ 0.630 x H = 1.08 m            [ESTIMATE — same source]
+#   => standing elbow sits ~0.33 m above the table: handles are held at a
+#      natural forearm-horizontal height            [derived from the above]
+#   comfortable one-hand stroke with elbows near the torso ~ 0.40-0.50 m
+#   diameter                                        [ESTIMATE — ergonomics rule
+#     of thumb, no solid grounding; confirm from a recorded session]
+#   robot usable radial band = (r_max - safety) - (r_min + safety)
+#     = 0.401 - 0.094 ~ 0.31 m                      [RIG: envelope radii]
+#   candidate translation_scale = 0.31 / 0.40 ~ 0.8 [DERIVED from the two
+#     estimates above — and independently corroborated: 0.8 is exactly the
+#     value tuned empirically in so101_dual_default.yaml]
+# Parameters NOT derived from operator height (and why): z_floor and the
+# envelope margins are robot/table safety; handle pitch/axis are grip
+# anatomy plus measured hardware; the height-lock default is a task
+# preference. operator_frame back_m/up_m COULD be derived (eye height
+# ~0.936 x H gives ~0.5 m up / 0.3 m back) but are cosmetic (they only
+# place a visualisation marker), so the original 0.20 m values are kept
+# and flagged as weakly grounded.
+operator:
+  height_m: 1.71

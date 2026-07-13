@@ -1,0 +1,32 @@
+# =================================================================================
+# METHOD: pink_full — production QP IK with a full 6D pose task
+# =================================================================================
+# Benchmark variant of the production Pink solver (src/common/pink_ik_solver.py):
+# a full 6D FrameTask with the production cost weights. Represents "track the
+# whole pose faithfully" on a 5-DOF arm, where full orientation tracking is
+# over-constrained. See the paper appendix for the comparison. British English.
+
+# Position-task weight (dimensionless): position dominates. Raise for stiffer
+# XYZ tracking at the expense of orientation.
+position_cost: 1.0
+
+# Orientation-task weight (dimensionless). Firm (0.75) so the wrist chases hand
+# attitude — which on a 5-DOF arm costs visible position error (the point of the
+# pink_full vs pink_relaxed comparison). Lower to relax toward pink_relaxed.
+orientation_cost: 0.75
+
+# Frame-task proportional gain (per tick): fraction of task-space error driven
+# out each solve. Lower => smoother/laggier; higher => snappier. Production 0.4.
+frame_task_gain: 0.4
+
+# Levenberg-Marquardt task damping. 0.0 — regularisation comes from the damping
+# task + solver damping below. Raise to calm near-singularity twitching.
+lm_damping: 0.0
+
+# Global damping-task weight biasing towards small joint velocities. Steadies
+# the solve near workspace edges.
+damping_cost: 0.25
+
+# Numerical QP regularisation on the Hessian diagonal — tiny, keeps the QP
+# well-posed. Rarely tuned.
+solver_damping_value: 1.0e-12

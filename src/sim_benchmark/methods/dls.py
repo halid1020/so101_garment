@@ -13,6 +13,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
+from common.config_parser import load_method_params
 from sim_benchmark.constants import ARM_JOINT_SUFFIXES, ARM_JOINTS, SIDES
 from sim_benchmark.methods.base import Targets, TeleopMethod
 
@@ -32,15 +33,17 @@ class DampedLeastSquares(TeleopMethod):
 
     name = "dls"
 
-    # Task weights: position dominates; orientation softly tracked, matching
-    # the spirit of the production cost ratio.
-    ORI_WEIGHT = 0.5
-    DAMPING = 0.05
-    GAIN = 0.4  # error feedback gain per tick, like the Pink frame-task gain
-    MAX_JOINT_VEL = 3.0  # rad/s clamp
-
     def __init__(self, sim_model: mujoco.MjModel) -> None:
         super().__init__(sim_model)
+        # Task weights and clamps from src/ik_conf/methods/dls.yaml (strict).
+        # ori_weight: position dominates, orientation softly tracked; gain: the
+        # per-tick error-feedback gain (like the Pink frame-task gain);
+        # max_joint_vel: rad/s integration clamp.
+        params = load_method_params(self.name)
+        self.ORI_WEIGHT = params["ori_weight"]
+        self.DAMPING = params["damping"]
+        self.GAIN = params["gain"]
+        self.MAX_JOINT_VEL = params["max_joint_vel"]
         self.model = sim_model
         self.data = mujoco.MjData(sim_model)  # private kinematic scratchpad
         self.q = np.zeros(len(ARM_JOINTS))

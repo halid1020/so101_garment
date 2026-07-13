@@ -1,0 +1,27 @@
+# =================================================================================
+# METHOD: scipy_ls — bounded nonlinear least-squares pose IK (telegrip style)
+# =================================================================================
+# telegrip and several hobbyist SO-10x stacks skip differential IK: each tick a
+# small bounded nonlinear least-squares solve finds the absolute joint config
+# best reaching the target position, with a weak orientation regulariser.
+# Warm-started, it converges in a few iterations and cannot accumulate drift, at
+# the cost of a slower, less smooth solve. See the paper appendix. British
+# English throughout.
+
+# Orientation residual weight (dimensionless): position-first, so orientation is
+# only a weak regulariser. 0.1 keeps the solve tracking position tightly while
+# nudging attitude. Raise to weight attitude more (at some position cost).
+ori_weight: 0.1
+
+# Maximum solver function evaluations per tick (scipy least_squares max_nfev).
+# Caps compute per tick; warm-starting means a few evaluations usually suffice.
+# Lower for a cheaper/looser solve; raise if convergence stalls.
+max_nfev: 25
+
+# Cost-function convergence tolerance (scipy ftol). Stop when the relative cost
+# reduction falls below this. Loosen for speed, tighten for accuracy.
+ftol: 1.0e-6
+
+# Parameter-step convergence tolerance (scipy xtol). Stop when the relative step
+# in q falls below this. Loosen for speed, tighten for accuracy.
+xtol: 1.0e-6

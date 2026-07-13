@@ -13,6 +13,7 @@ import mink
 import mujoco
 import numpy as np
 
+from common.config_parser import load_method_params
 from sim_benchmark.constants import ARM_JOINTS, EE_FRAMES, SIDES
 from sim_benchmark.methods.base import Targets, TeleopMethod
 
@@ -24,6 +25,9 @@ class MinkQP(TeleopMethod):
 
     def __init__(self, sim_model: mujoco.MjModel) -> None:
         super().__init__(sim_model)
+        # Task weights, gain and limits from src/ik_conf/methods/mink.yaml.
+        params = load_method_params(self.name)
+        self._velocity_limit = params["velocity_limit"]
         self.model = sim_model
         self.configuration = mink.Configuration(sim_model)
 
@@ -31,18 +35,18 @@ class MinkQP(TeleopMethod):
             side: mink.FrameTask(
                 frame_name=EE_FRAMES[side],
                 frame_type="body",
-                position_cost=1.0,
-                orientation_cost=0.75,
-                gain=0.4,
-                lm_damping=1e-3,
+                position_cost=params["position_cost"],
+                orientation_cost=params["orientation_cost"],
+                gain=params["gain"],
+                lm_damping=params["lm_damping"],
             )
             for side in SIDES
         }
-        self.posture_task = mink.PostureTask(sim_model, cost=1e-3)
+        self.posture_task = mink.PostureTask(sim_model, cost=params["posture_cost"])
         # Velocity cap matching the DLS method's clamp; without it mink
         # commands unbounded joint speeds near workspace-edge singularities.
         velocities = {
-            sim_model.joint(j).name: 3.0
+            sim_model.joint(j).name: self._velocity_limit
             for j in range(sim_model.njnt)
             if sim_model.joint(j).type == mujoco.mjtJoint.mjJNT_HINGE
         }

@@ -32,16 +32,21 @@ sys.path.insert(0, str(_root / "src"))
 import yaml
 from meta_quest_teleop.reader import MetaQuestReader
 
-from common.config_parser import load_ik_config
+from common.config_parser import load_ik_config, load_method_params
 from common.configs import (
     DUAL_URDF_PATH,
-    EE_ORIENTATION_COST_MASK,
     END_EFFECTOR_FRAME_NAMES,
     IK_SOLVER_RATE,
     NEUTRAL_JOINT_ANGLES_DUAL,
-    SOLVER_NAME,
     VISUALIZATION_RATE,
 )
+
+# The QP backend name and the per-axis orientation mask are armplane solver
+# properties, now sourced from src/ik_conf/methods/armplane.yaml. The live
+# ik_parameters sliders still come from --ik-config via load_ik_config.
+_ARMPLANE = load_method_params("armplane")
+SOLVER_NAME = _ARMPLANE["solver"]
+EE_ORIENTATION_COST_MASK = _ARMPLANE["ee_orientation_cost_mask"]
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.pink_ik_solver import PinkIKSolver
 from common.robot_visualizer import RobotVisualizer

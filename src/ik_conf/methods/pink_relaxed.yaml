@@ -1,0 +1,30 @@
+# =================================================================================
+# METHOD: pink_relaxed — QP IK with a relaxed (near position-only) pose task
+# =================================================================================
+# The "relaxed 5-DoF IK" strategy used by TeleopXR's SO-101 model: the same
+# production Pink QP as pink_full but with orientation cost lowered an order of
+# magnitude. On a 5-DoF arm full 6D orientation tracking is over-constrained;
+# relaxing it trades wrist attitude for position accuracy. See the paper
+# appendix for the numbers. British English throughout.
+
+# Position-task weight (dimensionless): position dominates, as in pink_full.
+position_cost: 1.0
+
+# Orientation-task weight (dimensionless). 0.05 — an order of magnitude below
+# pink_full's 0.75, so the QP barely fights position for orientation. This is
+# the single knob that distinguishes pink_relaxed from pink_full: raise it back
+# toward 0.75 to recover attitude tracking at the cost of position accuracy.
+orientation_cost: 0.05
+
+# Frame-task proportional gain (per tick). Same production value as pink_full.
+frame_task_gain: 0.4
+
+# Levenberg-Marquardt task damping. 0.0, as pink_full.
+lm_damping: 0.0
+
+# Global damping-task weight biasing towards small joint velocities.
+damping_cost: 0.25
+
+# Numerical QP regularisation on the Hessian diagonal — tiny; keeps the QP
+# well-posed.
+solver_damping_value: 1.0e-12

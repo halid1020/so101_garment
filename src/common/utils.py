@@ -5,6 +5,11 @@ from typing import Sequence
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+# Operator-frame origin offsets now live in the shared teleop YAML and are
+# bound onto configs at import time. configs does not import utils, so this is
+# cycle-free (verified by the unit tests).
+from common.configs import OPERATOR_FRAME_BACK_M, OPERATOR_FRAME_UP_M
+
 
 def transform_from_position_wxyz(
     position: Sequence[float], wxyz: Sequence[float]
@@ -48,13 +53,6 @@ _MIRROR_HEAD_FRAME_Y = np.diag([1.0, -1.0, 1.0, 1.0])
 def mirror_head_frame_pose(transform: np.ndarray) -> np.ndarray:
     """Mirror a head-frame hand pose for face-to-face (mirror) teleoperation."""
     return _MIRROR_HEAD_FRAME_Y @ transform @ _MIRROR_HEAD_FRAME_Y
-
-
-# Offset of the operator-frame origin from the handle midpoint at grip:
-# 20 cm behind (toward the operator) and 20 cm above — roughly where the
-# operator's head sits, making the origin a natural "headset center" proxy.
-OPERATOR_FRAME_BACK_M = 0.20
-OPERATOR_FRAME_UP_M = 0.20
 
 
 def compute_operator_frame(

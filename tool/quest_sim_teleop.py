@@ -44,6 +44,7 @@ from common.configs import (  # noqa: E402
     CONTROLLER_D_CUTOFF,
     CONTROLLER_MIN_CUTOFF,
     IK_SOLVER_RATE,
+    MAX_JOINT_VEL_SIM_RAD_S,
     NEUTRAL_JOINT_ANGLES_DUAL,
     ROTATION_SCALE,
     TRANSLATION_SCALE,
@@ -78,7 +79,7 @@ def main() -> None:
         default=0.0,
         help="Exit after this many seconds (0 = run until Ctrl+C)",
     )
-    parser.add_argument("--max-joint-vel", type=float, default=3.0)
+    parser.add_argument("--max-joint-vel", type=float, default=MAX_JOINT_VEL_SIM_RAD_S)
     parser.add_argument(
         "--oob-mode",
         type=str,

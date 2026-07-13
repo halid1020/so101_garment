@@ -24,6 +24,7 @@ for _p in (str(_repo_root), str(_repo_root / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from common.config_parser import load_method_params  # noqa: E402
 from common.pink_ik_solver import PinkIKSolver  # noqa: E402
 from sim_benchmark.constants import ARM_JOINTS, DUAL_URDF_PATH, EE_FRAMES  # noqa: E402
 from sim_benchmark.methods.base import Targets, TeleopMethod  # noqa: E402
@@ -32,22 +33,21 @@ from sim_benchmark.methods.base import Targets, TeleopMethod  # noqa: E402
 class _PinkBase(TeleopMethod):
     """Shared wrapper around the production PinkIKSolver."""
 
-    position_cost: float
-    orientation_cost: float
-
     def __init__(self, sim_model: mujoco.MjModel) -> None:
         super().__init__(sim_model)
+        # Cost weights and QP settings from src/ik_conf/methods/<name>.yaml
+        # (pink_full / pink_relaxed), strict-loaded.
+        params = load_method_params(self.name)
         self.solver = PinkIKSolver(
             urdf_path=str(DUAL_URDF_PATH),
             end_effector_frames=[EE_FRAMES[s] for s in ("left", "right")],
             solver_name="quadprog",
-            position_cost=self.position_cost,
-            orientation_cost=self.orientation_cost,
-            # Production values from src/common/configs.py.
-            frame_task_gain=0.4,
-            lm_damping=0.0,
-            damping_cost=0.25,
-            solver_damping_value=1e-12,
+            position_cost=params["position_cost"],
+            orientation_cost=params["orientation_cost"],
+            frame_task_gain=params["frame_task_gain"],
+            lm_damping=params["lm_damping"],
+            damping_cost=params["damping_cost"],
+            solver_damping_value=params["solver_damping_value"],
         )
         model = self.solver.urdf_model
         # Map ARM_JOINTS order -> Pinocchio q indices (grippers are locked
@@ -70,16 +70,12 @@ class _PinkBase(TeleopMethod):
 
 
 class PinkFull(_PinkBase):
-    """Production QP IK: full 6D pose task (position 1.0 / orientation 0.75)."""
+    """Production QP IK: full 6D pose task (see methods/pink_full.yaml)."""
 
     name = "pink_full"
-    position_cost = 1.0
-    orientation_cost = 0.75
 
 
 class PinkRelaxed(_PinkBase):
-    """Relaxed-orientation QP IK (position 1.0 / orientation 0.05)."""
+    """Relaxed-orientation QP IK (see methods/pink_relaxed.yaml)."""
 
     name = "pink_relaxed"
-    position_cost = 1.0
-    orientation_cost = 0.05

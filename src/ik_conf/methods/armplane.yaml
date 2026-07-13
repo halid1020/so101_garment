@@ -1,0 +1,64 @@
+# =================================================================================
+# METHOD: armplane — production Pink (Pinocchio QP) differential IK
+# =================================================================================
+# The tuned dual-arm solver tool/meta_quest_teleopration.py runs on the real
+# robot, paired with the "armplane" orientation mapping (yaw follows the arm;
+# tip elevation + roll come from the handle). Built by common.pink_ik_solver.
+# See the paper appendix (documents/paper/teleoperation) for the justification
+# of each weight. British English throughout.
+
+# QP backend used by Pink. "quadprog" is fast and dependency-light; the whole
+# family (quadprog/osqp/proxqp) gives the same optimum, so leave it be unless a
+# solver is unavailable on a machine.
+solver: "quadprog"
+
+# Position-task weight (dimensionless). Position accuracy must dominate: on a
+# 5-DOF arm a high orientation cost makes the solver sacrifice XYZ chasing
+# orientations the arm cannot physically reach. Keep orientation/position ~0.75.
+position_cost: 1.0
+
+# Orientation-task weight (dimensionless), scaled per-axis by the mask below.
+# Because the armplane mapping only ever commands reachable orientations, all
+# axes can be firmly costed. Lower it if the wrist fights position accuracy.
+orientation_cost: 0.75
+
+# Per-axis orientation cost mask in the eef_link LOCAL frame [x, y, z].
+# All axes are costed. (An earlier design zero-costed local z so "yaw follows
+# the arm", but the zero-cost family R_target*Rz(phi) includes phi=180 deg — a
+# full tip flip, so the gripper could face UP when the hand said down.
+# Yaw-follows-arm is now achieved by constructing the target inside the arm's
+# reachable set: hand_to_gripper_orientation_armplane in common/utils.py.)
+ee_orientation_cost_mask: [1.0, 1.0, 1.0]
+
+# Frame-task proportional gain (dimensionless, per solve tick): fraction of the
+# task-space error driven out each tick. Lower => smoother but laggier tracking;
+# raise toward 0.5-0.7 once the rig is stiff. 0.4 is the stable production value.
+frame_task_gain: 0.4
+
+# Levenberg-Marquardt task damping (dimensionless). 0.0 here because the
+# solver_damping_value + posture task already regularise the QP; raise to tame
+# twitching near singularities at the cost of tracking crispness.
+lm_damping: 0.0
+
+# Global damping-task weight (dimensionless) biasing towards small joint
+# velocities. Steadies the solve near workspace edges; raise to further calm
+# twitching, lower for more agility.
+damping_cost: 0.25
+
+# Numerical QP regularisation added to the Hessian diagonal. Tiny by design —
+# just enough to keep the QP well-posed. Rarely tuned.
+solver_damping_value: 1.0e-12
+
+# Posture-task cost, one weight per body joint over the DUAL configuration
+# (left x5 then right x5): [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex,
+# wrist_roll] x2. All zero: any posture pull on lift/elbow trades table-height
+# accuracy for the pull and bends straight radial lines. Raise a single entry
+# only to add a whisper of anti-contortion bias on that joint.
+posture_cost_vector: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Neutral / initial pose per arm (degrees), 5 body joints
+# [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]. The IK
+# integrator starts here and the arms home to it; a comfortable mid-range
+# posture clear of joint limits. configs.NEUTRAL_JOINT_ANGLES_DUAL mirrors this
+# (doubled to 10 DOF). Adjust to change the arms' rest/ready attitude.
+neutral_joint_angles_deg: [0.0, -10.0, 20.0, 25.0, 0.0]

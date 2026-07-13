@@ -29,24 +29,17 @@ sys.path.insert(0, str(_root / "src"))
 import yaml
 from meta_quest_teleop.reader import MetaQuestReader
 
+from common.config_parser import load_method_params
 from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
     CONTROLLER_MIN_CUTOFF,
-    DAMPING_COST,
     DUAL_URDF_PATH,
-    EE_ORIENTATION_COST_MASK,
     END_EFFECTOR_FRAME_NAMES,
-    FRAME_TASK_GAIN,
     IK_SOLVER_RATE,
-    LM_DAMPING,
+    MAX_JOINT_VEL_HW_RAD_S,
     NEUTRAL_JOINT_ANGLES_DUAL,
-    ORIENTATION_COST,
-    POSITION_COST,
-    POSTURE_COST_VECTOR_DUAL,
     ROTATION_SCALE,
-    SOLVER_DAMPING_VALUE,
-    SOLVER_NAME,
     TRANSLATION_SCALE,
     WORKSPACE_OOB_MODE,
 )
@@ -91,7 +84,7 @@ def main():
     parser.add_argument(
         "--max-joint-vel",
         type=float,
-        default=2.0,
+        default=MAX_JOINT_VEL_HW_RAD_S,
         help="Joint-space rate limit (rad/s) applied to benchmark methods",
     )
     parser.add_argument(
@@ -131,20 +124,29 @@ def main():
         if args.method == "production":
             print("⚠️  --method production is deprecated; use --method armplane")
         print("\n🔧 Creating dual-arm Pink IK solver (armplane)...")
+        # armplane solver weights come from src/ik_conf/methods/armplane.yaml
+        # (strict load). Neutral/posture are expanded to the dual (10-DOF)
+        # configuration here.
+        ap = load_method_params("armplane")
+        posture_dual = np.array(ap["posture_cost_vector"], dtype=float)
+        neutral_dual = np.radians(
+            [*ap["neutral_joint_angles_deg"], *ap["neutral_joint_angles_deg"]]
+        )
         ik_solver = PinkIKSolver(
             urdf_path=DUAL_URDF_PATH,
             end_effector_frames=END_EFFECTOR_FRAME_NAMES,
-            solver_name=SOLVER_NAME,
-            position_cost=POSITION_COST,
+            solver_name=ap["solver"],
+            position_cost=ap["position_cost"],
             # Anisotropic: zero cost on the EE-local yaw axis (no wrist-yaw joint)
-            orientation_cost=ORIENTATION_COST * np.asarray(EE_ORIENTATION_COST_MASK),
-            frame_task_gain=FRAME_TASK_GAIN,
-            lm_damping=LM_DAMPING,
-            damping_cost=DAMPING_COST,
-            solver_damping_value=SOLVER_DAMPING_VALUE,
+            orientation_cost=ap["orientation_cost"]
+            * np.asarray(ap["ee_orientation_cost_mask"]),
+            frame_task_gain=ap["frame_task_gain"],
+            lm_damping=ap["lm_damping"],
+            damping_cost=ap["damping_cost"],
+            solver_damping_value=ap["solver_damping_value"],
             integration_time_step=1.0 / IK_SOLVER_RATE,
-            initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
-            posture_cost_vector=np.array(POSTURE_COST_VECTOR_DUAL, dtype=float),
+            initial_configuration=neutral_dual,
+            posture_cost_vector=posture_dual,
         )
     else:
         from sim_benchmark.method_adapter import MethodIKAdapter

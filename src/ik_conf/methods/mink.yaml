@@ -1,0 +1,31 @@
+# =================================================================================
+# METHOD: mink — MuJoCo-native weighted-task QP IK
+# =================================================================================
+# mink solves the same weighted-task QP as Pink but directly on the MuJoCo model,
+# avoiding a second (Pinocchio) description of the robot. Benchmarking it against
+# pink_full quantifies the URDF/MJCF model-mismatch cost. See the paper appendix.
+# British English throughout.
+
+# Position-task weight (dimensionless): position dominates.
+position_cost: 1.0
+
+# Orientation-task weight (dimensionless). Matches pink_full's 0.75 so the
+# comparison isolates the model backend, not the weights.
+orientation_cost: 0.75
+
+# Frame-task proportional gain (per tick): fraction of task-space error driven
+# out each solve. Lower => smoother/laggier; higher => snappier.
+gain: 0.4
+
+# Levenberg-Marquardt task damping (dimensionless) on each FrameTask. 1.0e-3
+# keeps the QP well-conditioned near singularities. Raise to calm twitching.
+lm_damping: 1.0e-3
+
+# Posture-task cost (dimensionless): a gentle pull toward the reset posture that
+# resolves the arm's redundancy. Small so it does not fight the pose task.
+posture_cost: 1.0e-3
+
+# Per-joint velocity limit (rad/s) enforced as a hard QP constraint; without it
+# mink commands unbounded speeds near workspace-edge singularities. Matches the
+# dls clamp. Lower for gentler motion.
+velocity_limit: 3.0
