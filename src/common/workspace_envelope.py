@@ -48,6 +48,12 @@ from common.configs import (
 _WARN_PERIOD_S = 1.0
 
 
+def smoothstep(x: float) -> float:
+    """Cubic Hermite smoothstep, clipped to [0, 1] (0 at 0, 1 at 1)."""
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
 @dataclass(frozen=True)
 class ArmEnvelope:
     """Annulus-plus-floor reachable-set approximation for one arm."""
@@ -251,10 +257,7 @@ class SlowdownPolicy(OOEPolicy):
     def reset(self) -> None:
         self._p_prev = None
 
-    @staticmethod
-    def _smoothstep(x: float) -> float:
-        x = min(max(x, 0.0), 1.0)
-        return x * x * (3.0 - 2.0 * x)
+    _smoothstep = staticmethod(smoothstep)  # retained for callers/tests
 
     def apply(self, p_target: np.ndarray, t: float) -> tuple[np.ndarray, OOEStatus]:
         margin = self.envelope.margin(p_target)

@@ -134,5 +134,9 @@ CAMERA_FRAME_STREAMING_RATE = _rates["camera_frame_streaming"]
 MAX_JOINT_VEL_SIM_RAD_S = _rate_limit["max_joint_vel_sim_rad_s"]
 MAX_JOINT_VEL_HW_RAD_S = _rate_limit["max_joint_vel_hw_rad_s"]
 
+# Operator out-of-envelope feedback (see common/envelope_feedback.py).
+_feedback = _SHARED["feedback"]
+FEEDBACK_REPEAT_PERIOD_S = _feedback["repeat_period_s"]
+
 # Operator anthropometry (see the YAML for the full derivation chain).
 OPERATOR_HEIGHT_M = _operator["height_m"]

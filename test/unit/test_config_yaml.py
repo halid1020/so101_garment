@@ -73,6 +73,9 @@ class TestFrozenSharedValues(unittest.TestCase):
         self.assertEqual(configs.MAX_JOINT_VEL_SIM_RAD_S, 3.0)
         self.assertEqual(configs.MAX_JOINT_VEL_HW_RAD_S, 2.0)
 
+    def test_feedback(self):
+        self.assertEqual(configs.FEEDBACK_REPEAT_PERIOD_S, 0.25)
+
     def test_operator_height(self):
         self.assertEqual(configs.OPERATOR_HEIGHT_M, 1.71)
 
@@ -121,6 +124,7 @@ class TestSharedStrictValidation(unittest.TestCase):
                 "max_joint_vel_sim_rad_s": 3.0,
                 "max_joint_vel_hw_rad_s": 2.0,
             },
+            "feedback": {"repeat_period_s": 0.25},
             "operator": {"height_m": 1.71},
         }
 

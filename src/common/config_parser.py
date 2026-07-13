@@ -43,6 +43,7 @@ _SHARED_SCHEMA: dict[str, frozenset[str]] = {
     ),
     "scaling": frozenset({"translation_scale", "rotation_scale"}),
     "rate_limit": frozenset({"max_joint_vel_sim_rad_s", "max_joint_vel_hw_rad_s"}),
+    "feedback": frozenset({"repeat_period_s"}),
     "operator": frozenset({"height_m"}),
 }
 

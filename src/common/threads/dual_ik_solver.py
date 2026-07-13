@@ -23,6 +23,7 @@ from common.configs import (
     WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.envelope_feedback import EnvelopeFeedback
 from common.pink_ik_solver import PinkIKSolver
 from common.utils import (
     blend_rotations,
@@ -56,6 +57,7 @@ def dual_ik_solver_thread(
     ik_solver: PinkIKSolver,
     quest_reader: Any | None = None,
     oob_mode: str | None = None,
+    envelope_feedback: EnvelopeFeedback | None = None,
 ) -> None:
     """Dual-arm IK solver thread.
 
@@ -67,6 +69,10 @@ def dual_ik_solver_thread(
     oob_mode selects the out-of-envelope policy applied to every target
     position before it reaches the IK ("warn"|"project"|"freeze"|"slow",
     see common/workspace_envelope.py); None uses WORKSPACE_OOB_MODE.
+
+    envelope_feedback, if given, receives the per-arm OOEStatus every tick
+    (debounced operator cues, e.g. a terminal bell — see
+    common/envelope_feedback.py); its state resets with the calibration.
     """
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
     print(f"🧮 Dual IK solver thread started ({input_label})")
@@ -147,6 +153,8 @@ def dual_ik_solver_thread(
         nonlocal left_hand_reference, right_hand_reference
         nonlocal left_rot_at_activation, right_rot_at_activation
         nonlocal activation_time
+        if envelope_feedback is not None:
+            envelope_feedback.reset()
         left_rot_at_activation = None
         right_rot_at_activation = None
         activation_time = None
@@ -446,6 +454,9 @@ def dual_ik_solver_thread(
                 right_target[:3, 3], right_oob = oob_policies["right"].apply(
                     right_target[:3, 3], now
                 )
+                if envelope_feedback is not None:
+                    envelope_feedback.notify("left", left_oob, now)
+                    envelope_feedback.notify("right", right_oob, now)
 
                 ik_solver.set_target_poses(
                     {
@@ -503,12 +514,15 @@ def dual_ik_solver_thread(
                     now = time.time()
                     left_target = left_target.copy()
                     right_target = right_target.copy()
-                    left_target[:3, 3], _ = oob_policies["left"].apply(
+                    left_target[:3, 3], left_oob = oob_policies["left"].apply(
                         left_target[:3, 3], now
                     )
-                    right_target[:3, 3], _ = oob_policies["right"].apply(
+                    right_target[:3, 3], right_oob = oob_policies["right"].apply(
                         right_target[:3, 3], now
                     )
+                    if envelope_feedback is not None:
+                        envelope_feedback.notify("left", left_oob, now)
+                        envelope_feedback.notify("right", right_oob, now)
                     ik_solver.set_target_poses(
                         {
                             LEFT_END_EFFECTOR_FRAME_NAME: (

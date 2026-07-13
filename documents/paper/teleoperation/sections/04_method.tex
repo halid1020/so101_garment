@@ -206,6 +206,24 @@ height locked below the floor is still clamped) and applies to every
 input source (headset, mock device, interactive gizmos). The mode is
 selectable at launch on both the real-robot and simulation tools.
 
+\paragraph{Operator feedback.}
+Whichever policy is active, the operator should also \emph{feel} that
+their hand has left the envelope, because the visual cue (the arm
+stopping or sliding) is easy to miss mid-task. A feedback layer
+therefore observes the per-arm envelope status each tick and emits
+debounced cues: one cue immediately when a target crosses outside, a
+repeat at a fixed period while it stays outside, and a single stop cue
+on re-entry. Cue intensity grows smoothly with penetration depth,
+saturating one soft-margin outside the boundary, so a grazing excursion
+feels different from a deep one. The current implementation signals
+through the operator's terminal (an audible bell plus a margin readout);
+controller vibration is the intended endpoint, and the transport for it
+is specified~--- a one-way-to-two-way extension of the existing headset
+link~--- but awaits a rebuild of the headset application.
+\unjustified{} the repeat period (\SI{0.25}{s}) is a convention chosen
+to be noticeable without being irritating; it has not been tested with
+users.
+
 \subsection{Telegrip-style split IK}
 \label{sec:telegrip}
 

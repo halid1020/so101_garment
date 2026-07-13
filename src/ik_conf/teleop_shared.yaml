@@ -139,6 +139,16 @@ rate_limit:
   max_joint_vel_hw_rad_s: 2.0
 
 # ---------------------------------------------------------------------------
+# Operator feedback — out-of-envelope cues (src/common/envelope_feedback.py).
+# ---------------------------------------------------------------------------
+feedback:
+  # Minimum seconds between repeated cues while the target stays outside the
+  # envelope. The inside->outside edge always fires immediately; this only
+  # throttles the "still outside" reminders. Lower => more insistent cueing;
+  # higher => quieter but easier to forget the arm has stopped tracking.
+  repeat_period_s: 0.25
+
+# ---------------------------------------------------------------------------
 # Operator anthropometry. Only translation_scale is presently derived from
 # these; kept here so the derivation is auditable and re-runnable.
 # ---------------------------------------------------------------------------

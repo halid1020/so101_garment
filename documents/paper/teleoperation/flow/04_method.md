@@ -23,6 +23,10 @@ S2  Clutch (expanded):
 S3  Armplane orientation construction (kept; add explicit statement
     of what happens at engagement — see S5)
 S4  Workspace envelope + policies (kept)
+    P+  operator feedback paragraph: debounced OOE cues (edge, repeat,
+        stop; intensity ∝ penetration depth); terminal bell today,
+        controller vibration specified but awaiting the headset-app
+        rebuild; repeat period flagged unjustified
 S5  NEW subsection: gripper orientation at teleoperation start —
     what happens to the gripper orientation the moment the clutch
     engages, stated explicitly for every method:

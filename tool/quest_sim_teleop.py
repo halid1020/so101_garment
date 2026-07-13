@@ -50,6 +50,7 @@ from common.configs import (  # noqa: E402
     TRANSLATION_SCALE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState  # noqa: E402
+from common.envelope_feedback import NullFeedback, TerminalBellFeedback  # noqa: E402
 from common.threads.dual_ik_solver import dual_ik_solver_thread  # noqa: E402
 from common.workspace_envelope import OOE_POLICIES  # noqa: E402
 from sim_benchmark.constants import CONTROL_RATE_HZ, SIDES  # noqa: E402
@@ -86,6 +87,15 @@ def main() -> None:
         default=WORKSPACE_OOB_MODE,
         choices=sorted(OOE_POLICIES),
         help="Out-of-envelope target policy (see common/workspace_envelope.py)",
+    )
+    parser.add_argument(
+        "--envelope-feedback",
+        type=str,
+        default="bell",
+        choices=["bell", "none"],
+        help="Operator out-of-envelope cueing: 'bell' rings the terminal "
+        "bell with debounced intensity-shaped cues; 'none' disables it "
+        "(the throttled diagnostic print stays either way).",
     )
     parser.add_argument(
         "--mock-pattern",
@@ -174,7 +184,14 @@ def main() -> None:
     ik_thread = threading.Thread(
         target=dual_ik_solver_thread,
         args=(data_manager, ik_solver, quest_reader),
-        kwargs={"oob_mode": args.oob_mode},
+        kwargs={
+            "oob_mode": args.oob_mode,
+            "envelope_feedback": (
+                TerminalBellFeedback()
+                if args.envelope_feedback == "bell"
+                else NullFeedback()
+            ),
+        },
         daemon=True,
     )
     ik_thread.start()

@@ -44,6 +44,7 @@ from common.configs import (
     WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.envelope_feedback import NullFeedback, TerminalBellFeedback
 from common.pink_ik_solver import PinkIKSolver
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
@@ -93,6 +94,15 @@ def main():
         default=WORKSPACE_OOB_MODE,
         choices=sorted(OOE_POLICIES),
         help="Out-of-envelope target policy (see common/workspace_envelope.py)",
+    )
+    parser.add_argument(
+        "--envelope-feedback",
+        type=str,
+        default="bell",
+        choices=["bell", "none"],
+        help="Operator out-of-envelope cueing: 'bell' rings the terminal "
+        "bell with debounced intensity-shaped cues; 'none' disables it "
+        "(the throttled diagnostic print stays either way).",
     )
     args = parser.parse_args()
 
@@ -181,7 +191,14 @@ def main():
     ik_thread = threading.Thread(
         target=dual_ik_solver_thread,
         args=(data_manager, ik_solver, quest_reader),
-        kwargs={"oob_mode": args.oob_mode},
+        kwargs={
+            "oob_mode": args.oob_mode,
+            "envelope_feedback": (
+                TerminalBellFeedback()
+                if args.envelope_feedback == "bell"
+                else NullFeedback()
+            ),
+        },
         daemon=True,
     )
     left_joint_thread.start()
