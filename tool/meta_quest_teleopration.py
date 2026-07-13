@@ -10,7 +10,6 @@ Controls:
   Hold triggers           - close grippers
   Button A                - enable / disable both arms
   Button B                - move both arms to middle pose
-  Button Y                - toggle height lock (flat table strokes) # TODO: remove this functionality
   Ctrl+C                  - exit
 """
 
@@ -70,8 +69,9 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        default="production",
+        default="armplane",
         choices=[
+            "armplane",
             "production",
             "pink_full",
             "pink_relaxed",
@@ -81,10 +81,11 @@ def main():
             "telegrip",
         ],
         help=(
-            "IK layer: 'production' is the tuned Pink solver this tool has "
-            "always used; the others are the sim-benchmark methods, wrapped "
-            "in a joint-space rate limiter. Rehearse in simulation first "
-            "with tool/quest_sim_teleop.py."
+            "IK layer: 'armplane' (alias: production, deprecated) is the "
+            "tuned Pink solver with the armplane orientation mapping this "
+            "tool has always used; the others are the sim-benchmark methods, "
+            "wrapped in a joint-space rate limiter. Rehearse in simulation "
+            "first with tool/quest_sim_teleop.py."
         ),
     )
     parser.add_argument(
@@ -124,10 +125,12 @@ def main():
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
 
-    # 3. IK layer (10 body DOF, grippers locked): production Pink solver or
+    # 3. IK layer (10 body DOF, grippers locked): the armplane Pink solver or
     # one of the sim-benchmark methods behind the PinkIKSolver interface.
-    if args.method == "production":
-        print("\n🔧 Creating dual-arm Pink IK solver (production)...")
+    if args.method in ("armplane", "production"):
+        if args.method == "production":
+            print("⚠️  --method production is deprecated; use --method armplane")
+        print("\n🔧 Creating dual-arm Pink IK solver (armplane)...")
         ik_solver = PinkIKSolver(
             urdf_path=DUAL_URDF_PATH,
             end_effector_frames=END_EFFECTOR_FRAME_NAMES,
@@ -248,20 +251,10 @@ def main():
         else:
             print("⚠️  Cannot home: arms not enabled")
 
-    def toggle_height_lock() -> None:
-        enabled = data_manager.toggle_height_lock()
-        print(
-            "📏 Height lock "
-            + ("ON — hand height ignored, strokes stay flat" if enabled else "OFF")
-        )
-
     quest_reader.on(
         "button_a_pressed", _safe_button("Button A", toggle_robot_enabled_status)
     )
     quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
-    quest_reader.on(
-        "button_y_pressed", _safe_button("Button Y", toggle_height_lock)
-    )  # TODO: let's remove this functionality.
 
     print()
     print("🚀 Dual-arm teleoperation ready.")
@@ -270,7 +263,6 @@ def main():
     print("   3. Move controllers — arms follow!")
     print("   4. Hold triggers to close grippers")
     print("   5. Press BUTTON B to move both arms to the middle pose")
-    print("   6. Press BUTTON Y to lock/unlock the height (flat strokes)")
     print("⚠️  Press Ctrl+C to exit")
     print()
 

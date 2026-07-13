@@ -1,42 +1,71 @@
 \section{Related work}
 \label{sec:related}
 
-\paragraph{VR teleoperation of low-cost arms.}
-Telegrip~\citep{telegrip} teleoperates SO-100 arms from WebXR controllers
-with a deliberately minimal scheme: PyBullet position-only IK on the three
-proximal joints and a direct mapping from controller rotation deltas to the
-two wrist joints, with joint limits clamped after the solve. Its wrist
-feels agile precisely because the wrist path bypasses any task-space
-optimization. Our \texttt{telegrip} method (Section~\ref{sec:telegrip})
-ports this split-IK idea to our benchmark interface, replacing PyBullet
-with the simulator's own kinematics and recovering the wrist angles
-analytically from the absolute target orientation. Other VR pipelines for
-hobby-class arms (e.g.\ Dream-Machines' vr-teleop-kit, whose damped
-least-squares strategy our \texttt{dls} baseline reproduces) typically
-track the full 6D pose and inherit the over-constraint problem on 5-DoF
-hardware.
+This section positions the system along four axes: how other systems
+teleoperate bimanual low-cost arms, how other systems control arms with
+5-DoF wrists, which inverse-kinematics families our pluggable layer
+draws on, and the standard treatments of input filtering and workspace
+awareness.
+
+\paragraph{Bimanual teleoperation of low-cost arms.}
+Two families dominate. Joint-space leader--follower systems pair each
+follower arm with a kinematically matched leader that the operator moves
+by hand: ALOHA and Mobile ALOHA drive bimanual manipulation this
+way~\citep{zhao2023aloha,fu2024mobilealoha}, and GELLO generalises the
+idea with low-cost scaled leader replicas for common
+manipulators~\citep{wu2024gello}. Leader--follower transfers joint
+angles directly, so it sidesteps inverse kinematics entirely, but it
+requires dedicated leader hardware and ties the operator's posture to
+the follower's kinematics. Task-space retargeting systems instead track
+the operator's hands with vision or a VR headset and solve for joint
+angles online: AnyTeleop retargets vision-based hand poses to arm--hand
+systems~\citep{qin2023anyteleop}, and Open-TeleVision streams immersive
+stereo feedback to a headset-tracked operator~\citep{cheng2024televison}.
+Our system takes the task-space route with Meta Quest controllers: it
+needs no leader hardware, lets the operator stand and move freely, and
+gains clutching and motion scaling for free~--- at the price of needing
+the retargeting and IK machinery this paper describes.
+
+\paragraph{Controlling 5-DoF wrists.}
+Telegrip~\citep{telegrip} teleoperates the SO-100 lineage from WebXR
+controllers with a deliberately minimal scheme: position-only IK on the
+three proximal joints and a direct mapping from controller rotation
+deltas to the two wrist joints, with joint limits clamped after the
+solve. Its wrist feels agile precisely because the wrist path bypasses
+any task-space optimisation. Our \texttt{telegrip} method
+(Section~\ref{sec:telegrip}) ports this split-IK idea to our benchmark
+interface, replacing its physics-engine IK with the simulator's own
+kinematics and recovering the wrist angles analytically from the
+absolute target orientation. Other VR pipelines for hobby-class arms
+(e.g.\ the damped-least-squares strategy our \texttt{dls} baseline
+reproduces) typically track the full 6-D pose and inherit the
+over-constraint problem on 5-DoF hardware. Our armplane construction
+(Section~\ref{sec:armplane}) takes the opposite approach: rather than
+relaxing the tracker, it constructs targets inside the arm's reachable
+orientation set, so any tracker can follow them.
 
 \paragraph{Differential IK and task-space control.}
-Our production solver builds on Pink~\citep{pink}, a task-based
-differential-IK library over Pinocchio~\citep{pinocchio}, solving a QP with
-frame-tracking, damping, and posture tasks under joint limits;
-mink~\citep{mink} solves the analogous problem over MuJoCo models. Damped
-least squares is the classical singularity-robust baseline
+Our armplane pipeline builds on Pink~\citep{pink}, a task-based
+differential-IK library over Pinocchio~\citep{pinocchio}, solving a QP
+with frame-tracking, damping, and posture tasks under joint limits;
+mink~\citep{mink} solves the analogous problem over MuJoCo models.
+Damped least squares is the classical singularity-robust baseline
 \citep{wampler1986,nakamura1986}. The benchmark also includes a per-tick
 bounded nonlinear least-squares solve (\texttt{scipy\_ls}) as an
-optimization-based reference.
+optimisation-based reference.
 
 \paragraph{Input filtering.}
 Controller pose noise is attenuated with the One-Euro
 filter~\citep{oneeuro}, the de-facto standard for interactive input: a
-first-order low-pass whose cutoff adapts to signal speed, trading jitter at
-rest against lag during fast motion. Filter parameters interact directly
-with wrist agility (Section~\ref{sec:experiments}).
+first-order low-pass whose cutoff adapts to signal speed, trading jitter
+at rest against lag during fast motion (Section~\ref{sec:prelim} defines
+it). Filter parameters interact directly with wrist agility
+(Section~\ref{sec:experiments}).
 
 \paragraph{Workspace awareness.}
-Commercial teleoperation stacks commonly project infeasible targets onto a
-precomputed reachability approximation; we adopt the same philosophy with
-an analytic annulus-plus-floor envelope derived from the URDF
+Commercial teleoperation stacks commonly project infeasible targets onto
+a precomputed reachability approximation. We adopt the same philosophy
+with an analytic annulus-plus-floor envelope derived from the arm model
 (Section~\ref{sec:envelope}), and additionally compare \emph{freeze} and
-\emph{velocity-shaping} alternatives, which to our knowledge have not been
-compared head-to-head on low-cost 5-DoF hardware.
+\emph{velocity-shaping} alternatives, which to our knowledge have not
+been compared head-to-head on low-cost 5-DoF hardware.

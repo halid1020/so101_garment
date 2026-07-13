@@ -1,100 +1,204 @@
 \section{Implementation details of all teleoperation methods}
 \label{app:methods}
 
-All methods implement one interface: \texttt{reset(q0)} and
-\texttt{solve(targets, dt)} mapping absolute EE pose targets (robot base
-frame, both arms) to a 10-DoF joint command in a fixed joint order. The
-\texttt{MethodIKAdapter} wraps any of them behind the production solver
+This appendix specifies every teleoperation method in the repository in
+full implementation detail: the algorithm and update law, every
+parameter with its value and the reason for it (or an explicit
+unjustified-choice flag), the initialisation and reset behaviour, and
+the known failure modes. Together with Section~\ref{sec:method}, it is
+intended to be sufficient to reimplement the whole method suite without
+reading our code.
+
+\paragraph{Common interface and rate limiter.}
+All methods implement one narrow interface: reset to a given joint
+configuration, then per tick accept absolute EE pose targets (robot base
+frame, both arms) and return a 10-DoF joint command in a fixed joint
+order. An adapter exposes any of them behind the real-time solver
 interface and applies a joint-space rate limiter
 \(\lvert\Delta q\rvert \le \dot q_{\max}\,\Delta t\) after every solve
-(\(\dot q_{\max}=3\)~rad/s in simulation, 2~rad/s on hardware)~--- the
-benchmark showed \texttt{scipy\_ls} and \texttt{mink} can jump between IK
-branches near the workspace edge, and the limiter bounds the jump rate.
-Grippers are excluded from IK everywhere (locked in the reduced models).
+(\(\dot q_{\max}=3\)~rad/s in simulation, 2~rad/s on hardware). The
+limiter exists because the benchmark showed \texttt{scipy\_ls} and
+\texttt{mink} can jump between IK branches near the workspace edge; the
+limiter bounds the jump rate. \unjustified{} the two
+\(\dot q_{\max}\) values are safety conventions (hardware stricter than
+simulation), not derived from servo ratings. Grippers are excluded from
+IK everywhere (locked in the reduced models).
 
-\subsection{\texttt{pink\_full} — production QP, full orientation cost}
+\subsection{\texttt{armplane} / \texttt{pink\_full} — QP tracker, full orientation cost}
 \label{app:pink-full}
 
-Differential IK with Pink over the reduced Pinocchio model. Tasks: a
-6D \texttt{FrameTask} per EE (position cost 1.0, orientation cost 0.75,
-task gain 0.4, Levenberg–Marquardt damping 0), a \texttt{DampingTask}
-(cost 0.25), and a vectorized posture task (zero cost by default). The QP
-solves for joint velocities under configuration and velocity limits
-(solver \texttt{quadprog}, Tikhonov damping \(10^{-12}\)), then integrates
-with \(\Delta t = 10\)~ms. This is the tracker the production thread has
-always used; on the 5-DoF arm its full orientation cost trades position
-error for unreachable-orientation error (Section~\ref{sec:exp-tracking}).
-In production the armplane construction (Section~\ref{sec:armplane})
-feeds it only reachable orientations, which largely neutralizes the
-trade-off.
+\emph{Algorithm.} Differential IK with Pink over a reduced Pinocchio
+model (grippers locked). Tasks: a 6-D frame task per EE (position cost
+1.0, orientation cost 0.75, task gain 0.4, Levenberg--Marquardt damping
+0), a damping task (cost 0.25), and a per-joint-weighted posture task
+(zero cost by default). The QP solves for joint velocities under
+configuration and velocity limits (solver \texttt{quadprog}, Tikhonov
+damping \(10^{-12}\)), then integrates with \(\Delta t = 10\)~ms.
+
+\emph{Parameters.} Position cost 1.0 is the reference scale. Orientation
+cost 0.75 keeps all three orientation axes firmly tracked, which is safe
+\emph{only} because the armplane construction feeds this tracker
+reachable orientations (Section~\ref{sec:armplane}); on raw 6-D targets
+the same weight trades position for orientation error
+(Section~\ref{sec:exp-tracking}). Task gain 0.4 is a low-pass on target
+tracking: lower is smoother but laggier.
+\unjustified{} the 0.75 orientation cost, 0.4 gain, 0.25
+damping cost, and the zero posture cost were set by iterative manual
+tuning on the rig; they work well but carry no derivation.
+
+\emph{Initialisation/reset.} Anchors to the measured joints; at clutch
+engagement it receives the blended targets of
+Section~\ref{sec:engagement}, so no solver-side smoothing is needed.
+
+\emph{Failure modes.} As \texttt{pink\_full} in the benchmark (raw 6-D
+targets), it exhibits the over-constraint penalty: position error grows
+whenever the commanded orientation is unreachable. As the
+\texttt{armplane} tracker (constructed targets) this mode does not
+arise.
 
 \subsection{\texttt{pink\_relaxed} — QP with relaxed orientation}
 \label{app:pink-relaxed}
 
-Identical QP with the orientation cost lowered to 0.05: orientation becomes
-a soft preference and position dominates. Best all-round tracker of the
-original benchmark and the current recommended production setting when
-paired with the armplane mapping.
+\emph{Algorithm.} Identical QP with the orientation cost lowered to
+0.05: orientation becomes a soft preference and position dominates.
+
+\emph{Parameters.} 0.05 was chosen as roughly the largest weight at
+which position error stays within a few millimetres of the
+position-only optimum on the tracking suite.
+\unjustified{} the specific value 0.05 (rather than, say,
+0.02 or 0.1) was picked from a coarse manual sweep, not an optimisation.
+
+\emph{Initialisation/reset and failure modes.} As
+Appendix~\ref{app:pink-full}. Best all-round tracker of the original
+benchmark and the recommended setting when paired with the armplane
+mapping. Its orientation error is bounded but non-zero by construction;
+tasks needing exact wrist attitude favour \texttt{telegrip}.
 
 \subsection{\texttt{dls} — damped least squares}
 \label{app:dls}
 
-Per arm and per tick, the 6D task error
+\emph{Algorithm.} Per arm and per tick, the 6-D task error
 \(e = [\,p^\ast - p;\ w_o \log(R^\ast R^\top)\,]\) (orientation weight
 \(w_o=0.5\)) and the site Jacobian \(J\) (weighted likewise) give
 \(\Delta q = J^\top (J J^\top + \lambda^2 I_6)^{-1} e\) with
 \(\lambda = 0.05\), applied with per-tick gain 0.4, velocity clamp
-3~rad/s, and joint-range clamp. Runs directly on the MuJoCo model
-(vr-teleop-kit style), so it also cross-checks the Pinocchio methods
-against the simulator's kinematics.
+3~rad/s, and joint-range clamp. Runs directly on the MuJoCo model, so it
+also cross-checks the Pinocchio-based methods against the simulator's
+kinematics.
+
+\emph{Parameters.} \(\lambda=0.05\) is the classical
+singularity-robustness trade-off (larger damps harder near
+singularities but slows convergence); gain 0.4 matches the QP task gain
+for comparability. \unjustified{} \(w_o=0.5\) follows the
+community implementation this baseline reproduces, without independent
+tuning.
+
+\emph{Initialisation/reset.} Stateless beyond the current configuration;
+resets to the given joints.
+
+\emph{Failure modes.} Inherits the 6-D over-constraint problem on raw
+targets; near-singular postures converge slowly rather than jumping.
 
 \subsection{\texttt{mink} — MuJoCo-native QP}
 \label{app:mink}
 
-The mink library's differential IK over the MuJoCo model: per-EE 6D frame
-tasks with the production cost ratio, solved as a QP with joint limits and
-an added velocity cap matching \texttt{dls}. Behaviorally close to
-\texttt{pink\_full} (same task structure, different modeling backend).
+\emph{Algorithm.} The mink library's differential IK over the MuJoCo
+model: per-EE 6-D frame tasks with the same cost ratio as
+Appendix~\ref{app:pink-full} (position 1.0, orientation 0.75, gain 0.4),
+a small posture cost (\(10^{-3}\)), solved as a QP with joint limits and
+a velocity cap matching \texttt{dls} (3~rad/s).
+
+\emph{Parameters.} Deliberately mirrors the Pink tracker so that
+differences isolate the modelling backend (MuJoCo vs Pinocchio) rather
+than the weights. \unjustified{} the \(10^{-3}\) posture
+cost is a stabiliser copied from library examples.
+
+\emph{Initialisation/reset.} Anchors to the given joints.
+
+\emph{Failure modes.} Behaviourally close to \texttt{pink\_full},
+including the over-constraint penalty; can jump branches near the
+workspace edge, so the adapter's rate limiter applies.
 
 \subsection{\texttt{scipy\_ls} — bounded nonlinear least squares}
 \label{app:scipy-ls}
 
-Per tick, a \texttt{scipy.optimize.least\_squares} solve (Trust Region
-Reflective) over the arm joints with joint bounds, minimizing the stacked
-position and (weighted) orientation residuals from the previous solution as
-the initial guess. Accurate but the most expensive per tick, and prone to
-branch jumps near the workspace edge~--- the adapter's rate limiter is
-mandatory.
+\emph{Algorithm.} Per tick, a bounded nonlinear least-squares solve
+(Trust Region Reflective) over the arm joints, minimising the stacked
+position and weighted orientation residuals (orientation weight 0.1),
+warm-started from the previous solution, capped at 25 residual
+evaluations per tick.
+
+\emph{Parameters.} The evaluation cap bounds the per-tick latency; the
+low orientation weight prioritises position like
+\texttt{pink\_relaxed}. \unjustified{} both the 0.1 weight
+and the 25-evaluation cap were set by trial to keep solve times
+interactive.
+
+\emph{Initialisation/reset.} Warm start from the previous solution; on
+reset the guess is the given configuration.
+
+\emph{Failure modes.} The most accurate position tracker in the sweep
+but the most expensive per tick, and consecutive solves can land on
+different IK branches near the workspace edge~--- the adapter's rate
+limiter is mandatory, and residual jerk remains the highest of the QP
+family.
 
 \subsection{\texttt{telegrip} — split IK, direct wrist}
 \label{app:telegrip}
 
-Port of Telegrip's control scheme (Section~\ref{sec:telegrip}). Wrist
-first: \(q_4\) from the affine elevation model
-\(\theta = e_0 + s_2 q_2 + s_3 q_3 + s_4 q_4\) evaluated with the currently
-commanded \(q_2, q_3\); \(q_5\) from the affine roll model
-\(\psi = r_0 + s_5 q_5\) (previous roll held when the tip is within
-\(5.7^\circ\) of vertical). Coefficients calibrated by finite differences
-on the simulator's kinematics at construction; slopes are validated to be
-exactly \(\pm1\) and the affine models to \(<1^\circ\) by unit tests.
-Then position: DLS on the \(3\times3\) position Jacobian of
-\(q_1..q_3\) with \(\lambda=0.05\), per-tick gain 0.6. All joints
-velocity-clamped (3~rad/s) and range-clamped. Differences from upstream
-Telegrip: PyBullet is replaced by the benchmark scene's kinematics; the
-wrist angles are recovered from the absolute target rotation rather than
-integrated from controller deltas (equivalent under the clutch mapping,
-but stateless); and the shoulder pan participates in the position DLS
-rather than being wrapped separately~--- the \(\pm110^\circ\) pan range
-makes the differential step's implicit wrapping sufficient.
+\emph{Algorithm.} Port of Telegrip's control scheme
+(Section~\ref{sec:telegrip}). Wrist first: \(q_4\) from the affine
+elevation model \(\theta = e_0 + s_2 q_2 + s_3 q_3 + s_4 q_4\) evaluated
+with the currently commanded \(q_2, q_3\); \(q_5\) from the affine roll
+model \(\psi = r_0 + s_5 q_5\) (previous roll held when the tip is
+within \(5.7^\circ\) of vertical). Then position: DLS on the
+\(3\times3\) position Jacobian of \(q_1..q_3\) with \(\lambda=0.05\),
+per-tick gain 0.6. All joints velocity-clamped (3~rad/s) and
+range-clamped.
 
-\subsection{Production input processing (common to all methods)}
+\emph{Parameters.} The affine coefficients are calibrated by finite
+differences on the simulator's kinematics at construction; unit tests
+validate the slopes to be exactly \(\pm1\) and the affine models to
+\(<1^\circ\) across the joint range. Gain 0.6 (higher than the 6-D
+methods' 0.4) is affordable because the 3-DoF position subproblem is
+well-conditioned. \unjustified{} the \(5.7^\circ\)
+(0.1~rad) vertical-degeneracy threshold and the 0.6 gain were set by
+trial.
 
+\emph{Initialisation/reset.} Calibration runs once at construction;
+reset re-anchors to the given joints. At clutch engagement it receives
+the same blended targets as every other method
+(Section~\ref{sec:engagement}).
+
+\emph{Failure modes.} The direct wrist mapping happily commands steps up
+to the velocity clamp, so command jerk is an order of magnitude above
+the QP trackers (Section~\ref{sec:exp-wrist}); near-vertical tips freeze
+the roll axis by design; and because the wrist ignores position
+consequences, fast wrist motion perturbs the tip position for the
+proximal DLS to correct one tick later.
+
+\emph{Departures from upstream Telegrip.} The physics-engine IK is
+replaced by the benchmark scene's kinematics; the wrist angles are
+recovered from the absolute target rotation rather than integrated from
+controller deltas (equivalent under the clutch mapping, but stateless);
+and the shoulder pan participates in the position DLS rather than being
+wrapped separately~--- the \(\pm110^\circ\) pan range makes the
+differential step's implicit wrapping sufficient.
+
+\subsection{Common input processing (all methods)}
+\label{app:common-input}
+
+Every method receives targets through the same input processing:
 One-Euro filtering of controller transforms
 (\(f_{c,\min}=0.8\)~Hz, \(\beta=5.0\), \(f_{c,d}=0.9\)~Hz; position and
 quaternion filtered separately with a sign-consistency guard); grip
 threshold 0.9 on both hands for the clutch; per-session handle-axis
-calibration at first grip; orientation blend-in over 1~s after activation;
-optional height lock (freezes target \(z\) per arm) and mirror mode (swaps
-and laterally reflects the hands); workspace-envelope policy
-(Section~\ref{sec:envelope}) applied after the height lock, immediately
-before targets reach the IK.
+calibration at first grip; the engagement behaviour of
+Section~\ref{sec:engagement} (position anchored at the EE, orientation
+blended over 1~s); optional height lock (freezes target \(z\) per arm)
+and mirror mode (swaps and laterally reflects the hands); and the
+workspace-envelope policy (Section~\ref{sec:envelope}) applied after the
+height lock, immediately before targets reach the IK.
+\unjustified{} the One-Euro values (0.8, 5.0, 0.9) were
+tuned by feel on the rig; a principled sweep against the wrist-agility
+suite remains future work.

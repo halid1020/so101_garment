@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Meta-Quest teleoperation of the dual SO-101 arms in MuJoCo simulation.
 
-Runs the *production* Quest pipeline (One-Euro filtering, grip clutch,
-handle-axis calibration, armplane orientation mapping — the exact
-`dual_ik_solver_thread` used on the real robot) but streams the joint
+Runs the *armplane* Quest pipeline (the tuned production stack:
+One-Euro filtering, grip clutch, handle-axis calibration, armplane
+orientation mapping — the exact `dual_ik_solver_thread` used on the real
+robot) but streams the joint
 commands into the MuJoCo scene instead of the motor buses. Any of the
 registered benchmark IK methods can be selected, so every method can be
 rehearsed with the real headset in simulation before it ever moves the

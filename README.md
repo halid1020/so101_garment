@@ -19,6 +19,7 @@ This repository provides an independent, industrial-grade pipeline for dexterous
 - [`documents/user_study_protocol.md`](documents/user_study_protocol.md) — bimanual teleoperation user-study runbook.
 - [`documents/telegrip_native.md`](documents/telegrip_native.md) — driving the arms with the unmodified upstream Telegrip stack.
 - [`documents/paper/teleoperation/`](documents/paper/teleoperation/) — the living teleoperation paper (LaTeX). Build it with `make paper`.
+- [`documents/academic_writing_guideline.md`](documents/academic_writing_guideline.md) — writing rules for every paper/report in this repo (flow diagrams, British English, decision-justification convention).
 - [`src/platform/README.md`](src/platform/README.md) — printed-rig design, hardware shopping list, assembly.
 - [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md) — IK-method benchmark harness and options.
 - [`src/sim_twin/isaac/README.md`](src/sim_twin/isaac/README.md) — portable Isaac Lab package (asset conversion + demo).
@@ -65,10 +66,11 @@ Meta Quest link, and prints your GPU / free-disk readout.
 
 ## 🎮 Teleoperation quick start (real Meta Quest)
 
-Five IK methods are available behind the same production pipeline
+Seven IK methods are available behind the same input pipeline
 (One-Euro filtering, grip clutch, handle calibration, armplane orientation
-mapping): `production` (the tuned Pink solver), `pink_full`,
-`pink_relaxed`, `dls`, `mink`, `scipy_ls`. Benchmark results and method
+mapping): `armplane` (the tuned Pink solver; alias `production`,
+deprecated), `pink_full`, `pink_relaxed`, `dls`, `mink`, `scipy_ls`,
+`telegrip`. Benchmark results and method
 details: [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md)
 and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
 
@@ -83,7 +85,7 @@ and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
 first grip of a session point both handles straight down (this calibrates
 the handle axes). Triggers close the grippers. Release grips to pause.
 `Ctrl+C` exits. On the real tool: `A` enables/disables the arms, `B` moves
-to the middle pose, `Y` toggles height lock.
+to the middle pose.
 
 **Step 1 — rehearse in simulation** (headset drives the MuJoCo arms in a
 live viewer; no robot hardware needed):
@@ -100,10 +102,10 @@ python tool/quest_sim_teleop.py --method dls --mock --duration 15
 ```
 
 **Step 2 — run on the real arms** (same tool as always; the default
-`--method production` is the unchanged production solver):
+`--method armplane` is the unchanged tuned solver):
 
 ```bash
-python tool/meta_quest_teleopration.py                          # production
+python tool/meta_quest_teleopration.py                          # armplane
 python tool/meta_quest_teleopration.py --method pink_relaxed    # recommended first
 python tool/meta_quest_teleopration.py --method scipy_ls --max-joint-vel 1.5
 ```

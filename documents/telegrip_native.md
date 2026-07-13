@@ -79,4 +79,21 @@ Then:
   the LAN for the headset to connect.
 
 
-[TODO: please clearly outline the difference between running telegrip with integration and running telegrip directlry with an entrace program.]
+## Integrated `telegrip` method vs this native entry point
+
+The repo offers Telegrip two ways, and they are different things:
+
+| | Integrated method (`--method telegrip`) | Native stack (`tool/telegrip_native.py`) |
+|---|---|---|
+| What runs | **Our reimplementation** of Telegrip's split-IK algorithm (`src/sim_benchmark/methods/telegrip_split.py`), inside our teleop pipeline | The **unmodified upstream Telegrip program** — its own UI, input path, IK, and motor I/O; our script only bridges ports/calibrations then hands over |
+| Input path | Our Quest reader → One-Euro filter → clutch → armplane target construction → envelope policy | Telegrip's WebXR browser stream (or its keyboard control); none of our filtering, clutching, or envelope handling |
+| IK | Analytic wrist (recovered from the absolute target rotation) + 3-joint position DLS on our simulator/robot kinematics, plus our joint-space rate limiter | PyBullet position IK on their bundled SO-100 model, wrist driven by controller rotation *deltas*, their own clamping |
+| Envelope / safety | Full workspace-envelope policies, rate limiter, our calibration checks | Whatever upstream Telegrip does (no envelope) |
+| What it is for | Comparing Telegrip's *algorithm* against the other IK methods under identical input processing (benchmark + user-study conditions C1–C3) | Comparing the *whole system* end-to-end as users would actually install it (user-study condition C4) |
+
+In short: the integrated method isolates Telegrip's IK idea inside our
+pipeline so the comparison is apples-to-apples; the native entry point
+runs their complete product untouched so the comparison is
+system-versus-system. The paper's method section describes the
+integrated port and its deliberate departures from upstream; the user
+study uses both.

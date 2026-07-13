@@ -1,55 +1,96 @@
 \section{Retargeting method}
 \label{sec:method}
 
+This section specifies the \emph{armplane} retargeting pipeline, named
+after its orientation construction. Section~\ref{sec:opframe} derives
+the operator control frame, Section~\ref{sec:clutch} defines the clutch
+and its position mapping, Section~\ref{sec:armplane} constructs the
+orientation targets, Section~\ref{sec:engagement} states exactly what
+happens to the gripper pose at the moment teleoperation engages, and
+Section~\ref{sec:envelope} adds the workspace envelope and its
+out-of-envelope policies. The Telegrip-style split IK, an alternative
+method served by the same pipeline, closes the section
+(Section~\ref{sec:telegrip}).
+
 \subsection{Operator control frame (headset-anywhere)}
 \label{sec:opframe}
 
-The Quest app streams controller poses in a reference frame whose origin
-and yaw depend on where the \emph{headset} was when the app started; used
-raw, ``forward'' on the hand is only ``forward'' on the robot if the
-headset is placed carefully. The pipeline therefore never controls in the
-raw reader frame: at \emph{every} clutch engagement it derives an
-\emph{operator frame} from the two handle poses themselves~--- gravity
-gives \(z\) (OpenXR spaces are gravity-aligned), the horizontal left\(\to\)
-right handle line gives \(-y\), and \(x = y \times z\) points forward. The
-origin sits \SI{20}{cm} behind and \SI{20}{cm} above the handle midpoint
-(roughly the operator's head, and drawn as the ``headset center'' marker in
-the simulator). All hand poses are re-expressed in this frame before any
-control math, so the headset can sit anywhere, and moving it between grips
-has no effect. A unit test verifies exact invariance of the control inputs
-under arbitrary yaw and translation of the reader frame.
-\textbf{TODO: what is clutch?}
-\textbf{TODO: discuss the pro and cons between with and without clutch.}
-\textbf{TODO: please stop calling the "production". it should have tracable source and name that we can put reference to compare against.}
+The headset streams controller poses in a reference frame whose origin
+and yaw depend on where the \emph{headset} was when the app started;
+used raw, ``forward'' on the hand is only ``forward'' on the robot if
+the headset is placed carefully. The pipeline therefore never controls
+in the raw tracking frame: at \emph{every} clutch engagement it derives
+an \emph{operator frame} from the two handle poses themselves~---
+gravity gives \(z\) (OpenXR spaces are gravity-aligned), the horizontal
+left\(\to\)right handle line gives \(-y\), and \(x = y \times z\) points
+forward. The origin sits \SI{20}{cm} behind and \SI{20}{cm} above the
+handle midpoint (roughly the operator's head, and drawn as the ``headset
+centre'' marker in the simulator).
+\unjustified{} the \SI{20}{cm} offsets are a visual proxy
+set by intuition, not measured head geometry; they only place a marker
+and do not affect control. All hand poses are re-expressed in this frame
+before any control mathematics, so the headset can sit anywhere, and
+moving it between grips has no effect. A unit test verifies exact
+invariance of the control inputs under arbitrary yaw and translation of
+the tracking frame.
 
+\subsection{The clutch and the position mapping}
+\label{sec:clutch}
 
-\subsection{Clutched position mapping}
+\paragraph{What the clutch is.}
+The \emph{clutch} is a deadman-style engage/disengage control: the robot
+follows the operator's hands only while both grip buttons are held
+beyond a threshold. Releasing either grip freezes the arms where they
+are; gripping again re-engages tracking from the current hand position.
+The name comes from the automotive clutch, which likewise couples and
+decouples two systems that keep their own state while separated.
+\unjustified{} the grip threshold (0.9 of full grip
+travel) is a convention chosen to reject accidental grips; it has not
+been tuned against user data.
 
+\paragraph{Clutched position mapping.}
 Let \(p_H(t)\) be the filtered controller position in the operator frame
-and \(T_E(t)\) the arm's end-effector (EE) pose. On the rising edge of the
-clutch (both grips held), the pipeline latches the hand reference
+and \(p_E\) the arm's end-effector (EE) position. On the rising edge of
+the clutch (both grips held), the pipeline latches the hand reference
 \(p_H^0 = p_H(t_0)\) and the robot anchor \(p_E^0 = p_E(t_0)\). While
 clutched, the target position is the anchored frame-aligned delta
 \begin{equation}
   p^\ast(t) \;=\; p_E^0 + s\,\bigl(p_H(t) - p_H^0\bigr),
   \label{eq:clutch}
 \end{equation}
-with translation scale \(s\) (\(=1\) in production). Releasing the grips
-freezes the arms; re-gripping re-anchors, so the operator can reposition
-their hands (``ratcheting'') without moving the robot. Every re-grip is a
-\emph{full} recalibration~--- operator frame, handle axes, and roll
-references (Section~\ref{sec:armplane}) are all re-captured~--- so a poor
-initial calibration is fixed by simply releasing and gripping again.
+with translation scale \(s\) (\(=1\) in the current configuration).
+Releasing the grips freezes the arms; re-gripping re-anchors, so the
+operator can reposition their hands (``ratcheting'') without moving the
+robot. Every re-grip is a \emph{full} recalibration~--- operator frame,
+handle axes, and roll references (Section~\ref{sec:armplane}) are all
+re-captured~--- so a poor initial calibration is fixed by simply
+releasing and gripping again.
+
+\paragraph{Why clutched rather than absolute.}
+Against a fixed absolute mapping (Section~\ref{sec:prelim-retarget}),
+clutching buys three things on this hardware. First, workspace
+ratcheting: the arm's reach is far smaller than the operator's, and
+clutching covers it in comfortable strokes. Second, safety and comfort:
+release is an instant, always-available pause, and the operator can
+stretch, re-place the headset, or walk around without robot motion.
+Third, self-repair: because every engagement recalibrates everything, a
+bad first calibration never persists. The costs are real but smaller.
+There is no persistent hand--robot correspondence, so the mapping drifts
+by design across grip cycles, and spatial reasoning must be relative
+rather than absolute. Each cycle also adds a small workload, which the
+user study measures directly with its clutch questionnaire item
+(Section~\ref{sec:exp-userstudy}).
 
 \subsection{Armplane orientation construction}
 \label{sec:armplane}
 
-Full 6D orientation tracking is over-constrained on the 5-DoF SO-101: the
-missing wrist-yaw joint couples EE yaw to the shoulder-pan angle, so a naive
-tracker sacrifices position accuracy chasing an unreachable orientation
-(Section~\ref{sec:experiments}; this failure mode motivated the design).
-Instead, the production pipeline \emph{constructs} a target orientation that
-is reachable by construction, from three decoupled inputs:
+Full 6-D orientation tracking is over-constrained on the 5-DoF SO-101:
+the missing wrist-yaw joint couples EE yaw to the shoulder-pan angle, so
+a naive tracker sacrifices position accuracy chasing an unreachable
+orientation (Section~\ref{sec:experiments}; this failure mode motivated
+the design). Instead, the armplane pipeline \emph{constructs} a target
+orientation that is reachable by construction, from three decoupled
+inputs:
 \begin{align}
   \text{tip elevation} \quad
   \theta(t) &= \operatorname{atan2}\!\bigl(a_z(t),\,\lVert a_{xy}(t)\rVert\bigr),
@@ -59,7 +100,7 @@ is reachable by construction, from three decoupled inputs:
   \phi(t) &= \operatorname{atan2}\!\bigl(p_{E,y}-b_y,\;p_{E,x}-b_x\bigr),
   \label{eq:azim}\\
   \text{roll} \quad
-  \psi(t) &\;\text{from the controller ``knuckle'' axis, orthogonalized
+  \psi(t) &\;\text{from the controller ``knuckle'' axis, orthogonalised
   against the tip.}
   \label{eq:roll}
 \end{align}
@@ -67,22 +108,55 @@ Here \(\hat h\) is the handle axis captured per hand at every grip (the
 operator holds both handles plumb-vertical, so ``handle-down =
 gripper-down'' until the next re-grip), and \(b\) is the arm's base
 position: the tip azimuth \emph{follows the arm} rather than the hand,
-because the arm cannot yaw its wrist independently. The target rotation
+because the arm cannot yaw its wrist independently
+(Section~\ref{sec:system}). The target rotation
 \(R^\ast = [\,\hat t \;\; \hat y \;\; \hat z\,]\) assembles the tip
 direction \(\hat t = (\cos\theta\cos\phi,\ \cos\theta\sin\phi,\
 \sin\theta)\) with a roll-consistent frame completion. All three EE
 orientation axes can then be fully costed in the tracker without risking
-the \(180^\circ\) tip-flip that a zero-costed yaw axis admits. At clutch
-activation the orientation target is blended from the EE's current rotation
-to the constructed one over \SI{1}{s} (geodesic slerp), so activation never
-jerks the wrist.
+the \(180^\circ\) tip-flip that a zero-costed yaw axis admits.
+
+\subsection{Gripper orientation at engagement}
+\label{sec:engagement}
+
+What happens to the gripper the moment teleoperation starts is worth
+stating exactly, because it is where naive pipelines jerk the wrist.
+On the rising edge of the clutch, the pipeline performs three captures.
+First, it derives the operator frame from the two handle poses
+(Section~\ref{sec:opframe}). Second, it captures each hand's
+\emph{handle axis}: the operator holds both handles pointing straight
+down, and the body-frame direction that is currently world-down becomes
+that hand's elevation reference until the next re-grip. Third, it
+captures each gripper's \emph{roll reference}: a horizontal ``knuckle''
+axis taken from the gripper's \emph{current} roll, so the roll target is
+anchored to wherever the gripper already is.
+
+The commanded pose then starts from the gripper's own state, not from
+the hand's. The position target is anchored at the end-effector position
+at grip (Eq.~\eqref{eq:clutch} with \(p_H = p_H^0\)), so the gripper
+does not translate at engagement. The orientation target is blended from
+the end-effector's rotation \emph{at engagement} to the constructed
+armplane target over \SI{1}{s} by geodesic interpolation (spherical
+linear interpolation on the rotation group), so the wrist glides rather
+than snaps even if the hand's orientation disagrees with the gripper's.
+\unjustified{} the \SI{1}{s} blend duration is a comfort
+value chosen by feel; it has not been tuned against user data.
+
+This behaviour is identical for every method in the pluggable layer: the
+blended, reachable target of this section is computed once, upstream of
+the IK interface, and every method~--- the armplane QP tracker and all
+benchmark methods alike~--- receives the same target stream. The methods
+differ only in how they track it. In particular, the \texttt{telegrip}
+method recovers its wrist angles analytically from this same blended
+target, so its engagement behaviour matches the others even though its
+steady-state tracking differs (Appendix~\ref{app:methods}).
 
 \subsection{Workspace envelope and out-of-envelope policies}
 \label{sec:envelope}
 
 \paragraph{Envelope geometry.}
-The reachable position set of one arm is approximated by an annulus around
-the shoulder-lift pivot plus a table-clearance floor:
+The reachable position set of one arm is approximated by an annulus
+around the shoulder-lift pivot plus a table-clearance floor:
 \begin{equation}
   \mathcal{W} \;=\; \bigl\{\,p \;:\; r_{\min}\le \lVert p - c(p)\rVert \le
   r_{\max}, \;\; p_z \ge z_{\mathrm{floor}} \,\bigr\},
@@ -93,69 +167,74 @@ where the pivot \(c(p)\) is \emph{not} on the pan axis: it orbits it at
 axis (the pan angle tracks the target azimuth in steady state; the
 transient error is absorbed by a \SI{10}{mm} safety margin). Because the
 lift joint rotates the entire distal chain rigidly about the pivot, the
-pivot-to-EE distance is invariant to the lift angle; the radii are obtained
-by a forward-kinematics grid sweep over elbow and wrist-flex within URDF
-limits, giving \(r_{\min}=\SI{0.084}{m}\), \(r_{\max}=\SI{0.411}{m}\) (a
-unit test re-derives them so URDF edits cannot silently stale the
-constants). Point membership, signed margin, and nearest-point projection
-are a handful of vector operations (\(\approx\)\SI{36}{\micro s}), computed
-every tick at \SI{100}{Hz} for both arms.
+pivot-to-EE distance is invariant to the lift angle; the radii are
+obtained by a forward-kinematics grid sweep over elbow and wrist-flex
+within joint limits, giving \(r_{\min}=\SI{0.084}{m}\),
+\(r_{\max}=\SI{0.411}{m}\) (a unit test re-derives them so model edits
+cannot silently stale the constants). Point membership, signed margin,
+and nearest-point projection are a handful of vector operations
+(\(\approx\)\SI{36}{\micro s}), computed every tick at \SI{100}{Hz} for
+both arms.
 
 \paragraph{Policies.}
 Four selectable policies decide what reaches the IK when the operator's
 target \(p^\ast\) leaves \(\mathcal{W}\):
 \begin{description}
   \item[warn] Pass \(p^\ast\) through unchanged; log and warn (legacy
-    behavior plus telemetry). The QP saturates against joint limits.
+    behaviour plus telemetry). The QP saturates against joint limits.
   \item[project] Emit \(\Pi_{\mathcal{W}}(p^\ast)\), the nearest envelope
-    point. The arm slides along the boundary, staying as close to the hand
-    as physically possible; re-entry is seamless since the emitted target is
-    always consistent with the arm's position.
+    point. The arm slides along the boundary, staying as close to the
+    hand as physically possible; re-entry is seamless since the emitted
+    target is always consistent with the arm's position.
   \item[freeze] Hold the last feasible target while outside (``leash'');
     release on re-entry. State resets when the clutch releases.
-  \item[slow] Velocity shaping: the per-tick step \(\Delta p\) is split into
-    the outward-normal component (w.r.t.\ the nearest boundary) and the
-    tangential component; the outward part is scaled by
+  \item[slow] Velocity shaping: the per-tick step \(\Delta p\) is split
+    into the outward-normal component (w.r.t.\ the nearest boundary) and
+    the tangential component; the outward part is scaled by
     \(\sigma\bigl(m/m_{\mathrm{soft}}\bigr)\) where \(m\) is the current
-    margin, \(m_{\mathrm{soft}}=\SI{40}{mm}\), and \(\sigma\) is the cubic
-    smoothstep~--- full speed far inside, zero at the boundary, tangential
-    sliding unaffected. If a fast hand still escapes, the result degrades
-    to projection.
+    margin, \(m_{\mathrm{soft}}=\SI{40}{mm}\), and \(\sigma\) is the
+    cubic smoothstep~--- full speed far inside, zero at the boundary,
+    tangential sliding unaffected. If a fast hand still escapes, the
+    result degrades to projection.
 \end{description}
-The policy runs in the production IK thread \emph{after} the height lock
-(so a height locked below the floor is still clamped) and applies to every
-input source (headset, mock device, viser gizmos). The mode is selected
-with \texttt{--oob-mode} on both the real-robot and simulation tools.
+The policy runs in the IK thread \emph{after} the height lock (so a
+height locked below the floor is still clamped) and applies to every
+input source (headset, mock device, interactive gizmos). The mode is
+selectable at launch on both the real-robot and simulation tools.
 
 \subsection{Telegrip-style split IK}
 \label{sec:telegrip}
 
 The \texttt{telegrip} method ports Telegrip's split control
-scheme~\citep{telegrip}: only the three proximal joints solve an IK problem,
-and they solve it for \emph{position only}; the wrist joints are set
-directly, bypassing every task-space cost trade-off. Per tick and per arm:
+scheme~\citep{telegrip}: only the three proximal joints solve an IK
+problem, and they solve it for \emph{position only}; the wrist joints
+are set directly, bypassing every task-space cost trade-off. Per tick
+and per arm:
 \begin{enumerate}
   \item \textbf{Analytic wrist.} Because the lift/elbow/flex axes are
-  parallel, the EE tip elevation is affine in those joints,
+  parallel (Section~\ref{sec:system}), the EE tip elevation is affine in
+  those joints,
   \(\theta = e_0 + s_2 q_2 + s_3 q_3 + s_4 q_4\) with slopes
-  \(s_i\in\{\pm1\}\); given the currently commanded \(q_2,q_3\), the wrist
-  flex realizing the target elevation \(\theta^\ast\) is
-  \(q_4 = s_4(\theta^\ast - e_0 - s_2 q_2 - s_3 q_3)\). Similarly the roll
-  angle of the EE's local \(z\) about the tip axis (measured against a
-  horizontal reference) is affine in the roll joint,
+  \(s_i\in\{\pm1\}\); given the currently commanded \(q_2,q_3\), the
+  wrist flex realising the target elevation \(\theta^\ast\) is
+  \(q_4 = s_4(\theta^\ast - e_0 - s_2 q_2 - s_3 q_3)\). Similarly the
+  roll angle of the EE's local \(z\) about the tip axis (measured
+  against a horizontal reference) is affine in the roll joint,
   \(\psi = r_0 + s_5 q_5\). The coefficients are \emph{calibrated
   numerically} by finite differences at construction rather than derived
-  from the URDF (whose wrist-roll frame carries a non-trivial rotation that
-  makes sign bookkeeping treacherous); a unit test validates the affine
-  model to \(<1^\circ\) across the joint range. When the tip is
-  near-vertical the roll reference degenerates and the previous roll is
-  held.
+  from the arm model (whose wrist-roll frame carries a non-trivial
+  rotation that makes sign bookkeeping treacherous); a unit test
+  validates the affine model to \(<1^\circ\) across the joint range.
+  When the tip is near-vertical the roll reference degenerates and the
+  previous roll is held.
   \item \textbf{Position DLS.} With the wrist frozen, a damped
-  least-squares step on the \(3\times3\) position Jacobian of the proximal
-  joints, \(\Delta q = J^\top (J J^\top + \lambda^2 I)^{-1}(p^\ast - p)\)
+  least-squares step on the \(3\times3\) position Jacobian of the
+  proximal joints,
+  \(\Delta q = J^\top (J J^\top + \lambda^2 I)^{-1}(p^\ast - p)\)
   with \(\lambda=0.05\) and per-tick gain \(0.6\).
   \item \textbf{Clamping.} All five joints are velocity-clamped
   (\SI{3}{rad/s}) and position-clamped to their limits.
 \end{enumerate}
-The method registers in the same registry as the QP baselines and is
-selectable everywhere (\texttt{--method telegrip}).
+The method registers in the same pluggable layer as the QP baselines and
+is selectable everywhere. Appendix~\ref{app:telegrip} details the full
+port and its deliberate departures from the upstream implementation.

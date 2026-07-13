@@ -1,66 +1,87 @@
 \section{System overview}
 \label{sec:system}
 
+This section describes the platform the method runs on: the arms and
+their load-bearing geometry, the servo model, the software pipeline, the
+pluggable IK layer, and the simulation-rehearsal harness used for both
+practice and benchmarking.
+
 \paragraph{Hardware.}
 Two SO-101 arms are mounted \SI{0.30}{m} apart (bases at
-\(y=\pm\SI{0.15}{m}\)) on a 3D-printed platform whose geometry is generated
-from a single OpenSCAD configuration; a MuJoCo/Isaac digital twin is
-generated from the same source. Each arm has five revolute body joints~---
-\texttt{shoulder\_pan}, \texttt{shoulder\_lift}, \texttt{elbow\_flex},
-\texttt{wrist\_flex}, \texttt{wrist\_roll}~--- plus a gripper. The
-\texttt{wrist\_roll} axis coincides with the gripper's long (tip) axis, and
-the lift, elbow, and flex axes are parallel, a fact exploited by both the
-armplane mapping and the Telegrip wrist recovery \textbf{TODO: I do not understand here, please explain.}. STS3215 serial bus servos
-are position-controlled; the digital twin models them with position
-actuators (\(k_p=25\), \(k_v=1.5\)) plus joint damping, armature, and
-friction matching the official SO-ARM100 MJCF.
+\(y=\pm\SI{0.15}{m}\)) on a 3D-printed platform whose geometry is
+generated from a single parametric design file; a MuJoCo/Isaac digital
+twin is generated from the same source. Each arm has five revolute body
+joints~--- shoulder pan, shoulder lift, elbow flex, wrist flex, wrist
+roll~--- plus a gripper. Two geometric facts about this chain carry the
+whole orientation story of this paper. First, the wrist-roll axis
+coincides with the gripper's long (tip) axis, so rolling the gripper
+about its own tip is a single joint's motion. Second, the lift, elbow,
+and flex axes are mutually parallel: all three are horizontal axes
+normal to the vertical plane the arm sweeps as the shoulder pan rotates
+(the \emph{arm plane}). Rotations about parallel axes compose by adding
+their angles, so the elevation of the gripper tip above the horizontal
+is, up to a fixed offset, simply the signed sum of the lift, elbow, and
+flex angles~--- an affine function of those three joints. The armplane
+mapping (Section~\ref{sec:armplane}) relies on this to know that any
+commanded tip elevation is reachable by the wrist-flex joint alone, and
+the Telegrip wrist recovery (Section~\ref{sec:telegrip}) inverts the
+same affine relation in closed form to set the wrist directly. The
+shoulder-pan angle, by contrast, is the only joint that changes the
+tip's azimuth, which is why end-effector yaw is coupled to base rotation
+on this arm (Section~\ref{sec:prelim-retarget}).
+
+\paragraph{Servo model.}
+STS3215 serial bus servos are position-controlled; the digital twin
+models them with position actuators (\(k_p=25\), \(k_v=1.5\)) plus joint
+damping, armature, and friction matching the official SO-ARM100 MuJoCo
+model.
 
 \paragraph{Software pipeline.}
-A reader thread streams Meta Quest controller poses (\SI{50}{Hz}), buttons,
-grips, and triggers. Controller transforms are One-Euro filtered
-(\(f_{c,\min}=0.8\), \(\beta=5.0\), \(f_{c,d}=0.9\)) in a shared data
-manager. The IK solver thread (\SI{100}{Hz}) performs the retargeting of
+A reader thread streams Meta Quest controller poses (\SI{50}{Hz}),
+buttons, grips, and triggers. Controller transforms are One-Euro
+filtered (\(f_{c,\min}=0.8\), \(\beta=5.0\), \(f_{c,d}=0.9\);
+Section~\ref{sec:prelim-filter}) in a shared data manager. The IK solver
+thread (\SI{100}{Hz}) performs the retargeting of
 Section~\ref{sec:method} and hands 10-DoF joint targets to per-arm joint
-threads (real robot) or to the MuJoCo scene (simulation rehearsal). Holding
-both grips activates teleoperation (\emph{clutch}); the first grip of a
-session calibrates the handle axes; buttons toggle enable/home/height-lock
-states; triggers drive the grippers.
+threads (real robot) or to the MuJoCo scene (simulation rehearsal).
+Holding both grips engages teleoperation (the \emph{clutch},
+Section~\ref{sec:clutch}); the first grip of a session calibrates the
+handle axes; buttons toggle arm enablement and a home pose; triggers
+drive the grippers.
 
 \paragraph{Pluggable IK methods.}
-The IK layer is a narrow interface (anchor to measured joints, accept
-per-frame EE pose targets, solve, expose the configuration). The production
-implementation is a Pink QP; a \texttt{MethodIKAdapter} exposes the same
-interface over any of the six registered benchmark methods
-(Appendix~\ref{app:methods}) and adds a joint-space rate limiter
-(\(\dot q_{\max}=\SI{3}{rad/s}\) in simulation, \SI{2}{rad/s} on hardware).
-Every method can therefore be driven by the real headset on the real arms,
-by the headset against the digital twin, or by scripted mock trajectories in
-the benchmark~--- without touching the production thread. Independently of
-this registry, the \emph{unmodified upstream} Telegrip stack (web UI,
-WebXR streaming, PyBullet IK) can also drive the two arms directly for
-head-to-head comparison: \texttt{tool/telegrip\_native.py} is a thin entry
-point that bridges this rig's serial ports and motor calibrations into a
-Telegrip checkout and then defers entirely to its CLI
-(\texttt{documents/telegrip\_native.md}).
+The IK layer is a narrow interface: anchor to the measured joints,
+accept per-frame end-effector pose targets, solve, and expose the
+resulting configuration. The armplane pipeline's own tracker is a Pink
+QP; a thin adapter exposes the same interface over any of the six
+registered benchmark methods (Appendix~\ref{app:methods}) and adds a
+joint-space rate limiter (\(\dot q_{\max}=\SI{3}{rad/s}\) in simulation,
+\SI{2}{rad/s} on hardware). Every method can therefore be driven by the
+real headset on the real arms, by the headset against the digital twin,
+or by scripted mock trajectories in the benchmark~--- without touching
+the real-time thread. Independently of this registry, the
+\emph{unmodified upstream} Telegrip stack (web UI, WebXR streaming, its
+own IK) can also drive the two arms directly for head-to-head
+comparison, through a thin bridge that hands it this rig's serial ports
+and motor calibrations.
 
 \paragraph{Simulation rehearsal and benchmark harness.}
-\texttt{tool/quest\_sim\_teleop.py} runs the \emph{production} thread
-against the digital twin, with either the real headset or a scripted mock
-device (patterns: table circles, wrist oscillation, envelope excursion).
-By default it loads the full twin rig scene~--- printed board, adapter
-plates, camera tower, wrist C310s~--- with \emph{all} collisions enabled
+A rehearsal tool runs the full teleoperation thread against the digital
+twin, with either the real headset or a scripted mock device (patterns:
+table circles, wrist oscillation, envelope excursion). By default it
+loads the complete twin rig scene~--- printed board, adapter plates,
+camera tower, wrist cameras~--- with \emph{all} collisions enabled
 (arm--arm, arm--rig, arm--table; the nested base/shoulder mesh pair is
-explicitly excluded since those parts interpenetrate by design), renders
-the three mounted cameras (\texttt{rgb\_scene},
-\texttt{rgb\_wrist\_left/right}) into live view windows, and draws the
-world-frame triad plus the calibrated ``headset center'' marker so the
-operator can see exactly where the system thinks the VR frame sits.
-\texttt{sim\_benchmark/run\_benchmark.py} sweeps mock trajectories across
-methods and reports the metrics of Section~\ref{sec:experiments};
-\texttt{sim\_benchmark/run\_envelope.py} does the same for the
-out-of-envelope policy sweep. During this work we found and fixed a
-rehearsal-harness artifact: while teleoperation was idle, the harness fed
-measured (gravity-sagged) joints back as servo targets, letting the arms
-ratchet \(\approx\)\SI{13}{cm} downward before activation; idle targets are
-now held constant, matching the real robot's behavior (which only writes
-servo goals while teleoperation is active).
+explicitly excluded since those parts interpenetrate by design). It
+renders the three mounted cameras into live view windows and draws the
+world-frame triad plus the calibrated ``headset centre'' marker, so the
+operator can see exactly where the system thinks the VR frame sits. The
+benchmark runner sweeps mock trajectories across methods and reports the
+metrics of Section~\ref{sec:experiments}; a second runner does the same
+for the out-of-envelope policy sweep. During this work we found and
+fixed a rehearsal-harness artifact: while teleoperation was idle, the
+harness fed measured (gravity-sagged) joints back as servo targets,
+letting the arms ratchet \(\approx\)\SI{13}{cm} downward before
+activation. Idle targets are now held constant, matching the real
+robot's behaviour, which only writes servo goals while teleoperation is
+active.

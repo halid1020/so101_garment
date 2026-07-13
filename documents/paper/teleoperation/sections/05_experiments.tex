@@ -25,8 +25,8 @@ velocity while outside, and the re-entry recovery time (raw-target error
 
 Three circle radii (3/5/\SI{8}{cm}) and four line-stroke directions on the
 table plane, orientation held. Results in
-Table~\ref{tab:tracking} (see also the per-trajectory tables in
-\texttt{tables/}). The headline finding of the earlier benchmark holds:
+Table~\ref{tab:tracking} (see also the per-trajectory tables in the
+supplementary table set). The headline finding of the earlier benchmark holds:
 full-cost 6D tracking (\texttt{pink\_full}) pays a large position penalty
 on a 5-DoF arm (\SI{34.1}{mm} mean across the full suite vs.\
 \SI{15.3}{mm} for \texttt{pink\_relaxed}), while \texttt{scipy\_ls}
@@ -39,7 +39,7 @@ commanded-FK error at a solver cost 13\(\times\) below
 \begin{table}[h]
   \centering
   \caption{Tracking suite, representative trajectory
-  (\texttt{circle\_r5cm}). Full sweep in \texttt{tables/}.}
+  (\texttt{circle\_r5cm}). Full sweep in the supplementary table set.}
   \label{tab:tracking}
   \small
   \input{tables/bench_circle_r5cm}
@@ -52,7 +52,7 @@ Position held at the latch point while the target orientation oscillates:
 roll (\(\pm45^\circ\)) and flex (\(\pm30^\circ\)) at 0.5/1/\SI{2}{Hz}, plus
 a combined slow-circle + \SI{1}{Hz}-roll trajectory. This suite quantifies
 the ``wrist is not agile'' complaint directly.
-Table~\ref{tab:wrist} shows the \SI{1}{Hz} roll oscillation: the production
+Table~\ref{tab:wrist} shows the \SI{1}{Hz} roll oscillation: the armplane
 QP tracker lags the roll by \(\approx\)\SI{300}{ms} (about a third of the
 oscillation period) with \(28^\circ\) mean orientation error, while the
 Telegrip split IK cuts the lag to \(\approx\)\SI{120}{ms} and the error to
@@ -91,8 +91,8 @@ seamlessly.
 \begin{table}[h]
   \centering
   \caption{Out-of-envelope suite, \texttt{envelope\_slide} with
-  \texttt{pink\_relaxed} (policy comparison; full sweep in
-  \texttt{tables/}).}
+  \texttt{pink\_relaxed} (policy comparison; full sweep in the
+  supplementary table set).}
   \label{tab:envelope}
   \small
   \input{tables/envelope_envelope_slide_pink_relaxed}
@@ -100,7 +100,7 @@ seamlessly.
 
 \subsection{End-to-end rehearsal}
 
-The full production stack (One-Euro filter, clutch, armplane mapping,
+The full armplane stack (One-Euro filter, clutch, armplane mapping,
 envelope policy, IK thread) is exercised against the digital twin with the
 scripted mock device: circles (\SI{11.6}{mm} mean EE tracking with
 \texttt{pink\_relaxed}, \SI{7.0}{mm} with \texttt{telegrip}), wrist
@@ -117,7 +117,7 @@ re-clutching, and reacting to boundary behavior. We therefore pair the
 objective benchmark with a formative within-subjects user study
 (\(n\approx5\), a pilot scale appropriate for rig-level design decisions).
 The full operational runbook, session script, and questionnaire sheets live
-in \texttt{documents/user\_study\_protocol.md}; this section fixes the
+in the repository's user-study runbook; this section fixes the
 design.
 
 \paragraph{Conditions.}
@@ -126,7 +126,7 @@ benchmark identified (Table~\ref{tab:userstudy-conditions}). The
 out-of-envelope policy is fixed to \texttt{project} for C1--C3 so the
 method is the only varied factor; C4 is the unmodified upstream Telegrip
 stack (its own WebXR UI, PyBullet IK, no envelope layer), run via the
-\texttt{tool/telegrip\_native.py} bridge~--- a \emph{system-level} baseline
+native-Telegrip bridge of Section~\ref{sec:system}~--- a \emph{system-level} baseline
 rather than an IK swap.
 
 \begin{table}[h]
@@ -138,9 +138,9 @@ rather than an IK swap.
     \toprule
     & pipeline & IK method & OOE policy \\
     \midrule
-    C1 & production & \texttt{pink\_full} & \texttt{project} \\
-    C2 & production & \texttt{pink\_relaxed} & \texttt{project} \\
-    C3 & production & \texttt{telegrip} (split IK) & \texttt{project} \\
+    C1 & armplane & \texttt{pink\_full} & \texttt{project} \\
+    C2 & armplane & \texttt{pink\_relaxed} & \texttt{project} \\
+    C3 & armplane & \texttt{telegrip} (split IK) & \texttt{project} \\
     C4 & upstream Telegrip & PyBullet position IK & none (native) \\
     \bottomrule
   \end{tabular}
@@ -180,7 +180,7 @@ confidence, strategy changes across conditions).
 \paragraph{Procedure.}
 Per participant (\(\approx\)75\,min): consent and demographics
 (5\,min); guided familiarization on the simulation rehearsal tool
-(\texttt{quest\_sim\_teleop.py}, 10\,min); then the four conditions in a
+(the simulation rehearsal tool, 10\,min); then the four conditions in a
 balanced Latin-square order (the fifth participant repeats the first
 order), each comprising \(\sim\)3\,min free practice, three recorded
 trials, and the per-condition questionnaires (\(\sim\)12\,min); closing

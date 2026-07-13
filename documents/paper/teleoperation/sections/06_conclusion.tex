@@ -9,10 +9,10 @@ policies, and a pluggable IK layer now including a Telegrip-style split IK.
 Simulation results support two concrete recommendations:
 \begin{itemize}
   \item \textbf{Wrist agility.} The Telegrip split IK halves roll lag and
-  reduces orientation error relative to the production QP at every tested
+  reduces orientation error relative to the armplane QP at every tested
   frequency, and simultaneously improves position tracking; its higher
   command jerk argues for hardware validation (servo wear, audible
-  chatter) before promotion to the production default. Tuning the QP
+  chatter) before promotion to the pipeline default. Tuning the QP
   alternative (frame-task gain, One-Euro \(\beta\)) along the wrist-agility
   suite is the complementary path.
   \item \textbf{Out-of-envelope handling.} \texttt{project} should replace

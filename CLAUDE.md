@@ -166,6 +166,9 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   same branch. The paper builds with `make paper` (or `latexmk -pdf
   main.tex` in `documents/paper/teleoperation/`, or the VSCode build task);
   regenerate tables with `src/sim_benchmark/export_latex_tables.py`.
+  All paper writing follows `documents/academic_writing_guideline.md`
+  (flow diagram before LaTeX, British English, active voice, no numbers
+  in the abstract, no code paths in prose, `\unjustified{}` flags).
 - Don't hardcode rig geometry — edit `src/platform/config.scad`.
 
 ## Verifying changes

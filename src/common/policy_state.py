@@ -15,12 +15,14 @@ class PolicyState:
         TARGETING_TIME = "targeting_time"
         TARGETING_POSE = "targeting_pose"
 
-    def __init__(self) -> None:
+    def __init__(self, execution_ratio: float = 0.5) -> None:
         """Initialize PolicyState with default values."""
         # Prediction horizon stored as dict[str, list[float]] where keys are joint/gripper names
         self._prediction_horizon: dict[str, list[float]] = {}
         self._prediction_horizon_lock = threading.Lock()
-        self._execution_ratio: float = 0.5  # Default to executing 50% of the predicted horizon, TODO: we need to set it in
+        # Fraction of the predicted horizon to execute per lock. Callers
+        # configure it at construction or via the execution_ratio setter.
+        self._execution_ratio: float = self._clamp_execution_ratio(execution_ratio)
 
         self._policy_rgb_image_input: np.ndarray | None = None
         self._policy_rgb_image_input_lock = threading.Lock()
@@ -68,17 +70,31 @@ class PolicyState:
                 key: list(values) for key, values in horizon.items()
             }
 
-    def set_execution_ratio(self, ratio: float) -> None:
-        """Set execution ratio used when locking prediction horizon."""
-        # Clamp to (0, 1] to avoid zero-length horizons
-        clamped_ratio = float(np.clip(ratio, 1e-6, 1.0))
+    @staticmethod
+    def _clamp_execution_ratio(ratio: float) -> float:
+        """Clamp an execution ratio into (0, 1] to avoid zero-length horizons."""
+        return float(np.clip(ratio, 1e-6, 1.0))
+
+    @property
+    def execution_ratio(self) -> float:
+        """Fraction of the predicted horizon executed per lock (thread-safe)."""
+        with self._prediction_horizon_lock:
+            return self._execution_ratio
+
+    @execution_ratio.setter
+    def execution_ratio(self, ratio: float) -> None:
+        """Set the execution ratio, clamped to (0, 1] (thread-safe)."""
+        clamped_ratio = self._clamp_execution_ratio(ratio)
         with self._prediction_horizon_lock:
             self._execution_ratio = clamped_ratio
 
+    def set_execution_ratio(self, ratio: float) -> None:
+        """Set execution ratio used when locking prediction horizon."""
+        self.execution_ratio = ratio
+
     def get_execution_ratio(self) -> float:
         """Get execution ratio (thread-safe)."""
-        with self._prediction_horizon_lock:
-            return self._execution_ratio
+        return self.execution_ratio
 
     def get_policy_rgb_image_input(self) -> np.ndarray | None:
         """Get policy RGB image (thread-safe)."""

@@ -1,13 +1,15 @@
 """PinkIKSolver-compatible facade over the benchmark teleop methods.
 
-The production Quest pipeline (`common.threads.dual_ik_solver`) talks to its
+The armplane pipeline (the production teleop thread,
+`common.threads.dual_ik_solver`) talks to its
 IK solver through a narrow interface: anchor to measured joints, report EE
 poses, accept per-frame pose targets, solve, expose the configuration. This
 adapter implements exactly that interface on top of any registered
 benchmark method (`sim_benchmark.methods.METHODS`), so all five candidate
 IK strategies can be driven by the real Meta Quest device — on the real
 arms (tool/meta_quest_teleopration.py --method ...) and in the MuJoCo sim
-(tool/quest_sim_teleop.py) — without touching the production thread.
+(tool/quest_sim_teleop.py) — without touching the armplane pipeline
+(the production teleop thread).
 
 A joint-space rate limiter (per benchmark finding: mandatory for scipy_ls
 and mink near the workspace edge) clamps every solve.
@@ -57,7 +59,7 @@ class MethodIKAdapter:
         self.dt = dt
         self.max_joint_vel = max_joint_vel
 
-        # The production thread reads .urdf_model (Pinocchio) for arm base
+        # The armplane pipeline reads .urdf_model (Pinocchio) for arm base
         # positions; build the same reduced model PinkIKSolver uses.
         full = pin.buildModelFromUrdf(str(DUAL_URDF_PATH))
         gripper_ids = [i for i in range(1, full.njoints) if "gripper" in full.names[i]]

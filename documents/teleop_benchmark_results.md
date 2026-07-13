@@ -1,6 +1,6 @@
 # Meta-Quest Teleop Method Benchmark — Simulation Results
 
-**Branch:** `teleop-benchmark` · **Date:** 2026-07-03 · **Code:** `src/sim_benchmark/` [TODO: change these information accordingly.]
+**First run:** 2026-07-03 (branch `teleop-benchmark`) · **Last updated:** 2026-07-13 (branch `writing-guide-paper`) · **Code:** `src/sim_benchmark/`
 
 Goal: verify candidate Meta-Quest → dual SO-101 teleoperation pipelines in
 MuJoCo with mocked hand movements, *before* running the real headset on the
@@ -67,14 +67,37 @@ published/community solution for Quest → SO-101 teleop:
 | `telegrip` | split IK: analytic wrist (elevation/roll → wrist_flex/wrist_roll) + 3-joint position-only DLS | faithful port of DipFlip/telegrip's actual algorithm (added later; see §8) |
 
 ### 1.4 Metrics
-[TODO: please explain these metrics clearly] Why they are used and how exactly they are calulcated. What are the differences between these metrics]
-- **ik_err** — ‖FK(commanded q) − target‖: pure IK quality, no physics.
-- **err_mean / err_p95** — ‖measured EE − target‖ after stepping physics:
-  includes servo lag and gravity sag (~5–9 mm floor at these gains).
-- **jerk_rms** — RMS jerk of the joint commands (rad/s³): smoothness.
-- **qd_max** — peak commanded joint velocity (rad/s): safety.
-- **lim_margin** — worst-case distance to a joint limit (deg).
-- **solve** — mean per-tick compute time (ms); budget at 50 Hz is 20 ms.
+
+Each metric isolates one link of the chain *target → IK command → servo →
+measured pose*, so together they separate "the solver is wrong" from "the
+solver is right but the robot cannot follow" from "the command is
+unfollowable by design":
+
+- **ik_err** (mm) — ‖FK(commanded q) − target‖ per tick, averaged over the
+  episode: run the *commanded* joints through forward kinematics and
+  measure the distance to the commanded target. No physics is involved,
+  so this is pure solver quality — how close the IK's own answer lands.
+- **err_mean / err_p95** (mm) — ‖measured EE − target‖ after stepping
+  physics: the mean and 95th percentile over all ticks of the distance
+  between the *simulated* end-effector and the target. This adds what
+  ik_err excludes — servo lag, gravity sag, and dynamics (~5–9 mm floor
+  at these gains even for a perfect solver). The p95 catches transient
+  spikes that a mean hides. The difference (err − ik_err) is therefore
+  the tracking cost of the *hardware*, not the solver.
+- **jerk_rms** (rad/s³) — root-mean-square of the third time-derivative
+  of the joint *commands*, computed by finite differences over the
+  command sequence and pooled across joints. It measures command
+  smoothness: high jerk means the solver asks the servos for abrupt
+  acceleration changes, which excites oscillation and wears gears even
+  when the position error looks fine.
+- **qd_max** (rad/s) — the peak commanded joint velocity over the
+  episode: a safety metric; values at the rate-limiter clamp mean the
+  method is being saturated.
+- **lim_margin** (deg) — the worst-case distance of any commanded joint
+  from its position limit: small margins warn that a method solves by
+  parking joints at their limits.
+- **solve** (ms) — mean per-tick compute time; the budget at 50 Hz is
+  20 ms.
 
 Errors pool both arms; each (method, trajectory) episode starts from the
 same settled neutral pose `[0, −10, 20, 25, 0]°` per arm.
@@ -84,8 +107,6 @@ same settled neutral pose `[0, −10, 20, 25, 0]°` per arm.
 ## 2. Experiment 1: results
 
 ### 2.1 Summary (mean measured error across all 7 trajectories)
-
-[TODO:; what does "jerk" mean here?]
 
 | method | mean err (mm) | verdict |
 |---|---|---|
@@ -208,7 +229,16 @@ held at the latched pose (clutch semantics, as in Experiment 1).
 
 ### 3.2 Results (30 scenarios × 5 methods)
 
-[TODO: please explain clelarly what are these error.]
+Column definitions: **success** — episodes where the payload ends within
+2 cm (XY) of the target after release and settling; **handover** —
+episodes where the receiving gripper acquired the payload at the
+mid-air exchange (a success prerequisite); **place err mean/p95** (mm) —
+distance from the payload's final resting position to the target centre,
+mean and 95th percentile over the 30 scenarios (measures end-to-end
+placement accuracy, payload physics included); **track err mean** (mm) —
+the same measured-EE-vs-target tracking error as §1.4, averaged over the
+episode (measures how well the arm followed the script, independent of
+what the payload did); **solve** (ms) — mean per-tick compute time.
 
 | method | success | handover | place err mean (mm) | place err p95 (mm) | track err mean (mm) | solve (ms) |
 |---|---|---|---|---|---|---|
