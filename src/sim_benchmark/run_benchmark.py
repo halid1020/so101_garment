@@ -30,7 +30,10 @@ for _p in (str(_repo_root), str(_repo_root / "src")):
         sys.path.insert(0, _p)
 
 from sim_benchmark.constants import ARM_JOINTS, CONTROL_RATE_HZ, SIDES  # noqa: E402
-from sim_benchmark.methods import METHODS, MethodFactory  # noqa: E402
+from sim_benchmark.methods import (  # type: ignore[attr-defined]  # noqa: E402
+    METHODS,
+    MethodFactory,
+)
 from sim_benchmark.metrics import RunLog, compute_metrics  # noqa: E402
 from sim_benchmark.mock_quest import MockTrajectory, default_suite  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402

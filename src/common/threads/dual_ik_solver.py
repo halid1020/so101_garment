@@ -17,14 +17,22 @@ import pinocchio as pin
 
 from common.configs import (
     IK_SOLVER_RATE,
+    JOYSTICK_DEADZONE,
+    JOYSTICK_EXPO,
+    JOYSTICK_FLEX_RATE_DEG_S,
+    JOYSTICK_FLEX_SIGN,
+    JOYSTICK_ROLL_RATE_DEG_S,
+    JOYSTICK_ROLL_SIGN,
     LEFT_END_EFFECTOR_FRAME_NAME,
     ORIENTATION_BLEND_TIME_S,
     RATCHET_LIMIT_GUARD_DEG,
     RIGHT_END_EFFECTOR_FRAME_NAME,
     WORKSPACE_OOB_MODE,
+    WORKSPACE_Z_FLOOR,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.envelope_feedback import EnvelopeFeedback
+from common.joystick_wrist import JoystickWristTrim
 from common.pink_ik_solver import PinkIKSolver
 from common.roll_ratchet import KEEP, NEUTRAL, REWRAP, RollRatchet
 from common.utils import (
@@ -64,6 +72,7 @@ def dual_ik_solver_thread(
     oob_mode: str | None = None,
     envelope_feedback: EnvelopeFeedback | None = None,
     orientation_mode: str = "armplane",
+    joystick_wrist: bool = False,
 ) -> None:
     """Dual-arm IK solver thread.
 
@@ -86,7 +95,16 @@ def dual_ik_solver_thread(
     the handle); "incremental" instead anchors pitch and roll to the arm's
     current orientation at each grip and tracks only the CHANGE of the
     operator's wrist pitch/roll from there — a clutched, ratchetable mapping
-    that lets teleop start with the controllers in any pose.
+    that lets teleop start with the controllers in any pose; "hold" freezes
+    the gripper attitude at the rotation captured on grip and changes it only
+    through the thumbstick wrist trims (so the handle drives position only).
+
+    joystick_wrist enables the thumbstick wrist trims (the "mymethod" clutch,
+    see common/joystick_wrist.py): while a controller stick is deflected, that
+    arm's other joints freeze and the handle is ignored while stick x trims
+    wrist_roll and stick y trims wrist_flex in joint space; releasing the
+    stick leaves the wrist where it was and re-anchors the handle so control
+    resumes with no jump. Requires quest_reader to expose get_joystick_value.
     """
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
     print(f"🧮 Dual IK solver thread started ({input_label}, {orientation_mode})")
@@ -105,6 +123,11 @@ def dual_ik_solver_thread(
     # the 10-DoF configuration ([left x5, right x5], roll is joint 5 of each
     # arm), the roll joint limits from the model, and per-side decision state.
     _roll_idx = {"left": 4, "right": 9}
+    # wrist_flex joint index per side in the 10-DoF config (joint 4 of each
+    # arm); used by the thumbstick wrist trims alongside _roll_idx.
+    _flex_idx = {"left": 3, "right": 8}
+    # Side joint slices in the 10-DoF config: left 0:5, right 5:10.
+    _side_slice = {"left": slice(0, 5), "right": slice(5, 10)}
     _ee_fid = {
         "left": _m.getFrameId(LEFT_END_EFFECTOR_FRAME_NAME),
         "right": _m.getFrameId(RIGHT_END_EFFECTOR_FRAME_NAME),
@@ -146,6 +169,26 @@ def dual_ik_solver_thread(
     pitch_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
     roll_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
     hand_rot_ref: dict[str, np.ndarray] = {}
+    # Hold-mode state (orientation_mode="hold"): the gripper rotation captured
+    # at each grip, held as the absolute attitude target and changed only by
+    # the thumbstick wrist trims.
+    hold_rot: dict[str, np.ndarray] = {}
+    # Thumbstick wrist trims (joystick_wrist): the per-side integrator plus the
+    # latched 5-joint slice held while that arm's stick is deflected (its other
+    # joints are frozen exactly; see common/joystick_wrist.py).
+    joy_trim = (
+        JoystickWristTrim(
+            deadzone=JOYSTICK_DEADZONE,
+            expo=JOYSTICK_EXPO,
+            roll_rate_rad_s=np.deg2rad(JOYSTICK_ROLL_RATE_DEG_S),
+            flex_rate_rad_s=np.deg2rad(JOYSTICK_FLEX_RATE_DEG_S),
+            roll_sign=JOYSTICK_ROLL_SIGN,
+            flex_sign=JOYSTICK_FLEX_SIGN,
+        )
+        if joystick_wrist
+        else None
+    )
+    wrist_latch: dict[str, np.ndarray] = {}
     # Sign of the wrist->gripper mapping per axis. Wrist twist left -> gripper
     # rolls counter-clockwise; wrist up -> gripper pitches up. Flip a sign here
     # if a direction comes out reversed on the real robot.
@@ -226,6 +269,10 @@ def dual_ik_solver_thread(
         if envelope_feedback is not None:
             envelope_feedback.reset()
         roll_ratchet.reset()
+        if joy_trim is not None:
+            joy_trim.reset()
+        wrist_latch.clear()
+        hold_rot.clear()
         oob_inside_prev["left"] = True
         oob_inside_prev["right"] = True
         left_rot_at_activation = None
@@ -443,6 +490,10 @@ def dual_ik_solver_thread(
                         _, _ap, _ar = gripper_pitch_roll_from_rotation(_pose[:3, :3])
                         pitch_anchor[_key], roll_anchor[_key] = _ap, _ar
                         hand_rot_ref[_key] = _tf[:3, :3].copy()
+                    elif orientation_mode == "hold":
+                        # Freeze the gripper attitude at its current rotation;
+                        # only the thumbstick trims change it from here.
+                        hold_rot[_key] = _pose[:3, :3].copy()
                 print(
                     "🖐️  Handle axes captured (handles assumed pointing "
                     f"straight down): L={np.round(handle_axes['left'], 2)} "
@@ -531,6 +582,12 @@ def dual_ik_solver_thread(
                         pitch_anchor["right"] + rotation_scale * _PITCH_SIGN * r_pitch,
                         roll_anchor["right"] + rotation_scale * _ROLL_SIGN * r_roll,
                     )
+                elif orientation_mode == "hold":
+                    # Attitude held from the grip; the thumbstick trims are the
+                    # only thing that changes it (they move the wrist joints,
+                    # and the falling edge writes the new attitude back here).
+                    left_abs_rot = hold_rot["left"]
+                    right_abs_rot = hold_rot["right"]
                 else:
                     left_abs_rot = hand_to_gripper_orientation_armplane(
                         left_tf[:3, :3],
@@ -621,6 +678,112 @@ def dual_ik_solver_thread(
                             "keep rolling"
                         )
 
+                # Thumbstick wrist trims (mymethod): a deflected stick clutches
+                # that arm — its other joints freeze exactly and the handle is
+                # ignored — while stick x trims wrist_roll and stick y trims
+                # wrist_flex in joint space. On release the wrist stays put and
+                # the handle re-anchors so control resumes with no jump. See
+                # common/joystick_wrist.py.
+                frozen_sides: list[str] = []
+                if joy_trim is not None:
+                    _targets = {"left": left_target, "right": right_target}
+                    _tfs = {"left": left_tf, "right": right_tf}
+                    _get_js = getattr(quest_reader, "get_joystick_value", None)
+                    _lo, _hi = _m.lowerPositionLimit, _m.upperPositionLimit
+                    for _side in ("left", "right"):
+                        if _get_js is not None:
+                            # Under mirror control the sticks swap arms and the
+                            # roll axis reflects, so read the other hand and
+                            # negate x. SIGN UNTESTED on hardware — flip here (or
+                            # in the YAML roll_sign) if roll comes out reversed.
+                            _hand = _side
+                            if mirror_control:
+                                _hand = "right" if _side == "left" else "left"
+                            _jx, _jy = _get_js(_hand)
+                            _jx, _jy = float(_jx), float(_jy)
+                            if mirror_control:
+                                _jx = -_jx
+                        else:
+                            _jx, _jy = 0.0, 0.0
+                        _res = joy_trim.update(_side, _jx, _jy, dt)
+                        if not (_res.engaged or _res.just_released):
+                            continue
+                        if _res.just_engaged:
+                            wrist_latch[_side] = ik_solver.get_current_configuration()[
+                                _side_slice[_side]
+                            ].copy()
+                            print(f"🕹️  {_side} wrist trim engaged (arm frozen)")
+                        _latch = wrist_latch[_side]
+                        if _res.engaged:
+                            _new_flex = float(
+                                np.clip(
+                                    _latch[3] + _res.d_flex,
+                                    _lo[_flex_idx[_side]],
+                                    _hi[_flex_idx[_side]],
+                                )
+                            )
+                            _new_roll = float(
+                                np.clip(
+                                    _latch[4] + _res.d_roll,
+                                    _lo[_roll_idx[_side]],
+                                    _hi[_roll_idx[_side]],
+                                )
+                            )
+                            # Floor guard: FK the candidate; if a flex change
+                            # drives the tip below the table, revert it (roll
+                            # cannot lower the tip, so it is always kept).
+                            _q_probe = ik_solver.get_current_configuration().copy()
+                            _q_probe[_side_slice[_side]] = _latch
+                            _q_probe[_flex_idx[_side]] = _new_flex
+                            _q_probe[_roll_idx[_side]] = _new_roll
+                            pin.forwardKinematics(_m, _d, _q_probe)
+                            pin.updateFramePlacements(_m, _d)
+                            if (
+                                _d.oMf[_ee_fid[_side]].translation[2]
+                                < WORKSPACE_Z_FLOOR
+                            ):
+                                _new_flex = _latch[3]
+                            _latch[3] = _new_flex
+                            _latch[4] = _new_roll
+                        # Build the frozen config and set this arm's target to
+                        # its FK pose, so the solve is self-consistent and the
+                        # handle is ignored for this arm.
+                        _q_full = ik_solver.get_current_configuration().copy()
+                        _q_full[_side_slice[_side]] = _latch
+                        pin.forwardKinematics(_m, _d, _q_full)
+                        pin.updateFramePlacements(_m, _d)
+                        _fk = _d.oMf[_ee_fid[_side]]
+                        _fk_pose = np.eye(4)
+                        _fk_pose[:3, :3] = _fk.rotation.copy()
+                        _fk_pose[:3, 3] = _fk.translation.copy()
+                        _targets[_side] = _fk_pose
+                        ik_solver.set_configuration_no_task_update(_q_full)
+                        frozen_sides.append(_side)
+                        if _res.just_released:
+                            # Re-anchor so nothing jumps: zero the position
+                            # delta against the frozen pose, and carry the
+                            # trimmed attitude into the mode's orientation ref.
+                            _tf = _tfs[_side]
+                            _cal = compute_hand_to_robot_calibration(
+                                _fk_pose, _tf, _tf, translation_scale, rotation_scale
+                            )
+                            if _side == "left":
+                                left_hand_reference = _tf.copy()
+                                left_hand_to_robot = _cal
+                            else:
+                                right_hand_reference = _tf.copy()
+                                right_hand_to_robot = _cal
+                            _fk_rot = _fk_pose[:3, :3]
+                            if orientation_mode == "hold":
+                                hold_rot[_side] = _fk_rot.copy()
+                            elif orientation_mode == "incremental":
+                                _, _ap, _ar = gripper_pitch_roll_from_rotation(_fk_rot)
+                                pitch_anchor[_side], roll_anchor[_side] = _ap, _ar
+                                hand_rot_ref[_side] = _tf[:3, :3].copy()
+                            print(f"🕹️  {_side} wrist trim released (handle resumed)")
+                    left_target = _targets["left"]
+                    right_target = _targets["right"]
+
                 ik_solver.set_target_poses(
                     {
                         LEFT_END_EFFECTOR_FRAME_NAME: (
@@ -636,6 +799,14 @@ def dual_ik_solver_thread(
 
                 success = ik_solver.solve_ik()
                 if success:
+                    if frozen_sides:
+                        # Exact freeze: re-impose the latched joints on the
+                        # solved config before publishing, so a clutched arm's
+                        # non-wrist joints do not drift by an IK residual.
+                        _q_solved = ik_solver.get_current_configuration().copy()
+                        for _side in frozen_sides:
+                            _q_solved[_side_slice[_side]] = wrist_latch[_side]
+                        ik_solver.set_configuration_no_task_update(_q_solved)
                     joint_config = np.degrees(ik_solver.get_current_configuration())
                     data_manager.set_target_joint_angles(joint_config)
                     data_manager.set_target_pose("left", left_target)

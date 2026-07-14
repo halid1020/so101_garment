@@ -8,6 +8,11 @@ Single 10-DOF IK solver on the dual-arm URDF.
 Controls:
   Hold LEFT + RIGHT grip  - activate dual-arm teleoperation
   Hold triggers           - close grippers
+  Thumbstick (mymethod)   - deflect to trim that arm's wrist (x = roll,
+                            y = flex); the arm's other joints freeze while
+                            the stick is deflected and the handle is ignored
+                            for that arm, then resumes from the new pose on
+                            release
   Button A                - enable / disable both arms
   Button B                - move both arms to middle pose
   Joystick clicks (LJ/RJ) - glide that gripper's roll back to neutral
@@ -22,8 +27,6 @@ import time
 import traceback
 from pathlib import Path
 
-import numpy as np
-
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
@@ -31,26 +34,19 @@ sys.path.insert(0, str(_root / "src"))
 import yaml
 from meta_quest_teleop.reader import MetaQuestReader
 
-from common.config_parser import load_method_params
 from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
     CONTROLLER_MIN_CUTOFF,
-    DUAL_URDF_PATH,
-    END_EFFECTOR_FRAME_NAMES,
     IK_SOLVER_RATE,
     MAX_JOINT_VEL_HW_RAD_S,
-    NEUTRAL_JOINT_ANGLES_DUAL,
     ROTATION_SCALE,
     TRANSLATION_SCALE,
-    WORKSPACE_OOB_MODE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.envelope_feedback import NullFeedback, TerminalBellFeedback
-from common.pink_ik_solver import PinkIKSolver
+from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
-from common.workspace_envelope import OOE_POLICIES
 from src.so101_dual_arm import SO101DualArm
 
 
@@ -62,60 +58,8 @@ def load_yaml(filepath):
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="armplane",
-        choices=[
-            "armplane",
-            "production",
-            "mymethod",
-            "pink_full",
-            "pink_relaxed",
-            "dls",
-            "mink",
-            "scipy_ls",
-            "telegrip",
-        ],
-        help=(
-            "IK layer: 'armplane' (alias: production, deprecated) is the "
-            "tuned Pink solver with the armplane orientation mapping this "
-            "tool has always used; 'mymethod' is the pink_relaxed solver with "
-            "the incremental (clutched) wrist pitch/roll mapping; the others "
-            "are the sim-benchmark methods, wrapped in a joint-space rate "
-            "limiter. Rehearse in simulation first with quest_sim_teleop.py."
-        ),
-    )
-    parser.add_argument(
-        "--max-joint-vel",
-        type=float,
-        default=MAX_JOINT_VEL_HW_RAD_S,
-        help="Joint-space rate limit (rad/s) applied to benchmark methods",
-    )
-    parser.add_argument(
-        "--oob-mode",
-        type=str,
-        default=WORKSPACE_OOB_MODE,
-        choices=sorted(OOE_POLICIES),
-        help="Out-of-envelope target policy (see common/workspace_envelope.py)",
-    )
-    parser.add_argument(
-        "--orientation-cost",
-        type=float,
-        default=None,
-        help="Override the IK orientation-task cost (Pink methods only). Raises "
-        "gripper pitch/roll tracking on a relaxed method like pink_relaxed "
-        "(benchmark default 0.05); try ~0.2-0.4. None keeps the method's YAML "
-        "value.",
-    )
-    parser.add_argument(
-        "--envelope-feedback",
-        type=str,
-        default="bell",
-        choices=["bell", "none"],
-        help="Operator out-of-envelope cueing: 'bell' rings the terminal "
-        "bell with debounced intensity-shaped cues; 'none' disables it "
-        "(the throttled diagnostic print stays either way).",
+    add_teleop_cli_args(
+        parser, default_max_joint_vel=MAX_JOINT_VEL_HW_RAD_S, default_method="armplane"
     )
     args = parser.parse_args()
 
@@ -141,73 +85,11 @@ def main():
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
 
-    # 3. IK layer (10 body DOF, grippers locked): the armplane Pink solver or
-    # one of the sim-benchmark methods behind the PinkIKSolver interface.
-    # 'mymethod' reuses the pink_relaxed solver but drives the gripper with the
-    # incremental (clutched) wrist pitch/roll mapping instead of armplane.
-    orientation_mode = "incremental" if args.method == "mymethod" else "armplane"
-    solver_method = "pink_relaxed" if args.method == "mymethod" else args.method
-    if args.method in ("armplane", "production"):
-        if args.method == "production":
-            print("⚠️  --method production is deprecated; use --method armplane")
-        print("\n🔧 Creating dual-arm Pink IK solver (armplane)...")
-        # armplane solver weights come from src/ik_conf/methods/armplane.yaml
-        # (strict load). Neutral/posture are expanded to the dual (10-DOF)
-        # configuration here.
-        ap = load_method_params("armplane")
-        posture_dual = np.array(ap["posture_cost_vector"], dtype=float)
-        neutral_dual = np.radians(
-            [*ap["neutral_joint_angles_deg"], *ap["neutral_joint_angles_deg"]]
-        )
-        ik_solver = PinkIKSolver(
-            urdf_path=DUAL_URDF_PATH,
-            end_effector_frames=END_EFFECTOR_FRAME_NAMES,
-            solver_name=ap["solver"],
-            position_cost=ap["position_cost"],
-            # Anisotropic: zero cost on the EE-local yaw axis (no wrist-yaw joint)
-            orientation_cost=ap["orientation_cost"]
-            * np.asarray(ap["ee_orientation_cost_mask"]),
-            frame_task_gain=ap["frame_task_gain"],
-            lm_damping=ap["lm_damping"],
-            damping_cost=ap["damping_cost"],
-            solver_damping_value=ap["solver_damping_value"],
-            integration_time_step=1.0 / IK_SOLVER_RATE,
-            initial_configuration=neutral_dual,
-            posture_cost_vector=posture_dual,
-        )
-    else:
-        from sim_benchmark.method_adapter import MethodIKAdapter
-
-        print(f"\n🔧 Creating benchmark IK method '{solver_method}'...")
-        ik_solver = MethodIKAdapter(
-            solver_method,
-            dt=1.0 / IK_SOLVER_RATE,
-            max_joint_vel=args.max_joint_vel,
-            initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
-        )
-
-    # Orientation-task cost. mymethod needs the gripper attitude actually
-    # tracked (pink_relaxed's 0.05 is near position-only), so it defaults to a
-    # value that follows the incremental pitch/roll while staying position-
-    # dominant; --orientation-cost overrides it. For the other methods the flag
-    # is opt-in (None = keep the method's YAML value). Higher => pitch/roll
-    # follow the wrist more tightly at some cost to position smoothness.
-    effective_ocost = args.orientation_cost
-    if effective_ocost is None and args.method == "mymethod":
-        effective_ocost = 0.3
-    if effective_ocost is not None:
-        if hasattr(ik_solver, "update_task_parameters"):  # armplane PinkIKSolver
-            ik_solver.update_task_parameters(orientation_cost=effective_ocost)
-            applied = True
-        else:  # benchmark MethodIKAdapter
-            applied = ik_solver.set_orientation_cost(effective_ocost)
-        if applied:
-            print(f"🎚️  Orientation-cost → {effective_ocost}")
-        else:
-            print(
-                f"⚠️  --orientation-cost has no effect for method "
-                f"'{args.method}' (no Pink orientation task); ignored"
-            )
+    # 3. IK layer (10 body DOF, grippers locked): built by the shared helper so
+    # this tool and the sim rehearsal (tool/quest_sim_teleop.py) cannot drift.
+    # 'mymethod' reuses the pink_relaxed solver plus the thumbstick wrist trims
+    # (--wrist-mode); armplane keeps the tuned Pink solver + armplane mapping.
+    ik_solver, thread_kwargs = create_teleop_stack(args, dt=1.0 / IK_SOLVER_RATE)
 
     # 4. Quest reader (IK thread reads it directly)
     print("\n🎮 Initializing Meta Quest reader...")
@@ -231,15 +113,7 @@ def main():
     ik_thread = threading.Thread(
         target=dual_ik_solver_thread,
         args=(data_manager, ik_solver, quest_reader),
-        kwargs={
-            "oob_mode": args.oob_mode,
-            "envelope_feedback": (
-                TerminalBellFeedback()
-                if args.envelope_feedback == "bell"
-                else NullFeedback()
-            ),
-            "orientation_mode": orientation_mode,
-        },
+        kwargs=thread_kwargs,
         daemon=True,
     )
     left_joint_thread.start()
@@ -337,6 +211,12 @@ def main():
     print("   3. Move controllers — arms follow!")
     print("   4. Hold triggers to close grippers")
     print("   5. Press BUTTON B to move both arms to the middle pose")
+    if args.method == "mymethod":
+        print(
+            "   6. Deflect a THUMBSTICK to trim that arm's wrist (x = roll, "
+            "y = flex); its other joints freeze while deflected, then the "
+            "handle resumes from the new pose on release"
+        )
     print("⚠️  Press Ctrl+C to exit")
     print()
 

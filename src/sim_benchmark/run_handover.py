@@ -35,7 +35,10 @@ from sim_benchmark.handover import (  # noqa: E402
     Scenario,
     generate_scenarios,
 )
-from sim_benchmark.methods import METHODS, MethodFactory  # noqa: E402
+from sim_benchmark.methods import (  # type: ignore[attr-defined]  # noqa: E402
+    METHODS,
+    MethodFactory,
+)
 from sim_benchmark.scene import DualArmSim  # noqa: E402
 
 SUCCESS_RADIUS = 0.02  # m, XY distance payload-to-target that counts as success

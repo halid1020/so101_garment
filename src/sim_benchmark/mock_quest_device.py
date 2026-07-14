@@ -14,10 +14,14 @@ Patterns (``MockQuestReader(pattern=...)`` / ``--mock-pattern``):
 - ``excursion`` — an exaggerated forward stroke that drags the targets
                   well past the arms' reach and back, to exercise the
                   out-of-envelope policies end-to-end.
+- ``joystick``  — hands held still and gripped while a scripted thumbstick
+                  sequence trims the wrists (for --method mymethod): per 10 s
+                  cycle, roll trim, centre, flex trim, then a long pure-handle
+                  hold — exercising engage / integrate / release / re-anchor.
 
 Only the methods the pipeline actually calls are implemented:
 ``get_hand_controller_transform_ros``, ``get_grip_value``,
-``get_trigger_value``, ``get_button_state``, ``stop``.
+``get_joystick_value``, ``get_trigger_value``, ``get_button_state``, ``stop``.
 """
 
 from __future__ import annotations
@@ -45,13 +49,17 @@ RATCHET_STEP_DEG = 60.0
 RATCHET_GRIP_S = 4.0  # gripped-and-twisting portion of each cycle
 RATCHET_RELEASE_S = 2.0  # released-and-untwisting portion
 RATCHET_PERIOD_S = RATCHET_GRIP_S + RATCHET_RELEASE_S
+# joystick pattern: hands held still and gripped while the thumbsticks are
+# scripted through a 10 s cycle (roll trim, centre, flex trim, pure hold).
+JOYSTICK_CYCLE_S = 10.0
+JOYSTICK_STICK_MAG = 0.8  # stick deflection during a trim phase (of full 1.0)
 # Nominal hand rest positions in the ROS head frame (x fwd, y left, z up).
 HAND_REST = {
     "left": np.array([0.35, 0.15, -0.25]),
     "right": np.array([0.35, -0.15, -0.25]),
 }
 
-MOCK_PATTERNS = ("circle", "wrist", "excursion", "roll_ratchet")
+MOCK_PATTERNS = ("circle", "wrist", "excursion", "roll_ratchet", "joystick")
 
 
 class MockQuestReader:
@@ -106,6 +114,11 @@ class MockQuestReader:
                 s = 0.5 * (1 - np.cos(phase))  # 0 -> 1 -> 0 each period
                 ramp = min(t_active / (0.25 * EXCURSION_PERIOD_S), 1.0)
                 pos[0] += ramp * s * EXCURSION_REACH
+            elif self.pattern == "joystick":
+                # Hands held perfectly still and gripped; only the thumbsticks
+                # move (see get_joystick_value). Leave the identity transform
+                # at the rest position.
+                pass
             else:  # roll_ratchet
                 # While gripped: twist the handle smoothly through one
                 # RATCHET_STEP; while released: untwist back to zero. The
@@ -133,6 +146,27 @@ class MockQuestReader:
             # untwisting (see get_hand_controller_transform_ros).
             return 1.0 if (t_active % RATCHET_PERIOD_S) < RATCHET_GRIP_S else 0.0
         return 1.0
+
+    def get_joystick_value(self, hand: str) -> tuple[float, float]:
+        """Scripted thumbstick (x, y) in [-1, 1]; (0, 0) except for 'joystick'.
+
+        The 'joystick' pattern drives both hands identically through a 10 s
+        cycle: 0-2 s roll trim (x = +MAG), 2-3 s centred, 3-5 s flex trim
+        (y = -MAG), 5-10 s centred — engage, integrate, release, re-anchor.
+        """
+        if self.pattern != "joystick":
+            return (0.0, 0.0)
+        t_active = self._elapsed() - GRIP_DELAY_S
+        if t_active <= 0:
+            return (0.0, 0.0)
+        phase = t_active % JOYSTICK_CYCLE_S
+        if phase < 2.0:
+            return (JOYSTICK_STICK_MAG, 0.0)
+        if phase < 3.0:
+            return (0.0, 0.0)
+        if phase < 5.0:
+            return (0.0, -JOYSTICK_STICK_MAG)
+        return (0.0, 0.0)
 
     def get_trigger_value(self, hand: str) -> float:
         return 0.0

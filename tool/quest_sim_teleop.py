@@ -21,7 +21,12 @@ Usage:
 Controls (real headset): hold BOTH grips to activate teleop (EVERY grip
 recalibrates the handle axes and the operator control frame — point both
 handles straight down when gripping), triggers close the grippers,
-release grips to pause. Ctrl+C exits.
+release grips to pause. With --method mymethod, deflecting a thumbstick
+trims that arm's wrist (x = roll, y = flex) while freezing its other joints
+and ignoring the handle for that arm; releasing resumes handle control from
+the new pose. The viewer draws RGB orientation triads for each arm's
+measured EE pose (opaque) and its commanded target (semi-transparent).
+Ctrl+C exits.
 """
 
 import argparse
@@ -38,7 +43,6 @@ for _p in (str(_root), str(_root / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from common.configs import WORKSPACE_OOB_MODE  # noqa: E402
 from common.configs import (  # noqa: E402
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
@@ -50,25 +54,57 @@ from common.configs import (  # noqa: E402
     TRANSLATION_SCALE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState  # noqa: E402
-from common.envelope_feedback import NullFeedback, TerminalBellFeedback  # noqa: E402
+from common.teleop_setup import add_teleop_cli_args, create_teleop_stack  # noqa: E402
 from common.threads.dual_ik_solver import dual_ik_solver_thread  # noqa: E402
-from common.workspace_envelope import OOE_POLICIES  # noqa: E402
 from sim_benchmark.constants import CONTROL_RATE_HZ, SIDES  # noqa: E402
-from sim_benchmark.method_adapter import MethodIKAdapter  # noqa: E402
-from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]  # noqa: E402
 from sim_benchmark.mock_quest_device import MOCK_PATTERNS  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
+
+# Orientation-triad drawing (viewer only): x=red, y=green, z=blue.
+_TRIAD_AXIS_RGB = (
+    (1.0, 0.25, 0.25),  # x
+    (0.25, 1.0, 0.25),  # y
+    (0.35, 0.5, 1.0),  # z
+)
+_TRIAD_LEN = 0.06  # m, axis arrow length
+_TRIAD_WIDTH = 0.004  # m, arrow shaft radius
+
+
+def _add_triad(scn: Any, pos: np.ndarray, rot: np.ndarray, alpha: float) -> None:
+    """Append 3 RGB axis arrows for a world pose to a viewer user_scn.
+
+    ``alpha`` < 1 marks the semi-transparent target triad apart from the
+    opaque measured one. No-op once the scene's geom buffer is full.
+    """
+    import mujoco
+
+    for axis in range(3):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        geom = scn.geoms[scn.ngeom]
+        rgba = np.array([*_TRIAD_AXIS_RGB[axis], alpha], dtype=np.float32)
+        mujoco.mjv_initGeom(
+            geom,
+            mujoco.mjtGeom.mjGEOM_ARROW,
+            np.zeros(3),
+            np.zeros(3),
+            np.zeros(9),
+            rgba,
+        )
+        tip = pos + rot[:, axis] * _TRIAD_LEN
+        mujoco.mjv_connector(geom, mujoco.mjtGeom.mjGEOM_ARROW, _TRIAD_WIDTH, pos, tip)
+        scn.ngeom += 1
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="pink_relaxed",
-        choices=[*sorted(METHODS), "mymethod"],
-        help="Benchmark IK method, or 'mymethod' (pink_relaxed solver + the "
-        "incremental clutched wrist pitch/roll mapping).",
+    # Shared teleop args (method/wrist-mode/max-joint-vel/oob/orientation-cost/
+    # envelope) — identical to the real tool so the rehearsal cannot drift. The
+    # sim default method stays pink_relaxed.
+    add_teleop_cli_args(
+        parser,
+        default_max_joint_vel=MAX_JOINT_VEL_SIM_RAD_S,
+        default_method="pink_relaxed",
     )
     parser.add_argument("--ip-address", type=str, default=None)
     parser.add_argument(
@@ -85,23 +121,6 @@ def main() -> None:
         default=0.0,
         help="Exit after this many seconds (0 = run until Ctrl+C)",
     )
-    parser.add_argument("--max-joint-vel", type=float, default=MAX_JOINT_VEL_SIM_RAD_S)
-    parser.add_argument(
-        "--oob-mode",
-        type=str,
-        default=WORKSPACE_OOB_MODE,
-        choices=sorted(OOE_POLICIES),
-        help="Out-of-envelope target policy (see common/workspace_envelope.py)",
-    )
-    parser.add_argument(
-        "--envelope-feedback",
-        type=str,
-        default="bell",
-        choices=["bell", "none"],
-        help="Operator out-of-envelope cueing: 'bell' rings the terminal "
-        "bell with debounced intensity-shaped cues; 'none' disables it "
-        "(the throttled diagnostic print stays either way).",
-    )
     parser.add_argument(
         "--mock-pattern",
         type=str,
@@ -110,7 +129,8 @@ def main() -> None:
         help="Motion pattern of the --mock device "
         "(circle = table circles, wrist = wrist oscillation, "
         "excursion = deliberately out-of-envelope strokes, "
-        "roll_ratchet = repeated grip-twist/release-untwist cycles)",
+        "roll_ratchet = repeated grip-twist/release-untwist cycles, "
+        "joystick = scripted thumbstick roll/flex trims for --method mymethod)",
     )
     parser.add_argument(
         "--scene",
@@ -137,20 +157,11 @@ def main() -> None:
     )
     data_manager.set_teleop_scaling(TRANSLATION_SCALE, ROTATION_SCALE)
 
-    # 'mymethod' = pink_relaxed solver + the incremental clutched pitch/roll
-    # mapping, matching tool/meta_quest_teleopration.py so the sim rehearses it.
-    orientation_mode = "incremental" if args.method == "mymethod" else "armplane"
-    solver_method = "pink_relaxed" if args.method == "mymethod" else args.method
-    ik_solver = MethodIKAdapter(
-        solver_method,
-        dt=1.0 / IK_SOLVER_RATE,
-        max_joint_vel=args.max_joint_vel,
-        initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
-    )
-    if args.method == "mymethod":
-        # Incremental targets need the attitude actually tracked (pink_relaxed's
-        # 0.05 is near position-only); match the real tool's mymethod default.
-        ik_solver.set_orientation_cost(0.3)
+    # IK layer + thread kwargs from the shared helper — identical wiring to
+    # tool/meta_quest_teleopration.py (mymethod = pink_relaxed + thumbstick
+    # wrist trims; armplane = the tuned Pink solver). The sim thereby also
+    # exercises the armplane/PinkIKSolver branch, not just MethodIKAdapter.
+    ik_solver, thread_kwargs = create_teleop_stack(args, dt=1.0 / IK_SOLVER_RATE)
 
     if args.mock:
         from sim_benchmark.mock_quest_device import MockQuestReader
@@ -198,15 +209,7 @@ def main() -> None:
     ik_thread = threading.Thread(
         target=dual_ik_solver_thread,
         args=(data_manager, ik_solver, quest_reader),
-        kwargs={
-            "oob_mode": args.oob_mode,
-            "envelope_feedback": (
-                TerminalBellFeedback()
-                if args.envelope_feedback == "bell"
-                else NullFeedback()
-            ),
-            "orientation_mode": orientation_mode,
-        },
+        kwargs=thread_kwargs,
         daemon=True,
     )
     ik_thread.start()
@@ -222,6 +225,7 @@ def main() -> None:
     n_substeps = max(1, round(dt / sim.model.opt.timestep))
     start = time.time()
     track_errs: list[float] = []
+    orient_errs: list[float] = []  # geodesic target-vs-measured EE angle (deg)
     held_target = q0.copy()  # servo target held while teleop is inactive
 
     # Camera-view windows (twin scene renders its C310s offscreen).
@@ -284,10 +288,14 @@ def main() -> None:
             sim.step(n_substeps)
             data_manager.set_current_joint_angles(np.degrees(sim.arm_q()))
 
-            # Tracking diagnostics against the commanded EE targets.
-            for side, (pos, _rot) in markers.items():
-                meas, _ = sim.eef_pose(side)
-                track_errs.append(float(np.linalg.norm(pos - meas)))
+            # Tracking diagnostics against the commanded EE targets: position
+            # distance plus the geodesic angle between the commanded and
+            # measured EE rotations (sim-side diagnostics only).
+            for side, (pos, rot) in markers.items():
+                meas_pos, meas_rot = sim.eef_pose(side)
+                track_errs.append(float(np.linalg.norm(pos - meas_pos)))
+                cos_ang = np.clip((np.trace(rot @ meas_rot.T) - 1.0) / 2.0, -1.0, 1.0)
+                orient_errs.append(float(np.degrees(np.arccos(cos_ang))))
 
             tick_count += 1
             if (
@@ -301,6 +309,19 @@ def main() -> None:
                 cv2.waitKey(1)
 
             if viewer_ctx is not None:
+                # Orientation triads (RGB axes) for each arm's MEASURED EE pose
+                # (opaque) and its commanded TARGET pose (semi-transparent), on
+                # top of the mocap position markers the scene already draws.
+                scn = viewer_ctx.user_scn
+                scn.ngeom = 0
+                for side in SIDES:
+                    meas_pos, meas_rot = sim.eef_pose(side)
+                    _add_triad(scn, meas_pos, meas_rot, 1.0)
+                    tpose = data_manager.get_target_pose(side)
+                    if tpose is not None:
+                        _add_triad(
+                            scn, tpose[:3, 3] + world_offset[side], tpose[:3, :3], 0.45
+                        )
                 viewer_ctx.sync()
             sleep = dt - (time.time() - tick_start)
             if sleep > 0:
@@ -322,6 +343,14 @@ def main() -> None:
                 f"mean {errs.mean()*1e3:.1f} mm, "
                 f"p95 {np.percentile(errs, 95)*1e3:.1f} mm "
                 f"({len(errs)} samples)"
+            )
+        if orient_errs:
+            oerrs = np.asarray(orient_errs)
+            print(
+                f"📊 EE orientation error while teleop active: "
+                f"mean {oerrs.mean():.1f} deg, "
+                f"p95 {np.percentile(oerrs, 95):.1f} deg "
+                f"({len(oerrs)} samples)"
             )
         print("✅ Sim teleop stopped")
 

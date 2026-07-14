@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from sim_benchmark.methods import METHODS
+from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]
 from sim_benchmark.methods.telegrip_split import (
     TelegripSplit,
     _tip_elevation,

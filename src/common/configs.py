@@ -146,5 +146,15 @@ FEEDBACK_REPEAT_PERIOD_S = _feedback["repeat_period_s"]
 _ratchet = _SHARED["ratchet"]
 RATCHET_LIMIT_GUARD_DEG = _ratchet["limit_guard_deg"]
 
+# Thumbstick wrist trims (see common/joystick_wrist.py). Rates are in
+# degrees/second in the YAML; the consumer converts to radians.
+_joystick = _SHARED["joystick"]
+JOYSTICK_DEADZONE = _joystick["deadzone"]
+JOYSTICK_ROLL_RATE_DEG_S = _joystick["roll_rate_deg_s"]
+JOYSTICK_FLEX_RATE_DEG_S = _joystick["flex_rate_deg_s"]
+JOYSTICK_EXPO = _joystick["expo"]
+JOYSTICK_ROLL_SIGN = _joystick["roll_sign"]
+JOYSTICK_FLEX_SIGN = _joystick["flex_sign"]
+
 # Operator anthropometry (see the YAML for the full derivation chain).
 OPERATOR_HEIGHT_M = _operator["height_m"]

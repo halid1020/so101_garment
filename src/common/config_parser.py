@@ -46,6 +46,16 @@ _SHARED_SCHEMA: dict[str, frozenset[str]] = {
     "rate_limit": frozenset({"max_joint_vel_sim_rad_s", "max_joint_vel_hw_rad_s"}),
     "feedback": frozenset({"repeat_period_s"}),
     "ratchet": frozenset({"limit_guard_deg"}),
+    "joystick": frozenset(
+        {
+            "deadzone",
+            "roll_rate_deg_s",
+            "flex_rate_deg_s",
+            "expo",
+            "roll_sign",
+            "flex_sign",
+        }
+    ),
     "operator": frozenset({"height_m"}),
 }
 

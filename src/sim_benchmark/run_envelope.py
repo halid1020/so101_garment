@@ -43,7 +43,10 @@ from sim_benchmark.constants import (  # noqa: E402
     DUAL_URDF_PATH,
     SIDES,
 )
-from sim_benchmark.methods import METHODS, MethodFactory  # noqa: E402
+from sim_benchmark.methods import (  # type: ignore[attr-defined]  # noqa: E402
+    METHODS,
+    MethodFactory,
+)
 from sim_benchmark.metrics import RunLog, compute_envelope_metrics  # noqa: E402
 from sim_benchmark.mock_quest import MockTrajectory, envelope_suite  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402

@@ -175,6 +175,40 @@ ratchet:
   limit_guard_deg: 8.0
 
 # ---------------------------------------------------------------------------
+# Thumbstick wrist trims (src/common/joystick_wrist.py) — the 'mymethod'
+# clutch. A deflected stick freezes that arm's other joints and trims its
+# wrist directly in JOINT space: stick x -> wrist_roll, stick y -> wrist_flex.
+# Releasing leaves the wrist where it was and resumes handle control with no
+# jump. Only active with --method mymethod (and both grips held).
+# HONEST STATUS: the rates, deadzone and expo below are initial engineering
+# guesses — they have NOT yet been tuned against the real controllers; expect
+# to adjust them from operator feel. The signs live here on purpose so a
+# reversed direction on the real robot is a one-line config edit, not a code
+# change.
+# ---------------------------------------------------------------------------
+joystick:
+  # Fraction of full stick throw (0..1) treated as centre/no-input. Below this
+  # the axis is dead; above it the response starts from zero and grows. Raise
+  # to reject a noisier/drifting stick centre; lower for a lighter touch.
+  deadzone: 0.15
+  # wrist_roll trim speed at FULL stick deflection (degrees/second). Higher =>
+  # the gripper twists faster per unit stick; lower => finer, slower twisting.
+  roll_rate_deg_s: 60.0
+  # wrist_flex trim speed at FULL stick deflection (degrees/second). Higher =>
+  # faster nod per unit stick; lower => finer, slower flexing.
+  flex_rate_deg_s: 45.0
+  # Expo curve exponent (dimensionless, >= 1). 1 is linear; >1 softens the
+  # response near centre (fine control) while still reaching full rate at the
+  # edge. Raise for more precision near centre; 1.0 for a linear feel.
+  expo: 2.0
+  # Direction sign for the wrist_roll trim (+1 or -1). Flip if pushing the
+  # stick right rolls the gripper the wrong way on the real robot. UNTUNED.
+  roll_sign: 1.0
+  # Direction sign for the wrist_flex trim (+1 or -1). Flip if pushing the
+  # stick forward flexes the wrist the wrong way on the real robot. UNTUNED.
+  flex_sign: 1.0
+
+# ---------------------------------------------------------------------------
 # Operator anthropometry. Only translation_scale is presently derived from
 # these; kept here so the derivation is auditable and re-runnable.
 # ---------------------------------------------------------------------------

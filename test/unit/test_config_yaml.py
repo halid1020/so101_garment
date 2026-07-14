@@ -82,6 +82,14 @@ class TestFrozenSharedValues(unittest.TestCase):
     def test_ratchet(self):
         self.assertEqual(configs.RATCHET_LIMIT_GUARD_DEG, 8.0)
 
+    def test_joystick(self):
+        self.assertEqual(configs.JOYSTICK_DEADZONE, 0.15)
+        self.assertEqual(configs.JOYSTICK_ROLL_RATE_DEG_S, 60.0)
+        self.assertEqual(configs.JOYSTICK_FLEX_RATE_DEG_S, 45.0)
+        self.assertEqual(configs.JOYSTICK_EXPO, 2.0)
+        self.assertEqual(configs.JOYSTICK_ROLL_SIGN, 1.0)
+        self.assertEqual(configs.JOYSTICK_FLEX_SIGN, 1.0)
+
     def test_operator_height(self):
         self.assertEqual(configs.OPERATOR_HEIGHT_M, 1.71)
 
@@ -133,6 +141,14 @@ class TestSharedStrictValidation(unittest.TestCase):
             },
             "feedback": {"repeat_period_s": 0.25},
             "ratchet": {"limit_guard_deg": 8.0},
+            "joystick": {
+                "deadzone": 0.15,
+                "roll_rate_deg_s": 60.0,
+                "flex_rate_deg_s": 45.0,
+                "expo": 2.0,
+                "roll_sign": 1.0,
+                "flex_sign": 1.0,
+            },
             "operator": {"height_m": 1.71},
         }
 
