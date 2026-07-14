@@ -26,6 +26,7 @@ _METHODS_DIR = _IK_CONF_DIR / "methods"
 _SHARED_SCHEMA: dict[str, frozenset[str]] = {
     "filtering": frozenset({"min_cutoff", "beta", "d_cutoff"}),
     "clutch": frozenset({"grip_threshold", "orientation_blend_time_s"}),
+    "gripper": frozenset({"open_max_frac"}),
     "handle": frozenset({"pitch_offset_deg", "axis"}),
     "operator_frame": frozenset({"back_m", "up_m"}),
     "envelope": frozenset(

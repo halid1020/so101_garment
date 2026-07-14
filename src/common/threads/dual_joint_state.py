@@ -13,6 +13,7 @@ import traceback
 import numpy as np
 
 from common.configs import (
+    GRIPPER_OPEN_MAX_FRAC,
     JOINT_STATE_STREAMING_RATE,
     LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
     LEFT_ARM_HW_TO_URDF_SIGNS,
@@ -141,8 +142,10 @@ def dual_joint_state_thread(
                         zip(_BODY_JOINTS, hw_signs * (arm_targets - hw_to_urdf))
                     )
 
-                    # Trigger controls gripper: fully pressed = fully closed.
-                    gripper_target = 1.0 - trigger_value
+                    # Trigger controls gripper: fully pressed = fully closed,
+                    # fully released = open_max_frac of the jaw range (capped
+                    # below 100 % — see GRIPPER_OPEN_MAX_FRAC / teleop_shared).
+                    gripper_target = (1.0 - trigger_value) * GRIPPER_OPEN_MAX_FRAC
                     goal["gripper"] = gripper_target * 100.0
                     data_manager.set_target_gripper_open_value(arm_side, gripper_target)
 

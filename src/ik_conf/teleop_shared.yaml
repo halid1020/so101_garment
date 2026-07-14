@@ -44,6 +44,19 @@ clutch:
   orientation_blend_time_s: 1.0
 
 # ---------------------------------------------------------------------------
+# Gripper jaw command (trigger -> jaw opening).
+# ---------------------------------------------------------------------------
+gripper:
+  # Fraction of the gripper's full mechanical range used for the OPEN extreme.
+  # The trigger maps linearly to jaw opening: fully pressed = closed (0 %),
+  # fully released = open_max_frac of the range. The full 100 % opening is
+  # wider than most garment-manipulation grasps need and makes fine pinching
+  # awkward, so this caps how far the jaws splay. Raise toward 1.0 for a wider
+  # maximum bite; lower for a tighter, more precise open. Closing is always to
+  # 0 %, so grip strength is unaffected.
+  open_max_frac: 0.3
+
+# ---------------------------------------------------------------------------
 # Handle geometry — controller frame -> gripper (EE) orientation mapping.
 # ---------------------------------------------------------------------------
 handle:
@@ -91,7 +104,7 @@ operator_frame:
 envelope:
   r_min: 0.0837       # m, swept minimum reach from the lift pivot
   r_max: 0.4110       # m, swept maximum reach from the lift pivot
-  z_floor: 0.01       # m, table clearance floor for EE targets
+  z_floor: -0.01       # m, table clearance floor for EE targets
   safety_margin: 0.01 # m, shaved off both radii in build_envelopes
   soft_margin: 0.04   # m, slowdown band width ("slow" policy)
   # Default out-of-envelope policy: "warn" | "project" | "freeze" | "slow".

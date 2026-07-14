@@ -82,6 +82,7 @@ RIGHT_ARM_HW_TO_URDF_SIGNS = [1.0, 1.0, 1.0, 1.0, 1.0]
 # ===========================================================================
 _filtering = _SHARED["filtering"]
 _clutch = _SHARED["clutch"]
+_gripper = _SHARED["gripper"]
 _handle = _SHARED["handle"]
 _operator_frame = _SHARED["operator_frame"]
 _envelope = _SHARED["envelope"]
@@ -98,6 +99,9 @@ CONTROLLER_D_CUTOFF = _filtering["d_cutoff"]
 # Grip clutch.
 GRIP_THRESHOLD = _clutch["grip_threshold"]
 ORIENTATION_BLEND_TIME_S = _clutch["orientation_blend_time_s"]
+
+# Gripper jaw command: fraction of full range used for the OPEN extreme.
+GRIPPER_OPEN_MAX_FRAC = _gripper["open_max_frac"]
 
 # Handle geometry (controller frame -> gripper orientation).
 HANDLE_PITCH_OFFSET_DEG = _handle["pitch_offset_deg"]

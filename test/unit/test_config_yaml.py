@@ -22,7 +22,7 @@ import yaml
 
 from common import configs
 from common.config_parser import load_method_params, load_teleop_shared
-from sim_benchmark.methods import METHODS
+from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]
 
 # Every method that must have a companion YAML: the benchmark registry plus the
 # production armplane solver.
@@ -41,6 +41,9 @@ class TestFrozenSharedValues(unittest.TestCase):
         self.assertEqual(configs.GRIP_THRESHOLD, 0.9)
         self.assertEqual(configs.ORIENTATION_BLEND_TIME_S, 1.0)
 
+    def test_gripper(self):
+        self.assertEqual(configs.GRIPPER_OPEN_MAX_FRAC, 0.3)
+
     def test_handle(self):
         self.assertEqual(configs.HANDLE_PITCH_OFFSET_DEG, 65.0)
         self.assertEqual(list(configs.HANDLE_AXIS), [0.8242, 0.2110, -0.5255])
@@ -52,7 +55,7 @@ class TestFrozenSharedValues(unittest.TestCase):
     def test_envelope(self):
         self.assertEqual(configs.WORKSPACE_R_MIN, 0.0837)
         self.assertEqual(configs.WORKSPACE_R_MAX, 0.4110)
-        self.assertEqual(configs.WORKSPACE_Z_FLOOR, 0.01)
+        self.assertEqual(configs.WORKSPACE_Z_FLOOR, -0.01)
         self.assertEqual(configs.WORKSPACE_SAFETY_MARGIN, 0.01)
         self.assertEqual(configs.WORKSPACE_SOFT_MARGIN, 0.04)
         self.assertEqual(configs.WORKSPACE_OOB_MODE, "warn")
@@ -104,6 +107,7 @@ class TestSharedStrictValidation(unittest.TestCase):
         return {
             "filtering": {"min_cutoff": 0.8, "beta": 5.0, "d_cutoff": 0.9},
             "clutch": {"grip_threshold": 0.9, "orientation_blend_time_s": 1.0},
+            "gripper": {"open_max_frac": 0.5},
             "handle": {"pitch_offset_deg": 65.0, "axis": [0.1, 0.2, 0.3]},
             "operator_frame": {"back_m": 0.2, "up_m": 0.2},
             "envelope": {
