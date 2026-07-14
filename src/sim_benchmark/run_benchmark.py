@@ -34,6 +34,7 @@ from sim_benchmark.methods import METHODS, MethodFactory  # noqa: E402
 from sim_benchmark.metrics import RunLog, compute_metrics  # noqa: E402
 from sim_benchmark.mock_quest import MockTrajectory, default_suite  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
+from sim_benchmark.scene_rig import make_sim  # noqa: E402
 
 METRIC_COLUMNS = [
     ("ik_err_mean_mm", "ik_err(mm)"),
@@ -56,7 +57,7 @@ def run_episode(
     gif_path: Path | None = None,
 ) -> tuple[dict, RunLog]:
     """Run one (method, trajectory) episode; return (metrics, raw log)."""
-    method = method_factory(sim.model)
+    method = method_factory(sim.ik_model)
     q0 = sim.neutral_q()
     sim.reset(q0)
     method.reset(q0)
@@ -201,6 +202,13 @@ def main() -> None:
         default=None,
         help="Trajectory names to run (default: all). See mock_quest.default_suite.",
     )
+    parser.add_argument(
+        "--scene",
+        choices=["rig", "plain"],
+        default="rig",
+        help="rig = collision-enabled printed-rig twin (default); "
+        "plain = flat abstract scene, collisions off (cheap A/B baseline)",
+    )
     parser.add_argument("--view", action="store_true", help="Live MuJoCo viewer")
     parser.add_argument("--save", type=str, default=None, help="Save metrics JSON")
     parser.add_argument(
@@ -229,7 +237,7 @@ def main() -> None:
             )
         suite = [t for t in suite if t.name in args.trajectories]
 
-    sim = DualArmSim()
+    sim = make_sim(args.scene)
     results: dict[str, dict[str, dict]] = {}
     logs: dict[str, dict[str, RunLog]] = {}
     for traj in suite:
