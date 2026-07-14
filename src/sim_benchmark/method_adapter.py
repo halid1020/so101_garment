@@ -32,7 +32,7 @@ for _p in (str(_repo_root), str(_repo_root / "src")):
 
 from common.configs import MAX_JOINT_VEL_SIM_RAD_S  # noqa: E402
 from sim_benchmark.constants import DUAL_URDF_PATH, EE_FRAMES, SIDES  # noqa: E402
-from sim_benchmark.methods import METHODS  # noqa: E402
+from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
 
 _FRAME_TO_SIDE = {frame: side for side, frame in EE_FRAMES.items()}
@@ -95,6 +95,22 @@ class MethodIKAdapter:
         """4x4 EE poses at the current configuration, keyed by URDF frame."""
         poses = self._kin.fk_eef_pose(self._q)
         return {EE_FRAMES[side]: poses[side] for side in SIDES}
+
+    def set_orientation_cost(self, value: float) -> bool:
+        """Override the wrapped method's orientation-task cost, if it has one.
+
+        Only the Pink QP methods (pink_full/pink_relaxed) expose a Pink
+        FrameTask whose orientation cost can be retuned live; for those this
+        lets the teleop tool trade the benchmark's relaxed attitude tracking
+        for tighter pitch/roll follow without editing the benchmark YAML.
+        Returns True if applied, False for methods without a Pink solver
+        (dls/mink/scipy_ls/telegrip), which the caller can warn about.
+        """
+        solver = getattr(self.method, "solver", None)
+        if solver is not None and hasattr(solver, "update_task_parameters"):
+            solver.update_task_parameters(orientation_cost=value)
+            return True
+        return False
 
     def set_target_poses(
         self, targets: dict[str, tuple[np.ndarray, np.ndarray]]

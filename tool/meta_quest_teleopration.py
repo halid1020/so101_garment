@@ -98,6 +98,15 @@ def main():
         help="Out-of-envelope target policy (see common/workspace_envelope.py)",
     )
     parser.add_argument(
+        "--orientation-cost",
+        type=float,
+        default=None,
+        help="Override the IK orientation-task cost (Pink methods only). Raises "
+        "gripper pitch/roll tracking on a relaxed method like pink_relaxed "
+        "(benchmark default 0.05); try ~0.2-0.4. None keeps the method's YAML "
+        "value.",
+    )
+    parser.add_argument(
         "--envelope-feedback",
         type=str,
         default="bell",
@@ -170,6 +179,25 @@ def main():
             max_joint_vel=args.max_joint_vel,
             initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
         )
+
+    # Optional live override of the orientation-task cost, so the smooth,
+    # position-dominant benchmark methods (e.g. pink_relaxed) can be made to
+    # track the commanded gripper pitch/roll without editing any benchmark
+    # YAML. Higher => pitch/roll follow the wrist more tightly at some cost to
+    # position smoothness; the armplane target keeps yaw following the arm.
+    if args.orientation_cost is not None:
+        if hasattr(ik_solver, "update_task_parameters"):  # armplane PinkIKSolver
+            ik_solver.update_task_parameters(orientation_cost=args.orientation_cost)
+            applied = True
+        else:  # benchmark MethodIKAdapter
+            applied = ik_solver.set_orientation_cost(args.orientation_cost)
+        if applied:
+            print(f"🎚️  Orientation-cost override → {args.orientation_cost}")
+        else:
+            print(
+                f"⚠️  --orientation-cost has no effect for method "
+                f"'{args.method}' (no Pink orientation task); ignored"
+            )
 
     # 4. Quest reader (IK thread reads it directly)
     print("\n🎮 Initializing Meta Quest reader...")
