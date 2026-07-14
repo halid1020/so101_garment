@@ -31,8 +31,11 @@ from common.utils import (
     blend_rotations,
     compute_hand_to_robot_calibration,
     compute_operator_frame,
+    gripper_orientation_from_pitch_roll,
+    gripper_pitch_roll_from_rotation,
     hand_to_gripper_orientation_armplane,
     map_quest_hands_to_robot_arms,
+    operator_wrist_pitch_roll,
     to_operator_frame,
 )
 from common.workspace_envelope import build_envelopes, make_policies
@@ -60,6 +63,7 @@ def dual_ik_solver_thread(
     quest_reader: Any | None = None,
     oob_mode: str | None = None,
     envelope_feedback: EnvelopeFeedback | None = None,
+    orientation_mode: str = "armplane",
 ) -> None:
     """Dual-arm IK solver thread.
 
@@ -75,9 +79,17 @@ def dual_ik_solver_thread(
     envelope_feedback, if given, receives the per-arm OOEStatus every tick
     (debounced operator cues, e.g. a terminal bell — see
     common/envelope_feedback.py); its state resets with the calibration.
+
+    orientation_mode selects how the operator's wrist maps to the gripper
+    attitude: "armplane" (default) maps the ABSOLUTE hand orientation to a
+    reachable gripper orientation (yaw follows the arm, elevation + roll from
+    the handle); "incremental" instead anchors pitch and roll to the arm's
+    current orientation at each grip and tracks only the CHANGE of the
+    operator's wrist pitch/roll from there — a clutched, ratchetable mapping
+    that lets teleop start with the controllers in any pose.
     """
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
-    print(f"🧮 Dual IK solver thread started ({input_label})")
+    print(f"🧮 Dual IK solver thread started ({input_label}, {orientation_mode})")
 
     # Fixed base positions of each arm (for the tip-azimuth computation)
     _m = ik_solver.urdf_model
@@ -126,6 +138,14 @@ def dual_ik_solver_thread(
     # Whether each arm's target was inside the envelope last tick; used to
     # freeze the azimuth (and hence the roll reference) while out of envelope.
     oob_inside_prev: dict[str, bool] = {"left": True, "right": True}
+    # Incremental-mapping state (orientation_mode="incremental"): at each grip
+    # the *_anchor holds the gripper's actual pitch/roll and *_ref the
+    # operator's wrist pitch/roll; the commanded attitude is anchor + (now -
+    # ref), so re-gripping continues from the current pose (clutched ratchet).
+    pitch_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
+    roll_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
+    pitch_ref: dict[str, float] = {"left": 0.0, "right": 0.0}
+    roll_ref: dict[str, float] = {"left": 0.0, "right": 0.0}
     last_debug_time = 0.0
 
     # Workspace envelope + out-of-envelope policy (per arm). Applied to every
@@ -379,35 +399,48 @@ def dual_ik_solver_thread(
                     khat[2] = 0.0
                     n = np.linalg.norm(khat)
                     khat = khat / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
-                    # Roll ratcheting: decide the roll anchor for this
-                    # engagement (see common/roll_ratchet.py). The activation
-                    # blend below glides any change, so nothing snaps.
-                    try:
-                        _trig = float(quest_reader.get_trigger_value(_key))
-                    except (AttributeError, TypeError):
-                        _trig = 0.0
-                    _action = roll_ratchet.decide_at_grip(
-                        _key,
-                        float(_q_solved[_roll_idx[_key]]),
-                        data_manager.consume_roll_reset(_key),
-                        _trig > 0.5,
-                    )
-                    if _action == NEUTRAL:
-                        khat = _knuckle_at_neutral_roll(_key)
-                        print(f"🔄 {_key} gripper roll gliding back to neutral")
-                    elif _action == REWRAP:
-                        # Jaw-equivalent half-turn: negating the horizontal
-                        # roll reference rotates the target roll by 180 deg,
-                        # which the parallel jaws cannot distinguish, and
-                        # restores wrist_roll headroom.
-                        khat = -khat
-                        print(
-                            f"↩️  {_key} wrist rolled back 180° (jaw-"
-                            "equivalent) — roll headroom restored"
+                    # Roll ratcheting (armplane only): decide the roll anchor
+                    # for this engagement (see common/roll_ratchet.py). The
+                    # activation blend below glides any change, so nothing
+                    # snaps. The incremental mapping does its own clutched
+                    # re-anchoring, so it skips the ratchet.
+                    if orientation_mode == "armplane":
+                        try:
+                            _trig = float(quest_reader.get_trigger_value(_key))
+                        except (AttributeError, TypeError):
+                            _trig = 0.0
+                        _action = roll_ratchet.decide_at_grip(
+                            _key,
+                            float(_q_solved[_roll_idx[_key]]),
+                            data_manager.consume_roll_reset(_key),
+                            _trig > 0.5,
                         )
-                    else:
-                        assert _action == KEEP
+                        if _action == NEUTRAL:
+                            khat = _knuckle_at_neutral_roll(_key)
+                            print(f"🔄 {_key} gripper roll gliding back to neutral")
+                        elif _action == REWRAP:
+                            # Jaw-equivalent half-turn: negating the horizontal
+                            # roll reference rotates the target roll by 180 deg,
+                            # which the parallel jaws cannot distinguish, and
+                            # restores wrist_roll headroom.
+                            khat = -khat
+                            print(
+                                f"↩️  {_key} wrist rolled back 180° (jaw-"
+                                "equivalent) — roll headroom restored"
+                            )
+                        else:
+                            assert _action == KEEP
                     knuckle_axes[_key] = _tf[:3, :3].T @ khat
+                    if orientation_mode == "incremental":
+                        # Clutched anchor: the gripper's actual pitch/roll now,
+                        # and the operator's wrist pitch/roll as the zero. The
+                        # commanded attitude then tracks the change from here,
+                        # so a re-grip continues from the current pose.
+                        _, _ap, _ar = gripper_pitch_roll_from_rotation(_pose[:3, :3])
+                        pitch_anchor[_key], roll_anchor[_key] = _ap, _ar
+                        pitch_ref[_key], roll_ref[_key] = operator_wrist_pitch_roll(
+                            _tf[:3, :3], handle_axes[_key], knuckle_axes[_key]
+                        )
                 print(
                     "🖐️  Handle axes captured (handles assumed pointing "
                     f"straight down): L={np.round(handle_axes['left'], 2)} "
@@ -422,7 +455,10 @@ def dual_ik_solver_thread(
                 )
                 data_manager.set_frame_marker("headset_center", headset_center)
                 mode = "mirror" if mirror_control else "direct"
-                print(f"✓ Dual-arm teleop activated (absolute handle mapping, {mode})")
+                _map = (
+                    "incremental" if orientation_mode == "incremental" else "absolute"
+                )
+                print(f"✓ Dual-arm teleop activated ({_map} handle mapping, {mode})")
                 # Mapping diagnostics: the world direction each handle axis
                 # maps to right now (at first grip this is exactly [0,0,-1]
                 # by construction; on re-grips it shows the true reading).
@@ -463,28 +499,52 @@ def dual_ik_solver_thread(
             ):
                 translation_scale, rotation_scale = data_manager.get_teleop_scaling()
 
-                # Orientation: absolute and reachable-by-construction — tip
-                # elevation from the handle, tip azimuth following the arm,
-                # roll from the hand twist. Blended in over
-                # ORIENTATION_BLEND_TIME_S after activation to avoid a jerk.
-                left_abs_rot = hand_to_gripper_orientation_armplane(
-                    left_tf[:3, :3],
-                    _update_azimuth(
-                        "left", left_pose, freeze=not oob_inside_prev["left"]
-                    ),
-                    0.0,
-                    handle_axes["left"],
-                    knuckle_axes.get("left"),
+                # Orientation target, blended in over ORIENTATION_BLEND_TIME_S
+                # after activation to avoid a jerk. Tip azimuth always follows
+                # the arm (frozen while out of envelope). "armplane" maps the
+                # absolute hand orientation; "incremental" tracks the change of
+                # the operator's wrist pitch/roll from the grip anchor.
+                az_left = _update_azimuth(
+                    "left", left_pose, freeze=not oob_inside_prev["left"]
                 )
-                right_abs_rot = hand_to_gripper_orientation_armplane(
-                    right_tf[:3, :3],
-                    _update_azimuth(
-                        "right", right_pose, freeze=not oob_inside_prev["right"]
-                    ),
-                    0.0,
-                    handle_axes["right"],
-                    knuckle_axes.get("right"),
+                az_right = _update_azimuth(
+                    "right", right_pose, freeze=not oob_inside_prev["right"]
                 )
+                if orientation_mode == "incremental":
+                    lp, lr = operator_wrist_pitch_roll(
+                        left_tf[:3, :3], handle_axes["left"], knuckle_axes["left"]
+                    )
+                    rp, rr = operator_wrist_pitch_roll(
+                        right_tf[:3, :3], handle_axes["right"], knuckle_axes["right"]
+                    )
+                    left_abs_rot = gripper_orientation_from_pitch_roll(
+                        az_left,
+                        pitch_anchor["left"]
+                        + rotation_scale * (lp - pitch_ref["left"]),
+                        roll_anchor["left"] + rotation_scale * (lr - roll_ref["left"]),
+                    )
+                    right_abs_rot = gripper_orientation_from_pitch_roll(
+                        az_right,
+                        pitch_anchor["right"]
+                        + rotation_scale * (rp - pitch_ref["right"]),
+                        roll_anchor["right"]
+                        + rotation_scale * (rr - roll_ref["right"]),
+                    )
+                else:
+                    left_abs_rot = hand_to_gripper_orientation_armplane(
+                        left_tf[:3, :3],
+                        az_left,
+                        0.0,
+                        handle_axes["left"],
+                        knuckle_axes.get("left"),
+                    )
+                    right_abs_rot = hand_to_gripper_orientation_armplane(
+                        right_tf[:3, :3],
+                        az_right,
+                        0.0,
+                        handle_axes["right"],
+                        knuckle_axes.get("right"),
+                    )
                 blend_alpha = min(
                     1.0, (time.time() - activation_time) / ORIENTATION_BLEND_TIME_S
                 )
@@ -544,11 +604,13 @@ def dual_ik_solver_thread(
                 oob_inside_prev["left"] = left_oob.inside
                 oob_inside_prev["right"] = right_oob.inside
 
-                # Wrist-roll limit hint: a hold that parks the roll in the
-                # guard band gets a throttled release-and-regrip reminder
-                # (the rewrap itself only ever happens at a grip edge).
+                # Wrist-roll limit hint (armplane only): a hold that parks the
+                # roll in the guard band gets a throttled release-and-regrip
+                # reminder (the rewrap itself only ever happens at a grip edge).
                 _q_now = ik_solver.get_current_configuration()
-                for _side in ("left", "right"):
+                for _side in (
+                    ("left", "right") if orientation_mode == "armplane" else ()
+                ):
                     if roll_ratchet.should_warn_mid_hold(
                         _side, float(_q_now[_roll_idx[_side]]), now
                     ):

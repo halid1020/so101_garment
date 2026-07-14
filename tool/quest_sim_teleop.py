@@ -55,7 +55,7 @@ from common.threads.dual_ik_solver import dual_ik_solver_thread  # noqa: E402
 from common.workspace_envelope import OOE_POLICIES  # noqa: E402
 from sim_benchmark.constants import CONTROL_RATE_HZ, SIDES  # noqa: E402
 from sim_benchmark.method_adapter import MethodIKAdapter  # noqa: E402
-from sim_benchmark.methods import METHODS  # noqa: E402
+from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]  # noqa: E402
 from sim_benchmark.mock_quest_device import MOCK_PATTERNS  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
 
@@ -63,7 +63,12 @@ from sim_benchmark.scene import DualArmSim  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--method", type=str, default="pink_relaxed", choices=sorted(METHODS)
+        "--method",
+        type=str,
+        default="pink_relaxed",
+        choices=[*sorted(METHODS), "mymethod"],
+        help="Benchmark IK method, or 'mymethod' (pink_relaxed solver + the "
+        "incremental clutched wrist pitch/roll mapping).",
     )
     parser.add_argument("--ip-address", type=str, default=None)
     parser.add_argument(
@@ -132,12 +137,20 @@ def main() -> None:
     )
     data_manager.set_teleop_scaling(TRANSLATION_SCALE, ROTATION_SCALE)
 
+    # 'mymethod' = pink_relaxed solver + the incremental clutched pitch/roll
+    # mapping, matching tool/meta_quest_teleopration.py so the sim rehearses it.
+    orientation_mode = "incremental" if args.method == "mymethod" else "armplane"
+    solver_method = "pink_relaxed" if args.method == "mymethod" else args.method
     ik_solver = MethodIKAdapter(
-        args.method,
+        solver_method,
         dt=1.0 / IK_SOLVER_RATE,
         max_joint_vel=args.max_joint_vel,
         initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
     )
+    if args.method == "mymethod":
+        # Incremental targets need the attitude actually tracked (pink_relaxed's
+        # 0.05 is near position-only); match the real tool's mymethod default.
+        ik_solver.set_orientation_cost(0.3)
 
     if args.mock:
         from sim_benchmark.mock_quest_device import MockQuestReader
@@ -192,6 +205,7 @@ def main() -> None:
                 if args.envelope_feedback == "bell"
                 else NullFeedback()
             ),
+            "orientation_mode": orientation_mode,
         },
         daemon=True,
     )

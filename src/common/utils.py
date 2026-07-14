@@ -281,6 +281,90 @@ def hand_to_gripper_orientation_armplane(
     return np.column_stack([tip, y_axis, z_axis])
 
 
+def signed_angle_about(axis: np.ndarray, vec: np.ndarray, ref: np.ndarray) -> float:
+    """Signed angle (rad) of ``vec`` about unit ``axis``, measured from ``ref``.
+
+    Both ``vec`` and ``ref`` are projected perpendicular to ``axis`` first, so
+    only their rotation about the axis matters. Returns 0 if either projection
+    is degenerate (parallel to the axis).
+    """
+    a = np.asarray(axis, dtype=float)
+    a = a / (np.linalg.norm(a) + 1e-12)
+    v = np.asarray(vec, dtype=float) - (np.asarray(vec, dtype=float) @ a) * a
+    r = np.asarray(ref, dtype=float) - (np.asarray(ref, dtype=float) @ a) * a
+    nv, nr = np.linalg.norm(v), np.linalg.norm(r)
+    if nv < 1e-9 or nr < 1e-9:
+        return 0.0
+    v, r = v / nv, r / nr
+    return float(np.arctan2(a @ np.cross(r, v), r @ v))
+
+
+def operator_wrist_pitch_roll(
+    hand_rot: np.ndarray,
+    handle_axis: Sequence[float],
+    knuckle_axis: Sequence[float],
+) -> tuple[float, float]:
+    """Absolute wrist pitch and roll of the operator's hand (radians).
+
+    ``pitch`` is the elevation of the handle axis (hand tilted up/down);
+    ``roll`` is the twist of the knuckle reference about the handle axis,
+    measured from world up. Used by the incremental (clutched) mapping, which
+    tracks the CHANGE of these since the grip reference, not their absolute
+    value — so the controller can start in any pose.
+    """
+    h = np.asarray(handle_axis, dtype=float)
+    handle_world = hand_rot @ (h / np.linalg.norm(h))
+    knuckle_world = hand_rot @ np.asarray(knuckle_axis, dtype=float)
+    pitch = float(
+        np.arctan2(handle_world[2], max(np.linalg.norm(handle_world[:2]), 1e-9))
+    )
+    roll = signed_angle_about(handle_world, knuckle_world, np.array([0.0, 0.0, 1.0]))
+    return pitch, roll
+
+
+def gripper_orientation_from_pitch_roll(
+    azimuth: float, pitch: float, roll: float
+) -> np.ndarray:
+    """Reachable gripper orientation from tip azimuth, pitch and roll (radians).
+
+    The tip (gripper long axis) points at ``azimuth`` compass and ``pitch``
+    elevation; ``roll`` twists the jaws about the tip, measured from world up.
+    Inverse of ``gripper_pitch_roll_from_rotation``.
+    """
+    ce, se = np.cos(pitch), np.sin(pitch)
+    tip = np.array([ce * np.cos(azimuth), ce * np.sin(azimuth), se])
+    up = np.array([0.0, 0.0, 1.0])
+    ref = up - (up @ tip) * tip
+    n = np.linalg.norm(ref)
+    if n < 1e-6:  # tip vertical: pick any horizontal reference
+        ref = np.array([1.0, 0.0, 0.0]) - tip[0] * tip
+        n = np.linalg.norm(ref)
+    ref = ref / n
+    # Rodrigues rotation of ref about the unit tip by roll (ref ⟂ tip).
+    z_axis = ref * np.cos(roll) + np.cross(tip, ref) * np.sin(roll)
+    z_axis = z_axis / np.linalg.norm(z_axis)
+    y_axis = np.cross(z_axis, tip)
+    return np.column_stack([tip, y_axis, z_axis])
+
+
+def gripper_pitch_roll_from_rotation(rot: np.ndarray) -> tuple[float, float, float]:
+    """Decompose a gripper rotation into (azimuth, pitch, roll) radians.
+
+    Inverse of ``gripper_orientation_from_pitch_roll``; used to anchor the
+    incremental mapping to the arm's ACTUAL orientation at each grip, so
+    re-gripping continues smoothly from where the gripper is.
+    """
+    tip = rot[:3, 0]
+    azimuth = float(np.arctan2(tip[1], tip[0]))
+    pitch = float(np.arctan2(tip[2], max(np.linalg.norm(tip[:2]), 1e-9)))
+    up = np.array([0.0, 0.0, 1.0])
+    ref = up - (up @ tip) * tip
+    if np.linalg.norm(ref) < 1e-6:
+        return azimuth, pitch, 0.0
+    roll = signed_angle_about(tip, rot[:3, 2], ref)
+    return azimuth, pitch, roll
+
+
 def blend_rotations(
     rot_from: np.ndarray, rot_to: np.ndarray, alpha: float
 ) -> np.ndarray:

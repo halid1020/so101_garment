@@ -69,6 +69,7 @@ def main():
         choices=[
             "armplane",
             "production",
+            "mymethod",
             "pink_full",
             "pink_relaxed",
             "dls",
@@ -79,9 +80,10 @@ def main():
         help=(
             "IK layer: 'armplane' (alias: production, deprecated) is the "
             "tuned Pink solver with the armplane orientation mapping this "
-            "tool has always used; the others are the sim-benchmark methods, "
-            "wrapped in a joint-space rate limiter. Rehearse in simulation "
-            "first with tool/quest_sim_teleop.py."
+            "tool has always used; 'mymethod' is the pink_relaxed solver with "
+            "the incremental (clutched) wrist pitch/roll mapping; the others "
+            "are the sim-benchmark methods, wrapped in a joint-space rate "
+            "limiter. Rehearse in simulation first with quest_sim_teleop.py."
         ),
     )
     parser.add_argument(
@@ -141,6 +143,10 @@ def main():
 
     # 3. IK layer (10 body DOF, grippers locked): the armplane Pink solver or
     # one of the sim-benchmark methods behind the PinkIKSolver interface.
+    # 'mymethod' reuses the pink_relaxed solver but drives the gripper with the
+    # incremental (clutched) wrist pitch/roll mapping instead of armplane.
+    orientation_mode = "incremental" if args.method == "mymethod" else "armplane"
+    solver_method = "pink_relaxed" if args.method == "mymethod" else args.method
     if args.method in ("armplane", "production"):
         if args.method == "production":
             print("⚠️  --method production is deprecated; use --method armplane")
@@ -172,27 +178,31 @@ def main():
     else:
         from sim_benchmark.method_adapter import MethodIKAdapter
 
-        print(f"\n🔧 Creating benchmark IK method '{args.method}'...")
+        print(f"\n🔧 Creating benchmark IK method '{solver_method}'...")
         ik_solver = MethodIKAdapter(
-            args.method,
+            solver_method,
             dt=1.0 / IK_SOLVER_RATE,
             max_joint_vel=args.max_joint_vel,
             initial_configuration=np.radians(NEUTRAL_JOINT_ANGLES_DUAL),
         )
 
-    # Optional live override of the orientation-task cost, so the smooth,
-    # position-dominant benchmark methods (e.g. pink_relaxed) can be made to
-    # track the commanded gripper pitch/roll without editing any benchmark
-    # YAML. Higher => pitch/roll follow the wrist more tightly at some cost to
-    # position smoothness; the armplane target keeps yaw following the arm.
-    if args.orientation_cost is not None:
+    # Orientation-task cost. mymethod needs the gripper attitude actually
+    # tracked (pink_relaxed's 0.05 is near position-only), so it defaults to a
+    # value that follows the incremental pitch/roll while staying position-
+    # dominant; --orientation-cost overrides it. For the other methods the flag
+    # is opt-in (None = keep the method's YAML value). Higher => pitch/roll
+    # follow the wrist more tightly at some cost to position smoothness.
+    effective_ocost = args.orientation_cost
+    if effective_ocost is None and args.method == "mymethod":
+        effective_ocost = 0.3
+    if effective_ocost is not None:
         if hasattr(ik_solver, "update_task_parameters"):  # armplane PinkIKSolver
-            ik_solver.update_task_parameters(orientation_cost=args.orientation_cost)
+            ik_solver.update_task_parameters(orientation_cost=effective_ocost)
             applied = True
         else:  # benchmark MethodIKAdapter
-            applied = ik_solver.set_orientation_cost(args.orientation_cost)
+            applied = ik_solver.set_orientation_cost(effective_ocost)
         if applied:
-            print(f"🎚️  Orientation-cost override → {args.orientation_cost}")
+            print(f"🎚️  Orientation-cost → {effective_ocost}")
         else:
             print(
                 f"⚠️  --orientation-cost has no effect for method "
@@ -228,6 +238,7 @@ def main():
                 if args.envelope_feedback == "bell"
                 else NullFeedback()
             ),
+            "orientation_mode": orientation_mode,
         },
         daemon=True,
     )
