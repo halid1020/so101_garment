@@ -16,8 +16,8 @@ from scipy.spatial.transform import Rotation
 from common.utils import (
     gripper_orientation_from_pitch_roll,
     gripper_pitch_roll_from_rotation,
-    operator_wrist_pitch_roll,
     signed_angle_about,
+    wrist_roll_pitch_delta,
 )
 
 
@@ -46,42 +46,31 @@ class TestGripperAngleRoundTrip(unittest.TestCase):
         )
 
 
-class TestOperatorWristDecoupling(unittest.TestCase):
-    def setUp(self) -> None:
-        self.handle_axis = np.array([0.8242, 0.2110, -0.5255])
-        self.handle_axis = self.handle_axis / np.linalg.norm(self.handle_axis)
-        self.knuckle_axis = np.array([0.0, 1.0, 0.0])
-        self.hand = Rotation.from_euler("xyz", [0.3, -0.2, 0.1]).as_matrix()
+class TestWristRollPitchDelta(unittest.TestCase):
+    """rel_rot is the hand rotation in the operator frame (x fwd, y left, z up)."""
 
-    def test_pure_twist_changes_roll_only(self) -> None:
-        p0, r0 = operator_wrist_pitch_roll(
-            self.hand, self.handle_axis, self.knuckle_axis
-        )
-        handle_world = self.hand @ self.handle_axis
-        twist = Rotation.from_rotvec(
-            0.5 * handle_world / np.linalg.norm(handle_world)
-        ).as_matrix()
-        p1, r1 = operator_wrist_pitch_roll(
-            twist @ self.hand, self.handle_axis, self.knuckle_axis
-        )
-        self.assertAlmostEqual(p1 - p0, 0.0, places=6)
-        self.assertAlmostEqual(r1 - r0, 0.5, places=6)
+    def test_identity_is_zero(self) -> None:
+        roll, pitch = wrist_roll_pitch_delta(np.eye(3))
+        self.assertAlmostEqual(roll, 0.0)
+        self.assertAlmostEqual(pitch, 0.0)
 
-    def test_tilting_handle_up_changes_pitch(self) -> None:
-        p0, _ = operator_wrist_pitch_roll(
-            self.hand, self.handle_axis, self.knuckle_axis
-        )
-        # Rotate the hand about a world-horizontal axis perpendicular to the
-        # handle's ground projection -> the handle elevates -> pitch changes.
-        hw = self.hand @ self.handle_axis
-        horiz = np.array([hw[0], hw[1], 0.0])
-        horiz /= np.linalg.norm(horiz)
-        lateral = np.cross(np.array([0.0, 0.0, 1.0]), horiz)
-        lift = Rotation.from_rotvec(0.2 * lateral).as_matrix()
-        p1, _ = operator_wrist_pitch_roll(
-            lift @ self.hand, self.handle_axis, self.knuckle_axis
-        )
-        self.assertGreater(abs(p1 - p0), 0.1)
+    def test_pure_twist_about_forward_is_roll_only(self) -> None:
+        rel = Rotation.from_rotvec([0.5, 0.0, 0.0]).as_matrix()  # about +x (fwd)
+        roll, pitch = wrist_roll_pitch_delta(rel)
+        self.assertAlmostEqual(roll, 0.5, places=6)
+        self.assertAlmostEqual(pitch, 0.0, places=6)
+
+    def test_pure_nod_about_lateral_is_pitch_only(self) -> None:
+        rel = Rotation.from_rotvec([0.0, 0.3, 0.0]).as_matrix()  # about +y (left)
+        roll, pitch = wrist_roll_pitch_delta(rel)
+        self.assertAlmostEqual(roll, 0.0, places=6)
+        self.assertAlmostEqual(pitch, 0.3, places=6)
+
+    def test_yaw_about_up_is_dropped(self) -> None:
+        rel = Rotation.from_rotvec([0.0, 0.0, 0.4]).as_matrix()  # about +z (up)
+        roll, pitch = wrist_roll_pitch_delta(rel)
+        self.assertAlmostEqual(roll, 0.0, places=6)
+        self.assertAlmostEqual(pitch, 0.0, places=6)
 
 
 class TestSignedAngleAbout(unittest.TestCase):

@@ -35,8 +35,8 @@ from common.utils import (
     gripper_pitch_roll_from_rotation,
     hand_to_gripper_orientation_armplane,
     map_quest_hands_to_robot_arms,
-    operator_wrist_pitch_roll,
     to_operator_frame,
+    wrist_roll_pitch_delta,
 )
 from common.workspace_envelope import build_envelopes, make_policies
 
@@ -139,13 +139,17 @@ def dual_ik_solver_thread(
     # freeze the azimuth (and hence the roll reference) while out of envelope.
     oob_inside_prev: dict[str, bool] = {"left": True, "right": True}
     # Incremental-mapping state (orientation_mode="incremental"): at each grip
-    # the *_anchor holds the gripper's actual pitch/roll and *_ref the
-    # operator's wrist pitch/roll; the commanded attitude is anchor + (now -
-    # ref), so re-gripping continues from the current pose (clutched ratchet).
+    # the *_anchor holds the gripper's actual pitch/roll and hand_rot_ref the
+    # operator's hand rotation (operator frame); the commanded attitude is
+    # anchor + wrist-delta-since-grip, so re-gripping continues from the
+    # current pose (clutched ratchet) and the start pose is irrelevant.
     pitch_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
     roll_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
-    pitch_ref: dict[str, float] = {"left": 0.0, "right": 0.0}
-    roll_ref: dict[str, float] = {"left": 0.0, "right": 0.0}
+    hand_rot_ref: dict[str, np.ndarray] = {}
+    # Sign of the wrist->gripper mapping per axis. Wrist twist left -> gripper
+    # rolls counter-clockwise; wrist up -> gripper pitches up. Flip a sign here
+    # if a direction comes out reversed on the real robot.
+    _ROLL_SIGN, _PITCH_SIGN = 1.0, -1.0
     last_debug_time = 0.0
 
     # Workspace envelope + out-of-envelope policy (per arm). Applied to every
@@ -433,14 +437,12 @@ def dual_ik_solver_thread(
                     knuckle_axes[_key] = _tf[:3, :3].T @ khat
                     if orientation_mode == "incremental":
                         # Clutched anchor: the gripper's actual pitch/roll now,
-                        # and the operator's wrist pitch/roll as the zero. The
-                        # commanded attitude then tracks the change from here,
-                        # so a re-grip continues from the current pose.
+                        # and the operator's hand rotation as the zero. The
+                        # commanded attitude then tracks the wrist change from
+                        # here, so a re-grip continues from the current pose.
                         _, _ap, _ar = gripper_pitch_roll_from_rotation(_pose[:3, :3])
                         pitch_anchor[_key], roll_anchor[_key] = _ap, _ar
-                        pitch_ref[_key], roll_ref[_key] = operator_wrist_pitch_roll(
-                            _tf[:3, :3], handle_axes[_key], knuckle_axes[_key]
-                        )
+                        hand_rot_ref[_key] = _tf[:3, :3].copy()
                 print(
                     "🖐️  Handle axes captured (handles assumed pointing "
                     f"straight down): L={np.round(handle_axes['left'], 2)} "
@@ -511,24 +513,23 @@ def dual_ik_solver_thread(
                     "right", right_pose, freeze=not oob_inside_prev["right"]
                 )
                 if orientation_mode == "incremental":
-                    lp, lr = operator_wrist_pitch_roll(
-                        left_tf[:3, :3], handle_axes["left"], knuckle_axes["left"]
+                    # Wrist rotation since the grip, in the operator frame ->
+                    # roll (twist) and pitch (nod) deltas added to the anchor.
+                    l_roll, l_pitch = wrist_roll_pitch_delta(
+                        hand_rot_ref["left"].T @ left_tf[:3, :3]
                     )
-                    rp, rr = operator_wrist_pitch_roll(
-                        right_tf[:3, :3], handle_axes["right"], knuckle_axes["right"]
+                    r_roll, r_pitch = wrist_roll_pitch_delta(
+                        hand_rot_ref["right"].T @ right_tf[:3, :3]
                     )
                     left_abs_rot = gripper_orientation_from_pitch_roll(
                         az_left,
-                        pitch_anchor["left"]
-                        + rotation_scale * (lp - pitch_ref["left"]),
-                        roll_anchor["left"] + rotation_scale * (lr - roll_ref["left"]),
+                        pitch_anchor["left"] + rotation_scale * _PITCH_SIGN * l_pitch,
+                        roll_anchor["left"] + rotation_scale * _ROLL_SIGN * l_roll,
                     )
                     right_abs_rot = gripper_orientation_from_pitch_roll(
                         az_right,
-                        pitch_anchor["right"]
-                        + rotation_scale * (rp - pitch_ref["right"]),
-                        roll_anchor["right"]
-                        + rotation_scale * (rr - roll_ref["right"]),
+                        pitch_anchor["right"] + rotation_scale * _PITCH_SIGN * r_pitch,
+                        roll_anchor["right"] + rotation_scale * _ROLL_SIGN * r_roll,
                     )
                 else:
                     left_abs_rot = hand_to_gripper_orientation_armplane(

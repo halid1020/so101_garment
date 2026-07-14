@@ -299,27 +299,24 @@ def signed_angle_about(axis: np.ndarray, vec: np.ndarray, ref: np.ndarray) -> fl
     return float(np.arctan2(a @ np.cross(r, v), r @ v))
 
 
-def operator_wrist_pitch_roll(
-    hand_rot: np.ndarray,
-    handle_axis: Sequence[float],
-    knuckle_axis: Sequence[float],
-) -> tuple[float, float]:
-    """Absolute wrist pitch and roll of the operator's hand (radians).
+def wrist_roll_pitch_delta(rel_rot: np.ndarray) -> tuple[float, float]:
+    """Roll and pitch (radians) of a hand rotation in the operator frame.
 
-    ``pitch`` is the elevation of the handle axis (hand tilted up/down);
-    ``roll`` is the twist of the knuckle reference about the handle axis,
-    measured from world up. Used by the incremental (clutched) mapping, which
-    tracks the CHANGE of these since the grip reference, not their absolute
-    value — so the controller can start in any pose.
+    ``rel_rot`` is the hand's rotation SINCE the grip reference, expressed in
+    the operator control frame (x = forward toward the robot, y = operator's
+    left, z = up). Its rotation vector splits cleanly into the two wrist DOFs
+    the SO-101 wrist shares with a human wrist:
+
+      - roll  = component about forward x (wrist twist left/right),
+      - pitch = component about lateral y (wrist tilt up/down);
+
+    the yaw component about z is dropped — the 5-DoF arm supplies yaw by
+    panning. Pure twist gives (roll, 0); pure nod gives (0, pitch). The
+    incremental mapping adds these deltas to the gripper's pitch/roll anchored
+    at each grip, so re-gripping ratchets and the start pose is irrelevant.
     """
-    h = np.asarray(handle_axis, dtype=float)
-    handle_world = hand_rot @ (h / np.linalg.norm(h))
-    knuckle_world = hand_rot @ np.asarray(knuckle_axis, dtype=float)
-    pitch = float(
-        np.arctan2(handle_world[2], max(np.linalg.norm(handle_world[:2]), 1e-9))
-    )
-    roll = signed_angle_about(handle_world, knuckle_world, np.array([0.0, 0.0, 1.0]))
-    return pitch, roll
+    rv = Rotation.from_matrix(rel_rot).as_rotvec()
+    return float(rv[0]), float(rv[1])
 
 
 def gripper_orientation_from_pitch_roll(
