@@ -123,6 +123,9 @@ def dual_ik_solver_thread(
     # Arm azimuths (compass direction of the EE from its base), kept between
     # cycles so a near-vertical/retracted pose doesn't produce noise.
     azimuths: dict[str, float] = {}
+    # Whether each arm's target was inside the envelope last tick; used to
+    # freeze the azimuth (and hence the roll reference) while out of envelope.
+    oob_inside_prev: dict[str, bool] = {"left": True, "right": True}
     last_debug_time = 0.0
 
     # Workspace envelope + out-of-envelope policy (per arm). Applied to every
@@ -161,8 +164,18 @@ def dual_ik_solver_thread(
             "handles themselves."
         )
 
-    def _update_azimuth(side: str, ee_pose: np.ndarray | None) -> float:
-        if ee_pose is not None:
+    def _update_azimuth(
+        side: str, ee_pose: np.ndarray | None, freeze: bool = False
+    ) -> float:
+        # ``freeze`` holds the last azimuth without updating it. The armplane
+        # tip azimuth follows the arm's live EE heading, and the roll
+        # reference is orthogonalised against that tip — so any azimuth change
+        # rotates the commanded wrist_roll. While the target is out of the
+        # envelope the arm saturates and its heading swings as it slides along
+        # the boundary, which would inject roll the operator never asked for.
+        # Freezing the azimuth there keeps the gripper orientation steady, so
+        # roll only responds to a genuine wrist twist.
+        if ee_pose is not None and not freeze:
             vec = ee_pose[:2, 3] - base_xy[side]
             if np.linalg.norm(vec) > 0.04:
                 azimuths[side] = float(np.arctan2(vec[1], vec[0]))
@@ -189,6 +202,8 @@ def dual_ik_solver_thread(
         if envelope_feedback is not None:
             envelope_feedback.reset()
         roll_ratchet.reset()
+        oob_inside_prev["left"] = True
+        oob_inside_prev["right"] = True
         left_rot_at_activation = None
         right_rot_at_activation = None
         activation_time = None
@@ -454,14 +469,18 @@ def dual_ik_solver_thread(
                 # ORIENTATION_BLEND_TIME_S after activation to avoid a jerk.
                 left_abs_rot = hand_to_gripper_orientation_armplane(
                     left_tf[:3, :3],
-                    _update_azimuth("left", left_pose),
+                    _update_azimuth(
+                        "left", left_pose, freeze=not oob_inside_prev["left"]
+                    ),
                     0.0,
                     handle_axes["left"],
                     knuckle_axes.get("left"),
                 )
                 right_abs_rot = hand_to_gripper_orientation_armplane(
                     right_tf[:3, :3],
-                    _update_azimuth("right", right_pose),
+                    _update_azimuth(
+                        "right", right_pose, freeze=not oob_inside_prev["right"]
+                    ),
                     0.0,
                     handle_axes["right"],
                     knuckle_axes.get("right"),
@@ -520,6 +539,10 @@ def dual_ik_solver_thread(
                 if envelope_feedback is not None:
                     envelope_feedback.notify("left", left_oob, now)
                     envelope_feedback.notify("right", right_oob, now)
+                # Remember envelope state so next tick can freeze the azimuth
+                # (and roll reference) while a target stays out of envelope.
+                oob_inside_prev["left"] = left_oob.inside
+                oob_inside_prev["right"] = right_oob.inside
 
                 # Wrist-roll limit hint: a hold that parks the roll in the
                 # guard band gets a throttled release-and-regrip reminder
