@@ -47,7 +47,11 @@ threads (real robot) or to the MuJoCo scene (simulation rehearsal).
 Holding both grips engages teleoperation (the \emph{clutch},
 Section~\ref{sec:clutch}); the first grip of a session calibrates the
 handle axes; buttons toggle arm enablement and a home pose; triggers
-drive the grippers.
+drive the grippers. The trigger maps to a \emph{capped} jaw opening~---
+fully pressed closes the jaws, fully released opens them to only a
+fraction of their mechanical range~--- because the full splay is wider
+than garment grasps need and makes fine pinching awkward; closing is
+always complete, so grip strength is untouched.
 
 \paragraph{Pluggable IK methods.}
 The IK layer is a narrow interface: anchor to the measured joints,
@@ -66,16 +70,26 @@ comparison, through a thin bridge that hands it this rig's serial ports
 and motor calibrations.
 
 \paragraph{Simulation rehearsal and benchmark harness.}
-A rehearsal tool runs the full teleoperation thread against the digital
-twin, with either the real headset or a scripted mock device (patterns:
-table circles, wrist oscillation, envelope excursion). By default it
-loads the complete twin rig scene~--- printed board, adapter plates,
-camera tower, wrist cameras~--- with \emph{all} collisions enabled
-(arm--arm, arm--rig, arm--table; the nested base/shoulder mesh pair is
-explicitly excluded since those parts interpenetrate by design). It
-renders the three mounted cameras into live view windows and draws the
-world-frame triad plus the calibrated ``headset centre'' marker, so the
-operator can see exactly where the system thinks the VR frame sits. The
+The rehearsal and deployment tools share \emph{one} control stack by
+construction: they build the same filter, clutch, retargeting, envelope,
+and IK layer from a single wiring routine and differ only in the robot
+backend~--- the digital twin in rehearsal, the serial motor buses on the
+real rig. A method therefore behaves identically in both, which is the
+whole point of rehearsing before touching hardware. The rehearsal tool
+runs that shared thread against the digital twin, with either the real
+headset or a scripted mock device (patterns: table circles, wrist
+oscillation, envelope excursion). By default it loads the complete twin
+rig scene~--- printed board, adapter plates, camera tower, wrist
+cameras~--- with \emph{all} collisions enabled (arm--arm, arm--rig,
+arm--table; the nested base/shoulder mesh pair is explicitly excluded
+since those parts interpenetrate by design). It renders the three
+mounted cameras into live view windows and draws the world-frame triad
+and the calibrated ``headset centre'' marker, so the operator can see
+exactly where the system thinks the VR frame sits; it also draws a pair
+of orientation triads per arm~--- one for the \emph{measured} gripper
+pose and one for the \emph{commanded} target pose~--- so any attitude
+error between what the arm does and what the mapping asks for is visible
+at a glance. The
 benchmark runner sweeps mock trajectories across methods and reports the
 metrics of Section~\ref{sec:experiments}; a second runner does the same
 for the out-of-envelope policy sweep. During this work we found and

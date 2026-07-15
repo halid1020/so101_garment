@@ -21,6 +21,11 @@ the operator's hands with vision or a VR headset and solve for joint
 angles online: AnyTeleop retargets vision-based hand poses to arm--hand
 systems~\citep{qin2023anyteleop}, and Open-TeleVision streams immersive
 stereo feedback to a headset-tracked operator~\citep{cheng2024televison}.
+Closest to our setting, LeVR adds a VR teleoperation path for the LeRobot
+imitation-learning stack and uses it to collect headset demonstrations
+that fine-tune visuomotor policies~\citep{levr}; it targets a
+higher-DoF arm-and-hand system, whereas we target the under-actuated
+bimanual SO-101 and the retargeting problems its 5-DoF wrist creates.
 Our system takes the task-space route with Meta Quest controllers: it
 needs no leader hardware, lets the operator stand and move freely, and
 gains clutching and motion scaling for free~--- at the price of needing

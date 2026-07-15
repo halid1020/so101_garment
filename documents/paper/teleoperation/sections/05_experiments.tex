@@ -2,13 +2,23 @@
 \label{sec:experiments}
 
 \text{TODO: we also need to provide training experiments with ACT and Diffusino policy like in LeVR.}
-\textbf{TODO: organise this experiement section around research question. Each subsection should answer one research question.}
 
-All experiments run in the MuJoCo digital twin (\SI{500}{Hz} physics,
-\SI{50}{Hz} control) with scripted mock-hand trajectories that reproduce the
-clutch semantics of Eq.~\eqref{eq:clutch}: the trajectory is defined by a
-delta curve applied to the EE pose latched at ``grip press.'' Unless noted,
-metrics aggregate both arms.
+This section is organised around four research questions, each answered by
+one experiment. \textbf{RQ1} (Section~\ref{sec:exp-tracking}): on a 5-DoF
+arm, does a position-first IK layer track table-plane strokes better than a
+full 6-D pose tracker? \textbf{RQ2} (Section~\ref{sec:exp-wrist}): which
+strategy best follows a commanded wrist orientation without wrecking
+position? \textbf{RQ3} (Section~\ref{sec:exp-envelope}): how should
+infeasible, out-of-envelope targets be handled? \textbf{RQ4}
+(Section~\ref{sec:exp-userstudy}): do the objective winners survive contact
+with a human operator? RQ1--RQ3 are answered by controlled open-loop
+benchmarks; RQ4 is answered by a within-subjects user-study protocol.
+
+All benchmark experiments run in the MuJoCo digital twin (\SI{500}{Hz}
+physics, \SI{50}{Hz} control) with scripted mock-hand trajectories that
+reproduce the clutch semantics of Eq.~\eqref{eq:clutch}: the trajectory is
+defined by a delta curve applied to the EE pose latched at ``grip press.''
+Unless noted, metrics aggregate both arms.
 
 \paragraph{Metrics.}
 Position error (\(\mathrm{mm}\), target vs.\ measured EE, mean/p95/max) and
@@ -23,11 +33,13 @@ target and against the \emph{raw} operator target while outside, peak joint
 velocity while outside, and the re-entry recovery time (raw-target error
 \(<\SI{10}{mm}\) sustained \SI{0.2}{s}).
 
-\subsection{Tracking suite}
+\subsection{RQ1: position-first vs full 6-D tracking}
 \label{sec:exp-tracking}
 
-Three circle radii (3/5/\SI{8}{cm}) and four line-stroke directions on the
-table plane, orientation held. Results in
+\emph{Does a position-first IK layer track table-plane strokes better than
+a full 6-D pose tracker on a 5-DoF arm?} The tracking suite answers this
+with three circle radii (3/5/\SI{8}{cm}) and four line-stroke directions on
+the table plane, orientation held. Results in
 Table~\ref{tab:tracking} (see also the per-trajectory tables in the
 supplementary table set). The headline finding of the earlier benchmark holds:
 full-cost 6D tracking (\texttt{pink\_full}) pays a large position penalty
@@ -48,13 +60,15 @@ commanded-FK error at a solver cost 13\(\times\) below
   \input{tables/bench_circle_r5cm}
 \end{table}
 
-\subsection{Wrist-agility suite}
+\subsection{RQ2: following a commanded wrist orientation}
 \label{sec:exp-wrist}
 
-Position held at the latch point while the target orientation oscillates:
-roll (\(\pm45^\circ\)) and flex (\(\pm30^\circ\)) at 0.5/1/\SI{2}{Hz}, plus
-a combined slow-circle + \SI{1}{Hz}-roll trajectory. This suite quantifies
-the ``wrist is not agile'' complaint directly.
+\emph{Which strategy best follows a commanded wrist orientation without
+wrecking position?} The wrist-agility suite holds position at the latch
+point while the target orientation oscillates: roll (\(\pm45^\circ\)) and
+flex (\(\pm30^\circ\)) at 0.5/1/\SI{2}{Hz}, plus a combined slow-circle +
+\SI{1}{Hz}-roll trajectory. This suite quantifies the ``wrist is not
+agile'' complaint directly.
 Table~\ref{tab:wrist} shows the \SI{1}{Hz} roll oscillation: the armplane
 QP tracker lags the roll by \(\approx\)\SI{300}{ms} (about a third of the
 oscillation period) with \(28^\circ\) mean orientation error, while the
@@ -73,10 +87,26 @@ design.
   \input{tables/bench_wrist_roll_f1hz}
 \end{table}
 
-\subsection{Out-of-envelope suite}
+The thumbstick wrist interface (Section~\ref{sec:thumbstick}) answers the
+same complaint differently: it does not chase the commanded orientation at
+all, but hands the wrist to the operator. We evaluate it at rehearsal level
+only~--- the full teleoperation stack driven by the scripted mock device,
+not the controlled benchmark suite~--- because its input is a stick command
+the open-loop suite cannot script faithfully. Those rehearsals show its
+default hold mode giving the steadiest attitude and the best position
+tracking of the wrist patterns, precisely because the attitude is held
+rather than tracked, while the decaying soft mode fares worst; the run log
+records the sweep. This exposes the limit of the orientation metric here:
+for a held attitude the target is ``stay put'' by design, so a low
+orientation error against that target is not the same as following the
+operator's intent~--- which only the user study (RQ4) can score.
+
+\subsection{RQ3: handling out-of-envelope targets}
 \label{sec:exp-envelope}
 
-Three excursions: \texttt{envelope\_radial} (forward stroke \SI{0.30}{m},
+\emph{How should infeasible targets, driven past the reach boundary, be
+handled?} The out-of-envelope suite compares the four policies on three
+excursions: \texttt{envelope\_radial} (forward stroke \SI{0.30}{m},
 \SI{2}{s} dwell far past \(r_{\max}\), smooth return),
 \texttt{envelope\_swoop} (\SI{0.20}{m} dip below the floor), and
 \texttt{envelope\_slide} (exit radially, translate laterally while outside,
@@ -101,21 +131,21 @@ seamlessly.
   \input{tables/envelope_envelope_slide_pink_relaxed}
 \end{table}
 
-\subsection{End-to-end rehearsal}
-
-The full armplane stack (One-Euro filter, clutch, armplane mapping,
-envelope policy, IK thread) is exercised against the digital twin with the
-scripted mock device: circles (\SI{11.6}{mm} mean EE tracking with
-\texttt{pink\_relaxed}, \SI{7.0}{mm} with \texttt{telegrip}), wrist
-oscillation, and envelope excursions with each policy. These runs validate
-the wiring rather than the methods; the suites above are the controlled
-comparison.
-
-\subsection{Bimanual user study (protocol)}
+\subsection{RQ4: surviving a human operator (user-study protocol)}
 \label{sec:exp-userstudy}
 
-The suites above are open-loop: scripted trajectories cannot capture how a
-\emph{human} closes the loop through the headset~--- adapting to lag,
+\emph{Do the objective winners of RQ1--RQ3 survive contact with a human
+operator?} Before that question can be asked of people, the integrated
+stack must run as one piece. The full armplane stack (One-Euro filter,
+clutch, armplane mapping, envelope policy, IK thread) is exercised against
+the digital twin with the scripted mock device: circles (\SI{11.6}{mm} mean
+EE tracking with \texttt{pink\_relaxed}, \SI{7.0}{mm} with \texttt{telegrip}),
+wrist oscillation, and envelope excursions with each policy. These runs
+validate the wiring rather than the methods. The controlled comparison lives
+in RQ1--RQ3; the human factors need real operators. The suites above are
+open-loop: scripted trajectories cannot
+capture how a \emph{human} closes the loop through the headset~--- adapting
+to lag,
 re-clutching, and reacting to boundary behavior. We therefore pair the
 objective benchmark with a formative within-subjects user study
 (\(n\approx5\), a pilot scale appropriate for rig-level design decisions).

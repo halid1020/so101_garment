@@ -12,6 +12,19 @@ lineage~\citep{soarm100}) from Meta Quest hand controllers, with a MuJoCo
 digital twin used both for operator rehearsal and for quantitative
 benchmarking of design alternatives.
 
+The SO-101 and its LeRobot software stack~\citep{lerobot} have become a
+popular educational platform for students and hobbyists, precisely
+because the arm is cheap and open. Its default route to demonstration
+data, however, is inconvenient. Leader--follower collection needs a
+second, kinematically matched arm that the operator back-drives by hand,
+which doubles the hardware and ties the operator's posture to the
+follower's joints~\citep{soarm100}. Virtual-reality headset
+teleoperation removes both costs~--- the operator needs no leader arm and
+can stand and move freely~--- and this is the route recent work takes to
+feed imitation learning on such arms~\citep{levr}. LeRobot itself,
+though, ships no native headset teleoperation path, so a system that adds
+one is a practical gap worth filling. We fill it for the bimanual SO-101.
+
 Three properties of the SO-101 shape every design decision. First, each
 arm has only five degrees of freedom (shoulder pan, shoulder lift, elbow
 flex, wrist flex, wrist roll). There is no wrist-yaw joint, so full 6-D
@@ -32,7 +45,26 @@ itself, so rough commands cost hardware life as well as tracking
 fidelity. Smoothness therefore cannot be left to the servos; the
 teleoperation pipeline must deliver it.
 
-This document makes five contributions:
+This paper addresses five concrete challenges, and we flag where each is
+handled so the reader can jump ahead. The first is \emph{wrist
+under-actuation}: the operator's hand carries a full 6-D pose, but the
+5-DoF arm cannot realise every attitude, so the retargeting must project
+hand intent onto attitudes the arm can reach (Section~\ref{sec:method}).
+The second is \emph{command smoothness} on cheap position-controlled
+servos, which the input filtering targets
+(Section~\ref{sec:prelim-filter}). The third is the arm's \emph{small
+reach envelope} against large human gestures, which the workspace
+envelope and its out-of-envelope policies contain
+(Section~\ref{sec:envelope}). The fourth is \emph{dual-arm
+coordination}, hardest near the rig centre where both arms work close to
+their boundaries; the user-study task exercises it directly
+(Section~\ref{sec:exp-userstudy}). The fifth is \emph{operator
+workload}: a comfortable interface must keep re-clutching and mental
+bookkeeping low, which the clutch design manages
+(Section~\ref{sec:clutch}) and the user study measures
+(Section~\ref{sec:exp-userstudy}).
+
+This document makes six contributions:
 \begin{enumerate}
   \item a description of the \emph{armplane} retargeting pipeline:
         grip-clutched absolute-position mapping, input smoothing with
@@ -51,6 +83,11 @@ This document makes five contributions:
         (Section~\ref{sec:telegrip}; the full port, and how it departs
         from the upstream implementation, is specified in
         Appendix~\ref{app:telegrip});
+  \item a \emph{decoupled thumbstick wrist interface} that pairs the
+        relaxed position solver with clutched joint-space wrist trims
+        from the headset thumbsticks, so the operator adjusts gripper
+        roll and flex directly rather than through absolute hand
+        attitude (Section~\ref{sec:thumbstick});
   \item a simulation benchmark comparing six IK methods on tracking,
         wrist-agility, and out-of-envelope suites, with metrics that
         include orientation error and roll phase lag
@@ -79,10 +116,3 @@ The paper is a \emph{living document}: it is the canonical reference for
 the teleoperation side of the repository and is updated in the same
 branch as any change to the methods, mappings, envelope, or benchmark
 results.
-
-
-\textbf{TODO: mention even though LeRobot is quite popular, but it does not support VR teleopration. you can use LeVR paper to support this point.}
-
-\textbf{TODO: clearly state what kind of challenges we are addressing in this paper.}
-
-\textbf{TODO: mention LeRobot So101 becomes an enducational setup for students and hobboiest. However, it is not convenient to collect data with its leader-follower arms setup. Use reference to support this point. }

@@ -10,9 +10,10 @@ happens to the gripper pose at the moment teleoperation engages,
 Section~\ref{sec:ratchet} extends the clutch's ratcheting to unbounded
 gripper roll on the finite-range wrist joint, and
 Section~\ref{sec:envelope} adds the workspace envelope and its
-out-of-envelope policies. The Telegrip-style split IK, an alternative
-method served by the same pipeline, closes the section
-(Section~\ref{sec:telegrip}).
+out-of-envelope policies. Two alternative wrist strategies served by the
+same pipeline close the section: the Telegrip-style split IK
+(Section~\ref{sec:telegrip}) and the decoupled thumbstick wrist
+interface (Section~\ref{sec:thumbstick}).
 
 \subsection{Operator control frame (headset-anywhere)}
 \label{sec:opframe}
@@ -122,6 +123,16 @@ direction \(\hat t = (\cos\theta\cos\phi,\ \cos\theta\sin\phi,\
 orientation axes can then be fully costed in the tracker without risking
 the \(180^\circ\) tip-flip that a zero-costed yaw axis admits.
 
+Because the azimuth follows the arm's live end-effector heading, and the
+roll frame is orthogonalised against the tip, any change in that heading
+also moves the commanded roll. This matters at the reach boundary: while
+a target sits outside the workspace envelope
+(Section~\ref{sec:envelope}) the saturated arm slides along the
+boundary, and its heading would otherwise swing the roll reference with
+it. The pipeline therefore \emph{freezes} the azimuth reference while a
+target is out of envelope, so the commanded roll stays put instead of
+drifting as the arm saturates.
+
 \subsection{Gripper orientation at engagement}
 \label{sec:engagement}
 
@@ -213,7 +224,12 @@ within joint limits, giving \(r_{\min}=\SI{0.084}{m}\),
 cannot silently stale the constants). Point membership, signed margin,
 and nearest-point projection are a handful of vector operations
 (\(\approx\)\SI{36}{\micro s}), computed every tick at \SI{100}{Hz} for
-both arms.
+both arms. The floor \(z_{\mathrm{floor}}\) sits a few millimetres
+\emph{below} the table plane rather than above it: table-contact grasps
+need the gripper to actually reach the surface, and stopping the target
+just short of it would leave a persistent gap. The small allowed
+penetration is bounded by the same per-tick clamp, so the arm never
+drives hard into the table.
 
 \paragraph{Policies.}
 Four selectable policies decide what reaches the IK when the operator's
@@ -251,10 +267,15 @@ repeat at a fixed period while it stays outside, and a single stop cue
 on re-entry. Cue intensity grows smoothly with penetration depth,
 saturating one soft-margin outside the boundary, so a grazing excursion
 feels different from a deep one. The current implementation signals
-through the operator's terminal (an audible bell plus a margin readout);
-controller vibration is the intended endpoint, and the transport for it
-is specified~--- a one-way-to-two-way extension of the existing headset
-link~--- but awaits a rebuild of the headset application.
+audibly through the control computer: a terminal bell plus a margin
+readout, and~--- since a terminal is easy to mute or look away from~--- a
+real speaker tone played on the machine's default audio device. The two
+arms get different pitches (a lower tone for the left arm, a higher one
+for the right), so the operator hears \emph{which} arm has left the
+envelope without reading anything. Controller vibration is still the
+intended endpoint, and the transport for it is specified~--- a
+one-way-to-two-way extension of the existing headset link~--- but awaits
+a rebuild of the headset application.
 \unjustified{} the repeat period (\SI{0.25}{s}) is a convention chosen
 to be noticeable without being irritating; it has not been tested with
 users.
@@ -295,3 +316,68 @@ and per arm:
 The method registers in the same pluggable layer as the QP baselines and
 is selectable everywhere. Appendix~\ref{app:telegrip} details the full
 port and its deliberate departures from the upstream implementation.
+
+\subsection{Decoupled thumbstick wrist interface}
+\label{sec:thumbstick}
+
+Both wrist strategies so far derive the gripper attitude from the
+operator's hand: the armplane mapping from absolute hand orientation, the
+Telegrip split IK from the same constructed target. On the real rig, fine
+control of wrist roll and flex through absolute hand orientation proved
+hard (operator report): small, deliberate twists of the wrist are exactly
+where the missing yaw joint couples attitude into position, and where
+hand tremor is most visible. This interface takes the opposite route. It
+keeps the relaxed position solver (Section~\ref{sec:exp-tracking}) for
+the hand-driven position target, and moves wrist roll and flex onto the
+headset thumbsticks as \emph{joint-space rate trims}. Because a trim
+commands a joint rate directly, it never competes with a task-space cost
+and never excites the wrist-axis coupling.
+
+\paragraph{The trims.}
+Each controller's thumbstick drives that arm's wrist: the horizontal axis
+trims wrist roll and the vertical axis trims wrist flex. Each axis is
+shaped by a deadzone and an exponential curve~--- zero inside the
+deadzone, then rising smoothly from zero at its edge to a full rate at
+full deflection~--- and the shaped value is integrated in joint space at
+that rate. The trims are themselves \emph{clutched}, in the same
+deadman sense as the grip clutch (Section~\ref{sec:clutch}) but per
+stick: while a stick sits beyond its deadzone, that arm's other joints
+are held exactly where they were when the stick engaged and the handle is
+ignored, so only the wrist moves; the moment the stick returns to centre
+the wrist stays where it was left. A forward-kinematics guard protects
+the table: before a flex increment is applied, the pipeline runs the
+candidate configuration through forward kinematics and rejects the
+increment if it would drop the tip below the floor (roll cannot lower the
+tip, so it is never blocked). On release the hand-to-robot correspondence
+re-anchors against the trimmed pose~--- the position delta is zeroed and
+the attitude reference is reset to what the sticks left~--- so handle
+control resumes from the new wrist attitude without a jump.
+
+\paragraph{Attitude between trims.}
+Three behaviours govern the gripper attitude while no stick is deflected,
+selectable by the operator. \emph{Hold} (the default) freezes the
+attitude captured at grip, so the sticks are the only thing that ever
+changes it~--- the steadiest option, and the reason the position solver
+can stay fully relaxed. \emph{Incremental} keeps the wrist-motion mapping
+of Section~\ref{sec:prelim-retarget} and lets the trims add on top.
+\emph{Soft} follows the hand attitude weakly, so a trim decays back
+toward the hand over the following seconds rather than persisting.
+
+\paragraph{Trade-offs against the armplane mapping.}
+The interface buys two things. Clutched precision: a stick trim is a slow,
+bounded joint rate, so the operator can dial in a wrist angle far more
+finely than by twisting a tracked hand. Start-anywhere: in hold mode the
+attitude is anchored at the gripper's own state at grip, so teleoperation
+engages from any hand pose without a wrist snap. The cost is the direct
+hand-attitude correspondence that armplane preserves: outside soft mode
+the gripper no longer mirrors the hand's orientation, so the operator
+must track the wrist attitude through the sticks and the rehearsal triads
+(Section~\ref{sec:system}) rather than proprioception. The full
+algorithm, including the shaping law and the re-anchoring, is in
+Appendix~\ref{app:mymethod}.
+\unjustified{} the deadzone (0.15 of full throw), the roll and flex
+rates (\(60^\circ\)/s and \(45^\circ\)/s at full deflection), and the
+expo exponent (2.0) are initial engineering guesses, not yet tuned
+against the real controllers; and the two trim direction signs are
+unverified on the real robot, so a reversed axis is a one-line
+configuration change rather than a code fix.

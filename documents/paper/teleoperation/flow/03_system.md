@@ -13,11 +13,18 @@ P1  Hardware: rig geometry, the five joints, and the geometric fact
     wrist analytically                                    -> servos
 P2  servo model note (position control, twin gains)       -> software
 P3  Software pipeline: reader thread, filtering, IK thread, per-arm
-    joint threads; clutch semantics; no code paths        -> IK layer
+    joint threads; clutch semantics; the trigger drives the gripper
+    through a CAPPED jaw opening (closed at full press, a bounded
+    fraction of the range when released — fine garment pinching does
+    not need the full splay); no code paths                -> IK layer
 P4  Pluggable IK methods: narrow interface + adapter + rate limiter,
     described functionally (no class names); the native upstream
     Telegrip stack as an independent comparison path (no file paths)
                                                           -> rehearsal
-P5  Rehearsal and benchmark harness: twin scene, cameras, mock
-    device; the idle-sag artifact fix (kept, reworded without paths)
+P5  Rehearsal and benchmark harness: rehearsal and deployment share
+    ONE control stack by construction (only the robot backend differs,
+    so a method behaves identically in both); twin scene, cameras,
+    mock device; the viewer now draws orientation triads for the
+    MEASURED and COMMANDED gripper poses (so the operator sees attitude
+    error directly); the idle-sag artifact fix (kept, reworded)
 ```

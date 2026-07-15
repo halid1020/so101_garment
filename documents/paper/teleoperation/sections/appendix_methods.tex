@@ -185,6 +185,63 @@ and the shoulder pan participates in the position DLS rather than being
 wrapped separately~--- the \(\pm110^\circ\) pan range makes the
 differential step's implicit wrapping sufficient.
 
+\subsection{\texttt{mymethod} — decoupled thumbstick wrist interface}
+\label{app:mymethod}
+
+\emph{Algorithm.} The position target is solved by the
+\texttt{pink\_relaxed} QP (Appendix~\ref{app:pink-relaxed}); the wrist is
+trimmed in joint space from the thumbsticks (Section~\ref{sec:thumbstick}).
+Per side and per tick, each raw stick axis \(v\in[-1,1]\) is shaped by
+\[
+  \operatorname{shape}(v) =
+  \begin{cases}
+    0, & \lvert v\rvert \le d,\\[2pt]
+    \operatorname{sign}(v)\,
+    \bigl((\lvert v\rvert - d)/(1-d)\bigr)^{e}, & \lvert v\rvert > d,
+  \end{cases}
+\]
+with deadzone \(d\) and expo \(e\); the rescaling makes the response
+continuous (starting from zero) at the deadzone edge. The shaped
+horizontal axis integrates wrist roll at rate \(\dot\psi_{\max}\) and the
+vertical axis integrates wrist flex at \(\dot\theta_{\max}\), each with a
+configurable direction sign. A stick is \emph{engaged} whenever either
+raw axis exceeds the deadzone. On the engage edge the arm's five joints
+are latched; while engaged the two wrist joints integrate from the latch
+(clamped to their limits) and the other three are held at the latch, and
+this arm's target is set to the forward-kinematics pose of the resulting
+configuration so the solve is self-consistent and the handle is ignored.
+Before a flex increment is committed, the candidate configuration is run
+through forward kinematics and the increment is discarded if the tip
+would fall below \(z_{\mathrm{floor}}\). On the release edge the
+hand-to-robot calibration is recomputed against the frozen pose (zeroing
+the position delta) and the active attitude reference is reset to the
+trimmed attitude.
+
+\emph{Parameters.} Deadzone \(d=0.15\), roll rate
+\(\dot\psi_{\max}=60^\circ\)/s, flex rate \(\dot\theta_{\max}=45^\circ\)/s,
+expo \(e=2.0\), and both direction signs \(+1\).
+\unjustified{} all five are initial engineering guesses set before any
+hardware session; the rates and deadzone want tuning from operator feel,
+and the signs are unverified on the real robot (kept in configuration so
+a reversed axis is a one-line change).
+
+\emph{Initialisation/reset.} Shares the common engagement behaviour of
+Section~\ref{sec:engagement}: the position target anchors at the
+end-effector and the attitude blends over the activation window. The
+per-side engage state clears whenever teleoperation recalibrates.
+
+\emph{Attitude modes.} \emph{Hold} freezes the gripper rotation captured
+at grip and lets only the trims change it; \emph{incremental} runs the
+wrist-motion mapping with the trims added; \emph{soft} runs the relaxed
+absolute follow so trims decay back toward the hand attitude. Hold is the
+default and pairs best with the fully relaxed position solver.
+
+\emph{Failure modes.} Outside soft mode the gripper no longer tracks the
+hand's attitude, so the operator loses direct orientation
+correspondence; the trim signs are unverified on hardware; and, as for
+every relaxed method, the residual orientation error is bounded but
+non-zero.
+
 \subsection{Common input processing (all methods)}
 \label{app:common-input}
 
@@ -202,6 +259,17 @@ height lock, immediately before targets reach the IK.
 \unjustified{} the One-Euro values (0.8, 5.0, 0.9) were
 tuned by feel on the rig; a principled sweep against the wrist-agility
 suite remains future work.
+
+\paragraph{Runtime orientation-cost override.}
+The QP trackers expose their orientation-task weight as a single scalar
+the operator can override at launch, without editing any configuration
+file. It retunes how firmly the relaxed methods hold gripper attitude:
+raising it from the relaxed default trades a little position accuracy for
+tighter pitch and roll tracking. The override is what the thumbstick
+interface's incremental mode uses to lift the attitude weight above the
+near-position-only relaxed value, so the incremental wrist motion is
+actually tracked between trims; methods with no Pink orientation task
+ignore it.
 
 \paragraph{Parameter provenance.}
 Every parameter above lives in commented configuration files in the

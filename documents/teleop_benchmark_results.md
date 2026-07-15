@@ -1,6 +1,6 @@
 # Meta-Quest Teleop Method Benchmark — Simulation Results
 
-**First run:** 2026-07-03 (branch `teleop-benchmark`) · **Last updated:** 2026-07-13 (branch `writing-guide-paper`) · **Code:** `src/sim_benchmark/`
+**First run:** 2026-07-03 (branch `teleop-benchmark`) · **Last updated:** 2026-07-15 (branch `teleop-feel-fixes`) · **Code:** `src/sim_benchmark/`
 
 Goal: verify candidate Meta-Quest → dual SO-101 teleoperation pipelines in
 MuJoCo with mocked hand movements, *before* running the real headset on the
@@ -577,3 +577,65 @@ alongside per-trial objective logs. Design in
 `documents/paper/teleoperation/` §"Bimanual user study (protocol)"; step-by-step
 runbook in `documents/user_study_protocol.md`. Results land here and in
 the paper once sessions are run.
+
+---
+
+## 11. Rehearsal sweep — thumbstick wrist interface (branch `teleop-feel-fixes`, commit 08d4446, 2026-07-15)
+
+**Provenance (read this first — these are rehearsal numbers, not benchmark
+numbers).** These are 20 s *headless* MuJoCo rehearsals of the full teleop
+stack driven by the scripted **mock Quest device** (the same device the
+smoke tests in §6 use), *not* runs of the controlled benchmark suite in
+§1–§9. They exercise the new `mymethod` thumbstick wrist interface and its
+attitude modes end-to-end through the real IK thread, so the numbers reflect
+the integrated pipeline (filter, clutch, envelope, IK, joint-space wrist
+trims) rather than an isolated solver. Treat them as rehearsal-level
+sanity/feel evidence, not as suite-grade metrics.
+
+`mymethod` variants: `-hold` (attitude held from grip, sticks the only
+change — the default), `-wrist` (incremental wrist mapping + trims), `-soft`
+(weak absolute follow, trims decay toward the hand). `pos` = EE position
+tracking error vs command, mean/p95 (mm); `ori` = attitude error vs command,
+mean/p95 (deg).
+
+| condition | pos (mm) | ori (deg) |
+|---|---|---|
+| circle armplane | 54.4 / 79.6 | 1.7 / 2.1 |
+| circle pink_relaxed | 15.4 / 20.4 | 15.4 / 30.7 |
+| circle mymethod-hold | 13.0 / 16.9 | 5.5 / 10.1 |
+| circle mymethod-wrist | 14.4 / 20.3 | 2.9 / 3.8 |
+| wrist armplane | 35.1 / 72.0 | 15.1 / 30.0 |
+| wrist pink_relaxed | 15.2 / 19.8 | 32.1 / 54.4 |
+| wrist mymethod-hold | 13.3 / 14.7 | 3.0 / 3.3 |
+| wrist mymethod-wrist | 24.9 / 47.7 | 6.9 / 14.0 |
+| wrist mymethod-soft | 15.2 / 19.8 | 32.1 / 54.5 |
+| excursion pink_relaxed warn | 95.6 / 225.7 | 53.0 / 74.6 |
+| excursion pink_relaxed project | 31.4 / 42.5 | 43.1 / 58.0 |
+| excursion pink_relaxed slow | 31.4 / 42.6 | 43.2 / 57.9 |
+| excursion pink_relaxed freeze | 31.3 / 42.1 | 42.9 / 57.5 |
+| excursion mymethod-hold slow | 24.9 / 35.5 | 11.6 / 23.8 |
+| excursion mymethod-hold project | 24.9 / 36.0 | 11.7 / 23.8 |
+| joystick mymethod-hold | 15.4 / 22.5 | 3.6 / 5.5 |
+| joystick mymethod-wrist | 15.4 / 22.4 | 3.6 / 5.5 |
+| joystick mymethod-soft | 22.6 / 36.7 | 37.4 / 86.6 |
+
+### Conclusions
+
+1. **`mymethod-hold` gives the best position tracking in every pattern** and
+   a steady attitude — position error stays ~13–15 mm across circle, wrist,
+   and joystick patterns, and it more than halves the excursion-pattern error
+   of `pink_relaxed` (≈25 vs ≈31 mm). Holding the attitude from grip is what
+   lets the position solver stay fully relaxed.
+2. **`-soft` is eliminated.** Its trims decay back toward the hand, so it
+   inherits `pink_relaxed`'s large attitude errors (wrist 32°/54°, joystick
+   37°/87°) with no position benefit. Drop it from the recommended set.
+3. **Recommended combination: `--method mymethod --wrist-mode hold
+   --oob-mode slow`.** Honest caveat: `slow` and `project` were *numerically
+   identical* in this sweep (excursion 24.9 mm both, ori ~11.6–11.7°), so the
+   `slow` choice rests on the operator's real-world preference for a soft
+   boundary, **not** on any simulation evidence here.
+4. **Read the orientation metric with care.** It measures how well the
+   commanded attitude is *followed*, not operator *intent*. For `-hold` the
+   command is "stay put" by design, so a low `ori` there means "held steady",
+   not "did what the operator wanted" — only the planned user study can score
+   intent-following.

@@ -6,7 +6,9 @@ P1  bimanual teleoperation of low-cost arms: joint-space
     leader-follower (ALOHA, Mobile ALOHA, GELLO) vs task-space
     VR/vision retargeting (AnyTeleop, Open-TeleVision); where our
     Quest-based task-space approach sits and why (no leader hardware,
-    operator moves freely)                                -> P2
+    operator moves freely); LeVR added as the VR-teleop-for-LeRobot
+    point of comparison (headset data collection feeding imitation
+    learning), which our system parallels for the SO-101      -> P2
 P2  controlling under-actuated (5-DoF) wrists: Telegrip's split IK on
     the SO-100 lineage; the vr-teleop-kit DLS family; how full 6-D
     trackers inherit the over-constraint; our armplane construction
