@@ -6,9 +6,15 @@ Pure Python — OOEStatus objects are constructed directly; no MuJoCo, no adb.
 """
 
 import unittest
+from unittest import mock
 
 from common.configs import FEEDBACK_REPEAT_PERIOD_S, WORKSPACE_SOFT_MARGIN
-from common.envelope_feedback import NullFeedback, RateLimitedFeedback
+from common.envelope_feedback import (
+    CompositeFeedback,
+    NullFeedback,
+    RateLimitedFeedback,
+    SpeakerBeepFeedback,
+)
 from common.workspace_envelope import OOEStatus
 
 
@@ -92,6 +98,72 @@ class TestRateLimitedFeedback(unittest.TestCase):
         nf = NullFeedback()
         nf.notify("left", _status(-0.02), t=0.0)  # must not raise
         nf.reset()
+
+
+class TestSpeakerBeepFeedback(unittest.TestCase):
+    def _make(self) -> tuple[SpeakerBeepFeedback, list[str]]:
+        """Build a SpeakerBeepFeedback with a fake player recording wav paths."""
+        played: list[str] = []
+        fb = SpeakerBeepFeedback(player=played.append)
+        return fb, played
+
+    def test_rising_edge_plays_once(self) -> None:
+        fb, played = self._make()
+        fb.notify("left", _status(0.01), t=0.0)  # inside: silence
+        self.assertEqual(played, [])
+        fb.notify("left", _status(-0.02), t=1.0)  # edge: one beep
+        self.assertEqual(len(played), 1)
+        self.assertIn("left", played[0])
+
+    def test_side_selects_pitch_wav(self) -> None:
+        fb, played = self._make()
+        fb.notify("right", _status(-0.02), t=0.0)
+        self.assertEqual(len(played), 1)
+        self.assertIn("right", played[0])
+
+    def test_sustained_outside_throttles(self) -> None:
+        period = FEEDBACK_REPEAT_PERIOD_S
+        fb, played = self._make()
+        fb.notify("left", _status(-0.02), t=0.0)  # edge
+        fb.notify("left", _status(-0.02), t=period * 0.5)  # too soon
+        self.assertEqual(len(played), 1)
+        fb.notify("left", _status(-0.02), t=period * 1.1)  # due
+        self.assertEqual(len(played), 2)
+
+    def test_reentry_and_reset_play_nothing_extra(self) -> None:
+        fb, played = self._make()
+        fb.notify("left", _status(-0.02), t=0.0)  # edge: one beep
+        fb.notify("left", _status(0.01), t=0.1)  # re-entry: no beep (stop)
+        self.assertEqual(len(played), 1)
+        fb.reset()
+        fb.notify("left", _status(-0.02), t=0.2)  # fresh edge after reset
+        self.assertEqual(len(played), 2)
+
+    def test_missing_player_degrades_silently(self) -> None:
+        # Force player detection to fail: no CLI player is found.
+        with mock.patch("common.envelope_feedback.shutil.which", return_value=None):
+            fb = SpeakerBeepFeedback()
+        # No player: emitting must be a silent no-op, never raising.
+        fb.notify("left", _status(-0.02), t=0.0)
+        fb.notify("left", _status(0.01), t=0.1)
+        fb.reset()
+
+
+class TestCompositeFeedback(unittest.TestCase):
+    def test_fans_out_notify_and_reset(self) -> None:
+        left_played: list[str] = []
+        right_played: list[str] = []
+        a = SpeakerBeepFeedback(player=left_played.append)
+        b = SpeakerBeepFeedback(player=right_played.append)
+        comp = CompositeFeedback([a, b])
+        comp.notify("left", _status(-0.02), t=0.0)
+        self.assertEqual(len(left_played), 1)
+        self.assertEqual(len(right_played), 1)
+        # reset() must clear both backends' edge state (fresh edge re-fires).
+        comp.reset()
+        comp.notify("left", _status(-0.02), t=0.1)
+        self.assertEqual(len(left_played), 2)
+        self.assertEqual(len(right_played), 2)
 
 
 if __name__ == "__main__":

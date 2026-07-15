@@ -30,7 +30,12 @@ from common.configs import (
     NEUTRAL_JOINT_ANGLES_DUAL,
     WORKSPACE_OOB_MODE,
 )
-from common.envelope_feedback import NullFeedback, TerminalBellFeedback
+from common.envelope_feedback import (
+    CompositeFeedback,
+    NullFeedback,
+    SpeakerBeepFeedback,
+    TerminalBellFeedback,
+)
 from common.pink_ik_solver import PinkIKSolver
 from common.workspace_envelope import OOE_POLICIES
 from sim_benchmark.methods import METHODS  # type: ignore[attr-defined]
@@ -107,12 +112,26 @@ def add_teleop_cli_args(
     parser.add_argument(
         "--envelope-feedback",
         type=str,
-        default="bell",
-        choices=["bell", "none"],
-        help="Operator out-of-envelope cueing: 'bell' rings the terminal "
-        "bell with debounced intensity-shaped cues; 'none' disables it "
-        "(the throttled diagnostic print stays either way).",
+        default="audio",
+        choices=["audio", "bell", "none"],
+        help="Operator out-of-envelope cueing: 'audio' (default) rings the "
+        "terminal bell AND plays an audible speaker beep (lower tone = LEFT "
+        "arm, higher = RIGHT); 'bell' is the terminal bell only; 'none' "
+        "disables it (the throttled diagnostic print stays in every case).",
     )
+
+
+def _build_envelope_feedback(choice: str) -> Any:
+    """Map the ``--envelope-feedback`` choice to a feedback backend.
+
+    'audio' runs the terminal bell and the speaker beep together; 'bell' is the
+    terminal bell alone; 'none' disables operator cueing.
+    """
+    if choice == "audio":
+        return CompositeFeedback([TerminalBellFeedback(), SpeakerBeepFeedback()])
+    if choice == "bell":
+        return TerminalBellFeedback()
+    return NullFeedback()
 
 
 def _resolve_method(method: str, wrist_mode: str) -> tuple[str, str, bool]:
@@ -209,11 +228,7 @@ def create_teleop_stack(
 
     thread_kwargs: dict[str, Any] = {
         "oob_mode": args.oob_mode,
-        "envelope_feedback": (
-            TerminalBellFeedback()
-            if args.envelope_feedback == "bell"
-            else NullFeedback()
-        ),
+        "envelope_feedback": _build_envelope_feedback(args.envelope_feedback),
         "orientation_mode": orientation_mode,
         "joystick_wrist": joystick_wrist,
     }
