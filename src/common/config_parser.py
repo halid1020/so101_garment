@@ -20,6 +20,10 @@ _IK_CONF_DIR = Path(__file__).resolve().parent.parent / "ik_conf"
 _DEFAULT_SHARED_PATH = _IK_CONF_DIR / "teleop_shared.yaml"
 _METHODS_DIR = _IK_CONF_DIR / "methods"
 
+# Directory holding the data-collection (recording) YAML.
+_CONF_DIR = Path(__file__).resolve().parent.parent / "conf"
+_DEFAULT_RECORDING_PATH = _CONF_DIR / "recording.yaml"
+
 # Frozen schema for teleop_shared.yaml: section -> exact set of allowed keys.
 # Kept in lock-step with the YAML and with the constant bindings in
 # common/configs.py; test/unit/test_config_yaml.py guards it.
@@ -113,6 +117,19 @@ _METHOD_SCHEMA: dict[str, frozenset[str]] = {
 }
 
 
+# Frozen schema for recording.yaml. The top-level sections and their keys are
+# fixed; the "cameras" section is a map of arbitrary stream names, each of whose
+# value must match _CAMERA_SCHEMA exactly. Guarded by
+# test/unit/test_recording_config.py.
+_RECORDING_SCHEMA: dict[str, frozenset[str]] = {
+    "dataset": frozenset({"fps", "image_writer_threads_per_camera", "robot_type"}),
+    "sidecar": frozenset({"enabled", "rate_hz", "include_hw_frame_goal"}),
+}
+_CAMERA_SCHEMA: frozenset[str] = frozenset(
+    {"enabled", "device", "width", "height", "fps", "rotate180"}
+)
+
+
 def load_ik_config(config_path: str) -> dict:
     """Loads the teleoperation and IK parameters from a YAML file.
 
@@ -189,4 +206,31 @@ def load_method_params(method_name: str) -> dict:
     cfg_path = _METHODS_DIR / f"{method_name}.yaml"
     data = _load_yaml_strict(cfg_path)
     _validate_keys(cfg_path, method_name, data, _METHOD_SCHEMA[method_name])
+    return data
+
+
+def load_recording_config(path: str | None = None) -> dict:
+    """Load and strictly validate the data-collection (recording) config.
+
+    Validates the top-level sections (``dataset``, ``sidecar``, ``cameras``)
+    and every key within each. The ``cameras`` section is a map of arbitrary
+    stream names, each of which must be keyed exactly by the camera schema.
+    Same loud-failure regime as ``load_teleop_shared``: any missing file,
+    missing key, or unknown key raises a clear error naming the offending key.
+    """
+    cfg_path = Path(path) if path is not None else _DEFAULT_RECORDING_PATH
+    data = _load_yaml_strict(cfg_path)
+    _validate_keys(
+        cfg_path, "top-level", data, frozenset(_RECORDING_SCHEMA) | {"cameras"}
+    )
+    for section, expected in _RECORDING_SCHEMA.items():
+        _validate_keys(cfg_path, section, data[section], expected)
+
+    cameras = data["cameras"]
+    if not isinstance(cameras, dict):
+        raise ValueError(f"{cfg_path}: section 'cameras' must be a mapping")
+    if not cameras:
+        raise ValueError(f"{cfg_path}: section 'cameras' must not be empty")
+    for cam_name, cam_cfg in cameras.items():
+        _validate_keys(cfg_path, f"cameras.{cam_name}", cam_cfg, _CAMERA_SCHEMA)
     return data

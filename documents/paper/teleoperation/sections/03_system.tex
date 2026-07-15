@@ -46,8 +46,16 @@ Section~\ref{sec:method} and hands 10-DoF joint targets to per-arm joint
 threads (real robot) or to the MuJoCo scene (simulation rehearsal).
 Holding both grips engages teleoperation (the \emph{clutch},
 Section~\ref{sec:clutch}); the first grip of a session calibrates the
-handle axes; buttons toggle arm enablement and a home pose; triggers
-drive the grippers. The trigger maps to a \emph{capped} jaw opening~---
+handle axes; dedicated buttons enable the arms (torque on, ready pose)
+and park them (rest pose, torque off), one button brackets recorded
+demonstration episodes around a homing move, and another re-homes the
+arms without interrupting a recording; triggers drive the grippers. An
+optional recording layer captures each demonstration as an episode in a
+standard imitation-learning dataset format at a fixed frame rate, and
+writes alongside it a full-rate log of every control signal (joint
+states and commands, end-effector poses, and the raw operator inputs)
+for offline analysis; an episode interrupted by a fault is discarded
+automatically and the arms return to rest. The trigger maps to a \emph{capped} jaw opening~---
 fully pressed closes the jaws, fully released opens them to only a
 fraction of their mechanical range~--- because the full splay is wider
 than garment grasps need and makes fine pinching awkward; closing is

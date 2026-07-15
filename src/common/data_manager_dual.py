@@ -92,6 +92,9 @@ class CameraState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.rgb_images: dict[str, np.ndarray] = {}
+        # time.monotonic() of the most recent frame per camera name, used by
+        # the recorder to detect stale streams.
+        self.rgb_timestamps: dict[str, float] = {}
 
 
 class LeaderMappedStateDual:
@@ -99,6 +102,24 @@ class LeaderMappedStateDual:
         self._lock = threading.Lock()
         self.joint_angles: dict[str, np.ndarray | None] = {"left": None, "right": None}
         self.gripper_open: dict[str, float | None] = {"left": None, "right": None}
+
+
+class LastSentCommandState:
+    """Latest joint-space command actually written to the motors, per side.
+
+    Published by ``threads/dual_joint_state.py`` after each successful
+    ``sync_write`` of Goal_Position, and consumed by the recorder's ``action``
+    feature (used only while fresh; see the recorder's action-fallback rule).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # URDF-space 5-DOF body targets (degrees) per side.
+        self.urdf_deg: dict[str, np.ndarray | None] = {"left": None, "right": None}
+        # Commanded gripper open fraction (0-1) per side.
+        self.gripper_open: dict[str, float | None] = {"left": None, "right": None}
+        # time.monotonic() timestamp of the write per side (for freshness).
+        self.t_mono: dict[str, float | None] = {"left": None, "right": None}
 
 
 class DualDataManager:
@@ -115,6 +136,7 @@ class DualDataManager:
         self._ik_state = IKState()
         self._camera_state = CameraState()
         self._leader_mapped_state = LeaderMappedStateDual()
+        self._last_sent_command = LastSentCommandState()
         self._shutdown_event = threading.Event()
         self._on_change_callback: Callable[
             [str, dict[str, Any], float], None
@@ -135,6 +157,22 @@ class DualDataManager:
     def set_rgb_image(self, image: np.ndarray, camera_name: str) -> None:
         with self._camera_state._lock:
             self._camera_state.rgb_images[camera_name] = image.copy()
+            self._camera_state.rgb_timestamps[camera_name] = time.monotonic()
+
+    def get_rgb_image_age(
+        self, camera_name: str, now_mono: float | None = None
+    ) -> float | None:
+        """Age in seconds of the latest frame for ``camera_name``.
+
+        Returns ``None`` if no frame has ever been published for that camera
+        (used by the recorder to reject stale/absent streams). ``now_mono``
+        defaults to ``time.monotonic()``.
+        """
+        if now_mono is None:
+            now_mono = time.monotonic()
+        with self._camera_state._lock:
+            ts = self._camera_state.rgb_timestamps.get(camera_name)
+            return None if ts is None else now_mono - ts
 
     # ── Controller ──────────────────────────────────────────────────────────────
 
@@ -143,6 +181,25 @@ class DualDataManager:
             raise ValueError("hand must be 'left' or 'right'")
         with self._controller_state._lock:
             tf = self._controller_state.transform[hand]
+            return (
+                tf.copy() if tf is not None else None,
+                self._controller_state.grip_value[hand],
+                self._controller_state.trigger_value[hand],
+            )
+
+    def get_controller_state_raw(
+        self, hand: str
+    ) -> tuple[np.ndarray | None, float, float]:
+        """Return the UNFILTERED controller transform, grip and trigger.
+
+        Mirrors :meth:`get_controller_state` but returns the raw handle pose
+        (before the One-Euro filter), used by the sidecar to log the operator
+        input at full fidelity.
+        """
+        if hand not in ("left", "right"):
+            raise ValueError("hand must be 'left' or 'right'")
+        with self._controller_state._lock:
+            tf = self._controller_state.transform_raw[hand]
             return (
                 tf.copy() if tf is not None else None,
                 self._controller_state.grip_value[hand],
@@ -411,6 +468,48 @@ class DualDataManager:
             return (
                 angles.copy() if angles is not None else None,
                 self._leader_mapped_state.gripper_open[side],
+            )
+
+    # ── Last Sent Command ───────────────────────────────────────────────────────
+
+    def set_last_sent_command(
+        self,
+        side: str,
+        arm_urdf_deg_5: np.ndarray,
+        gripper_open: float,
+        t_mono: float,
+    ) -> None:
+        """Publish the joint-space command just written to one arm's motors.
+
+        Called from ``threads/dual_joint_state.py`` after a successful
+        ``sync_write``. ``arm_urdf_deg_5`` are the 5 body-joint targets in
+        URDF degrees, ``gripper_open`` the commanded 0-1 open fraction, and
+        ``t_mono`` a ``time.monotonic()`` timestamp for freshness checks.
+        """
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        with self._last_sent_command._lock:
+            self._last_sent_command.urdf_deg[side] = np.asarray(
+                arm_urdf_deg_5, dtype=np.float64
+            ).copy()
+            self._last_sent_command.gripper_open[side] = float(gripper_open)
+            self._last_sent_command.t_mono[side] = float(t_mono)
+
+    def get_last_sent_command(
+        self, side: str
+    ) -> tuple[np.ndarray | None, float | None, float | None]:
+        """Return ``(urdf_deg_5, gripper_open, t_mono)`` for one arm.
+
+        Any element is ``None`` before the first command has been sent.
+        """
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        with self._last_sent_command._lock:
+            angles = self._last_sent_command.urdf_deg[side]
+            return (
+                angles.copy() if angles is not None else None,
+                self._last_sent_command.gripper_open[side],
+                self._last_sent_command.t_mono[side],
             )
 
     # ── System ──────────────────────────────────────────────────────────────────

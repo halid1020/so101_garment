@@ -1,0 +1,97 @@
+# Data-collection (LeRobot recording) configuration for the dual SO-101 rig.
+#
+# This file configures the episode-based recorder driven from the Quest handles
+# (tool/meta_quest_teleopration.py --record). It is SEPARATE from the teleop
+# tuning YAMLs (src/ik_conf/*): camera device indices are per-machine hardware
+# wiring, not teleop tuning, and must be set for each rig.
+#
+# Every key is validated strictly at load time (common.config_parser
+# .load_recording_config): a missing or unknown key is a hard error naming the
+# offending key. British English throughout.
+
+# LeRobotDataset-level settings (one dataset, one integer fps).
+dataset:
+  # Recording rate for the training-ready dataset (integer frames per second).
+  # LeRobot supports exactly one fps per dataset; the full-rate control signals
+  # live in the ~100 Hz sidecar parquet instead (see the sidecar section).
+  fps: 30
+  # Async image-writer threads spawned PER enabled camera. PNG encoding is
+  # offloaded to these threads so the record loop never blocks on disk.
+  image_writer_threads_per_camera: 2
+  # Robot-type string stored in the dataset metadata (informational).
+  robot_type: so101_dual
+
+# Full-rate sidecar: a per-episode parquet at ~100 Hz with wall-clock
+# timestamps, holding the complete control signals for offline analysis. It is
+# stored inside the dataset folder (<root>/extra/) but is NOT part of the
+# LeRobotDataset features, so it never reaches the policy.
+sidecar:
+  # Master switch; --no-sidecar on the command line overrides this to false.
+  enabled: true
+  # Target sampling rate (Hz) of the sidecar thread. ~100 Hz captures the
+  # control signals well above the 30 Hz dataset rate.
+  rate_hz: 100.0
+  # When true, also record the hardware-frame joint goal (cmd_hw_*) alongside
+  # the URDF-space command. Useful for debugging the HW<->URDF boundary.
+  include_hw_frame_goal: true
+
+# Camera streams. Each entry maps a stream NAME to its capture settings. The
+# name becomes the LeRobotDataset feature key (observation.images.<name>).
+# Device indices are PER-MACHINE PLACEHOLDERS — you MUST set the correct
+# /dev/videoN index for each stream on your rig (a -1 device is only valid for
+# a disabled stream). --enable-camera / --disable-camera override "enabled".
+cameras:
+  # Overhead / scene RGB camera.
+  scene:
+    enabled: true        # capture this stream
+    device: 0            # PLACEHOLDER: /dev/video0 — set for your machine
+    width: 640           # forced capture width (px); a warn-once resize applies
+    height: 480          # forced capture height (px)
+    fps: 30              # requested device frame rate (Hz)
+    rotate180: false     # rotate the frame 180 deg (camera mounted upside down)
+  # Left wrist RGB camera (follower_1 = LEFT arm).
+  wrist_left:
+    enabled: true
+    device: 2            # PLACEHOLDER: set for your machine
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
+  # Right wrist RGB camera (follower_0 = RIGHT arm).
+  wrist_right:
+    enabled: true
+    device: 4            # PLACEHOLDER: set for your machine
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
+  # Tactile cameras 0..3 — HARDWARE NOT ATTACHED YET, disabled by default.
+  # --tactile enables all four; set real device indices before enabling.
+  tactile_0:
+    enabled: false
+    device: -1           # PLACEHOLDER: no device wired yet
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
+  tactile_1:
+    enabled: false
+    device: -1           # PLACEHOLDER: no device wired yet
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
+  tactile_2:
+    enabled: false
+    device: -1           # PLACEHOLDER: no device wired yet
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
+  tactile_3:
+    enabled: false
+    device: -1           # PLACEHOLDER: no device wired yet
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false

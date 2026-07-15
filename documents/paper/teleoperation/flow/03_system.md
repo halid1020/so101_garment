@@ -13,7 +13,11 @@ P1  Hardware: rig geometry, the five joints, and the geometric fact
     wrist analytically                                    -> servos
 P2  servo model note (position control, twin gains)       -> software
 P3  Software pipeline: reader thread, filtering, IK thread, per-arm
-    joint threads; clutch semantics; the trigger drives the gripper
+    joint threads; clutch semantics; button roles (enable to ready /
+    park to rest / episode bracket / re-home without interrupting a
+    recording); optional recording layer — fixed-rate episode dataset
+    in a standard imitation-learning format plus a full-rate log of
+    every control signal; the trigger drives the gripper
     through a CAPPED jaw opening (closed at full press, a bounded
     fraction of the range when released — fine garment pinching does
     not need the full splay); no code paths                -> IK layer

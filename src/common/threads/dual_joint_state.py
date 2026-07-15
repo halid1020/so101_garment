@@ -154,6 +154,15 @@ def dual_joint_state_thread(
                             bus.sync_write(
                                 "Goal_Position", goal, normalize=True, num_retry=2
                             )
+                        # Publish the command actually sent (URDF-space body
+                        # targets + gripper open fraction) for the recorder's
+                        # 'action' feature. Only after a successful write.
+                        data_manager.set_last_sent_command(
+                            arm_side,
+                            np.asarray(arm_targets, dtype=np.float64),
+                            gripper_target,
+                            time.monotonic(),
+                        )
                     except ConnectionError as e:
                         # Transient write failure: drop this command tick —
                         # the next one supersedes it anyway.
