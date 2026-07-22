@@ -1,0 +1,50 @@
+\section{Experiments}
+\label{sec:experiments}
+
+The experiment asks two questions: do contemporary imitation policies
+--- ACT~\citep{zhao2023aloha}, Diffusion
+Policy~\citep{chi2023diffusion}, and the vision-language-action model
+$\pi_{0.5}$~\citep{pi05} --- learn the two tasks from oracle
+demonstrations collected through the teleoperation pipeline; and does
+the simple/full mode split localise failures correctly, with simple
+mode catching pipeline bugs and full mode measuring generalisation.
+This section fixes the protocol; the results subsection is populated
+from the long-run report as the living document grows.
+
+\paragraph{Protocol.}
+The campaign runs per mode (simple, then full), per task, per policy:
+\begin{enumerate}
+  \item \textbf{Oracle gate.} Both oracles are dry-run on thirty
+    scenarios per task. The experiment aborts if the
+    teleoperation-pipeline oracle drops below \SI{95}{\percent} on the
+    single task or \SI{70}{\percent} on the relay. The relay bar sits
+    below the oracle's measured per-attempt band (roughly
+    \SIrange{75}{86}{\percent}) so a thirty-episode sample's noise
+    cannot false-abort, yet far above the failure regime of a broken
+    oracle.
+  \item \textbf{Collection.} Simple mode collects on its one scenario;
+    full mode collects one demonstration per training seed. Failed
+    episodes are discarded and retried; only verified successes are
+    saved.
+  \item \textbf{Training.} ACT and Diffusion Policy train from scratch;
+    $\pi_{0.5}$ is adapted from its published base with low-rank
+    adapters, full finetuning being out of memory reach
+    (Section~\ref{sec:diff-tooling}). All training uses the
+    LeRobot framework~\citep{cadene2024lerobot}.
+  \item \textbf{Checkpoint selection.} Every saved checkpoint rolls out
+    on the validation seeds; the best checkpoint per cell (ties to the
+    later step) advances.
+  \item \textbf{Evaluation.} The selected checkpoint runs once per
+    evaluation seed --- thirty held-out scenarios in full mode, thirty
+    trials of the fixed scenario in simple mode --- with a video saved
+    per episode. Success uses the collection criterion unchanged.
+\end{enumerate}
+
+\paragraph{Results.}
+\textit{TODO: populate from the long-run report (success-rate table per
+mode\,$\times$\,task\,$\times$\,policy with placement-error statistics,
+per-seed success maps, validation curves, and head-to-head episode
+renders) once the full campaign completes on the training machine. The
+plumbing of every cell of this protocol --- collection, training,
+checkpoint selection, evaluation, reporting --- has been verified end to
+end at smoke scale.}

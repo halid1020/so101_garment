@@ -1,0 +1,54 @@
+\section{Introduction}
+\label{sec:intro}
+
+Learning visuomotor policies from demonstrations involves a long chain
+of software: dataset schemas, image encoding, normalisation statistics,
+checkpointing, and an evaluation harness that must observe the world
+exactly as training did. Each link can fail silently, and on a real
+robot each failure is discovered only after hours or days of human
+demonstration collection have already been spent. This paper describes
+how we de-risk that campaign for our bimanual garment-manipulation rig:
+we build the entire collect--train--evaluate loop inside the rig's
+digital twin, drive it with scripted oracle demonstrators, and require
+the loop to work end to end --- through three different policy families
+--- before a single real demonstration is recorded.
+
+The starting point is the platform described by our companion
+teleoperation paper~\citep{so101teleop}: a pair of low-cost
+five-degree-of-freedom arms on a printed rig, teleoperated from Meta
+Quest hand controllers through a clutched retargeting stack. The rig has
+a faithful digital twin: a single parametric CAD description generates
+both the printed parts and the simulation model, so the simulated
+geometry, camera poses and arm bases match the physical build by
+construction.
+
+A twin alone, however, is not a training environment. It needs an object
+the grippers can actually hold under simulated contact; tasks whose
+success is measurable; demonstrations whose distribution matches what
+teleoperation will later produce; and an evaluation protocol that cannot
+leak training scenarios. Building those four things --- and making them
+reliable enough to train on --- is the subject of this paper.
+
+Our contributions are:
+\begin{itemize}
+  \item a contact-manipulation extension of the digital twin: a graspable
+    cube payload, fingertip contact pads, a bounded pinch force, and a
+    timing design in which one control tick is an exact number of
+    physics substeps (Section~\ref{sec:environment});
+  \item two tasks with a seeded scenario generator and a disjoint
+    train/validation/evaluation seed protocol, including a deliberate
+    overfit-one-scenario mode that separates pipeline bugs from data
+    problems (Section~\ref{sec:tasks});
+  \item a scripted oracle that demonstrates through the \emph{full
+    production teleoperation pipeline} by inverting the retargeting map,
+    with closed-loop grasp and placement corrections standing in for the
+    operator's eyes, plus a deterministic direct-drive fallback
+    (Section~\ref{sec:oracles});
+  \item an honest catalogue of every difficulty met while making
+    contact-based demonstration collection reliable, and its resolution
+    (Section~\ref{sec:difficulties});
+  \item an experiment protocol --- oracle gate, gated collection,
+    per-checkpoint validation, held-out evaluation --- whose results
+    section grows with this living document
+    (Section~\ref{sec:experiments}).
+\end{itemize}

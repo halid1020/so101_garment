@@ -1,0 +1,19 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We built a training environment inside our rig's digital twin that
+proves the entire imitation-learning loop before any real demonstration
+exists: contact-based single-arm and bimanual-relay tasks, a scripted
+oracle that demonstrates through the full production teleoperation
+pipeline via a closed-form inversion of its retargeting, closed-loop
+corrections that stand in for the operator's eyes, and gated collection
+that admits only verified successes under a leak-proof seed protocol.
+The difficulties catalogue records every failure met on the way ---
+solver steady-state error defeating small-object grasps, correction
+wind-up and dragging through pipeline lag, an envelope floor silently
+rejecting table-level targets, and a series of training-stack pitfalls
+--- so that the environment can be rebuilt without rediscovering them.
+The experiments section will grow with the living document as the full
+campaign runs; the next step beyond it is the one the environment was
+built to de-risk: collecting real teleoperated demonstrations on the
+physical rig and finetuning the same policy families on them.

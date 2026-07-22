@@ -1,0 +1,69 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+
+% Guideline convention: flag design choices that lack a solid reason.
+\newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
+
+\title{A Digital-Twin Training Environment for Bimanual
+Visuomotor Policies: Contact-Based Tasks, Pipeline-Authentic Oracles,
+and Gated Demonstration Collection}
+
+\author{so101\_garment project\thanks{Living document: this paper is the
+canonical description of the simulation training environment in the
+\texttt{so101\_garment} repository and MUST be updated, in the same
+branch, whenever the simulated tasks, oracle demonstrators, collection
+gating, or experiment protocol change. The repository's writing
+guideline governs its style. The teleoperation system it builds on has
+its own living paper in the same repository.}}
+
+\date{Last updated: \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Imitation-learning pipelines for bimanual manipulation fail late and
+expensively when their first end-to-end test uses real-robot
+demonstrations: schema mismatches, normalisation errors and evaluation
+bugs all surface only after days of collection. We instead prove the
+whole collect--train--evaluate loop inside a digital twin of our dual
+five-degree-of-freedom rig before any hardware demonstration exists. The
+environment adds contact-based cube manipulation to the twin: a
+single-arm pick-and-place task and a bimanual relay in which one arm
+stages the object at a shared midline for the other. Demonstrations come
+from a scripted oracle that drives the \emph{full production
+teleoperation pipeline} --- the same input filtering, clutch
+calibration, retargeting and asynchronous solver a human operator
+exercises --- by inverting the retargeting map, so the collected data
+distribution matches what the real rig records. Closed-loop grasp and
+placement corrections, standing in for the teleoperator's eyes,
+compensate the solver's steady-state tracking error. Collection is
+gated: only episodes that verifiably succeed enter the dataset. A
+disjoint seed protocol separates training, validation and evaluation
+scenarios, and a deliberately trivial overfit-one-scenario mode
+distinguishes pipeline bugs from data problems. We document every
+difficulty met while building the environment --- contact tuning,
+servo wind-up, envelope conflicts, tooling pitfalls --- so the result is
+reproducible, and we reserve an experiments section that grows with the
+living document.
+\end{abstract}
+
+\input{sections/01_intro}
+\input{sections/02_environment}
+\input{sections/03_tasks}
+\input{sections/04_oracles}
+\input{sections/05_difficulties}
+\input{sections/06_experiments}
+\input{sections/07_conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,63 @@
+\section{Tasks and evaluation protocol}
+\label{sec:tasks}
+
+Two tasks share the cube, the scenario generator and one success notion.
+This section defines the tasks, how scenarios are generated and seeded,
+and the gating rule that keeps failed demonstrations out of every
+dataset.
+
+\paragraph{Single-arm pick-and-place.}
+The cube spawns at a seeded position on one side of the table and must
+be placed on a seeded target on the same side. The acting arm is the one
+whose side the cube is on; sides alternate across scenarios so the
+dataset covers both arms. The idle arm holds its neutral pose with the
+gripper open.
+
+\paragraph{Bimanual relay.}
+The cube spawns on the left; the target lies on the right, outside the
+left arm's reach. The left arm picks the cube and lays it down at a
+midline staging point both arms reach, then retreats to its start; the
+right arm picks the staged cube and places it on the target. The task is
+genuinely bimanual --- neither arm can complete it alone --- and
+sequential, which the language instruction reflects.
+
+This design replaced a mid-air hand-over in which one arm held the
+object while the other grasped it. The mid-air version failed for two
+reasons we could not tune away: a single parallel-jaw grasp leaves the
+object's yaw about the vertical unconstrained, so the carried object
+drifted out of the second gripper's approach plane; and two gripper
+bodies converging on one small object clashed geometrically. Staging on
+the table restores a fully constrained object pose before the second
+grasp, decomposing the relay into two instances of the already-reliable
+single-arm grasp (Section~\ref{sec:difficulties}).
+
+\paragraph{Scenario generation.}
+A scenario fixes the cube spawn, the target, and (for the relay) the
+staging point, all sampled from seeded uniform ranges over the reachable
+table region. An analytic reachability check rejects samples either arm
+cannot serve; rejected samples are resampled deterministically, so a
+seed always denotes the same scenario.
+
+\paragraph{Seed protocol.}
+Three disjoint seed pools cover training (one thousand seeds, one
+demonstration per seed), validation (ten seeds) and evaluation (thirty
+seeds). Training, checkpoint selection and final evaluation therefore
+never share a scenario. Alongside this \emph{full} mode, a \emph{simple}
+mode uses a single fixed scenario for every phase: all demonstrations,
+validation rollouts and evaluation trials run on the same scene. Simple
+mode is the overfit-one-scenario sanity check --- a policy that cannot
+master one fixed scenario has a pipeline bug, not a data problem --- and
+it runs first, cheaply, before the full campaign.
+
+\paragraph{Success and gating.}
+An episode succeeds when the cube rests within \SI{2}{\centi\metre} of
+the target centre, has settled (near its resting height, moving slower
+than a small velocity threshold), and both grippers have released.
+During collection this criterion gates every episode: a failed episode
+is discarded --- never written to the dataset --- and its seed is
+retried a bounded number of times before being skipped and recorded as
+skipped. Before any training run, an oracle gate dry-runs both
+demonstrators and aborts the experiment if the teleoperation-pipeline
+oracle falls below task-specific thresholds
+(Section~\ref{sec:experiments}); training on a degraded oracle would
+silently poison every downstream number.

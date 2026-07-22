@@ -169,16 +169,21 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   checkout -b <topic>`), even for docs-only changes; never commit straight
   to `main`. Finish with a commit on that branch ending in the
   `Co-Authored-By: Claude …` trailer. The user pushes/merges.
-- **Living paper rule:** any change on the teleoperation side — methods,
-  orientation mapping, envelope/OOE handling, calibration/control-frame
-  behavior, benchmark results — MUST update `documents/paper/teleoperation/`
-  (and `documents/teleop_benchmark_results.md` when results change) in the
-  same branch. The paper builds with `make paper` (or `latexmk -pdf
-  main.tex` in `documents/paper/teleoperation/`, or the VSCode build task);
-  regenerate tables with `src/sim_benchmark/export_latex_tables.py`.
-  All paper writing follows `documents/academic_writing_guideline.md`
-  (flow diagram before LaTeX, British English, active voice, no numbers
-  in the abstract, no code paths in prose, `\unjustified{}` flags).
+- **Living paper rule:** there are TWO living papers, and each guards its
+  domain in the same branch as the change:
+  - `documents/paper/teleoperation/` — any change on the teleoperation
+    side: methods, orientation mapping, envelope/OOE handling,
+    calibration/control-frame behavior, benchmark results (also update
+    `documents/teleop_benchmark_results.md` when results change);
+    regenerate tables with `src/sim_benchmark/export_latex_tables.py`.
+  - `documents/paper/sim_training/` — any change to the sim-VLA side:
+    simulated tasks/payload/contacts, oracle demonstrators, collection
+    gating/seed protocol, or the experiment protocol and its results.
+  Both build with `make paper` (or `latexmk -pdf main.tex` in the paper
+  dir). All paper writing follows
+  `documents/academic_writing_guideline.md` (flow diagram before LaTeX,
+  British English, active voice, no numbers in the abstract, no code
+  paths in prose, `\unjustified{}` flags).
 - Don't hardcode rig geometry — edit `src/platform/config.scad`.
 
 ## Verifying changes
