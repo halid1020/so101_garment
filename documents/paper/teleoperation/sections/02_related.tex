@@ -16,7 +16,7 @@ idea with low-cost scaled leader replicas for common
 manipulators~\citep{wu2024gello}. Leader--follower transfers joint
 angles directly, so it sidesteps inverse kinematics entirely, but it
 requires dedicated leader hardware and ties the operator's posture to
-the follower's kinematics. Task-space retargeting systems instead track
+the follower's kinematics. \textbf{TODO: this setup also limit (the wrist/other joint) movement due to human limitation.} Task-space retargeting systems instead track
 the operator's hands with vision or a VR headset and solve for joint
 angles online: AnyTeleop retargets vision-based hand poses to arm--hand
 systems~\citep{qin2023anyteleop}, and Open-TeleVision streams immersive
@@ -57,7 +57,7 @@ mink~\citep{mink} solves the analogous problem over MuJoCo models.
 Damped least squares is the classical singularity-robust baseline
 \citep{wampler1986,nakamura1986}. The benchmark also includes a per-tick
 bounded nonlinear least-squares solve (\texttt{scipy\_ls}) as an
-optimisation-based reference.
+optimisation-based reference. \textbf{TODO: explain Pinochhio in greate details}
 
 \paragraph{Input filtering.}
 Controller pose noise is attenuated with the One-Euro

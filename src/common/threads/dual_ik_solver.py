@@ -174,10 +174,17 @@ def dual_ik_solver_thread(
     pitch_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
     roll_anchor: dict[str, float] = {"left": 0.0, "right": 0.0}
     hand_rot_ref: dict[str, np.ndarray] = {}
-    # Hold-mode state (orientation_mode="hold"): the gripper rotation captured
-    # at each grip, held as the absolute attitude target and changed only by
-    # the thumbstick wrist trims.
-    hold_rot: dict[str, np.ndarray] = {}
+    # Hold-mode state (orientation_mode="hold"): the gripper's pitch/roll
+    # captured at each grip, held fixed and changed only by the thumbstick
+    # wrist trims. Stored AZIMUTH-RELATIVE (not as an absolute world
+    # rotation) — the target is rebuilt from the arm's live azimuth each
+    # tick (see gripper_orientation_from_pitch_roll below), exactly like
+    # armplane/incremental. A literal fixed world rotation would force
+    # wrist_roll to silently counter-rotate every time the operator pans
+    # the arm (changes its azimuth), burning through the joint's limited
+    # ~320 deg range with no stick input at all.
+    hold_pitch: dict[str, float] = {"left": 0.0, "right": 0.0}
+    hold_roll: dict[str, float] = {"left": 0.0, "right": 0.0}
     # Thumbstick wrist trims (joystick_wrist): the per-side integrator plus the
     # latched 5-joint slice held while that arm's stick is deflected (its other
     # joints are frozen exactly; see common/joystick_wrist.py).
@@ -281,7 +288,8 @@ def dual_ik_solver_thread(
         if joy_trim is not None:
             joy_trim.reset()
         wrist_latch.clear()
-        hold_rot.clear()
+        hold_pitch["left"] = hold_pitch["right"] = 0.0
+        hold_roll["left"] = hold_roll["right"] = 0.0
         oob_inside_prev["left"] = True
         oob_inside_prev["right"] = True
         left_rot_at_activation = None
@@ -500,9 +508,10 @@ def dual_ik_solver_thread(
                         pitch_anchor[_key], roll_anchor[_key] = _ap, _ar
                         hand_rot_ref[_key] = _tf[:3, :3].copy()
                     elif orientation_mode == "hold":
-                        # Freeze the gripper attitude at its current rotation;
-                        # only the thumbstick trims change it from here.
-                        hold_rot[_key] = _pose[:3, :3].copy()
+                        # Freeze pitch/roll (azimuth-relative); only the
+                        # thumbstick trims change them from here.
+                        _, _hp, _hr = gripper_pitch_roll_from_rotation(_pose[:3, :3])
+                        hold_pitch[_key], hold_roll[_key] = _hp, _hr
                 print(
                     "🖐️  Handle axes captured (handles assumed pointing "
                     f"straight down): L={np.round(handle_axes['left'], 2)} "
@@ -592,11 +601,17 @@ def dual_ik_solver_thread(
                         roll_anchor["right"] + rotation_scale * _ROLL_SIGN * r_roll,
                     )
                 elif orientation_mode == "hold":
-                    # Attitude held from the grip; the thumbstick trims are the
-                    # only thing that changes it (they move the wrist joints,
-                    # and the falling edge writes the new attitude back here).
-                    left_abs_rot = hold_rot["left"]
-                    right_abs_rot = hold_rot["right"]
+                    # Pitch/roll held from the grip; the thumbstick trims are
+                    # the only thing that changes them (they move the wrist
+                    # joints, and the falling edge writes the new attitude
+                    # back here). Rebuilt against the arm's LIVE azimuth so
+                    # panning the arm never eats into wrist_roll's range.
+                    left_abs_rot = gripper_orientation_from_pitch_roll(
+                        az_left, hold_pitch["left"], hold_roll["left"]
+                    )
+                    right_abs_rot = gripper_orientation_from_pitch_roll(
+                        az_right, hold_pitch["right"], hold_roll["right"]
+                    )
                 else:
                     left_abs_rot = hand_to_gripper_orientation_armplane(
                         left_tf[:3, :3],
@@ -784,7 +799,8 @@ def dual_ik_solver_thread(
                                 right_hand_to_robot = _cal
                             _fk_rot = _fk_pose[:3, :3]
                             if orientation_mode == "hold":
-                                hold_rot[_side] = _fk_rot.copy()
+                                _, _hp, _hr = gripper_pitch_roll_from_rotation(_fk_rot)
+                                hold_pitch[_side], hold_roll[_side] = _hp, _hr
                             elif orientation_mode == "incremental":
                                 _, _ap, _ar = gripper_pitch_roll_from_rotation(_fk_rot)
                                 pitch_anchor[_side], roll_anchor[_side] = _ap, _ar
