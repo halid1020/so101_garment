@@ -321,11 +321,19 @@ def derive_workspace_radii(
     return r_min, r_max
 
 
-def build_envelopes(urdf_model: pin.Model) -> dict[str, ArmEnvelope]:
+def build_envelopes(
+    urdf_model: pin.Model, z_floor: float | None = None
+) -> dict[str, ArmEnvelope]:
     """Per-side envelopes from FK at neutral + WORKSPACE_* constants.
 
     The safety margin is applied here: the usable annulus is shrunk by
     WORKSPACE_SAFETY_MARGIN on both radii relative to the swept values.
+
+    ``z_floor`` overrides the WORKSPACE_Z_FLOOR table-clearance floor for
+    callers whose working surface is NOT at the IK frame's nominal table
+    height — e.g. the digital-twin collection scene, whose table top sits
+    ~34 mm below the arm base plane. The real teleop stack never passes it,
+    so hardware behaviour keeps the shared-YAML value.
     """
     data = urdf_model.createData()
     q0 = pin.neutral(urdf_model)
@@ -344,7 +352,7 @@ def build_envelopes(urdf_model: pin.Model) -> dict[str, ArmEnvelope]:
             pivot_z=float(p_piv[2]),
             r_min=WORKSPACE_R_MIN + WORKSPACE_SAFETY_MARGIN,
             r_max=WORKSPACE_R_MAX - WORKSPACE_SAFETY_MARGIN,
-            z_floor=WORKSPACE_Z_FLOOR,
+            z_floor=WORKSPACE_Z_FLOOR if z_floor is None else float(z_floor),
         )
     return envelopes
 

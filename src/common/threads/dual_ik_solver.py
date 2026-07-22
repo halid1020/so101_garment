@@ -73,6 +73,7 @@ def dual_ik_solver_thread(
     envelope_feedback: EnvelopeFeedback | None = None,
     orientation_mode: str = "armplane",
     joystick_wrist: bool = False,
+    envelope_z_floor: float | None = None,
 ) -> None:
     """Dual-arm IK solver thread.
 
@@ -105,6 +106,10 @@ def dual_ik_solver_thread(
     wrist_roll and stick y trims wrist_flex in joint space; releasing the
     stick leaves the wrist where it was and re-anchors the handle so control
     resumes with no jump. Requires quest_reader to expose get_joystick_value.
+
+    envelope_z_floor overrides the envelope's table-clearance floor (see
+    common/workspace_envelope.py build_envelopes); None keeps the shared-YAML
+    value. Only sim collection scenes with a lowered table pass this.
     """
     input_label = "Quest" if quest_reader is not None else "Viser gizmo"
     print(f"🧮 Dual IK solver thread started ({input_label}, {orientation_mode})")
@@ -198,8 +203,12 @@ def dual_ik_solver_thread(
     # Workspace envelope + out-of-envelope policy (per arm). Applied to every
     # target position right before it is handed to the IK.
     oob_mode = oob_mode if oob_mode is not None else WORKSPACE_OOB_MODE
-    oob_policies = make_policies(oob_mode, build_envelopes(_m))
+    oob_policies = make_policies(
+        oob_mode, build_envelopes(_m, z_floor=envelope_z_floor)
+    )
     print(f"🛡️  Out-of-envelope policy: {oob_mode}")
+    if envelope_z_floor is not None:
+        print(f"🛡️  Envelope z-floor override: {envelope_z_floor:+.4f} m")
 
     # Handle axes are captured PER HAND at EVERY grip: the operator holds
     # both handles pointing straight down, and whatever body-frame direction

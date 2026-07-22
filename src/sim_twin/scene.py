@@ -50,6 +50,58 @@ WOOD = [0.62, 0.48, 0.32, 1.0]
 PRINT_BLUE = [0.25, 0.35, 0.55, 1.0]
 PRINT_DARK = [0.22, 0.22, 0.24, 1.0]
 
+# ---------------------------------------------------------------------------
+# Contact-graspable payload (payload=True only). An upright rectangular bar
+# the arms pick up with REAL contact (no kinematic weld). The parameters are
+# the anti-slip grasp recipe from the sim-VLA design: a stiff-but-forgiving
+# contact (short solref time-constant, high solimp) with condim 4 so the
+# tangential+torsional friction resists the bar twisting out of the pinch.
+# ---------------------------------------------------------------------------
+PAYLOAD_HALF_EXTENTS = [0.011, 0.011, 0.011]  # m (2.2 cm cube)
+PAYLOAD_MASS = 0.040  # kg
+PAYLOAD_FRICTION = [1.5, 0.02, 0.0002]  # slide, torsion, roll
+PAYLOAD_CONDIM = 4
+PAYLOAD_PRIORITY = 1
+PAYLOAD_SOLREF = [0.004, 1.0]
+PAYLOAD_SOLIMP = [0.95, 0.99, 0.001, 0.5, 2.0]  # (dmin, dmax, width, mid, power)
+PAYLOAD_REST_Z = PAYLOAD_HALF_EXTENTS[2]  # resting centre z above table top (world 0)
+PAYLOAD_RGBA = [0.95, 0.45, 0.10, 1.0]
+
+# Fingertip pads: small high-friction boxes on each jaw, priority above the
+# bar so their friction/solref win the contact. The local placements were
+# measured from the compiled twin — the grasp axis is the EE y-axis and the
+# fingertips sit near EE x=0, so a fixed-jaw pad (on {side}_gripper_link) and
+# a moving-jaw pad (on {side}_moving_jaw_so101_v1_link) close onto the bar
+# from opposite sides. Symmetric between arms (mirrored bodies share locals).
+PAD_HALF = [0.010, 0.006, 0.012]  # box half-extents (m); ~cube-height contact face
+PAD_FRICTION = [3.0, 0.1, 0.005]
+PAD_PRIORITY = 2
+PAD_SOLREF = [0.004, 1.0]
+PAD_SOLIMP = [0.95, 0.99, 0.001, 0.5, 2.0]
+# Pads are invisible in normal payload mode (alpha 0 — the policy cameras must
+# see the real gripper, not green tuning aids); payload_debug turns them green.
+PAD_RGBA_DEBUG = [0.15, 0.60, 0.20, 1.0]
+PAD_RGBA_HIDDEN = [0.15, 0.60, 0.20, 0.0]
+FIXED_PAD_LOCAL = [-0.0139, -0.0002, -0.0881]  # on {side}_gripper_link
+MOVING_PAD_LOCAL = [-0.0081, -0.0647, 0.019]  # on {side}_moving_jaw_so101_v1_link
+
+# Visual-only goal cue: a translucent green disc on the table the policy must
+# read from rgb_scene (mocap so the collector/eval can move it per scenario).
+TARGET_ZONE_RADIUS = 0.02
+TARGET_ZONE_HALF_H = 0.001
+TARGET_ZONE_RGBA = [0.10, 0.85, 0.25, 0.40]
+
+# Pinch-force clamp: an unclamped closed command against a jaw blocked by the
+# bar explodes the contact solver, so bound the gripper actuator force.
+GRIPPER_FORCERANGE = 12.0
+
+# Payload-mode solver options (finer step both divides 1/30 s into 20 whole
+# substeps and stabilises the contacts; elliptic cone + impratio + noslip are
+# the standard anti-slip grasp recipe).
+PAYLOAD_TIMESTEP = 1.0 / 600.0
+PAYLOAD_IMPRATIO = 10.0
+PAYLOAD_NOSLIP_ITERATIONS = 2
+
 
 def _quat_from_rpy(rpy) -> list[float]:
     r, p, y = rpy
@@ -119,8 +171,70 @@ def _visual_mesh(body, name, mesh, pos=(0, 0, 0), quat=(1, 0, 0, 0), rgba=PRINT_
     )
 
 
+def _add_payload(spec: mujoco.MjSpec, world, debug: bool = False) -> None:
+    """Add the graspable bar, fingertip pads and target-zone disc (payload mode).
+
+    debug=True renders the fingertip pads green (contact-tuning aid); default
+    keeps them fully transparent so the policy cameras see the bare gripper.
+    Physics is identical either way.
+    """
+    # -- Free-jointed cube, spawned on the table beyond the board's front edge.
+    bar = world.add_body(name="payload", pos=[0.30, 0.0, PAYLOAD_REST_Z])
+    bar.add_freejoint(name="payload_free")
+    geom = bar.add_geom(
+        name="payload_geom",
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=list(PAYLOAD_HALF_EXTENTS),
+        rgba=list(PAYLOAD_RGBA),
+        contype=1,
+        conaffinity=1,
+    )
+    geom.mass = PAYLOAD_MASS
+    geom.friction = list(PAYLOAD_FRICTION)
+    geom.condim = PAYLOAD_CONDIM
+    geom.priority = PAYLOAD_PRIORITY
+    geom.solref = list(PAYLOAD_SOLREF)
+    geom.solimp = list(PAYLOAD_SOLIMP)
+
+    # -- Fingertip pads on both jaws of each gripper.
+    for side in SIDES:
+        for jaw, local in (
+            (f"{side}_gripper_link", FIXED_PAD_LOCAL),
+            (f"{side}_moving_jaw_so101_v1_link", MOVING_PAD_LOCAL),
+        ):
+            tag = "fixed" if "gripper_link" in jaw else "moving"
+            pad = spec.body(jaw).add_geom(
+                name=f"{side}_{tag}_pad",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=list(PAD_HALF),
+                pos=list(local),
+                rgba=list(PAD_RGBA_DEBUG if debug else PAD_RGBA_HIDDEN),
+                contype=1,
+                conaffinity=1,
+            )
+            pad.friction = list(PAD_FRICTION)
+            pad.condim = PAYLOAD_CONDIM
+            pad.priority = PAD_PRIORITY
+            pad.solref = list(PAD_SOLREF)
+            pad.solimp = list(PAD_SOLIMP)
+
+    # -- Visual-only target-zone disc (mocap; the policy's sole goal cue).
+    zone = world.add_body(name="target_zone", mocap=True)
+    zone.add_geom(
+        name="target_zone_geom",
+        type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+        size=[TARGET_ZONE_RADIUS, TARGET_ZONE_HALF_H, 0.0],
+        rgba=list(TARGET_ZONE_RGBA),
+        contype=0,
+        conaffinity=0,
+    )
+
+
 def build_spec(
-    params: TwinParams | None = None, all_collisions: bool = False
+    params: TwinParams | None = None,
+    all_collisions: bool = False,
+    payload: bool = False,
+    payload_debug: bool = False,
 ) -> mujoco.MjSpec:
     """Assemble the twin scene.
 
@@ -128,13 +242,25 @@ def build_spec(
     robot included, parent-child pairs excluded by MuJoCo as usual) — used
     by the teleop rehearsal tool so arm-arm and arm-rig contact is felt.
     Default False keeps the original robot-vs-world-only model.
+
+    payload=True adds the contact-graspable bar, the fingertip pads, the
+    visual target-zone disc, a pinch-force clamp and the anti-slip contact
+    solver options used by the sim-VLA pick-and-place tasks. It implies
+    all_collisions (the bar must feel every colliding geom). payload_debug
+    renders the (normally invisible) fingertip pads green for tuning.
     """
     p = params or TwinParams.load()
     mm = 1e-3
+    if payload:
+        all_collisions = True
 
     spec = mujoco.MjSpec.from_file(_patched_urdf_path())
     spec.modelname = "so101_dual_twin"
-    spec.option.timestep = 0.002
+    spec.option.timestep = PAYLOAD_TIMESTEP if payload else 0.002
+    if payload:
+        spec.option.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
+        spec.option.impratio = PAYLOAD_IMPRATIO
+        spec.option.noslip_iterations = PAYLOAD_NOSLIP_ITERATIONS
     spec.visual.global_.offwidth = 1280
     spec.visual.global_.offheight = 960
 
@@ -381,8 +507,13 @@ def build_spec(
         act.biasprm[0] = 0.0
         act.biasprm[1] = -ACTUATOR_KP
         act.biasprm[2] = -ACTUATOR_KV
+        if payload and joint_name in GRIPPER_JOINTS:
+            act.forcerange = [-GRIPPER_FORCERANGE, GRIPPER_FORCERANGE]
 
-    if all_collisions:
+    if payload:
+        _add_payload(spec, world, debug=payload_debug)
+        _setup_payload_collisions(spec)
+    elif all_collisions:
         # Flatten every colliding geom into one group: arm-arm, arm-rig,
         # arm-table contacts all become live. Pure-visual geoms (0/0)
         # stay visual.
@@ -390,6 +521,8 @@ def build_spec(
             if geom.contype or geom.conaffinity:
                 geom.contype = 1
                 geom.conaffinity = 1
+
+    if all_collisions or payload:
         # The base shell and the rotating shoulder NEST on real hardware —
         # their raw meshes interpenetrate by design. MuJoCo's automatic
         # parent-child contact exclusion does not cover them because the
@@ -402,20 +535,68 @@ def build_spec(
     return spec
 
 
+# Collision groups for payload mode (contype, conaffinity) bitmasks. Two geoms
+# collide iff (c1 & a2) or (c2 & a1). The scheme keeps every arm-arm/arm-rig
+# contact live (as all_collisions does) BUT lets the bar touch only the rig and
+# the fingertip pads — never the raw jaw/arm meshes — so a clean two-pad pinch
+# holds it, instead of a dozen mesh corners tilting it.
+_BIT_ARM = 1  # arm/jaw meshes
+_BIT_BAR = 2  # the payload bar
+_BIT_RIG = 4  # world/rig collidable by the bar
+_BIT_PAD = 8  # fingertip pads
+_GRP_ARM = (_BIT_ARM, _BIT_ARM)
+_GRP_RIG = (_BIT_ARM | _BIT_RIG, _BIT_ARM | _BIT_BAR)
+_GRP_BAR = (_BIT_BAR, _BIT_RIG | _BIT_PAD)
+_GRP_PAD = (_BIT_PAD, _BIT_BAR)
+
+
+def _setup_payload_collisions(spec: mujoco.MjSpec) -> None:
+    """Assign the payload-mode collision groups (see the bitmask table above)."""
+    for geom in spec.geoms:
+        if not (geom.contype or geom.conaffinity):
+            continue  # pure-visual geoms stay visual
+        if geom.name == "payload_geom":
+            geom.contype, geom.conaffinity = _GRP_BAR
+        elif geom.name.endswith("_pad"):
+            geom.contype, geom.conaffinity = _GRP_PAD
+        elif geom.contype == WORLD_CONTYPE:  # table / board / adapters / tower
+            geom.contype, geom.conaffinity = _GRP_RIG
+        else:  # arm / jaw meshes
+            geom.contype, geom.conaffinity = _GRP_ARM
+
+
 def build_model(
-    params: TwinParams | None = None, all_collisions: bool = False
+    params: TwinParams | None = None,
+    all_collisions: bool = False,
+    payload: bool = False,
+    payload_debug: bool = False,
 ) -> mujoco.MjModel:
-    return build_spec(params, all_collisions=all_collisions).compile()
+    return build_spec(
+        params,
+        all_collisions=all_collisions,
+        payload=payload,
+        payload_debug=payload_debug,
+    ).compile()
 
 
 class TwinSim:
     """Compiled twin with the same driving interface as DualArmSim."""
 
     def __init__(
-        self, params: TwinParams | None = None, all_collisions: bool = False
+        self,
+        params: TwinParams | None = None,
+        all_collisions: bool = False,
+        payload: bool = False,
+        payload_debug: bool = False,
     ) -> None:
         self.params = params or TwinParams.load()
-        self.model = build_model(self.params, all_collisions=all_collisions)
+        self.payload = payload
+        self.model = build_model(
+            self.params,
+            all_collisions=all_collisions,
+            payload=payload,
+            payload_debug=payload_debug,
+        )
         self.data = mujoco.MjData(self.model)
         self.arm_qpos_idx = np.array(
             [self.model.joint(j).qposadr[0] for j in ARM_JOINTS]
@@ -433,6 +614,26 @@ class TwinSim:
             side: self.model.body(f"{side}_target").mocapid[0] for side in SIDES
         }
         self.headset_mocap_id = self.model.body("headset_marker").mocapid[0]
+        self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
+
+        if payload:
+            free = self.model.joint("payload_free")
+            qadr, vadr = free.qposadr[0], free.dofadr[0]
+            self._payload_pos_sl = slice(qadr, qadr + 3)
+            self._payload_quat_sl = slice(qadr + 3, qadr + 7)
+            self._payload_vel_sl = slice(vadr, vadr + 6)
+            self.target_zone_mocap_id = self.model.body("target_zone").mocapid[0]
+            self._gripper_ctrl_by_side = {
+                side: int(self.model.actuator(f"act_{side}_gripper").id)
+                for side in SIDES
+            }
+            self._gripper_qpos_idx = {
+                side: int(self.model.joint(f"{side}_gripper").qposadr[0])
+                for side in SIDES
+            }
+            self._gripper_range = {
+                side: tuple(self.model.joint(f"{side}_gripper").range) for side in SIDES
+            }
 
     def neutral_q(self) -> np.ndarray:
         return np.deg2rad(np.array(NEUTRAL_ARM_ANGLES_DEG * 2))
@@ -443,9 +644,48 @@ class TwinSim:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[self.arm_qpos_idx] = q
         self.data.ctrl[self.arm_ctrl_idx] = q
+        if self.payload:
+            # Start with the grippers commanded fully open so the bar can be
+            # placed between the jaws before any squeeze.
+            for side in SIDES:
+                self.set_gripper_frac(side, 1.0)
         # Park the headset marker behind the rig until calibration places it.
         self.data.mocap_pos[self.headset_mocap_id] = [-0.45, 0.0, 0.45]
         mujoco.mj_forward(self.model, self.data)
+
+    # ------------------------------------------------------------------
+    # Payload / grasp helpers (payload mode only)
+    # ------------------------------------------------------------------
+
+    def set_payload_pose(self, pos: np.ndarray, quat: np.ndarray | None = None) -> None:
+        """Place the bar (settled, zero velocity); default upright attitude."""
+        self.data.qpos[self._payload_pos_sl] = pos
+        self.data.qpos[self._payload_quat_sl] = (
+            [1.0, 0.0, 0.0, 0.0] if quat is None else quat
+        )
+        self.data.qvel[self._payload_vel_sl] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
+    def payload_pos(self) -> np.ndarray:
+        return self.data.qpos[self._payload_pos_sl].copy()
+
+    def payload_vel(self) -> np.ndarray:
+        return self.data.qvel[self._payload_vel_sl].copy()
+
+    def set_target_zone(self, pos: np.ndarray) -> None:
+        """Move the visual target-zone disc (twin world coords)."""
+        self.data.mocap_pos[self.target_zone_mocap_id] = pos
+
+    def gripper_open_frac(self, side: str) -> float:
+        """Measured gripper open fraction (0 closed, 1 open)."""
+        q = float(self.data.qpos[self._gripper_qpos_idx[side]])
+        lo, hi = self._gripper_range[side]
+        return (q - lo) / (hi - lo)
+
+    def set_gripper_frac(self, side: str, frac: float) -> None:
+        """Command the gripper by open fraction (0 closed, 1 open)."""
+        lo, hi = self._gripper_range[side]
+        self.data.ctrl[self._gripper_ctrl_by_side[side]] = lo + float(frac) * (hi - lo)
 
     def set_arm_targets(self, q: np.ndarray) -> None:
         self.data.ctrl[self.arm_ctrl_idx] = q
@@ -479,10 +719,16 @@ class TwinSim:
     def render_camera(
         self, camera: str, width: int = CAMERA_WIDTH, height: int = CAMERA_HEIGHT
     ) -> np.ndarray:
-        """Offscreen RGB render of one of the twin's C310 cameras."""
-        renderer = getattr(self, "_renderer", None)
-        if renderer is None or renderer._width != width:
-            renderer = self._renderer = mujoco.Renderer(
+        """Offscreen RGB render of one of the twin's C310 cameras.
+
+        Renderers are cached per (width, height) so the collector/eval can
+        serve several resolutions from one sim without clobbering a
+        single-resolution cache.
+        """
+        key = (width, height)
+        renderer = self._renderers.get(key)
+        if renderer is None:
+            renderer = self._renderers[key] = mujoco.Renderer(
                 self.model, height=height, width=width
             )
         renderer.update_scene(self.data, camera=camera)

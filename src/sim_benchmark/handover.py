@@ -103,6 +103,17 @@ class _ReachChecker:
         )
         return float(np.linalg.norm(result.fun))
 
+    def keyposes_feasible(self, checks: list[tuple[str, np.ndarray]]) -> bool:
+        """True if every (side, EE position) keypose is reachable by that arm.
+
+        Factored out of :meth:`scenario_feasible` so other tasks (the
+        contact-grasp single-arm and handover oracles) can supply their own
+        keypose lists to the same reach test.
+        """
+        return all(
+            self.reach_error(side, pos) < FEASIBILITY_TOL for side, pos in checks
+        )
+
     def scenario_feasible(self, scenario: Scenario) -> bool:
         """Every keypose reachable by the arm that must reach it."""
         pick, place = scenario.pick_side, scenario.place_side
@@ -117,9 +128,7 @@ class _ReachChecker:
             (place, np.array([*scenario.target_pos[:2], PLACE_HEIGHT])),
             (place, np.array([*scenario.target_pos[:2], HOVER_HEIGHT])),
         ]
-        return all(
-            self.reach_error(side, pos) < FEASIBILITY_TOL for side, pos in checks
-        )
+        return self.keyposes_feasible(checks)
 
 
 def generate_scenarios(n: int = 30, seed: int = 0) -> list[Scenario]:
@@ -132,7 +141,7 @@ def generate_scenarios(n: int = 30, seed: int = 0) -> list[Scenario]:
         attempts += 1
         if attempts > 100 * n:
             raise RuntimeError("Scenario sampling failed to converge")
-        pick_side = "left" if len(scenarios) % 2 == 0 else "right"
+        pick_side = "left" if (seed + len(scenarios)) % 2 == 0 else "right"
         y_sign = 1.0 if pick_side == "left" else -1.0
         payload = np.array(
             [
@@ -171,10 +180,14 @@ class _Track:
         self.times.append(arrive_at)
         self.points.append(point.copy())
 
-    def move_to(self, point: np.ndarray) -> float:
-        """Append a keypose reached at CARRY_SPEED; return arrival time."""
+    def move_to(self, point: np.ndarray, speed: float = CARRY_SPEED) -> float:
+        """Append a keypose reached at ``speed`` m/s; return arrival time.
+
+        ``speed`` defaults to CARRY_SPEED so existing callers are unaffected;
+        the contact-grasp oracle passes a slower LIFT_SPEED for lifts.
+        """
         dist = float(np.linalg.norm(point - self.points[-1]))
-        arrival = self.times[-1] + max(dist / CARRY_SPEED, 0.4)
+        arrival = self.times[-1] + max(dist / speed, 0.4)
         self.append(point, arrival)
         return arrival
 
