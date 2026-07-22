@@ -182,6 +182,33 @@ See [`documents/long_vla_sim_guide.md`](documents/long_vla_sim_guide.md)
 for the full experiment protocol (seed pools, oracle gate, wall-time
 budgets, viewing collected data).
 
+#### The long test (full experiment, big GPU)
+
+The full-scale run (`test/system/long_vla_sim.sh`) collects ~1000
+teleop-oracle demos per task, trains ACT / Diffusion / pi0.5-LoRA on
+them, validates every checkpoint on held-out seeds and evaluates the
+best on 30 evaluation seeds. Validated target: RTX 3090 Ti (24 GB, no
+sudo). On the GPU machine:
+
+```bash
+git pull && source setup.sh
+venv/bin/hf auth login     # once; then accept the licence at
+                           # https://huggingface.co/google/paligemma-3b-pt-224
+tmux new -s vla            # the full matrix is multi-day
+bash test/system/long_vla_sim.sh                 # both modes, all cells
+bash test/system/long_vla_sim.sh --modes simple  # cheap sanity half first
+bash test/system/long_vla_sim.sh --only pi05 --pi05-steps 20000
+```
+
+The script is **resumable** (rerun it and finished datasets/checkpoints/
+evals are reused; `--skip-collect` / `--skip-train` / `--skip-gate`
+force-skip phases), aborts before training if the teleop oracle drops
+below its gate (95 % single / 70 % handover), and prints a measured
+s/step projection for pi0.5 near step 50 so you can trim
+`--pi05-steps` early. Results land in
+`$SO101_OUTPUT_DIR/vla_sim_long/<run>/results.md`; analyse them with
+`notebooks/long_vla_analysis.ipynb`.
+
 ### The real run: pi0.5 on LIBERO (needs a big GPU)
 
 pi0.5 is a ~4B-parameter VLA. **Full-parameter finetuning needs a
