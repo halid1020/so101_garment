@@ -80,6 +80,28 @@ and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
   the same network (then pass `--ip-address <QUEST_IP>`).
 - For the real arms: both SO-101 buses connected and LeRobot-calibrated
   (ports/IDs in `src/conf/robot.yaml`).
+- **Tactile cameras mounted? Protect their cables first.** Nothing limits
+  `wrist_roll` by default (full turn), so teleop can twist the
+  gripper-mounted tactile-camera USB cables until they strain. Record a
+  cable-safe band into the servo firmware once per arm — torque drops,
+  you rotate the wrist by hand through the safe arc and press Enter:
+
+  ```bash
+  python tool/set_wrist_roll_limits.py --arm right   # then --arm left
+  ```
+
+  The limit lives in the motor's EEPROM (survives power cycles and every
+  normal startup) with a 5° margin inside what you recorded. Caveats:
+  re-running `lerobot-calibrate` on a follower resets `wrist_roll` to
+  full turn — re-run the tool afterwards; `--reset` removes the
+  protection. To sanity-check the tactile cameras and joint streams
+  themselves (max read rates, live view), use
+  `python tool/test_sensor_rates.py --view` — the first run opens an
+  assignment GUI (press a gel to identify each camera and name it,
+  wiggle an arm to identify each serial port); assignments persist in
+  `src/conf/sensor_map.yaml` and `--assign` redoes them. Both arms are
+  read by default (`--arm right|left|both|none`); `--list-cameras`
+  lists raw device nodes.
 
 **Controls** (both tools): hold **both grips** to activate teleop — at the
 first grip of a session point both handles straight down (this calibrates
