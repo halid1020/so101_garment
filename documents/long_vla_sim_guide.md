@@ -32,12 +32,13 @@ policy (`act`, `diffusion`, `pi05`):
 0. **Oracle gate** — dry-runs both oracles (`teleop` = scripted
    operator through the full teleoperation pipeline, `direct` = IK
    fallback) and prints a success-rate table. Aborts if the teleop
-   oracle is below 95 % (single) / 85 % (handover): do not train on a
-   broken oracle. The looser handover bar reflects an accepted ~86 %
-   teleop success on the table-mediated relay — every saved episode is
-   still a verified success (failures are discarded, not trained on);
-   the `direct` oracle remains at 100 % for either task if a fuller
-   dataset is wanted.
+   oracle is below 95 % (single) / 70 % (handover): do not train on a
+   broken oracle. The handover bar sits well below the teleop relay's
+   measured ~75–86 % per-attempt band so sampling noise on a 30-episode
+   dry run never false-aborts, yet far above a genuinely broken (<50 %)
+   oracle. Every saved episode is still a verified success (failures
+   are discarded, not trained on); the `direct` oracle remains at 100 %
+   for either task if a fuller dataset is wanted.
 1. **Collect** — demonstrations through the teleop oracle; failed
    episodes are never saved (a failed seed retries up to 3×, then is
    skipped and recorded).
@@ -70,7 +71,10 @@ not a data problem.
    venv/bin/python -m sim_twin.verify` must pass (regenerates
    `build/twin` from OpenSCAD if the pipeline is installed).
 4. Network on first run only: HF Hub access for `lerobot/pi05_base`
-   (~8 GB) and the PaliGemma tokenizer. Everything else is local.
+   (~8 GB) and the PaliGemma tokenizer. The tokenizer repo
+   (`google/paligemma-3b-pt-224`) is **gated**: log in once with
+   `venv/bin/hf auth login` and accept the licence on the model page,
+   or the pi0.5 cells abort in preflight. Everything else is local.
 5. No sudo needed. Video decode/encode uses PyAV's bundled FFmpeg
    (`--dataset.video_backend=pyav` is passed everywhere by the script).
 

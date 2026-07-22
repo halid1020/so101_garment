@@ -51,7 +51,7 @@ from sim_datagen.oracle import (  # noqa: E402
     generate_relay_scenarios,
     generate_single_scenarios,
 )
-from sim_datagen.seeds import EVAL_SEEDS  # noqa: E402
+from sim_datagen.seeds import EVAL_SEEDS, VAL_SEEDS  # noqa: E402
 
 # The rgb_scene view is the one written to the per-episode eval video (the
 # analysis notebook composes head-to-head GIFs from these).
@@ -205,16 +205,17 @@ def main() -> int:
     )
     parser.add_argument(
         "--seeds",
-        choices=["simple", "full"],
+        choices=["simple", "full", "val"],
         default="full",
-        help="full = every EVAL seed once (30 trials); simple = seed 0 repeated",
+        help="full = every EVAL seed once (30 trials); val = the VAL seed pool "
+        "(checkpoint selection); simple = seed 0 repeated",
     )
     parser.add_argument(
         "--episodes",
         type=int,
         default=None,
         help="simple mode: number of seed-0 trials (default 30); "
-        "full mode: cap on EVAL seeds evaluated (default all 30)",
+        "full/val modes: cap on pool seeds evaluated (default the whole pool)",
     )
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--camera-width", type=int, default=640)
@@ -245,9 +246,11 @@ def main() -> int:
 
     if args.seeds == "simple":
         n = args.episodes if args.episodes is not None else 30
-        seeds = [20000] * n  # a fixed EVAL seed, repeated (scenario is constant)
+        # The overfit-one-scenario protocol: seed 0's scenario EVERYWHERE
+        # (train, val, eval) — matching the collector's simple mode.
+        seeds = [0] * n
     else:
-        seeds = list(EVAL_SEEDS)
+        seeds = list(VAL_SEEDS if args.seeds == "val" else EVAL_SEEDS)
         if args.episodes is not None:
             seeds = seeds[: args.episodes]
 
