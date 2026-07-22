@@ -57,8 +57,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
   upstream* Telegrip checkout — see `documents/telegrip_native.md`),
   `check_mirror.py` / `fit_joint_offsets.py` (arm-side/offset checks),
-  `view_twin.py`, `part_drawings.py`, plus policy train/eval helpers
-  (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`, `send_middle_and_rest.py`).
+  `view_twin.py` (`--payload` shows the collection scene), `part_drawings.py`,
+  the sim-VLA pair `collect_sim_dataset.py` (oracle demonstrations in the
+  twin; only verified successes are saved) / `eval_sim_policy.py` (policy
+  rollouts in the same env — see `documents/long_vla_sim_guide.md`), plus
+  policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
+  `send_middle_and_rest.py`).
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,
@@ -70,13 +74,15 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 - `src/platform/` — OpenSCAD rig design (`config.scad`, `board.scad`, …).
 - `test/` — tiered: `test/unit/` (fast, pure-python/pinocchio, no MuJoCo),
   `test/integration/` (MuJoCo scenes), `test/system/`
-  (`smoke_test_pipeline.sh`, train→eval plumbing check). `test/__init__.py`
-  is load-bearing (keeps the stdlib `test` package from shadowing it).
+  (`smoke_test_pipeline.sh`, train→eval plumbing check;
+  `smoke_vla_sim.sh`, sim-VLA collect→train→eval plumbing check).
+  `test/__init__.py` is load-bearing (keeps the stdlib `test` package from
+  shadowing it).
 - `documents/` — design docs & worklogs (teleop benchmark results, user
   study protocol, telegrip-native) plus the living paper under
   `documents/paper/`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
-  `test-system`), `paper`, and `lint` targets.
+  `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).
 
 ## Training / eval pipeline (LeRobot)
@@ -188,6 +194,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   - `make test` — unit + integration.
   - `make test-system` — the train→eval plumbing smoke test
     (`test/system/smoke_test_pipeline.sh`; network + time).
+  - `make test-system-vla` — the sim-VLA collect→train→eval plumbing
+    smoke test (`test/system/smoke_vla_sim.sh`; ~15–45 min on CPU).
   Discover manually with e.g. `PYTHONPATH=.:src MUJOCO_GL=egl venv/bin/python
   -m unittest discover -s test/unit -t .`. `test/__init__.py` must exist or
   the stdlib `test` package shadows the directory.

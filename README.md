@@ -162,6 +162,26 @@ is **not** meaningful (only a few training steps) — the point is that the
 train → checkpoint → eval wiring works before you commit GPU hours to
 pi0.5.
 
+### Sim-VLA pipeline: oracle demonstrations in the digital twin
+
+Collect scripted-oracle pick-and-place demonstrations in the MuJoCo
+digital twin, train ACT / Diffusion / pi0.5 on them, and evaluate in the
+same environment. Only verified-successful episodes are ever saved:
+
+```bash
+python tool/collect_sim_dataset.py --task single --episodes 30 --dry-run \
+    --gif outputs/oracle_gifs                    # tune/inspect the oracle
+python tool/collect_sim_dataset.py --task handover --oracle direct \
+    --episodes 150 --repo-id local/so101_sim_handover   # collect a dataset
+python tool/eval_sim_policy.py --task single \
+    --checkpoint <run>/checkpoints/last/pretrained_model --out results.json
+bash test/system/smoke_vla_sim.sh    # collect→train→eval plumbing (~15–45 min CPU)
+```
+
+See [`documents/long_vla_sim_guide.md`](documents/long_vla_sim_guide.md)
+for the full experiment protocol (seed pools, oracle gate, wall-time
+budgets, viewing collected data).
+
 ### The real run: pi0.5 on LIBERO (needs a big GPU)
 
 pi0.5 is a ~4B-parameter VLA. **Full-parameter finetuning needs a

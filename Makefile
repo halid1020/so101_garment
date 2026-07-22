@@ -11,7 +11,7 @@
 PY := venv/bin/python
 PYTHONPATH := .:src
 
-.PHONY: test test-unit test-integration test-system paper lint
+.PHONY: test test-unit test-integration test-system test-system-vla paper lint
 
 test: test-unit test-integration
 
@@ -23,6 +23,9 @@ test-integration:
 
 test-system:
 	bash test/system/smoke_test_pipeline.sh
+
+test-system-vla:
+	bash test/system/smoke_vla_sim.sh
 
 paper:
 	cd documents/paper/teleoperation && latexmk -pdf main.tex
