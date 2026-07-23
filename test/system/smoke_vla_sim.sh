@@ -117,7 +117,11 @@ import torch
 print("  compute:", "cuda" if torch.cuda.is_available() else "cpu")
 PY
 # Twin assets must exist (payload scene builds from build/twin).
-"$PY" -m sim_twin.verify >/dev/null 2>&1 || fail "twin assets (run: python -m sim_twin.verify)"
+# Log kept (and tailed on failure) so preflight errors are never silent.
+"$PY" -m sim_twin.verify >"$RUN_DIR/logs/preflight_twin.log" 2>&1 || {
+    tail -n 25 "$RUN_DIR/logs/preflight_twin.log"
+    fail "twin assets (full log: $RUN_DIR/logs/preflight_twin.log)"
+}
 echo "  ✓ deps + twin assets present"
 # pi0.5's tokenizer lives in a GATED HF repo (google/paligemma-3b-pt-224):
 # it needs an authenticated account that accepted the licence. Without it,

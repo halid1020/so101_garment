@@ -115,10 +115,34 @@ def _check_volumes(part: str, count: int | None, expected: int) -> bool:
 
 
 def export_sim_meshes(force: bool = False, check: bool = False) -> bool:
-    """Export + scale the sim meshes. Returns overall volume-check pass."""
+    """Export + scale the sim meshes. Returns overall volume-check pass.
+
+    On a machine without the ``openscad`` binary (e.g. a remote GPU box
+    with no sudo), falls back to the prebuilt meshes in ``build/twin``
+    when they are all present — copy that directory over from a machine
+    that has OpenSCAD.
+    """
     import trimesh
 
     MESH_DIR.mkdir(parents=True, exist_ok=True)
+    if shutil.which("openscad") is None:
+        missing = [p for p in SIM_PARTS if not (MESH_DIR / f"{p}.stl").exists()]
+        if check or missing:
+            raise RuntimeError(
+                "openscad binary not found and "
+                + (
+                    f"meshes missing from {MESH_DIR}: {', '.join(missing)}"
+                    if missing
+                    else "--check needs it for the CGAL volume counts"
+                )
+                + " — install OpenSCAD, or copy build/twin/ from a machine "
+                "that has it (rsync -av build/ <host>:<repo>/build/)"
+            )
+        print(
+            "  WARNING openscad not found — using the prebuilt meshes in "
+            f"{MESH_DIR} as-is (freshness against config.scad unchecked)"
+        )
+        return True
     cache = json.loads(CACHE_PATH.read_text()) if CACHE_PATH.exists() else {}
     version = _openscad_version()
     ok = True

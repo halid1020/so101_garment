@@ -123,7 +123,11 @@ fail() { echo; echo "❌ LONG RUN FAILED during: $1"; exit 1; }
 
 # ---- preflight -------------------------------------------------------
 phase "Preflight"
-"$PY" -m sim_twin.verify >/dev/null 2>&1 || fail "twin assets (python -m sim_twin.verify)"
+# Log kept (and tailed on failure) so preflight errors are never silent.
+"$PY" -m sim_twin.verify >"$RUN_DIR/logs/preflight_twin.log" 2>&1 || {
+    tail -n 25 "$RUN_DIR/logs/preflight_twin.log"
+    fail "twin assets (full log: $RUN_DIR/logs/preflight_twin.log)"
+}
 if grep -qw pi05 <<<"$POLICIES"; then
     "$PY" - <<'PY' || fail "pi0.5 prerequisites (hf auth login + accept the licence at https://huggingface.co/google/paligemma-3b-pt-224)"
 from huggingface_hub import auth_check
