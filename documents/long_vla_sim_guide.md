@@ -86,8 +86,7 @@ source setup.sh
 bash test/system/long_vla_sim.sh                 # both modes, all cells
 ```
 
-Run it under `tmux`/`nohup` — the full matrix is multi-day. Useful
-variants:
+Useful variants:
 
 ```bash
 bash test/system/long_vla_sim.sh --modes simple            # sanity half only
@@ -97,6 +96,44 @@ bash test/system/long_vla_sim.sh --skip-train              # re-eval only
 bash test/system/long_vla_sim.sh --pi05-steps 20000        # higher pi0.5 quality
 bash test/system/long_vla_sim.sh --simple-episodes 50      # cheaper sanity half
 bash test/system/long_vla_sim.sh --val-trials 5            # 5–10 supported
+```
+
+### Running in the background (tmux)
+
+The full matrix is multi-day, so run it inside `tmux` — the script
+keeps running on the server after you disconnect:
+
+```bash
+tmux new -s vla                  # start a session (skip if already inside one)
+bash test/system/long_vla_sim.sh
+# Ctrl+b d  — detach; the run continues on the server
+tmux attach                      # reattach later (tmux ls lists sessions)
+# Ctrl+b c  — new window alongside the run; Ctrl+b n/p switches
+# Ctrl+b [  — scroll back through the run's output (q exits)
+```
+
+Monitor without attaching, from any other login:
+
+```bash
+tail -f $SO101_OUTPUT_DIR/vla_sim_long/<run-name>/logs/*.log
+ls $SO101_OUTPUT_DIR/vla_sim_long/<run-name>/oracle_gate/
+```
+
+Nothing looks stuck for hours by design: Phase 0 and teleop-oracle
+collection run in real time, and the pi0.5 cells print a measured
+s/step projection after ~50 steps (see the wall-time table below).
+
+### Resuming after a crash
+
+Do **not** simply rerun the bare command — each bare invocation makes
+a fresh timestamped run directory and starts from scratch. Rerun with
+the SAME run name plus skip flags for the phases already done; within
+a run dir the script also reuses per-cell artefacts it finds (gate
+JSONs, datasets, checkpoints):
+
+```bash
+bash test/system/long_vla_sim.sh --run-name long_20260723_141954 \
+    --skip-gate --skip-collect          # e.g. died during training
 ```
 
 ### Wall-time budget (3090 Ti, defaults)
