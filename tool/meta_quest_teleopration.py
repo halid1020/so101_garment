@@ -9,6 +9,21 @@ Optionally records LeRobot-format episodes (--record): a training-ready
 dataset at the configured fps plus a ~100 Hz full-rate sidecar parquet per
 episode, all controlled from the Quest handles.
 
+Leader-arm mode (--input leader): two passive SO-101 leader arms drive the
+followers in joint space (LeRobot SOLeader; no IK solver, no Quest). The
+laptop keyboard replaces the Quest buttons — same Y/X/A/B semantics as
+below, plus SPACE as the follow clutch (engage slews the followers to the
+leader pose at a bounded joint velocity, then tracks 1:1; press again to
+pause) and Q to quit. Leader ports/ids come from src/conf/robot.yaml
+(LEADER_PORT_*/LEADER_ID_*). Calibrate each leader once with
+  lerobot-calibrate --teleop.type=so101_leader --teleop.port=<port> \\
+      --teleop.id=leader_left|leader_right
+(or answer the interactive prompts on first connect). The leader jaw maps
+onto the same capped gripper command as the Quest trigger, so recorded
+datasets are interchangeable between the two interfaces. Note: leader mode
+bypasses the workspace envelope — collisions are the operator's
+responsibility.
+
 Controls (the Y/X/A/B semantics apply even WITHOUT --record):
   Hold LEFT + RIGHT grip  - activate dual-arm teleoperation
   Hold triggers           - close grippers
@@ -56,6 +71,7 @@ from common.configs import (
     TRANSLATION_SCALE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.keyboard_buttons import KeyboardButtons
 from common.recording import (
     CameraCapture,
     EpisodeRecorder,
@@ -67,6 +83,7 @@ from common.recording import (
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
+from common.threads.leader_arm import leader_arm_thread
 from src.so101_dual_arm import SO101DualArm
 
 # Disk-space thresholds for --record (GB free on the dataset volume).
@@ -290,9 +307,48 @@ def build_recording_stack(
     )
 
 
+def connect_leader_arms(robot_conf: dict) -> dict:
+    """Connect both SO-101 leader arms (torque stays off on the leaders).
+
+    Must run while the terminal is still in cooked mode: on a missing
+    calibration file, SOLeader.connect(calibrate=True) prompts on stdin.
+    """
+    from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
+    from lerobot.teleoperators.so_leader.so_leader import SOLeader
+
+    leaders = {}
+    for side, port_key, id_key in (
+        ("left", "LEADER_PORT_LEFT", "LEADER_ID_LEFT"),
+        ("right", "LEADER_PORT_RIGHT", "LEADER_ID_RIGHT"),
+    ):
+        if port_key not in robot_conf or id_key not in robot_conf:
+            raise SystemExit(
+                f"❌ --input leader needs {port_key}/{id_key} in " "src/conf/robot.yaml"
+            )
+        leader = SOLeader(
+            SOLeaderTeleopConfig(
+                port=robot_conf[port_key], id=robot_conf[id_key], use_degrees=True
+            )
+        )
+        print(f"🕹️  Connecting {side} leader ({robot_conf[port_key]})...")
+        leader.connect(calibrate=True)
+        leaders[side] = leader
+    return leaders
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="quest",
+        choices=["quest", "leader"],
+        help="Operator interface: 'quest' (Meta Quest, default) or 'leader' "
+        "(two SO-101 leader arms in joint space; keyboard keys Y/X/A/B, "
+        "SPACE = follow clutch, Q = quit; ports/ids from src/conf/robot.yaml "
+        "LEADER_PORT_*/LEADER_ID_*)",
+    )
     add_teleop_cli_args(
         parser, default_max_joint_vel=MAX_JOINT_VEL_HW_RAD_S, default_method="armplane"
     )
@@ -320,20 +376,33 @@ def main():
     dual_arm = SO101DualArm(config)
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
+    use_leader = args.input == "leader"
 
-    # 3. IK layer (10 body DOF, grippers locked): built by the shared helper so
-    # this tool and the sim rehearsal (tool/quest_sim_teleop.py) cannot drift.
-    # 'mymethod' reuses the pink_relaxed solver plus the thumbstick wrist trims
-    # (--wrist-mode); armplane keeps the tuned Pink solver + armplane mapping.
-    ik_solver, thread_kwargs = create_teleop_stack(args, dt=1.0 / IK_SOLVER_RATE)
+    # 3. Input layer.
+    # Quest: IK stack (10 body DOF, grippers locked) built by the shared
+    # helper so this tool and the sim rehearsal (tool/quest_sim_teleop.py)
+    # cannot drift, plus the Quest reader (the IK thread reads it directly).
+    # Leader: two passive SO-101 leader arms — connected NOW, while the
+    # terminal is still cooked (first-connect calibration prompts on stdin);
+    # no IK solver, the leader thread publishes joint targets directly.
+    quest_reader = None
+    ik_solver = thread_kwargs = None
+    leaders = None
+    if use_leader:
+        leaders = connect_leader_arms(config["robot"])
+    else:
+        # 'mymethod' reuses the pink_relaxed solver plus the thumbstick wrist
+        # trims (--wrist-mode); armplane keeps the tuned Pink solver +
+        # armplane mapping.
+        ik_solver, thread_kwargs = create_teleop_stack(args, dt=1.0 / IK_SOLVER_RATE)
+        print("\n🎮 Initializing Meta Quest reader...")
+        quest_reader = MetaQuestReader(ip_address=args.ip_address, port=5555, run=True)
 
-    # 4. Quest reader (IK thread reads it directly)
-    print("\n🎮 Initializing Meta Quest reader...")
-    quest_reader = MetaQuestReader(ip_address=args.ip_address, port=5555, run=True)
-
-    # 5. Threads: per-arm joint state I/O + dual IK solver.
+    # 5. Threads: per-arm joint state I/O + the input thread (dual IK solver
+    # for Quest, leader poller for leader mode — each leader owns its own
+    # serial port, so no lock is shared with the follower buses).
     # The Feetech serial port handler is not thread-safe: every bus access
-    # (joint threads AND quest button callbacks) must hold that bus's lock.
+    # (joint threads AND button callbacks) must hold that bus's lock.
     left_bus_lock = threading.Lock()
     right_bus_lock = threading.Lock()
     left_joint_thread = threading.Thread(
@@ -346,15 +415,22 @@ def main():
         args=(data_manager, dual_arm.bus_1, "right", right_bus_lock),
         daemon=True,
     )
-    ik_thread = threading.Thread(
-        target=dual_ik_solver_thread,
-        args=(data_manager, ik_solver, quest_reader),
-        kwargs=thread_kwargs,
-        daemon=True,
-    )
+    if use_leader:
+        input_thread = threading.Thread(
+            target=leader_arm_thread,
+            args=(data_manager, leaders),
+            daemon=True,
+        )
+    else:
+        input_thread = threading.Thread(
+            target=dual_ik_solver_thread,
+            args=(data_manager, ik_solver, quest_reader),
+            kwargs=thread_kwargs,
+            daemon=True,
+        )
     left_joint_thread.start()
     right_joint_thread.start()
-    ik_thread.start()
+    input_thread.start()
 
     # park_arms: the recorder invokes this ONLY for shutdown/thread-error
     # discards (never for DISABLED- or camera-staleness-triggered ones). Bare
