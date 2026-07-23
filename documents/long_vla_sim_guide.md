@@ -136,6 +136,37 @@ bash test/system/long_vla_sim.sh --run-name long_20260723_141954 \
     --skip-gate --skip-collect          # e.g. died during training
 ```
 
+### Knowing when it's done — and whether it succeeded
+
+The script is fail-fast, so there are exactly two endings:
+
+- **Success**: the final report phase prints
+  `✅ LONG RUN COMPLETE — see <run_dir>/results.md` and exits 0.
+  `results.md` is written only by that last phase, so its existence
+  is the definitive whole-pipeline success check:
+
+  ```bash
+  ls $SO101_OUTPUT_DIR/vla_sim_long/<run-name>/results.md
+  ```
+
+- **Failure**: the first broken cell prints
+  `❌ LONG RUN FAILED during: <phase>` and exits 1; the cell's full
+  output is in `<run_dir>/logs/`. No `results.md` will exist — resume
+  as above once fixed.
+
+Still running vs finished, without attaching:
+
+```bash
+pgrep -af long_vla_sim.sh                 # non-empty = still running
+tmux capture-pane -t vla -p | tail -5     # last lines of the run window
+```
+
+Inside tmux, finished means the shell prompt is back — check
+`echo $?` right there (0 = success). Progress markers along the way:
+the `### [HH:MM:SS] …` phase banners, the oracle-gate table (~1 h in),
+per-cell dataset stats under `collect_stats/`, and `↷ reusing …`
+lines wherever prior artefacts are picked up.
+
 ### Wall-time budget (3090 Ti, defaults)
 
 | Phase | Estimate |
