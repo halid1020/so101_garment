@@ -9,6 +9,11 @@ Optionally records LeRobot-format episodes (--record): a training-ready
 dataset at the configured fps plus a ~100 Hz full-rate sidecar parquet per
 episode, all controlled from the Quest handles.
 
+--sensor-view opens a live window with the tactile-camera feeds and both
+arms' measured/commanded joints while you teleoperate (cameras come from
+src/conf/sensor_map.yaml — run tool/test_sensor_rates.py --assign once —
+or ad-hoc --view-camera NAME=DEV). q/Esc closes just the window.
+
 Controls (the Y/X/A/B semantics apply even WITHOUT --record):
   Hold LEFT + RIGHT grip  - activate dual-arm teleoperation
   Hold triggers           - close grippers
@@ -64,6 +69,7 @@ from common.recording import (
     build_dataset_features,
     load_recording_config,
 )
+from common.sensor_view import run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
@@ -290,6 +296,74 @@ def build_recording_stack(
     )
 
 
+def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("live sensor view")
+    group.add_argument(
+        "--sensor-view",
+        action="store_true",
+        help="Live window with tactile-camera feeds + both arms' joint "
+        "state while teleoperating (q/Esc closes just the window)",
+    )
+    group.add_argument(
+        "--view-camera",
+        action="append",
+        default=[],
+        metavar="NAME=DEV",
+        help="Ad-hoc camera for --sensor-view, e.g. "
+        "left_arm_left_gripper=/dev/video4 (repeatable; default: the "
+        "cameras assigned in src/conf/sensor_map.yaml)",
+    )
+
+
+def build_sensor_view_captures(
+    args: argparse.Namespace, data_manager: DualDataManager
+) -> list[CameraCapture]:
+    """Open + start the viewer's tactile-camera capture threads.
+
+    The view is a convenience: a camera that fails to open is warned
+    about and skipped (joints-only view if none open) — it never kills
+    teleoperation. Only NO cameras being configured at all is an error.
+    """
+    from tool.test_sensor_rates import (
+        SENSOR_MAP_PATH,
+        load_sensor_map,
+        parse_camera_spec,
+    )
+
+    if args.view_camera:
+        specs = [parse_camera_spec(spec) for spec in args.view_camera]
+    elif SENSOR_MAP_PATH.exists():
+        specs = sorted(load_sensor_map(SENSOR_MAP_PATH)["cameras"].items())
+    else:
+        raise SystemExit(
+            "❌ --sensor-view has no cameras: run "
+            "tool/test_sensor_rates.py --assign once, or pass "
+            "--view-camera NAME=DEV"
+        )
+
+    captures: list[CameraCapture] = []
+    for name, device in specs:
+        cam = CameraCapture(
+            name=name,
+            device=device,
+            width=640,
+            height=480,
+            fps=30,  # the tactile cameras' true ceiling (measured)
+            rotate180=False,
+            fourcc="MJPG",  # compressed: 4 simultaneous streams share USB
+        )
+        if not cam.open():
+            print(
+                f"⚠️  sensor-view camera '{name}' ({device}) failed to open — skipped"
+            )
+            continue
+        cam.start(data_manager)
+        captures.append(cam)
+    if not captures:
+        print("⚠️  no sensor-view camera opened — showing joint panels only")
+    return captures
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
@@ -297,6 +371,7 @@ def main():
         parser, default_max_joint_vel=MAX_JOINT_VEL_HW_RAD_S, default_method="armplane"
     )
     add_recording_cli_args(parser)
+    add_sensor_view_cli_args(parser)
     args = parser.parse_args()
 
     print("=" * 60)
@@ -524,10 +599,20 @@ def main():
             "y = flex); its other joints freeze while deflected, then the "
             "handle resumes from the new pose on release"
         )
+    if args.sensor_view:
+        print("   👁 --sensor-view window: q/Esc closes it (teleop keeps running)")
     print("⚠️  Press Ctrl+C to exit")
     print()
 
+    view_captures: list[CameraCapture] = []
+    if args.sensor_view:
+        view_captures = build_sensor_view_captures(args, data_manager)
+
     try:
+        if args.sensor_view:
+            # Runs on the main thread (sole owner of the cv2 GUI);
+            # returns when the window is closed or shutdown is requested.
+            run_sensor_view_loop(data_manager, view_captures)
         while not data_manager.is_shutdown_requested():
             time.sleep(1.0)
     except KeyboardInterrupt:
@@ -547,6 +632,8 @@ def main():
         ik_thread.join(timeout=3.0)
         left_joint_thread.join(timeout=3.0)
         right_joint_thread.join(timeout=3.0)
+        for cam in view_captures:
+            cam.stop()
         with left_bus_lock, right_bus_lock:
             dual_arm.disable_torque()
         print("👋 Done.")
