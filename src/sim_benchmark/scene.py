@@ -159,6 +159,10 @@ class DualArmSim:
     def __init__(self) -> None:
         self.model = build_spec().compile()
         self.data = mujoco.MjData(self.model)
+        # Flat IK model the methods build their kinematics from. For the plain
+        # scene this is the executing model itself; RigBenchSim overrides it
+        # with a separate flat model so dls/mink stay in the flat IK frame.
+        self.ik_model = self.model
 
         self.arm_qpos_idx = np.array(
             [self.model.joint(j).qposadr[0] for j in ARM_JOINTS]

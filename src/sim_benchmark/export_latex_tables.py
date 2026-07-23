@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Export benchmark metrics JSON to LaTeX (booktabs) tables for the paper.
 
-Handles both results shapes:
+Handles three results shapes:
 - run_benchmark.py:  results[trajectory][method] -> metrics
 - run_envelope.py:   results[trajectory][method][oob_mode] -> metrics
+- run_handover.py:   results[method] -> {summary: {...}, episodes: [...]}
 
 Usage:
     python src/sim_benchmark/export_latex_tables.py \
@@ -36,6 +37,18 @@ ENVELOPE_COLUMNS = [
     ("cmd_jerk_rms_rad_s3", r"jerk (rad/s$^3$)"),
 ]
 
+# Handover summary columns. success_rate and handover_rate are fractions in
+# the JSON; they are scaled to percent for the table (see _handover_rows).
+HANDOVER_COLUMNS = [
+    ("success_rate", r"success (\%)"),
+    ("handover_rate", r"handover (\%)"),
+    ("place_err_mean_mm", r"$\bar{e}_{place}$ (mm)"),
+    ("place_err_p95_mm", r"$e_{place}^{95}$ (mm)"),
+    ("track_err_mean_mm", r"$\bar{e}_{track}$ (mm)"),
+    ("solve_ms_mean", r"solve (ms)"),
+]
+_HANDOVER_RATE_KEYS = ("success_rate", "handover_rate")
+
 
 def _fmt(v: float) -> str:
     if v != v:  # NaN
@@ -63,8 +76,32 @@ def _tabular(
     return "\n".join(lines) + "\n"
 
 
+def _is_handover(results: dict) -> bool:
+    """True for run_handover.py output: method -> {summary, episodes}."""
+    first = next(iter(results.values()))
+    return isinstance(first, dict) and "summary" in first
+
+
+def _handover_rows(results: dict) -> list[tuple[str, dict]]:
+    """Flatten method -> summary rows, scaling rate fractions to percent."""
+    rows = []
+    for method_name, payload in results.items():
+        metrics = dict(payload["summary"])
+        for key in _HANDOVER_RATE_KEYS:
+            if key in metrics:
+                metrics[key] = metrics[key] * 100.0
+        rows.append((method_name, metrics))
+    return rows
+
+
 def export(results: dict, out_dir: Path, prefix: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if _is_handover(results):  # handover shape: method -> {summary, episodes}
+        tex = _tabular(_handover_rows(results), HANDOVER_COLUMNS, "method")
+        path = out_dir / f"{prefix}.tex"
+        path.write_text(tex)
+        print(f"  wrote {path}")
+        return
     for traj_name, by_method in results.items():
         first = next(iter(by_method.values()))
         nested = isinstance(first, dict) and all(

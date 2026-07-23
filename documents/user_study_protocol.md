@@ -28,9 +28,9 @@ results when sessions happen (living-paper rule in CLAUDE.md).
 
 | id | pipeline | how to launch |
 |---|---|---|
-| C1 | production, `pink_full`, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method pink_full --oob-mode project` |
-| C2 | production, `pink_relaxed`, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method pink_relaxed --oob-mode project` |
-| C3 | production, `telegrip` split IK, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method telegrip --oob-mode project` |
+| C1 | armplane, `pink_full`, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method pink_full --oob-mode project` |
+| C2 | armplane, `pink_relaxed`, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method pink_relaxed --oob-mode project` |
+| C3 | armplane, `telegrip` split IK, OOE `project` | `venv/bin/python tool/meta_quest_teleopration.py --method telegrip --oob-mode project` |
 | C4 | upstream Telegrip stack (own UI + IK, no envelope) | `venv/bin/python tool/telegrip_native.py --autoconnect` (see `documents/telegrip_native.md`) |
 
 Do **not** reveal which condition is "ours"/"the baseline"; refer to them
@@ -158,7 +158,10 @@ episode for post-hoc EE smoothness analysis with `src/sim_benchmark/metrics.py`.
   (user-study subsection) and cross-link from
   `documents/teleop_benchmark_results.md`.
 
-[TODO: create an experiment document for each interviewers, so that I can work on these experimetn documents later.]
+Per-participant session packs (consent/demographics, per-condition trial
+sheets and questionnaires in that participant's Latin-square order, and
+the closing interview sheet) live in `documents/user_study/` — print one
+pack per participant and file it after the session.
 
 ## 10. Safety & ethics checklist
 

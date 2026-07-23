@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -50,6 +51,7 @@ from sim_benchmark.methods import (  # type: ignore[attr-defined]  # noqa: E402
 from sim_benchmark.metrics import RunLog, compute_envelope_metrics  # noqa: E402
 from sim_benchmark.mock_quest import MockTrajectory, envelope_suite  # noqa: E402
 from sim_benchmark.scene import DualArmSim  # noqa: E402
+from sim_benchmark.scene_rig import make_sim  # noqa: E402
 
 METRIC_COLUMNS = [
     ("oob_time_s", "oob(s)"),
@@ -79,7 +81,7 @@ def run_episode(
     envelopes: dict[str, ArmEnvelope],
 ) -> tuple[dict, RunLog]:
     """Run one (method, trajectory, policy) episode; return (metrics, log)."""
-    method = method_factory(sim.model)
+    method = method_factory(sim.ik_model)
     q0 = sim.neutral_q()
     sim.reset(q0)
     method.reset(q0)
@@ -224,9 +226,41 @@ def main() -> None:
         choices=sorted(OOE_POLICIES),
     )
     parser.add_argument("--trajectories", nargs="+", default=None)
+    parser.add_argument(
+        "--scene",
+        choices=["rig", "plain"],
+        default="rig",
+        help="rig = collision-enabled printed-rig twin (default); plain = flat scene",
+    )
     parser.add_argument("--save", type=str, default=None, help="Save metrics JSON")
     parser.add_argument("--plot", type=str, default=None, metavar="DIR")
+    parser.add_argument(
+        "--render-views",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="Render 3-D reach-envelope figures (top/front/side/iso + section) "
+        "to DIR and exit; DIR defaults to $SO101_OUTPUT_DIR/teleop_envelope_plots",
+    )
+    parser.add_argument(
+        "--table-z",
+        type=float,
+        default=0.0,
+        help="Work-surface height in the IK frame for the envelope plots (m)",
+    )
     args = parser.parse_args()
+
+    if args.render_views is not None:
+        from sim_benchmark.envelope_views import render_envelope_views
+
+        out_root = os.environ.get("SO101_OUTPUT_DIR", "outputs")
+        out_dir = args.render_views or str(Path(out_root) / "teleop_envelope_plots")
+        paths = render_envelope_views(_load_envelopes(), out_dir, table_z=args.table_z)
+        print("Rendered envelope views:")
+        for p in paths:
+            print(f"  {p}")
+        return
 
     suite = envelope_suite()
     if args.trajectories:
@@ -239,7 +273,7 @@ def main() -> None:
         suite = [t for t in suite if t.name in args.trajectories]
 
     envelopes = _load_envelopes()
-    sim = DualArmSim()
+    sim = make_sim(args.scene)
     results: dict[str, dict[str, dict[str, dict]]] = {}
     logs: dict[str, dict[str, dict[str, RunLog]]] = {}
     for traj in suite:
