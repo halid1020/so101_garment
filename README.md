@@ -132,6 +132,11 @@ python tool/meta_quest_teleopration.py --method pink_relaxed    # recommended fi
 python tool/meta_quest_teleopration.py --method scipy_ls --max-joint-vel 1.5
 ```
 
+Add `--sensor-view` for a live window with the tactile-camera feeds and
+both arms' measured/commanded joints while you teleoperate (uses the
+camera assignments from `tool/test_sensor_rates.py --assign`, or ad-hoc
+`--view-camera NAME=DEV`; q/Esc closes just the window).
+
 Benchmark methods run through a joint-space rate limiter
 (`--max-joint-vel`, default 2 rad/s on the real arms). Based on the
 simulation benchmark: try `pink_relaxed` first (best accuracy/smoothness
