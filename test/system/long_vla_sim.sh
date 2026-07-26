@@ -35,10 +35,13 @@ ORACLE="teleop"              # collection oracle (direct = faster fallback)
 SIMPLE_EPISODES=100
 FULL_EPISODES=1000
 GATE_EPISODES=30             # dry-run episodes per gate cell
-SINGLE_GATE=95               # abort if teleop single success (%) is below
-HANDOVER_GATE=70             # relay teleop measures ~75-86%/attempt; gate
-                             # well below that band (but far above a broken
-                             # <50% oracle) so sampling noise never aborts
+SINGLE_GATE=90               # abort if teleop PER-SEED success (%) is below
+HANDOVER_GATE=75             # per-seed = "each seed eventually yields a demo"
+                             # (retries recover flaky seeds; the per-attempt
+                             # rate only reflects collection speed). Observed
+                             # ~97% single / ~88% handover; bars sit well
+                             # above a broken (<50%) oracle with headroom for
+                             # 30-episode sampling noise (~3.2pp per seed).
 ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
 PI05_STEPS=10000; PI05_BATCH=8
@@ -107,7 +110,7 @@ cat <<BANNER
 ----------------------------------------------------------------------
  modes    : $MODES     tasks: $TASKS     policies: $POLICIES
  collect  : $ORACLE oracle, ${CAM_W}x${CAM_H}; simple=$SIMPLE_EPISODES, full=$FULL_EPISODES eps/task
- gate     : teleop >= ${SINGLE_GATE}% (single) / ${HANDOVER_GATE}% (handover), $GATE_EPISODES eps/cell
+ gate     : teleop per-seed >= ${SINGLE_GATE}% (single) / ${HANDOVER_GATE}% (handover), $GATE_EPISODES eps/cell
  train    : act ${ACT_STEPS}, diffusion ${DIFF_STEPS}, pi05 ${PI05_STEPS} (LoRA r=16 from pi05_base)
  validate : $VAL_TRIALS VAL-seed rollouts per checkpoint
  evaluate : all 30 EVAL seeds, videos on
@@ -149,7 +152,7 @@ if [ "$SKIP_GATE" = "0" ]; then
                 --camera-width "$CAM_W" --camera-height "$CAM_H" \
                 > "$RUN_DIR/logs/gate_${task}_${oracle}.log" 2>&1 \
                 || fail "oracle gate ($task/$oracle)"
-            echo "  $task/$oracle: $("$PY" -c "import json;d=json.load(open('$out'));print(f\"{d['oracle_success_rate']*100:.0f}% ({d['episodes_collected']}/{d['episode_attempts']})\")")"
+            echo "  $task/$oracle: $("$PY" -c "import json;d=json.load(open('$out'));print(f\"{d['per_seed_success_rate']*100:.0f}% per-seed ({d['oracle_success_rate']*100:.0f}% per-attempt, {d['episodes_collected']}/{d['episode_attempts']})\")")"
         done
     done
     "$PY" - "$RUN_DIR" "$SINGLE_GATE" "$HANDOVER_GATE" <<'PY' || fail "oracle gate (teleop below threshold — do not train on a broken oracle)"
@@ -160,9 +163,9 @@ gates = {"single": sgate, "handover": hgate}
 ok = True
 for task, gate in gates.items():
     d = json.loads((run / "oracle_gate" / f"{task}_teleop.json").read_text())
-    rate = 100 * d["oracle_success_rate"]
+    rate = 100 * d["per_seed_success_rate"]
     mark = "✓" if rate >= gate else "✗"
-    print(f"  {mark} teleop {task}: {rate:.0f}% (gate {gate:.0f}%)")
+    print(f"  {mark} teleop {task}: {rate:.0f}% per-seed (gate {gate:.0f}%)")
     ok &= rate >= gate
 sys.exit(0 if ok else 1)
 PY

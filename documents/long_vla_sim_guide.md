@@ -32,13 +32,17 @@ policy (`act`, `diffusion`, `pi05`):
 0. **Oracle gate** — dry-runs both oracles (`teleop` = scripted
    operator through the full teleoperation pipeline, `direct` = IK
    fallback) and prints a success-rate table. Aborts if the teleop
-   oracle is below 95 % (single) / 70 % (handover): do not train on a
-   broken oracle. The handover bar sits well below the teleop relay's
-   measured ~75–86 % per-attempt band so sampling noise on a 30-episode
-   dry run never false-aborts, yet far above a genuinely broken (<50 %)
-   oracle. Every saved episode is still a verified success (failures
-   are discarded, not trained on); the `direct` oracle remains at 100 %
-   for either task if a fuller dataset is wanted.
+   oracle's **per-seed** success — "each seed eventually yields a demo
+   within its retries" — is below 90 % (single) / 75 % (handover): do
+   not train on a broken oracle. Per-seed is the right health signal:
+   failed attempts are retried (up to 3×), so the *per-attempt* rate
+   only reflects collection speed, not oracle quality. Observed on a
+   30-episode dry run is ~97 % single / ~88 % handover, so both bars
+   clear with headroom for sampling noise (~3.2 pp per seed) yet sit
+   far above a genuinely broken (<50 %) oracle. Every saved episode is
+   still a verified success (failures are discarded, not trained on);
+   the `direct` oracle remains at 100 % for either task if a fuller
+   dataset is wanted.
 1. **Collect** — demonstrations through the teleop oracle; failed
    episodes are never saved (a failed seed retries up to 3×, then is
    skipped and recorded).
