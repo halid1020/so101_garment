@@ -48,6 +48,9 @@ DEVICE=""
 RUN_NAME="long_$(date +%Y%m%d_%H%M%S)"
 SKIP_COLLECT=0; SKIP_TRAIN=0; SKIP_GATE=0
 
+# TODO: I would like to have configuration files to save these hyper-parameters.
+# TODO: these hyper-parameters should be logged into the resulted folder as well.
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --modes) MODES="$2"; shift 2;;
