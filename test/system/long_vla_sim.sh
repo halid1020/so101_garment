@@ -15,6 +15,7 @@
 #   bash test/system/long_vla_sim.sh                  # both modes, all cells
 #   bash test/system/long_vla_sim.sh --modes simple   # sanity half only
 #   bash test/system/long_vla_sim.sh --only pi05      # one policy
+#   bash test/system/long_vla_sim.sh --tasks single   # one task
 #   bash test/system/long_vla_sim.sh --skip-collect   # reuse datasets
 #   bash test/system/long_vla_sim.sh --skip-train     # re-validate/eval only
 #   bash test/system/long_vla_sim.sh --pi05-steps 20000
@@ -31,6 +32,7 @@ cd "$REPO_ROOT"
 # ---- defaults --------------------------------------------------------
 MODES="simple,full"
 ONLY=""                      # comma list of policies; empty = all three
+ONLY_TASKS=""                # comma list of tasks; empty = single,handover
 ORACLE="teleop"              # collection oracle (direct = faster fallback)
 SIMPLE_EPISODES=100
 FULL_EPISODES=1000
@@ -55,6 +57,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --modes) MODES="$2"; shift 2;;
         --only) ONLY="$2"; shift 2;;
+        --tasks) ONLY_TASKS="$2"; shift 2;;
         --oracle) ORACLE="$2"; shift 2;;
         --simple-episodes) SIMPLE_EPISODES="$2"; shift 2;;
         --full-episodes) FULL_EPISODES="$2"; shift 2;;
@@ -77,6 +80,7 @@ done
 POLICIES="act diffusion pi05"
 [ -n "$ONLY" ] && POLICIES="${ONLY//,/ }"
 TASKS="single handover"
+[ -n "$ONLY_TASKS" ] && TASKS="${ONLY_TASKS//,/ }"
 
 # ---- environment -----------------------------------------------------
 if [ -z "${VIRTUAL_ENV:-}" ]; then
