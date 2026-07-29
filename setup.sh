@@ -75,8 +75,10 @@ export SO101_OUTPUT_DIR="${SO101_OUTPUT_DIR:-$PROJECT_ROOT/outputs}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 # --- Real-rig access (harmless when no arms/headset are attached) ------
-# Serial ports for the SO-101 buses (resets on reboot/replug).
-for port in /dev/ttyACM0 /dev/ttyACM1; do
+# Serial ports for the SO-101 buses — two followers + two leaders
+# (resets on reboot/replug; ttyACM devices enumerate in an unstable
+# order, so grant access to all of them rather than fixed nodes).
+for port in /dev/ttyACM*; do
     if [ -e "$port" ] && [ ! -w "$port" ]; then
         echo "=> Enabling access to ${port} (sudo may prompt for password)..."
         sudo chmod 666 "$port"
