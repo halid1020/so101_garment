@@ -36,7 +36,7 @@ def _scad_state() -> dict[str, float]:
     return {str(p): p.stat().st_mtime for p in sorted(PLATFORM_DIR.glob("*.scad"))}
 
 
-def _load(spacing_mm: float | None) -> TwinSim:
+def _load(spacing_mm: float | None, payload: bool = False) -> TwinSim:
     assets.build()
     params = TwinParams.load()
     if spacing_mm is not None:
@@ -51,7 +51,9 @@ def _load(spacing_mm: float | None) -> TwinSim:
         from sim_twin.params import BUILD_DIR
 
         urdf_gen.generate(params, BUILD_DIR / "robot.urdf")
-    sim = TwinSim(params)
+    # The viewer is the contact-tuning aid, so payload mode shows the
+    # (normally camera-invisible) fingertip pads in green.
+    sim = TwinSim(params, payload=payload, payload_debug=payload)
     sim.reset()
     return sim
 
@@ -69,13 +71,19 @@ def main() -> int:
         default=None,
         help="arm spacing override in mm (what-if only)",
     )
+    parser.add_argument(
+        "--payload",
+        action="store_true",
+        help="add the graspable bar, fingertip pads and target-zone disc "
+        "(for visually tuning the contact-grasp scene)",
+    )
     args = parser.parse_args()
 
     cam_state = None
     while True:
         state = _scad_state()
         try:
-            sim = _load(args.spacing)
+            sim = _load(args.spacing, payload=args.payload)
         except Exception as exc:
             if not args.watch:
                 raise

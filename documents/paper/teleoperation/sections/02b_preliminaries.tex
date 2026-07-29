@@ -1,0 +1,129 @@
+\section{Preliminaries: the anatomy of headset-to-arm teleoperation}
+\label{sec:prelim}
+
+This section introduces the parts every headset-driven teleoperation
+system shares, so that a reader new to the area can follow the design
+choices of Sections~\ref{sec:system} and~\ref{sec:method}. We cover the
+common data flow (Section~\ref{sec:prelim-dataflow}), the retargeting
+maps that turn hand poses into end-effector targets
+(Section~\ref{sec:prelim-retarget}), the inverse-kinematics families
+that turn targets into joint angles (Section~\ref{sec:prelim-ik}), the
+standard input filter (Section~\ref{sec:prelim-filter}), and the common
+treatments of workspace limits (Section~\ref{sec:prelim-workspace}).
+Throughout, the discussion applies to single or dual arms with five,
+six, or seven degrees of freedom; we note where the arm's DoF count
+changes the picture.
+
+\subsection{Data flow}
+\label{sec:prelim-dataflow}
+
+A headset such as the Meta Quest tracks its two hand controllers at
+\SIrange{50}{90}{Hz} and reports, per controller, a 6-D pose (position
+and orientation), analogue grip and trigger values, and button states.
+The poses arrive in a \emph{tracking frame} whose origin and yaw depend
+on where the headset started~--- an arbitrary frame the system must not
+control in directly. A teleoperation pipeline therefore runs the
+following stages, usually as separate threads at different rates:
+controller poses are (i) re-expressed in a stable \emph{operator frame},
+(ii) low-pass filtered, (iii) mapped by a \emph{retargeting map} to
+end-effector pose targets in each arm's \emph{base frame}, (iv) solved
+by inverse kinematics into joint targets, and (v) streamed to the servo
+controllers, typically at \SI{100}{Hz} or more. The analogue grips
+usually gate the whole pipeline (the \emph{clutch},
+Section~\ref{sec:prelim-retarget}) and the triggers drive the grippers.
+We write \(p_H, R_H\) for the filtered hand position and orientation in
+the operator frame, and \(p_E, R_E\) for the end-effector pose in the
+arm's base frame.
+
+\subsection{Retargeting maps}
+\label{sec:prelim-retarget}
+
+\paragraph{Position: absolute vs clutched.}
+The simplest map is absolute: fix a rigid transform between the operator
+frame and the robot frame once, and command
+\(p^\ast = T\,p_H\) forever after. Absolute mapping preserves a
+persistent hand--robot correspondence but fails when the robot workspace
+and the comfortable human workspace differ in size or offset~--- which
+is the usual case. The standard remedy is the \emph{clutched} (or
+indexed) map: an engage/disengage control, usually the grip buttons,
+gates tracking. On engagement the system latches the current hand
+position \(p_H^0\) and end-effector position \(p_E^0\), and while
+engaged it commands the anchored delta
+\begin{equation}
+  p^\ast(t) \;=\; p_E^0 + s\,\bigl(p_H(t) - p_H^0\bigr),
+  \label{eq:prelim-clutch}
+\end{equation}
+with a translation scale \(s\). Disengaging freezes the robot;
+re-engaging re-anchors. The operator can therefore cover any workspace
+in comfortable strokes, like lifting and re-placing a computer mouse.
+
+\paragraph{Orientation.}
+For arms with a full 3-DoF wrist (6- and 7-DoF arms), orientation is
+usually retargeted absolutely: the target rotation is the hand rotation,
+optionally composed with a fixed offset, and a 7th degree of freedom is
+spent on posture objectives such as elbow placement. At five degrees of
+freedom the picture changes: with only two wrist joints (flex and roll),
+the end-effector yaw is kinematically coupled to the shoulder-pan angle,
+so the reachable orientation set at a given position is a 2-D subset of
+\(\mathrm{SO}(3)\). Commanding an arbitrary hand rotation then
+over-constrains the tracker. Systems escape in one of two ways: they
+\emph{relax} the tracker (lower or zero the orientation cost on the
+infeasible axis and accept whatever orientation results), or they
+\emph{construct} targets inside the reachable set before tracking. The
+armplane mapping of Section~\ref{sec:armplane} is of the second kind.
+
+\subsection{Inverse-kinematics families}
+\label{sec:prelim-ik}
+
+Four families cover the systems in this paper.
+\emph{Differential (velocity-level) IK} linearises the kinematics each
+tick and solves a quadratic programme for joint velocities that reduce
+task errors under joint position and velocity limits; frame-tracking,
+damping, and posture objectives enter as weighted tasks. It is smooth
+and constraint-aware, and its per-tick cost is low.
+\emph{Damped least squares} is the classical closed-form member of the
+same family: it applies the damped pseudo-inverse of the task Jacobian
+to the pose error, trading tracking gain against robustness near
+singularities~\citep{wampler1986,nakamura1986}.
+\emph{Per-tick nonlinear optimisation} solves the position-level problem
+directly each tick (bounded least squares over joint angles). It can be
+the most accurate, but each solve is expensive and consecutive solves
+may jump between IK branches, so a rate limiter downstream is essential.
+\emph{Analytic and split solutions} exploit the arm's specific geometry:
+low-DoF chains often admit closed-form wrist solutions, so a system can
+solve position with a small numeric problem and set the wrist joints
+directly. Split methods buy wrist agility at the price of coupling
+between the two subproblems.
+
+\subsection{Input filtering}
+\label{sec:prelim-filter}
+
+Tracked controller poses carry hand tremor and sensor noise. Filtering
+them with a fixed low-pass forces a hard choice between residual jitter
+and lag. The One-Euro filter~\citep{oneeuro}, the de-facto standard for
+interactive input, is a first-order low-pass whose cutoff frequency
+adapts to the signal's speed:
+\(f_c = f_{c,\min} + \beta\,|\dot{\hat x}|\), where the speed estimate
+\(\dot{\hat x}\) is itself low-pass filtered with cutoff \(f_{c,d}\).
+The two knobs separate the concerns: \(f_{c,\min}\) sets steadiness when
+the hand is still, and \(\beta\) sets how quickly the filter opens up
+during fast motion. Position and orientation are filtered separately;
+quaternions need a sign-consistency guard so that interpolation stays on
+the short arc.
+
+\subsection{Workspace handling}
+\label{sec:prelim-workspace}
+
+Every arm has a bounded reachable set, and headset teleoperation
+routinely commands targets outside it. With no handling, the IK layer
+chases an infeasible target: the QP saturates against joint limits, the
+arm parks at a limit posture away from its commanded target, and
+re-entry is abrupt. Common remedies operate on the target before the IK
+sees it: \emph{projection} replaces an outside target with the nearest
+point of a reachability approximation, \emph{freezing} holds the last
+feasible target until the hand returns, and \emph{velocity shaping}
+attenuates the outward component of target motion as the boundary
+approaches. All three need a cheap membership test, which is why
+practical systems use analytic envelope approximations rather than exact
+reachability maps. Section~\ref{sec:envelope} makes these concrete for
+the SO-101 and compares them head-to-head.

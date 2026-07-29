@@ -1,0 +1,138 @@
+\section{Difficulties and resolutions}
+\label{sec:difficulties}
+
+Every environment of this kind embodies dozens of small decisions made
+under failure. Hiding them would make the result irreproducible: a
+reader rebuilding the environment would meet the same failures with no
+record of the fixes. This section catalogues each difficulty in the
+order we met it --- contact, geometry, control, then tooling --- with
+its symptom, diagnosis and resolution, and closes with what remains
+unjustified.
+
+\subsection{Contact grasping}
+\label{sec:diff-grasp}
+
+The first cube grasps failed roughly one attempt in three: the jaws
+closed beside the cube, or clipped its edge and spun it away. The
+diagnosis was not contact physics but tracking: the differential solver
+carries an azimuth-dependent steady-state error of roughly
+\SI{8}{\milli\metre}, so a script that positions the gripper perfectly
+in its own frame places the real pinch centre off the cube. The earlier
+payload, a ten-centimetre prism, had masked this error entirely.
+
+The obvious fix --- a proportional servo centring the pinch during the
+whole approach --- made matters worse, dropping success to zero. The
+pipeline lags its target by several ticks, so the servo integrated stale
+error into wind-up and swept the gripper past the cube. The working
+form holds the approach for a convergence dwell, then corrects with a
+low gain under a hard magnitude clip, and freezes the correction the
+moment the jaws start closing.
+
+The decisive improvement came from visual review of failure renders:
+the fingertips hovered just above the cube's top face at the commanded
+grasp depth. Commanding the pinch \emph{below} the cube's centre ---
+lower than any geometrically sensible target --- lets the solver's
+vertical undershoot land the pinch on the cube. With the dwell, the
+clipped servo and the deepened grasp, single-arm grasping became
+fully reliable.
+
+\subsection{Place-phase dragging}
+\label{sec:diff-drag}
+
+Relay episodes then failed at the \emph{second} place: lengthening the
+settle dwell --- normally the safe change --- made success \emph{worse}.
+The hold servo was the culprit: after the cube touched down but before
+the jaws opened, the servo kept correcting through the pipeline's lag
+and dragged the placed cube off its target; more dwell meant more
+dragging. The resolution freezes the hold correction once a previously
+lifted cube is detected back at rest while still gripped. The general
+lesson: any closed-loop correction acting through a laggy actuation
+path needs an explicit end-of-life rule, not just a gain.
+
+\subsection{Workspace envelope versus the twin table}
+\label{sec:diff-envelope}
+
+Teleoperation targets pass through an analytic workspace envelope whose
+floor protects the real rig's table surface. The twin's table top sits
+about \SI{34}{\milli\metre} below the plane that floor assumes, so
+table-level grasp targets in simulation were silently projected upward
+--- the gripper stopped short of the cube with no error anywhere. The
+fix scopes an envelope-floor override to the simulated collection scene
+only; the real stack's tuned floor is untouched. The implication worth
+recording for the real rig: whenever the physical working surface
+differs from the height the envelope was tuned at, grasps near the
+surface will fail in exactly this silent way.
+
+\subsection{The abandoned mid-air hand-over}
+\label{sec:diff-handover}
+
+The original bimanual task held the object in the air while the second
+arm grasped it. Two failure modes resisted all tuning. First, a
+parallel-jaw grasp leaves the object's yaw about the vertical axis
+unconstrained; during the carry the object rotated freely, so the
+second gripper's approach met an unpredictable cross-section. Second,
+two gripper bodies converging on one small object collided with each
+other. Both problems vanish when the object is staged on the table
+between grasps, which is why the relay of Section~\ref{sec:tasks}
+exists. The lesson generalises: with parallel jaws and no wrist
+redundancy, prefer task decompositions in which every grasp starts from
+a fully constrained object pose.
+
+\subsection{Renderer cache}
+\label{sec:diff-renderer}
+
+The twin cached one offscreen renderer keyed by image width alone.
+Requesting two camera resolutions silently returned buffers of the
+wrong height for one of them. The cache is now keyed by the full
+resolution. A one-line bug, but it cost a debugging session because the
+symptom (distorted frames in one stream) appeared far from the cause.
+
+\subsection{Training-stack pitfalls}
+\label{sec:diff-tooling}
+
+For reproducibility, the pitfalls met wiring three policy families to
+locally collected datasets, none of which produced a helpful error
+message at the point of failure:
+
+\begin{itemize}
+  \item \textbf{Normalisation lives outside the policy.} The framework's
+    policies do not normalise inside their action-selection call;
+    normalisation is a separate processor pipeline saved alongside the
+    checkpoint. An evaluation harness that loads only the policy weights
+    silently evaluates an unnormalised model. Ours loads the
+    checkpoint's own processor pipelines and passes every observation
+    and action through them.
+  \item \textbf{Observation construction must match the dataloader.}
+    Evaluation images must be channel-first floating point in the unit
+    range, keyed exactly as the dataset features were; we reuse the
+    framework's own observation-conversion helper rather than
+    reimplementing it.
+  \item \textbf{Output directories must not pre-exist.} The trainer
+    refuses to write into an existing run directory; resumable scripts
+    must reuse finished cells and clear partial ones.
+  \item \textbf{Video decoding.} Dataset videos are encoded with a
+    modern codec; the default decoding backend loads system libraries
+    that a sudo-less machine may lack. The pure-Python backend bundles
+    its own decoder and is passed explicitly everywhere.
+  \item \textbf{Gated model access.} The vision-language policy's
+    tokenizer lives in a licence-gated repository; an unauthenticated
+    machine fails at download time deep inside training. Our scripts
+    check access in preflight and either skip the cell (smoke test) or
+    abort before any compute is spent (long run).
+  \item \textbf{Model sizing.} Full finetuning of the
+    four-billion-parameter vision-language policy does not fit a
+    \SI{24}{\gibi\byte} GPU once optimiser state is counted; low-rank
+    adaptation of the published base fits comfortably and is the
+    configuration our long-run script uses.
+\end{itemize}
+
+\subsection{What remains unjustified}
+\label{sec:diff-unjustified}
+
+The contact constants (friction, impedance ratio, pad geometry), the
+payload mass, the servo gains, clips and dwell durations, and the
+oracle-gate thresholds beyond their measured bands are all tuned rather
+than derived; each is flagged where introduced. They are stable across
+the seeds exercised so far, and the oracle gate exists precisely to
+catch a future regression in any of them before it can poison a
+training run.

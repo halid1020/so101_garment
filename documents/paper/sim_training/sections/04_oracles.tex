@@ -1,0 +1,89 @@
+\section{Oracle demonstrators}
+\label{sec:oracles}
+
+Two scripted oracles produce demonstrations. Both consume the same task
+scripts (time-parameterised end-effector tracks and gripper schedules)
+and both are gated by the success criterion of Section~\ref{sec:tasks};
+they differ only in how end-effector targets become joint commands. The
+\emph{teleoperation-pipeline} oracle is the default; the \emph{direct}
+oracle is the deterministic fallback. This section explains why the
+pipeline-authentic route matters, derives its inverse retargeting map,
+describes the closed-loop corrections that stand in for the operator's
+eyes, and reports the reliability both oracles reach.
+
+\paragraph{Why demonstrate through the pipeline.}
+The purpose of the simulated campaign is to de-risk a real one, and the
+real one records \emph{teleoperated} data. The teleoperation stack
+shapes that data everywhere: the adaptive input filter adds
+state-dependent lag, the clutch re-anchors the mapping at every grip,
+the retargeting scales and rotates operator motion, and the solver runs
+asynchronously at its own rate, so commands interleave with observations
+exactly as its thread timing dictates. A policy trained on
+demonstrations that bypass all of this meets those dynamics for the
+first time on the real rig. Our oracle therefore \emph{is} a scripted
+operator: it implements the same reader interface as the headset,
+holds both grips, moves virtual hands, and squeezes triggers, and the
+production stack --- filter, clutch calibration, operator-frame
+retargeting, asynchronous solver, rate limiting --- runs unmodified
+between the oracle and the simulated arms.
+
+\paragraph{Inverting the retargeting.}
+At grip engagement the stack calibrates a map from hand space to robot
+space: it stores the hand rest position $H_0$ and the arm's current
+end-effector position $E_0$, and thereafter commands
+\begin{equation}
+  p(t) \;=\; E_0 + s\, R_{\mathrm{op}}\,\bigl(h(t) - H_0\bigr),
+  \label{eq:retarget}
+\end{equation}
+where $h(t)$ is the filtered hand position, $s$ the translation scale
+and $R_{\mathrm{op}}$ the operator control frame, a rotation the stack
+computes deterministically from the rest pose. The oracle wants the
+pipeline to output a scripted target $p^\ast(t)$, so it places its
+virtual hand at the closed-form inverse of Equation~\ref{eq:retarget}:
+\begin{equation}
+  h(t) \;=\; H_0 + \tfrac{1}{s}\, R_{\mathrm{op}}^{\!\top}
+  \bigl(p^\ast(t) - E_0\bigr).
+\end{equation}
+Hands keep the identity orientation (handles pointing down, the
+calibration posture), and the trigger value is one minus the scripted
+gripper fraction. The demonstration is then whatever the pipeline makes
+of these inputs --- including its lag and filtering --- and the recorded
+action is the joint command the solver actually published, matching the
+real recorder's semantics. Collection consequently runs in real time and
+is not perfectly repeatable; scenarios remain seeded.
+
+\paragraph{Closed-loop corrections.}
+The differential solver tracks with a steady-state positional error of
+roughly \SI{8}{\milli\metre} that varies with the arm's azimuth. A
+\SI{10}{\centi\metre} object shrugs this off; a
+\SI{2.2}{\centi\metre} cube does not --- the jaws close beside it. A
+human operator absorbs exactly this error visually, so the oracle gets
+eyes: a \emph{grasp servo} nudges the approach target to centre the
+pinch on the measured cube position while the jaws are still open, and
+freezes the moment they begin to close; a \emph{hold servo} steers the
+gripped cube onto the scripted track, and freezes once the cube is set
+back down, because continuing to correct through the pipeline's lag
+drags an already-placed object off its target. Both corrections use low
+gains with hard magnitude clips: the pipeline lags the target by several
+ticks, and a high-gain correction integrates that lag into wind-up that
+throws the pinch off entirely (Section~\ref{sec:difficulties}).
+\unjustified{} the gains, clips and dwell durations were tuned by
+inspecting rendered episodes; they are stable but not derived.
+
+\paragraph{The direct oracle.}
+The fallback path feeds the scripted targets straight into the inverse
+kinematics adapter once per control tick, synchronously. It is
+deterministic given the seed, runs faster than real time, and shares the
+task scripts, environment, gating and dataset schema with the teleop
+oracle, so either can produce any dataset. The collection metadata
+records which oracle produced each dataset.
+
+\paragraph{Reliability.}
+With the corrections in place the direct oracle succeeds on every
+attempted scenario of both tasks. The teleoperation-pipeline oracle
+matches it on the single-arm task and reaches a high but imperfect
+per-attempt rate on the relay (its residual failures are place-phase
+misses through pipeline lag). Because collection retries a failed seed a
+bounded number of times and saves only verified successes, nearly every
+training seed still yields one clean demonstration, and no failed
+episode can enter a dataset.

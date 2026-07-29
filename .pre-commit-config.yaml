@@ -36,3 +36,14 @@ repos:
       - id: mypy
         args: ["--ignore-missing-imports", "--explicit-package-bases"]
         additional_dependencies: [types-PyYAML]
+
+  # Fast unit tier gate: the pure-python/pinocchio tests run in ~2 s, so
+  # they're cheap enough to guard every commit (integration/system tiers
+  # are too slow/heavy for a hook — run them via `make`).
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: unit tests (make test-unit)
+        entry: make test-unit
+        language: system
+        pass_filenames: false

@@ -3,6 +3,17 @@ PORT_ID_1: "/dev/ttyACM1"
 ROBOT_NAME_0: "follower_0"
 ROBOT_NAME_1: "follower_1"
 
+# Leader arms (tool/meta_quest_teleopration.py --input leader). Side keys
+# follow the tool's bus wiring: "LEFT" drives the follower on PORT_ID_0
+# (bus_0), "RIGHT" the one on PORT_ID_1. Per-machine hardware config —
+# prefer stable /dev/serial/by-id/... paths: four ttyACM devices enumerate
+# in an unstable order across replugs. The IDs name the LeRobot calibration
+# files ($HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json).
+LEADER_PORT_LEFT: "/dev/ttyACM2"
+LEADER_PORT_RIGHT: "/dev/ttyACM3"
+LEADER_ID_LEFT: "leader_left"
+LEADER_ID_RIGHT: "leader_right"
+
 # Used by move_to_norm_pose to map [-1.0, 1.0] inputs to safe degrees.
 # Format: [min_degree, max_degree]
 joint_limits_deg:

@@ -1,0 +1,67 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+
+% Guideline convention: flag design choices that lack a solid reason.
+\newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
+
+\title{Meta-Quest Teleoperation of Low-Cost 5-DoF Bimanual Arms:
+Retargeting, Workspace-Envelope Handling, and a Comparison of
+Inverse-Kinematics Strategies}
+
+\author{so101\_garment project\thanks{Living document: this paper is the
+canonical description of the teleoperation system in the
+\texttt{so101\_garment} repository and MUST be updated, in the same
+branch, whenever the teleoperation methods, orientation mapping,
+workspace envelope, or benchmark results change. The repository's
+writing guideline governs its style.}}
+
+\date{Last updated: \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a teleoperation system that drives a pair of low-cost 5-DoF
+arms from Meta Quest hand controllers, built to collect bimanual
+demonstrations for garment manipulation. Three properties of such arms
+make direct pose tracking a poor fit. The missing wrist joint makes full
+6-D orientation tracking structurally over-constrained. The reachable
+workspace is far smaller than a person's natural gestures. The
+position-controlled bus servos reward smooth commands. We answer each
+property in turn. A clutched retargeting scheme lets the operator work in
+comfortable strokes and re-anchor at will. An orientation mapping we call
+\emph{armplane} constructs only wrist orientations the arm can actually
+realise. An adaptive input filter suppresses hand tremor without adding
+noticeable lag. An analytic workspace envelope detects infeasible targets
+and offers a choice of policies for handling them. Beneath these sits a
+pluggable inverse-kinematics layer in which quadratic-programme trackers,
+damped least squares, nonlinear optimisation, and an analytic split
+solver are interchangeable. We evaluate every component in a digital twin
+of the rig, with benchmark suites for position tracking, wrist agility,
+and out-of-envelope behaviour, and we pair the benchmark with a
+within-subjects user-study protocol. The appendix specifies every method
+in full implementation detail.
+\end{abstract}
+
+\input{sections/01_intro}
+\input{sections/02_related}
+\input{sections/02b_preliminaries}
+\input{sections/03_system}
+\input{sections/04_method}
+\input{sections/05_experiments}
+\input{sections/06_conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\input{sections/appendix_methods}
+
+\end{document}

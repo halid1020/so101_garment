@@ -2,3 +2,4 @@ __pycache__
 venv
 outputs
 build/
+src/conf/sensor_map.yaml

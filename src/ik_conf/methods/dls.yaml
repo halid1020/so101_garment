@@ -1,0 +1,26 @@
+# =================================================================================
+# METHOD: dls — damped-least-squares differential IK on the MuJoCo Jacobian
+# =================================================================================
+# Dream-Machines' vr-teleop-kit strategy: per tick compute the 6D task-space
+# error, solve dq = J^T (J J^T + lambda^2 I)^-1 e per arm, integrate. Cheap,
+# QP-free, runs directly on the simulator's kinematics. See the paper appendix.
+# British English throughout.
+
+# Orientation error/Jacobian weight (dimensionless): position dominates,
+# orientation softly tracked, matching the spirit of the production cost ratio.
+# Lower to favour position further; raise to chase attitude harder.
+ori_weight: 0.5
+
+# Damping factor lambda (dimensionless) in (J J^T + lambda^2 I). Regularises the
+# solve near singularities: higher => smoother/steadier but slower to converge;
+# lower => crisper but twitchier at the workspace edge.
+damping: 0.05
+
+# Per-tick error-feedback gain (dimensionless), analogous to the Pink frame-task
+# gain: fraction of the error driven out each tick. Lower => smoother/laggier;
+# higher => snappier.
+gain: 0.4
+
+# Joint-velocity clamp (rad/s) applied to the integrated step. Bounds motion
+# near workspace-edge singularities. Lower for gentler motion; raise for agility.
+max_joint_vel: 3.0

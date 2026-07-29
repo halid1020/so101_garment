@@ -1,0 +1,66 @@
+\section{Simulation environment}
+\label{sec:environment}
+
+The environment is the rig's digital twin with a contact-manipulable
+payload added. This section covers where the twin comes from, how the
+payload and its contacts are designed, why the timing is structured
+around an exact substep count, and what the policy senses.
+
+\paragraph{Twin provenance.}
+One parametric CAD description is the single source of truth for the
+physical rig: the printed parts are exported from it, and the simulation
+model --- meshes, joint frames, arm-base placements, camera poses --- is
+regenerated from the same description. Simulated geometry therefore
+cannot drift from the physical build, and any rig change propagates to
+the twin by regeneration rather than by hand-editing. The three mounted
+cameras (one scene view, one wrist view per arm) sit at the poses the
+printed mounts dictate.
+
+\paragraph{Payload.}
+The payload is a cube of \SI{2.2}{\centi\metre} edge and
+\SI{40}{\gram} mass resting on the table. A cube suits both tasks with
+one object: its symmetric cross-section reads the same to either
+gripper, and a parallel-jaw grasp of a cube tolerates yaw error that a
+long prism does not (Section~\ref{sec:difficulties} records how the
+earlier prism payload motivated this). \unjustified{} the mass and the
+exact edge length were chosen by convention (a comfortable fraction of
+the jaw opening) and have not been validated against a physical object.
+
+\paragraph{Contact design.}
+Simulated parallel-jaw grasping fails in characteristic ways: objects
+slip through soft contacts, or explode out of stiff ones. We use the
+standard anti-slip recipe: an elliptic friction cone with a high
+friction-to-normal impedance ratio, extra no-slip solver iterations, a
+raised contact priority on small high-friction fingertip pads fitted to
+both jaws, and a physics timestep of $1/600$\,\si{\second}. The gripper
+actuators are force-bounded so that a closed-jaw command against a
+blocked jaw saturates instead of building unbounded penetration force.
+\unjustified{} the friction coefficients, impedance ratio and pad
+dimensions were tuned by iterating on rendered episodes until grasps
+held through transport; they are stable in practice but not derived
+from measured material properties.
+
+\paragraph{Timing.}
+Control, dataset frames and evaluation all run at \SI{30}{\hertz}. With
+the $1/600$\,\si{\second} physics step, one control tick is exactly twenty
+substeps, so a simulated episode advances in ticks that are bit-identical
+in duration to training frames. The finer step also stabilises the
+pinch contacts. Evaluation rollouts therefore observe the world on
+exactly the clock the policy was trained on.
+
+\paragraph{Sensing and goal specification.}
+The policy observes the three camera views and a twelve-dimensional
+proprioceptive state: five joint angles plus a gripper opening fraction
+per arm, in the same units, ordering and semantics as the real rig's
+recorder, so a policy trained in simulation reads real observations
+without translation. The task goal is communicated visually: a
+translucent disc on the table marks the target zone in the scene
+camera's view. No goal coordinates are ever given to the policy.
+
+\paragraph{Gripper opening cap.}
+The real rig's trigger maps to a deliberately capped jaw opening
+(roughly a third of the mechanical range), a garment-handling choice
+described in the companion paper~\citep{so101teleop}. The simulated
+gripper honours the same cap on both the command side and the recorded
+open fraction, so simulated and real gripper channels share semantics;
+the cube still passes the capped opening with clearance.

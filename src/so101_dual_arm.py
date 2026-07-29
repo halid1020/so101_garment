@@ -208,7 +208,20 @@ class SO101DualArm:
             time.sleep(0.02)
 
     def disable_torque(self) -> None:
-        """Relaxes both arms, dropping hardware torque."""
+        """Relaxes both arms, dropping hardware torque.
+
+        Cleanup path: must never raise. A transient serial failure on one
+        bus (dropped status packet) should neither crash the exit nor stop
+        the OTHER bus from being disabled, so each bus is retried and
+        failures are reported instead of propagated.
+        """
         print("Disabling torque...")
-        self.bus_0.disable_torque()
-        self.bus_1.disable_torque()
+        for label, bus in (("bus_0", self.bus_0), ("bus_1", self.bus_1)):
+            try:
+                bus.disable_torque(num_retry=3)
+            except Exception as e:  # noqa: BLE001 — cleanup must not raise
+                print(
+                    f"⚠️  Could not disable torque on {label}: {e}\n"
+                    "    Power-cycle the arm or re-run "
+                    "test/send_middle_and_rest.py to relax it."
+                )

@@ -13,6 +13,17 @@ This repository provides an independent, industrial-grade pipeline for dexterous
 3. **Data Pipeline:** Synchronized, offline collection of RGB feeds, joint states, and tactile data formatted natively for Hugging Face LeRobot dataset standards.
 4. **Digital Twin:** The 3D-printed rig (board, adapters, camera tower, C310 holders) is parametrized in OpenSCAD and mirrored 1:1 in MuJoCo and Isaac Lab from the same config — see [Digital twin & printed rig](#-digital-twin--printed-rig-openscad--mujoco--isaac-lab).
 
+## 📚 Documentation
+
+- [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md) — teleop IK-method benchmark results (tracking, wrist, handover, out-of-envelope sweeps).
+- [`documents/user_study_protocol.md`](documents/user_study_protocol.md) — bimanual teleoperation user-study runbook.
+- [`documents/telegrip_native.md`](documents/telegrip_native.md) — driving the arms with the unmodified upstream Telegrip stack.
+- [`documents/paper/teleoperation/`](documents/paper/teleoperation/) — the living teleoperation paper (LaTeX). Build it with `make paper`.
+- [`documents/academic_writing_guideline.md`](documents/academic_writing_guideline.md) — writing rules for every paper/report in this repo (flow diagrams, British English, decision-justification convention).
+- [`src/platform/README.md`](src/platform/README.md) — printed-rig design, hardware shopping list, assembly.
+- [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md) — IK-method benchmark harness and options.
+- [`src/sim_twin/isaac/README.md`](src/sim_twin/isaac/README.md) — portable Isaac Lab package (asset conversion + demo).
+
 ## ⚙️ Installation
 
 Everything installs with **one script**. From the repo root:
@@ -55,12 +66,13 @@ Meta Quest link, and prints your GPU / free-disk readout.
 
 ## 🎮 Teleoperation quick start (real Meta Quest)
 
-Five IK methods are available behind the same production pipeline
+Seven IK methods are available behind the same input pipeline
 (One-Euro filtering, grip clutch, handle calibration, armplane orientation
-mapping): `production` (the tuned Pink solver), `pink_full`,
-`pink_relaxed`, `dls`, `mink`, `scipy_ls`. Benchmark results and method
-details: [`markdowns/teleop_benchmark_results.md`](markdowns/teleop_benchmark_results.md)
-and [`sim_benchmark/README.md`](sim_benchmark/README.md).
+mapping): `armplane` (the tuned Pink solver; alias `production`,
+deprecated), `pink_full`, `pink_relaxed`, `dls`, `mink`, `scipy_ls`,
+`telegrip`. Benchmark results and method
+details: [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md)
+and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
 
 **Prerequisites**
 
@@ -68,12 +80,34 @@ and [`sim_benchmark/README.md`](sim_benchmark/README.md).
   the same network (then pass `--ip-address <QUEST_IP>`).
 - For the real arms: both SO-101 buses connected and LeRobot-calibrated
   (ports/IDs in `src/conf/robot.yaml`).
+- **Tactile cameras mounted? Protect their cables first.** Nothing limits
+  `wrist_roll` by default (full turn), so teleop can twist the
+  gripper-mounted tactile-camera USB cables until they strain. Record a
+  cable-safe band into the servo firmware once per arm — torque drops,
+  you rotate the wrist by hand through the safe arc and press Enter:
+
+  ```bash
+  python tool/set_wrist_roll_limits.py --arm right   # then --arm left
+  ```
+
+  The limit lives in the motor's EEPROM (survives power cycles and every
+  normal startup) with a 5° margin inside what you recorded. Caveats:
+  re-running `lerobot-calibrate` on a follower resets `wrist_roll` to
+  full turn — re-run the tool afterwards; `--reset` removes the
+  protection. To sanity-check the tactile cameras and joint streams
+  themselves (max read rates, live view), use
+  `python tool/test_sensor_rates.py --view` — the first run opens an
+  assignment GUI (press a gel to identify each camera and name it,
+  wiggle an arm to identify each serial port); assignments persist in
+  `src/conf/sensor_map.yaml` and `--assign` redoes them. Both arms are
+  read by default (`--arm right|left|both|none`); `--list-cameras`
+  lists raw device nodes.
 
 **Controls** (both tools): hold **both grips** to activate teleop — at the
 first grip of a session point both handles straight down (this calibrates
 the handle axes). Triggers close the grippers. Release grips to pause.
 `Ctrl+C` exits. On the real tool: `A` enables/disables the arms, `B` moves
-to the middle pose, `Y` toggles height lock.
+to the middle pose.
 
 **Step 1 — rehearse in simulation** (headset drives the MuJoCo arms in a
 live viewer; no robot hardware needed):
@@ -90,10 +124,10 @@ python tool/quest_sim_teleop.py --method dls --mock --duration 15
 ```
 
 **Step 2 — run on the real arms** (same tool as always; the default
-`--method production` is the unchanged production solver):
+`--method armplane` is the unchanged tuned solver):
 
 ```bash
-python tool/meta_quest_teleopration.py                          # production
+python tool/meta_quest_teleopration.py                          # armplane
 python tool/meta_quest_teleopration.py --method pink_relaxed    # recommended first
 python tool/meta_quest_teleopration.py --method scipy_ls --max-joint-vel 1.5
 ```
@@ -112,12 +146,12 @@ Offline benchmark of the five methods on mocked hand trajectories
 with plots and animated GIF comparisons:
 
 ```bash
-python sim_benchmark/run_benchmark.py --plot outputs/teleop_benchmark_plots
-python sim_benchmark/run_handover.py --plot outputs/teleop_benchmark_plots
-python sim_benchmark/package_report.py   # shareable zip of all results
+python src/sim_benchmark/run_benchmark.py --plot outputs/teleop_benchmark_plots
+python src/sim_benchmark/run_handover.py --plot outputs/teleop_benchmark_plots
+python src/sim_benchmark/package_report.py   # shareable zip of all results
 ```
 
-See [`sim_benchmark/README.md`](sim_benchmark/README.md) for all options.
+See [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md) for all options.
 
 ## 🧠 Policy training & evaluation (LeRobot · pi0.5 · LIBERO)
 
@@ -132,9 +166,9 @@ few episodes of the lightweight PushT dataset — it runs in minutes and
 will not freeze a laptop:
 
 ```bash
-bash test/smoke_test_pipeline.sh                 # auto device, tiny run
-bash test/smoke_test_pipeline.sh --device cpu    # force CPU
-bash test/smoke_test_pipeline.sh --steps 100 --eval-episodes 3
+bash test/system/smoke_test_pipeline.sh                 # auto device, tiny run
+bash test/system/smoke_test_pipeline.sh --device cpu    # force CPU
+bash test/system/smoke_test_pipeline.sh --steps 100 --eval-episodes 3
 ```
 
 It **auto-selects the device**: CUDA only if the GPU has ≥8 GB VRAM,
@@ -149,6 +183,53 @@ and ends with `✅ PIPELINE SMOKE TEST PASSED`. The success rate it reports
 is **not** meaningful (only a few training steps) — the point is that the
 train → checkpoint → eval wiring works before you commit GPU hours to
 pi0.5.
+
+### Sim-VLA pipeline: oracle demonstrations in the digital twin
+
+Collect scripted-oracle pick-and-place demonstrations in the MuJoCo
+digital twin, train ACT / Diffusion / pi0.5 on them, and evaluate in the
+same environment. Only verified-successful episodes are ever saved:
+
+```bash
+python tool/collect_sim_dataset.py --task single --episodes 30 --dry-run \
+    --gif outputs/oracle_gifs                    # tune/inspect the oracle
+python tool/collect_sim_dataset.py --task handover --oracle direct \
+    --episodes 150 --repo-id local/so101_sim_handover   # collect a dataset
+python tool/eval_sim_policy.py --task single \
+    --checkpoint <run>/checkpoints/last/pretrained_model --out results.json
+bash test/system/smoke_vla_sim.sh    # collect→train→eval plumbing (~15–45 min CPU)
+```
+
+See [`documents/long_vla_sim_guide.md`](documents/long_vla_sim_guide.md)
+for the full experiment protocol (seed pools, oracle gate, wall-time
+budgets, viewing collected data).
+
+#### The long test (full experiment, big GPU)
+
+The full-scale run (`test/system/long_vla_sim.sh`) collects ~1000
+teleop-oracle demos per task, trains ACT / Diffusion / pi0.5-LoRA on
+them, validates every checkpoint on held-out seeds and evaluates the
+best on 30 evaluation seeds. Validated target: RTX 3090 Ti (24 GB, no
+sudo). On the GPU machine:
+
+```bash
+git pull && source setup.sh
+venv/bin/hf auth login     # once; then accept the licence at
+                           # https://huggingface.co/google/paligemma-3b-pt-224
+tmux new -s vla            # the full matrix is multi-day
+bash test/system/long_vla_sim.sh                 # both modes, all cells
+bash test/system/long_vla_sim.sh --modes simple  # cheap sanity half first
+bash test/system/long_vla_sim.sh --only pi05 --pi05-steps 20000
+```
+
+The script is **resumable** (rerun it and finished datasets/checkpoints/
+evals are reused; `--skip-collect` / `--skip-train` / `--skip-gate`
+force-skip phases), aborts before training if the teleop oracle drops
+below its gate (95 % single / 70 % handover), and prints a measured
+s/step projection for pi0.5 near step 50 so you can trim
+`--pi05-steps` early. Results land in
+`$SO101_OUTPUT_DIR/vla_sim_long/<run>/results.md`; analyse them with
+`notebooks/long_vla_analysis.ipynb`.
 
 ### The real run: pi0.5 on LIBERO (needs a big GPU)
 
@@ -315,7 +396,7 @@ python -m sim_twin.assets --package-isaac   # -> build/so101_twin_isaac.zip
 ```
 
 Unzip there, run `convert_assets.py` (URDF/STL → USD), then
-`run_demo.py` — see [`sim_twin/isaac/`](sim_twin/isaac/README.md).
+`run_demo.py` — see [`src/sim_twin/isaac/`](src/sim_twin/isaac/README.md).
 
 The asset pipeline (`python -m sim_twin.assets`, SCAD → meshes → URDF →
 `twin_params.json`, content-hash cached) runs automatically inside the

@@ -1,0 +1,34 @@
+\section{Conclusion and outlook}
+\label{sec:conclusion}
+
+We documented the Meta-Quest teleoperation stack of the
+\texttt{so101\_garment} dual SO-101 rig: clutched absolute-position
+retargeting, the armplane orientation construction that sidesteps the 5-DoF
+over-constraint, an analytic workspace envelope with four out-of-envelope
+policies, a pluggable IK layer now including a Telegrip-style split IK, and
+a decoupled thumbstick wrist interface that hands wrist roll and flex to the
+operator as clutched joint-space trims. Simulation results support two
+concrete recommendations:
+\begin{itemize}
+  \item \textbf{Wrist agility.} The Telegrip split IK halves roll lag and
+  reduces orientation error relative to the armplane QP at every tested
+  frequency, and simultaneously improves position tracking; its higher
+  command jerk argues for hardware validation (servo wear, audible
+  chatter) before promotion to the pipeline default. Tuning the QP
+  alternative (frame-task gain, One-Euro \(\beta\)) along the wrist-agility
+  suite is the complementary path.
+  \item \textbf{Out-of-envelope handling.} \texttt{project} should replace
+  the legacy pass-through: bounded error, boundary sliding, seamless
+  re-entry, negligible cost. \texttt{freeze} is a useful conservative
+  alternative for delicate scenes; \texttt{slow} adds a tuning burden for
+  marginal benefit at teleop speeds.
+\end{itemize}
+Next steps: executing the bimanual user study of
+Section~\ref{sec:exp-userstudy}, whose subjective measures (workload,
+usability, teleoperation feel) complement the objective benchmark and
+arbitrate the wrist-agility/jerk trade on real operators; folding the
+envelope margin into operator feedback (controller vibration); tuning the
+thumbstick wrist interface (trim rates, deadzone, and direction signs) from
+operator feel on the real rig, where its parameters are so far only
+guesses; and extending the envelope to a self-collision-aware region for
+bimanual work near the rig center.

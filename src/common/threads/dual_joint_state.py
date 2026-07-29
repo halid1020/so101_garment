@@ -13,6 +13,7 @@ import traceback
 import numpy as np
 
 from common.configs import (
+    GRIPPER_OPEN_MAX_FRAC,
     JOINT_STATE_STREAMING_RATE,
     LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
     LEFT_ARM_HW_TO_URDF_SIGNS,
@@ -69,13 +70,35 @@ def dual_joint_state_thread(
     hw_to_urdf = _HW_TO_URDF_OFFSETS[arm_side]
     hw_signs = _HW_TO_URDF_SIGNS[arm_side]
 
+    # Serial robustness: the Feetech bus occasionally drops a status packet
+    # (EMI / USB latency), which LeRobot surfaces as a ConnectionError. A
+    # single dropped packet must NOT kill the thread (and with it the whole
+    # teleop session) — skip the tick and retry. Only give up after
+    # _MAX_CONSECUTIVE_FAILURES in a row (a genuinely dead bus).
+    _MAX_CONSECUTIVE_FAILURES = 100  # = 1 s at 100 Hz
+    consecutive_failures = 0
+
     try:
         while not data_manager.is_shutdown_requested():
             iteration_start = time.time()
 
             # ── Read current state from hardware ─────────────────────────────
-            with bus_lock:
-                positions = bus.sync_read("Present_Position")
+            try:
+                with bus_lock:
+                    positions = bus.sync_read("Present_Position", num_retry=2)
+            except ConnectionError as e:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    raise
+                if consecutive_failures in (1, 10) or consecutive_failures % 50 == 0:
+                    print(
+                        f"⚠️  {arm_side} bus read failed "
+                        f"({consecutive_failures} in a row, tolerating up to "
+                        f"{_MAX_CONSECUTIVE_FAILURES}): {e}"
+                    )
+                time.sleep(dt)
+                continue
+            consecutive_failures = 0
             current_joint_angles = (
                 hw_signs
                 * np.array([positions[j] for j in _BODY_JOINTS], dtype=np.float64)
@@ -119,13 +142,31 @@ def dual_joint_state_thread(
                         zip(_BODY_JOINTS, hw_signs * (arm_targets - hw_to_urdf))
                     )
 
-                    # Trigger controls gripper: fully pressed = fully closed.
-                    gripper_target = 1.0 - trigger_value
+                    # Trigger controls gripper: fully pressed = fully closed,
+                    # fully released = open_max_frac of the jaw range (capped
+                    # below 100 % — see GRIPPER_OPEN_MAX_FRAC / teleop_shared).
+                    gripper_target = (1.0 - trigger_value) * GRIPPER_OPEN_MAX_FRAC
                     goal["gripper"] = gripper_target * 100.0
                     data_manager.set_target_gripper_open_value(arm_side, gripper_target)
 
-                    with bus_lock:
-                        bus.sync_write("Goal_Position", goal, normalize=True)
+                    try:
+                        with bus_lock:
+                            bus.sync_write(
+                                "Goal_Position", goal, normalize=True, num_retry=2
+                            )
+                        # Publish the command actually sent (URDF-space body
+                        # targets + gripper open fraction) for the recorder's
+                        # 'action' feature. Only after a successful write.
+                        data_manager.set_last_sent_command(
+                            arm_side,
+                            np.asarray(arm_targets, dtype=np.float64),
+                            gripper_target,
+                            time.monotonic(),
+                        )
+                    except ConnectionError as e:
+                        # Transient write failure: drop this command tick —
+                        # the next one supersedes it anyway.
+                        print(f"⚠️  {arm_side} bus write failed (skipped): {e}")
 
             elapsed = time.time() - iteration_start
             sleep_time = dt - elapsed

@@ -10,7 +10,7 @@ class RobotVisualizerGUI:
     """Handles all the 2D UI elements: buttons, sliders, and text readouts."""
 
     def __init__(self, server: viser.ViserServer) -> None:
-        """TODO: Document this method."""
+        """Store the viser server and initialise all GUI handle slots to None."""
         self.server = server
         self._ema_timing = 0.001
 
@@ -81,24 +81,24 @@ class RobotVisualizerGUI:
         self._save_config_button = self.server.gui.add_button("💾 Save Config to YAML")
 
     def get_slow_translation_scale(self) -> float:
-        """TODO: Document this method."""
+        """Return the current value of the slow translation-scale slider."""
         return self._slow_translation_scale_handle.value
 
     def get_slow_rotation_scale(self) -> float:
-        """TODO: Document this method."""
+        """Return the current value of the slow rotation-scale slider."""
         return self._slow_rotation_scale_handle.value
 
     def get_wrist_step_degrees(self) -> float:
-        """TODO: Document this method."""
+        """Return the wrist-nudge slider value in degrees."""
         return self._wrist_step_handle.value
 
     def set_save_config_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the 'Save Config to YAML' button's click event."""
         if self._save_config_button:
             self._save_config_button.on_click(lambda _: cb())
 
     def add_basic_controls(self) -> None:
-        """TODO: Document this method."""
+        """Add the read-only IK solve-time and joint-angles text readouts."""
         self._timing_handle = self.server.gui.add_number(
             "IK Solve Time (ms)", 0.001, disabled=True
         )
@@ -107,13 +107,13 @@ class RobotVisualizerGUI:
         )
 
     def add_robot_status_controls(self) -> None:
-        """TODO: Document this method."""
+        """Add the robot-status text readout."""
         self._robot_status_handle = self.server.gui.add_text(
             "Robot Status", "Initializing..."
         )
 
     def add_teleop_controls(self) -> None:
-        """TODO: Document this method."""
+        """Add the grip, trigger, teleop-status and controller-status readouts."""
         self._grip_value_handle = self.server.gui.add_number(
             "Grip Value", 0.0, disabled=True
         )
@@ -128,17 +128,17 @@ class RobotVisualizerGUI:
         )
 
     def add_gripper_status_controls(self) -> None:
-        """TODO: Document this method."""
+        """Add the gripper-status text readout."""
         self._gripper_status_handle = self.server.gui.add_text(
             "Gripper Status", "Open (0%)"
         )
 
     def add_homing_controls(self) -> None:
-        """TODO: Document this method."""
+        """Add the 'Go Home' button."""
         self._go_home_button = self.server.gui.add_button("Go Home")
 
     def add_toggle_robot_enabled_status_button(self) -> None:
-        """TODO: Document this method."""
+        """Add the enable/disable-robot toggle button."""
         self._toggle_robot_enabled_status_button = self.server.gui.add_button(
             "Enable Robot"
         )
@@ -146,7 +146,7 @@ class RobotVisualizerGUI:
     def add_controller_filter_controls(
         self, initial_min_cutoff: float, initial_beta: float, initial_d_cutoff: float
     ) -> None:
-        """TODO: Document this method."""
+        """Add the One-Euro controller filter sliders (min cutoff, beta, d-cutoff)."""
         self._controller_min_cutoff_handle = self.server.gui.add_number(
             "Controller Min Cutoff", initial_min_cutoff, min=0.01, max=10.0, step=0.01
         )
@@ -160,7 +160,7 @@ class RobotVisualizerGUI:
     def add_scaling_controls(
         self, initial_translation_scale: float, initial_rotation_scale: float
     ) -> None:
-        """TODO: Document this method."""
+        """Add the translation- and rotation-scale sliders."""
         self._translation_scale_handle = self.server.gui.add_number(
             "Translation Scale",
             initial_translation_scale,
@@ -182,7 +182,7 @@ class RobotVisualizerGUI:
         solver_damping_value: float,
         posture_cost_vector: list[float],
     ) -> None:
-        """TODO: Document this method."""
+        """Add the Pink IK cost/damping sliders and per-joint posture-cost sliders."""
         self._position_weight_handle = self.server.gui.add_number(
             "Position Weight", position_cost, min=0.0, max=10.0, step=0.1
         )
@@ -216,7 +216,7 @@ class RobotVisualizerGUI:
         initial_robot_rate: float = 200.0,
         initial_execution_mode: str = "targeting_time",
     ) -> None:
-        """TODO: Document this method."""
+        """Add the policy status, prediction-ratio, rate and execution-mode controls."""
         self._policy_status_handle = self.server.gui.add_text("Policy Status", "Ready")
         self._prediction_ratio_handle = self.server.gui.add_number(
             "Prediction Ratio", initial_prediction_ratio, min=0.0, max=1.0, step=0.01
@@ -234,7 +234,7 @@ class RobotVisualizerGUI:
         )
 
     def add_policy_buttons(self) -> None:
-        """TODO: Document this method."""
+        """Add the run/execute/continuous-play policy buttons."""
         self._run_policy_button = self.server.gui.add_button("Run Policy (Preview)")
         self._start_policy_execution_button = self.server.gui.add_button(
             "Execute Policy (Run Preview)"
@@ -245,21 +245,19 @@ class RobotVisualizerGUI:
 
     # --- UI Update Methods ---
     def update_timing(self, solve_time_ms: float) -> None:
-        """TODO: Document this method."""
+        """Update the IK solve-time readout with an EMA-smoothed value."""
         if self._timing_handle:
             self._ema_timing = 0.99 * self._ema_timing + 0.01 * solve_time_ms
             self._timing_handle.value = self._ema_timing
 
     def update_robot_status(self, status: str) -> None:
-        """TODO: Document this method."""
+        """Update the robot-status readout text."""
         if self._robot_status_handle:
-            """TODO: Document this method."""
             self._robot_status_handle.value = status
 
     def update_teleop_status(self, active: bool) -> None:
-        """TODO: Document this method."""
+        """Update the teleop-status readout to Active or Inactive."""
         if self._teleop_status_handle:
-            """TODO: Document this method."""
             self._teleop_status_handle.value = (
                 f"Teleop Status: {'Active' if active else 'Inactive'}"
             )
@@ -267,7 +265,7 @@ class RobotVisualizerGUI:
     def update_controller_status_display(
         self, position: np.ndarray | None, connected: bool = True
     ) -> None:
-        """TODO: Document this method."""
+        """Update the controller-status readout with position and connection state."""
         if not self._controller_status_handle:
             return
         if connected and position is not None:
@@ -278,7 +276,7 @@ class RobotVisualizerGUI:
     def update_gripper_status(
         self, trigger_value: float, robot_enabled: bool = True
     ) -> None:
-        """TODO: Document this method."""
+        """Update the gripper-status readout from the trigger value."""
         if not self._gripper_status_handle:
             return
         state = (
@@ -294,23 +292,20 @@ class RobotVisualizerGUI:
         )
 
     def update_policy_status(self, status: str) -> None:
-        """TODO: Document this method."""
+        """Update the policy-status readout text."""
         if self._policy_status_handle:
-            """TODO: Document this method."""
             self._policy_status_handle.value = status
 
     def update_toggle_robot_enabled_status(self, enabled: bool) -> None:
-        """TODO: Document this method."""
+        """Update the enable/disable toggle button label from the robot state."""
         if self._toggle_robot_enabled_status_button:
-            """TODO: Document this method."""
             self._toggle_robot_enabled_status_button.label = (
                 "Disable Robot" if enabled else "Enable Robot"
             )
 
     def update_play_policy_button_status(self, active: bool) -> None:
-        """TODO: Document this method."""
+        """Update the continuous-play button label from its active state."""
         if self._play_policy_button:
-            """TODO: Document this method."""
             self._play_policy_button.label = (
                 "Stop Continuous Horizon" if active else "Continuous Receding Horizon"
             )
@@ -318,7 +313,7 @@ class RobotVisualizerGUI:
     def update_joint_angles_display(
         self, joint_config: np.ndarray, show_gripper: bool = False
     ) -> None:
-        """TODO: Document this method."""
+        """Update the joint-angles readout in radians and degrees."""
         if not self._joint_angles_handle:
             return
         lines = ["Joint Angles (rad):"]
@@ -335,20 +330,18 @@ class RobotVisualizerGUI:
         self._joint_angles_handle.value = "\n".join(lines)
 
     def set_grip_value(self, value: float) -> None:
-        """TODO: Document this method."""
+        """Set the grip-value readout."""
         if self._grip_value_handle:
-            """TODO: Document this method."""
             self._grip_value_handle.value = value
 
     def set_trigger_value(self, value: float) -> None:
-        """TODO: Document this method."""
+        """Set the trigger-value readout."""
         if self._trigger_value_handle:
-            """TODO: Document this method."""
             self._trigger_value_handle.value = value
 
     # --- Getters ---
     def get_controller_filter_params(self) -> tuple[float, float, float]:
-        """TODO: Document this method."""
+        """Return the (min cutoff, beta, d-cutoff) One-Euro filter slider values."""
         return (
             self._controller_min_cutoff_handle.value,
             self._controller_beta_handle.value,
@@ -356,31 +349,31 @@ class RobotVisualizerGUI:
         )
 
     def get_translation_scale(self) -> float:
-        """TODO: Document this method."""
+        """Return the translation-scale slider value."""
         return self._translation_scale_handle.value
 
     def get_rotation_scale(self) -> float:
-        """TODO: Document this method."""
+        """Return the rotation-scale slider value."""
         return self._rotation_scale_handle.value
 
     def get_prediction_ratio(self) -> float:
-        """TODO: Document this method."""
+        """Return the prediction-ratio slider value."""
         return self._prediction_ratio_handle.value
 
     def get_policy_execution_rate(self) -> float:
-        """TODO: Document this method."""
+        """Return the policy-rate slider value."""
         return self._policy_execution_rate_handle.value
 
     def get_robot_rate(self) -> float:
-        """TODO: Document this method."""
+        """Return the robot-rate slider value."""
         return self._robot_rate_handle.value
 
     def get_execution_mode(self) -> str:
-        """TODO: Document this method."""
+        """Return the selected execution-mode dropdown value."""
         return self._execution_mode_dropdown.value
 
     def get_pink_parameters(self) -> dict:
-        """TODO: Document this method."""
+        """Return the Pink IK cost/damping parameters as a dict from the sliders."""
         return {
             "position_cost": self._position_weight_handle.value,
             "orientation_cost": self._orientation_weight_handle.value,
@@ -395,57 +388,48 @@ class RobotVisualizerGUI:
 
     # --- Button Setters/Callbacks ---
     def set_toggle_robot_enabled_status_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the enable/disable-robot toggle button."""
         if self._toggle_robot_enabled_status_button:
-            """TODO: Document this method."""
             self._toggle_robot_enabled_status_button.on_click(lambda _: cb())
 
     def set_go_home_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the 'Go Home' button."""
         if self._go_home_button:
-            """TODO: Document this method."""
             self._go_home_button.on_click(lambda _: cb())
 
     def set_run_policy_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the 'Run Policy (Preview)' button."""
         if self._run_policy_button:
-            """TODO: Document this method."""
             self._run_policy_button.on_click(lambda _: cb())
 
     def set_start_policy_execution_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the 'Execute Policy' button."""
         if self._start_policy_execution_button:
-            """TODO: Document this method."""
             self._start_policy_execution_button.on_click(lambda _: cb())
 
     def set_play_policy_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the continuous-play button."""
         if self._play_policy_button:
-            """TODO: Document this method."""
             self._play_policy_button.on_click(lambda _: cb())
 
     def set_execution_mode_callback(self, cb: Callable[[], Any]) -> None:
-        """TODO: Document this method."""
+        """Wire a callback to the execution-mode dropdown's update event."""
         if self._execution_mode_dropdown:
-            """TODO: Document this method."""
             self._execution_mode_dropdown.on_update(lambda _: cb())
 
     def set_run_policy_button_disabled(self, disabled: bool) -> None:
-        """TODO: Document this method."""
+        """Enable or disable the 'Run Policy' button."""
         if self._run_policy_button:
-            """TODO: Document this method."""
             self._run_policy_button.disabled = disabled
 
     def set_start_policy_execution_button_disabled(self, disabled: bool) -> None:
-        """TODO: Document this method."""
+        """Enable or disable the 'Execute Policy' button."""
         if self._start_policy_execution_button:
-            """TODO: Document this method."""
             self._start_policy_execution_button.disabled = disabled
 
     def set_play_policy_button_disabled(self, disabled: bool) -> None:
-        """TODO: Document this method."""
+        """Enable or disable the continuous-play button."""
         if self._play_policy_button:
-            """TODO: Document this method."""
             self._play_policy_button.disabled = disabled
 
     def add_ee_pose_displays(self) -> None:

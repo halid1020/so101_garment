@@ -5,6 +5,11 @@ from typing import Sequence
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+# Operator-frame origin offsets now live in the shared teleop YAML and are
+# bound onto configs at import time. configs does not import utils, so this is
+# cycle-free (verified by the unit tests).
+from common.configs import OPERATOR_FRAME_BACK_M, OPERATOR_FRAME_UP_M
+
 
 def transform_from_position_wxyz(
     position: Sequence[float], wxyz: Sequence[float]
@@ -48,6 +53,50 @@ _MIRROR_HEAD_FRAME_Y = np.diag([1.0, -1.0, 1.0, 1.0])
 def mirror_head_frame_pose(transform: np.ndarray) -> np.ndarray:
     """Mirror a head-frame hand pose for face-to-face (mirror) teleoperation."""
     return _MIRROR_HEAD_FRAME_Y @ transform @ _MIRROR_HEAD_FRAME_Y
+
+
+def compute_operator_frame(
+    left_hand_tf: np.ndarray, right_hand_tf: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Operator control frame from the two handle poses at grip time.
+
+    The Quest app streams controller poses in a reference frame whose yaw
+    and origin depend on where the HEADSET was when the app started — so
+    with raw poses, the operator has to place the headset carefully or
+    "forward" on the hand stops being "forward" on the robot. This frame
+    removes that dependence: at every grip, a robot-aligned frame is built
+    from the handles themselves (gravity gives z; the left→right handle
+    line gives the lateral axis), and all control happens in it. The
+    headset can sit anywhere.
+
+    Returns (rotation, origin) in the reader frame: `rotation` columns are
+    the operator frame's x (forward, away from the operator), y (operator's
+    left), z (up); `origin` sits OPERATOR_FRAME_BACK_M behind and
+    OPERATOR_FRAME_UP_M above the handle midpoint — a headset-center proxy.
+    Assumes the reader frame's z is gravity-aligned (OpenXR spaces are).
+    """
+    p_left = left_hand_tf[:3, 3]
+    p_right = right_hand_tf[:3, 3]
+    midpoint = 0.5 * (p_left + p_right)
+    y_axis = p_left - p_right
+    y_axis[2] = 0.0  # lateral axis is horizontal by construction
+    norm = np.linalg.norm(y_axis)
+    y_axis = y_axis / norm if norm > 1e-6 else np.array([0.0, 1.0, 0.0])
+    z_axis = np.array([0.0, 0.0, 1.0])
+    x_axis = np.cross(y_axis, z_axis)  # forward, right-handed with y left
+    rotation = np.column_stack([x_axis, y_axis, z_axis])
+    origin = midpoint - OPERATOR_FRAME_BACK_M * x_axis + OPERATOR_FRAME_UP_M * z_axis
+    return rotation, origin
+
+
+def to_operator_frame(
+    hand_tf: np.ndarray, frame_rot: np.ndarray, frame_origin: np.ndarray
+) -> np.ndarray:
+    """Re-express a reader-frame hand pose in the operator control frame."""
+    out = np.eye(4)
+    out[:3, :3] = frame_rot.T @ hand_tf[:3, :3]
+    out[:3, 3] = frame_rot.T @ (hand_tf[:3, 3] - frame_origin)
+    return out
 
 
 def map_quest_hands_to_robot_arms(
@@ -230,6 +279,87 @@ def hand_to_gripper_orientation_armplane(
     z_axis = z_axis / norm
     y_axis = np.cross(z_axis, tip)
     return np.column_stack([tip, y_axis, z_axis])
+
+
+def signed_angle_about(axis: np.ndarray, vec: np.ndarray, ref: np.ndarray) -> float:
+    """Signed angle (rad) of ``vec`` about unit ``axis``, measured from ``ref``.
+
+    Both ``vec`` and ``ref`` are projected perpendicular to ``axis`` first, so
+    only their rotation about the axis matters. Returns 0 if either projection
+    is degenerate (parallel to the axis).
+    """
+    a = np.asarray(axis, dtype=float)
+    a = a / (np.linalg.norm(a) + 1e-12)
+    v = np.asarray(vec, dtype=float) - (np.asarray(vec, dtype=float) @ a) * a
+    r = np.asarray(ref, dtype=float) - (np.asarray(ref, dtype=float) @ a) * a
+    nv, nr = np.linalg.norm(v), np.linalg.norm(r)
+    if nv < 1e-9 or nr < 1e-9:
+        return 0.0
+    v, r = v / nv, r / nr
+    return float(np.arctan2(a @ np.cross(r, v), r @ v))
+
+
+def wrist_roll_pitch_delta(rel_rot: np.ndarray) -> tuple[float, float]:
+    """Roll and pitch (radians) of a hand rotation in the operator frame.
+
+    ``rel_rot`` is the hand's rotation SINCE the grip reference, expressed in
+    the operator control frame (x = forward toward the robot, y = operator's
+    left, z = up). Its rotation vector splits cleanly into the two wrist DOFs
+    the SO-101 wrist shares with a human wrist:
+
+      - roll  = component about forward x (wrist twist left/right),
+      - pitch = component about lateral y (wrist tilt up/down);
+
+    the yaw component about z is dropped — the 5-DoF arm supplies yaw by
+    panning. Pure twist gives (roll, 0); pure nod gives (0, pitch). The
+    incremental mapping adds these deltas to the gripper's pitch/roll anchored
+    at each grip, so re-gripping ratchets and the start pose is irrelevant.
+    """
+    rv = Rotation.from_matrix(rel_rot).as_rotvec()
+    return float(rv[0]), float(rv[1])
+
+
+def gripper_orientation_from_pitch_roll(
+    azimuth: float, pitch: float, roll: float
+) -> np.ndarray:
+    """Reachable gripper orientation from tip azimuth, pitch and roll (radians).
+
+    The tip (gripper long axis) points at ``azimuth`` compass and ``pitch``
+    elevation; ``roll`` twists the jaws about the tip, measured from world up.
+    Inverse of ``gripper_pitch_roll_from_rotation``.
+    """
+    ce, se = np.cos(pitch), np.sin(pitch)
+    tip = np.array([ce * np.cos(azimuth), ce * np.sin(azimuth), se])
+    up = np.array([0.0, 0.0, 1.0])
+    ref = up - (up @ tip) * tip
+    n = np.linalg.norm(ref)
+    if n < 1e-6:  # tip vertical: pick any horizontal reference
+        ref = np.array([1.0, 0.0, 0.0]) - tip[0] * tip
+        n = np.linalg.norm(ref)
+    ref = ref / n
+    # Rodrigues rotation of ref about the unit tip by roll (ref ⟂ tip).
+    z_axis = ref * np.cos(roll) + np.cross(tip, ref) * np.sin(roll)
+    z_axis = z_axis / np.linalg.norm(z_axis)
+    y_axis = np.cross(z_axis, tip)
+    return np.column_stack([tip, y_axis, z_axis])
+
+
+def gripper_pitch_roll_from_rotation(rot: np.ndarray) -> tuple[float, float, float]:
+    """Decompose a gripper rotation into (azimuth, pitch, roll) radians.
+
+    Inverse of ``gripper_orientation_from_pitch_roll``; used to anchor the
+    incremental mapping to the arm's ACTUAL orientation at each grip, so
+    re-gripping continues smoothly from where the gripper is.
+    """
+    tip = rot[:3, 0]
+    azimuth = float(np.arctan2(tip[1], tip[0]))
+    pitch = float(np.arctan2(tip[2], max(np.linalg.norm(tip[:2]), 1e-9)))
+    up = np.array([0.0, 0.0, 1.0])
+    ref = up - (up @ tip) * tip
+    if np.linalg.norm(ref) < 1e-6:
+        return azimuth, pitch, 0.0
+    roll = signed_angle_about(tip, rot[:3, 2], ref)
+    return azimuth, pitch, roll
 
 
 def blend_rotations(

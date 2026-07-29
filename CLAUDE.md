@@ -11,6 +11,15 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 **pi0.5**, LIBERO). Plus a fully 3D-printed rig with a MuJoCo/Isaac
 **digital twin** generated from OpenSCAD.
 
+## Working style
+
+- Keep documentation and the README at an industrial level — accurate
+  enough to install and run the project from scratch.
+- Reduce redundancy between files; keep good modularisation and a
+  well-organised file tree.
+- Be surgical: make only the changes the task needs, and don't change
+  things that don't need changing.
+
 ## Environment & how to run things
 
 - **venv** lives at `venv/`. There is **no system `python`** — always use
@@ -35,19 +44,45 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 ## Layout
 
 - `src/common/` — teleop pipeline: `configs.py` (all tuning constants),
-  `threads/dual_ik_solver.py` (the production IK loop), `arm_poses.py`,
-  `teleop_buttons.py` (shared A/B/Y state machine), `pink_ik_solver.py`.
+  `threads/dual_ik_solver.py` (the production IK loop),
+  `workspace_envelope.py` (analytic reach envelope + out-of-envelope
+  policies), `pink_ik_solver.py`, `one_euro_filter.py`,
+  `data_manager_dual.py`, `utils.py` (operator control frame), and
+  `recording/` (LeRobot episode recorder behind `--record` on the real
+  teleop tool: 30 fps dataset + ~100 Hz sidecar parquet + UVC camera
+  threads; config in `src/conf/recording.yaml`, device indices are
+  per-machine placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
-  cameras), `identify_arms.py`, `view_twin.py`, `part_drawings.py`.
-- `sim_benchmark/` — MuJoCo IK-method benchmark + `sim_arms.py`,
-  `method_adapter.py`, `mock_quest_device.py`.
-- `sim_twin/` — OpenSCAD→MuJoCo/Isaac digital-twin pipeline. `config.scad`
-  is the single source of truth (see the memory note / `src/platform/`).
+  cameras), `telegrip_native.py` (drive the arms with the *unmodified
+  upstream* Telegrip checkout — see `documents/telegrip_native.md`),
+  `check_mirror.py` / `fit_joint_offsets.py` (arm-side/offset checks),
+  `view_twin.py` (`--payload` shows the collection scene), `part_drawings.py`,
+  the sim-VLA pair `collect_sim_dataset.py` (oracle demonstrations in the
+  twin; only verified successes are saved) / `eval_sim_policy.py` (policy
+  rollouts in the same env — see `documents/long_vla_sim_guide.md`), plus
+  policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
+  `send_middle_and_rest.py`).
+- `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
+  `method_adapter.py`, `methods/` (pluggable registry incl.
+  `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,
+  `run_benchmark.py`, `run_envelope.py` (OOE policy sweep),
+  `export_latex_tables.py` (JSON → paper tables).
+- `src/sim_twin/` — OpenSCAD→MuJoCo/Isaac digital-twin pipeline.
+  `config.scad` is the single source of truth (see the memory note /
+  `src/platform/`).
 - `src/platform/` — OpenSCAD rig design (`config.scad`, `board.scad`, …).
-- `test/` — `smoke_test_pipeline.sh` (train→eval plumbing check) + unit
-  tests.
-- `markdowns/` — design docs & worklogs (teleop benchmark, teleop-v2).
+- `test/` — tiered: `test/unit/` (fast, pure-python/pinocchio, no MuJoCo),
+  `test/integration/` (MuJoCo scenes), `test/system/`
+  (`smoke_test_pipeline.sh`, train→eval plumbing check;
+  `smoke_vla_sim.sh`, sim-VLA collect→train→eval plumbing check).
+  `test/__init__.py` is load-bearing (keeps the stdlib `test` package from
+  shadowing it).
+- `documents/` — design docs & worklogs (teleop benchmark results, user
+  study protocol, telegrip-native) plus the living paper under
+  `documents/paper/`.
+- `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
+  `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).
 
 ## Training / eval pipeline (LeRobot)
@@ -124,17 +159,54 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   inside f-strings on Python 3.12); `E203/E501/E231/E402` are ignored.
 - Teleop **arm/side mapping is load-bearing and easy to get wrong**:
   `follower_0`=RIGHT arm/handle, `follower_1`=LEFT. HW→URDF offsets are
-  keyed per follower in `configs.py`. Confirm with `tool/identify_arms.py`.
+  keyed per follower in `configs.py`. Confirm with `tool/check_mirror.py`
+  / `tool/fit_joint_offsets.py`.
 - All teleop tuning is centralized in `src/common/configs.py`
-  (`GRIPPER_MAX_OPEN`, `FRAME_TASK_GAIN`, `JOINT_VEL_SCALE`, `WORKSPACE_*`,
+  (`FRAME_TASK_GAIN`, `ORIENTATION_COST`, `CONTROLLER_*` One-Euro params,
+  `WORKSPACE_*` envelope radii/margins, `WORKSPACE_OOB_MODE`,
   `NEUTRAL_JOINT_ANGLES`). Change there, not inline.
-- Git: work on a branch, never commit straight to `main`; end commit
-  messages with the `Co-Authored-By: Claude …` trailer. The user pushes.
+- **Git: every change set starts on a fresh branch off `main`** (`git
+  checkout -b <topic>`), even for docs-only changes; never commit straight
+  to `main`. Finish with a commit on that branch ending in the
+  `Co-Authored-By: Claude …` trailer. The user pushes/merges.
+- **Living paper rule:** there are TWO living papers, and each guards its
+  domain in the same branch as the change:
+  - `documents/paper/teleoperation/` — any change on the teleoperation
+    side: methods, orientation mapping, envelope/OOE handling,
+    calibration/control-frame behavior, benchmark results (also update
+    `documents/teleop_benchmark_results.md` when results change);
+    regenerate tables with `src/sim_benchmark/export_latex_tables.py`.
+  - `documents/paper/sim_training/` — any change to the sim-VLA side:
+    simulated tasks/payload/contacts, oracle demonstrators, collection
+    gating/seed protocol, or the experiment protocol and its results.
+  Both build with `make paper` (or `latexmk -pdf main.tex` in the paper
+  dir). All paper writing follows
+  `documents/academic_writing_guideline.md` (flow diagram before LaTeX,
+  British English, active voice, no numbers in the abstract, no code
+  paths in prose, `\unjustified{}` flags).
 - Don't hardcode rig geometry — edit `src/platform/config.scad`.
 
 ## Verifying changes
 
-- Teleop/sim: `python tool/quest_sim_teleop.py --mock --headless --no-rig
-  --duration 14` prints EE tracking error + gripper cap.
+- Teleop/sim rehearsal: `python tool/quest_sim_teleop.py --mock --headless
+  --duration 14` prints EE tracking error (add `--mock-pattern
+  wrist|excursion`, `--oob-mode project|freeze|slow|warn`, `--scene plain`
+  as needed).
+- Tests are tiered and run via the `Makefile` (all need `PYTHONPATH=.:src`
+  and `MUJOCO_GL=egl`, which the targets set):
+  - `make test-unit` — fast pure-python/pinocchio tests (`test/unit/`).
+  - `make test-integration` — MuJoCo-backed tests (`test/integration/`).
+  - `make test` — unit + integration.
+  - `make test-system` — the train→eval plumbing smoke test
+    (`test/system/smoke_test_pipeline.sh`; network + time).
+  - `make test-system-vla` — the sim-VLA collect→train→eval plumbing
+    smoke test (`test/system/smoke_vla_sim.sh`; ~15–45 min on CPU).
+  Discover manually with e.g. `PYTHONPATH=.:src MUJOCO_GL=egl venv/bin/python
+  -m unittest discover -s test/unit -t .`. `test/__init__.py` must exist or
+  the stdlib `test` package shadows the directory.
+- Benchmarks: `python src/sim_benchmark/run_benchmark.py` (tracking + wrist
+  suites), `python src/sim_benchmark/run_envelope.py` (OOE policies).
 - Digital twin: `python -m sim_twin.verify`.
-- Training plumbing: `bash test/smoke_test_pipeline.sh`.
+- Lint (black/isort/flake8/mypy + unit-test hook): `make lint`.
+- Paper: `make paper` (or `cd documents/paper/teleoperation && latexmk -pdf
+  main.tex`).
