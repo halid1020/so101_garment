@@ -593,16 +593,127 @@ def _live_hz(probe: SensorProbe) -> float:
     return float(len(recent))
 
 
+# One cell per side, wide enough for two value columns in a large font.
+_SIDE_PANEL_W = 640
+_SIDE_PANEL_H = 460
+_BODY_AND_GRIP = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
+]
+
+
+def _probe_side(name: str) -> str:
+    return "left" if "left" in name else "right"
+
+
+def _probe_role(name: str) -> str:
+    return "leader" if name.startswith("leader") else "follower"
+
+
+def _side_panel(
+    side: str, follower: "JointProbe | None", leader: "JointProbe | None"
+) -> np.ndarray:
+    """One cell for a side: follower and leader joints in two big columns."""
+    panel = np.zeros((_SIDE_PANEL_H, _SIDE_PANEL_W, 3), dtype=np.uint8)
+    cv2.putText(panel, f"{side.upper()} ARM", (15, 46), _FONT, 1.2, (0, 255, 0), 3)
+
+    # Column headers + live Hz under each.
+    cv2.putText(panel, "follower", (300, 92), _FONT, 0.9, (0, 200, 255), 2)
+    cv2.putText(panel, "leader", (490, 92), _FONT, 0.9, (0, 200, 255), 2)
+    fhz = f"{_live_hz(follower):.0f} Hz" if follower is not None else "--"
+    lhz = f"{_live_hz(leader):.0f} Hz" if leader is not None else "--"
+    cv2.putText(panel, fhz, (300, 124), _FONT, 0.7, (150, 150, 150), 1)
+    cv2.putText(panel, lhz, (490, 124), _FONT, 0.7, (150, 150, 150), 1)
+
+    fpos = (follower.last_positions or {}) if follower is not None else {}
+    lpos = (leader.last_positions or {}) if leader is not None else {}
+    order = list(fpos) or list(lpos) or _BODY_AND_GRIP
+    for i, joint in enumerate(order):
+        y = 172 + 48 * i
+        cv2.putText(panel, joint, (15, y), _FONT, 0.8, (255, 255, 255), 2)
+        fv = f"{fpos[joint]:7.2f}" if joint in fpos else "   --"
+        lv = f"{lpos[joint]:7.2f}" if joint in lpos else "   --"
+        cv2.putText(panel, fv, (300, y), _FONT, 0.8, (255, 255, 255), 2)
+        cv2.putText(panel, lv, (490, y), _FONT, 0.8, (255, 255, 255), 2)
+    return panel
+
+
+def _joint_grid(joints: "list[JointProbe]") -> "np.ndarray | None":
+    """One cell per side (follower + leader together), sides side by side.
+
+    Columns within a cell are follower then leader; a missing arm shows
+    ``--``. A side with no arms at all is dropped.
+    """
+    by_key = {(_probe_role(jp.name), _probe_side(jp.name)): jp for jp in joints}
+    sides = [
+        s
+        for s in ("left", "right")
+        if any((r, s) in by_key for r in ("follower", "leader"))
+    ]
+    if not sides:
+        return None
+    panels = [
+        _side_panel(s, by_key.get(("follower", s)), by_key.get(("leader", s)))
+        for s in sides
+    ]
+    return np.hstack(panels)
+
+
+def _vstack_pad(blocks: "list[np.ndarray]") -> np.ndarray:
+    """Stack blocks vertically, right-padding narrower ones to equal width."""
+    width = max(b.shape[1] for b in blocks)
+    padded = [
+        (
+            b
+            if b.shape[1] == width
+            else np.hstack(
+                [b, np.zeros((b.shape[0], width - b.shape[1], 3), dtype=b.dtype)]
+            )
+        )
+        for b in blocks
+    ]
+    return np.vstack(padded)
+
+
+def _fit_to_screen(img: np.ndarray, max_w: int, max_h: int) -> np.ndarray:
+    """Downscale (never upscale) ``img`` to fit within ``max_w`` x ``max_h``."""
+    h, w = img.shape[:2]
+    scale = min(max_w / w, max_h / h, 1.0)
+    if scale >= 1.0:
+        return img
+    return cv2.resize(img, (max(int(w * scale), 1), max(int(h * scale), 1)))
+
+
+# Display size of each camera tile in the live view (four in a row ≈ 1280
+# wide, so the composite fits a laptop screen without shrinking the labels).
+_CAM_TILE_W = 320
+_CAM_TILE_H = 240
+
+
+def _camera_short_label(name: str) -> str:
+    """Compact camera name for the tile overlay (e.g. ``left-left``)."""
+    return name.replace("_arm", "").replace("_gripper", "").replace("_", "-")
+
+
 def run_view(
     probes: list[SensorProbe],
     cameras: "list[CameraProbe]",
     joints: "list[JointProbe]",
+    max_w: int = 1280,
+    max_h: int = 720,
 ) -> None:
-    """Live window: all camera feeds in a grid + one joint panel per arm.
+    """Live window: a row of tactile cameras above a row of arm cells.
 
-    Runs until q/Esc; the probes keep free-running underneath, so the
-    rate summary printed afterwards reflects the same contention as the
-    headless simultaneous phase.
+    Top row: the tactile cameras in one row (name-sorted → left-left,
+    left-right, right-left, right-right). Bottom row: one cell per side
+    (left | right), each showing that side's follower and leader joints
+    in two columns. Runs until q/Esc; the probes keep free-running
+    underneath, so the rate summary printed afterwards reflects the same
+    contention as the headless simultaneous phase.
     """
     print("\n▶ live view — press q or Esc in the window to stop")
     for p in probes:
@@ -610,49 +721,35 @@ def run_view(
         p.start()
     try:
         while True:
-            tiles = []
+            cam_tiles = []
             for cam in cameras:
                 frame = cam.last_frame
                 if frame is None:
                     frame = np.zeros((cam.height, cam.width, 3), dtype=np.uint8)
-                else:
-                    frame = frame.copy()
+                frame = cv2.resize(frame, (_CAM_TILE_W, _CAM_TILE_H))
                 cv2.putText(
                     frame,
-                    f"{cam.name} {_live_hz(cam):.0f} Hz",
-                    (8, 24),
+                    f"{_camera_short_label(cam.name)} {_live_hz(cam):.0f}Hz",
+                    (6, 26),
                     _FONT,
-                    0.6,
+                    0.7,
                     (0, 255, 0),
                     2,
                 )
-                tiles.append(frame)
-            for jp in joints:
-                panel = np.zeros((480, 300, 3), dtype=np.uint8)
-                cv2.putText(
-                    panel,
-                    f"{jp.name} {_live_hz(jp):.0f} Hz",
-                    (8, 24),
-                    _FONT,
-                    0.55,
-                    (0, 255, 0),
-                    2,
-                )
-                positions = jp.last_positions or {}
-                for i, (joint, value) in enumerate(positions.items()):
-                    cv2.putText(
-                        panel,
-                        f"{joint:<14} {value:8.2f}",
-                        (8, 60 + 26 * i),
-                        _FONT,
-                        0.5,
-                        (255, 255, 255),
-                        1,
-                    )
-                tiles.append(panel)
-            if not tiles:
+                cam_tiles.append(frame)
+            blocks = []
+            if cam_tiles:
+                # One row of cameras; the sensor map is name-sorted, so the
+                # order is left-left, left-right, right-left, right-right.
+                blocks.append(grid_tiles(cam_tiles, max_per_row=max(len(cam_tiles), 1)))
+            joint_grid = _joint_grid(joints)
+            if joint_grid is not None:
+                blocks.append(joint_grid)
+            if not blocks:
                 break
-            cv2.imshow("sensor rates", grid_tiles(tiles, max_per_row=3))
+            cv2.imshow(
+                "sensor rates", _fit_to_screen(_vstack_pad(blocks), max_w, max_h)
+            )
             key = cv2.waitKey(33) & 0xFF
             if key in (27, ord("q")):
                 break
@@ -743,6 +840,19 @@ def main() -> None:
         help="skip the leader arms even if assigned (leaders are optional; "
         "an unplugged/failed leader is warned about and skipped anyway)",
     )
+    parser.add_argument(
+        "--view-max-width",
+        type=int,
+        default=1280,
+        help="max width of the --view window; the composite is scaled down "
+        "to fit (default 1280)",
+    )
+    parser.add_argument(
+        "--view-max-height",
+        type=int,
+        default=720,
+        help="max height of the --view window (default 720)",
+    )
     args = parser.parse_args()
 
     if args.list_cameras:
@@ -813,7 +923,7 @@ def main() -> None:
                     "re-run with --assign."
                 ) from e
             buses.append(bus)
-            jp = JointProbe(f"joints[{side}]", bus)
+            jp = JointProbe(f"follower[{side}]", bus)
             joints.append(jp)
             probes.append(jp)
 
@@ -840,7 +950,13 @@ def main() -> None:
                 probes.append(jp)
 
         if args.view:
-            run_view(probes, cameras, joints)
+            run_view(
+                probes,
+                cameras,
+                joints,
+                max_w=args.view_max_width,
+                max_h=args.view_max_height,
+            )
         else:
             if args.solo > 0:
                 for p in probes:
