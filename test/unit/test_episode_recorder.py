@@ -24,7 +24,12 @@ import numpy as np
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording.episode_recorder import EpisodeRecorder, RecorderState
-from common.recording.features import ACTION_FRESH_S, STATE_NAMES, build_action
+from common.recording.features import (
+    ACTION_FRESH_S,
+    STATE_NAMES,
+    TELEOP_ACTIVE_KEY,
+    build_action,
+)
 
 _CAMERAS = ["cam_a", "cam_b"]
 _FPS = 100  # fast ticks so tests stay quick
@@ -146,6 +151,7 @@ class TestEpisodeRecorder(RecorderTestBase):
         expected = {
             "observation.state",
             "action",
+            TELEOP_ACTIVE_KEY,
             "task",
             *(f"observation.images.{n}" for n in _CAMERAS),
         }
@@ -223,6 +229,14 @@ class TestEpisodeRecorder(RecorderTestBase):
         self.assertAlmostEqual(float(frame["action"][5]), 0.9, places=5)
         # Right side had no command: falls back to measured state.
         np.testing.assert_allclose(frame["action"][6:], frame["observation.state"][6:])
+
+    def test_teleop_active_flag_recorded(self) -> None:
+        # Flag mirrors DualDataManager.get_teleop_active() at record time.
+        self.dm.set_teleop_state(True)
+        self._record_some_frames()
+        frame = self.dataset.frames[-1]
+        self.assertEqual(frame[TELEOP_ACTIVE_KEY].shape, (1,))
+        self.assertEqual(float(frame[TELEOP_ACTIVE_KEY][0]), 1.0)
 
     def test_build_action_unit(self) -> None:
         # Direct check of the pure builder (no threads involved).

@@ -275,7 +275,7 @@ def build_recording_stack(
                 "choose another --repo-id/--dataset-root"
             )
         features = build_dataset_features(
-            [(c.name, c.height, c.width) for c in captures]
+            [(c.name, c.height, c.width) for c in captures], include_phase=True
         )
         print(f"📂 Creating dataset {args.repo_id} at {root} ({fps} fps)")
         dataset = LeRobotDataset.create(

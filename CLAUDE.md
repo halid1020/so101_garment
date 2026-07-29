@@ -47,11 +47,16 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `threads/dual_ik_solver.py` (the production IK loop),
   `workspace_envelope.py` (analytic reach envelope + out-of-envelope
   policies), `pink_ik_solver.py`, `one_euro_filter.py`,
-  `data_manager_dual.py`, `utils.py` (operator control frame), and
-  `recording/` (LeRobot episode recorder behind `--record` on the real
-  teleop tool: 30 fps dataset + ~100 Hz sidecar parquet + UVC camera
-  threads; config in `src/conf/recording.yaml`, device indices are
-  per-machine placeholders).
+  `data_manager_dual.py`, `utils.py` (operator control frame),
+  `sync.py` (pure timestamped-history buffers + nearest/interpolated
+  sample selection used to align every stream to one reference time per
+  recorded frame), and `recording/` (LeRobot episode recorder behind
+  `--record` on the real teleop tool: 30 fps dataset + ~100 Hz sidecar
+  parquet + UVC camera threads; `drift.py` logs per-frame per-stream
+  temporal drift to `<root>/extra/`; the `--sensor-view` monitor shows
+  live per-stream drift + drop counts; config in
+  `src/conf/recording.yaml`, device indices are per-machine
+  placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
   cameras), `telegrip_native.py` (drive the arms with the *unmodified

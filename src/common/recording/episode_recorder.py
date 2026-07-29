@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording import features as feat
+from common.recording.drift import DriftLog
 
 
 class RecorderState(Enum):
@@ -76,6 +77,10 @@ class EpisodeRecorder:
         self._frame_count = 0
         self._last_reuse_warn = 0.0
         self._last_overrun_warn = 0.0
+        # Temporal-alignment telemetry + action-fallback tally.
+        self._drift = DriftLog()
+        self._fallback_frames = 0
+        self.root = getattr(dataset, "root", None)
 
         # Episode index tracking (kept in sync with the dataset, works on
         # resume where num_episodes > 0).
@@ -182,6 +187,8 @@ class EpisodeRecorder:
             self.sidecar.begin_episode()
         self._tick_durations = []
         self._frame_count = 0
+        self._drift.reset()
+        self._fallback_frames = 0
         with self._lock:
             self._state = RecorderState.RECORDING
         print(f"🔴 recording episode {self._episode_index} (task: {self.task!r})")
@@ -215,27 +222,49 @@ class EpisodeRecorder:
 
     def _record_frame(self) -> None:
         dm = self.data_manager
-        measured = dm.get_current_joint_angles()
-        if measured is None or len(measured) < feat.BODY_DOF * len(feat.SIDES):
+        # One reference time for the whole frame: every stream is sampled at
+        # t_ref (interpolated proprio, nearest image) and reports its drift, so
+        # the frame is temporally coherent instead of a mix of latest values.
+        t_ref = time.monotonic()
+        drifts: dict[str, float] = {}
+
+        joints_res = dm.get_current_joint_angles_at(t_ref)
+        if joints_res is None:
             return  # no joint state yet; skip this tick
-        gripper_open = {
-            side: (dm.get_current_gripper_open_value(side) or 0.0)
-            for side in feat.SIDES
-        }
+        measured, joint_drift = joints_res
+        if len(measured) < feat.BODY_DOF * len(feat.SIDES):
+            return
+        drifts["joints"] = joint_drift
+
+        gripper_open: dict[str, float] = {}
+        for side in feat.SIDES:
+            g = dm.get_current_gripper_open_value_at(side, t_ref)
+            gripper_open[side] = 0.0 if g is None else g[0]
+            drifts[f"grip_{side}"] = float("nan") if g is None else g[1]
+
         state = feat.build_observation_state(measured, gripper_open)
         last_commands = {side: dm.get_last_sent_command(side) for side in feat.SIDES}
-        action = feat.build_action(state, last_commands, time.monotonic())
+        action = feat.build_action(state, last_commands, t_ref)
 
         images = {}
         for name in self.camera_names:
-            img = dm.get_rgb_image(name)
-            if img is None:
+            res = dm.get_rgb_image_at(name, t_ref)
+            if res is None:
                 return  # guarded by staleness, but never add a None frame
-            images[name] = img
+            images[name], drifts[name] = res
 
-        frame = feat.assemble_frame(state, action, images, self.task)
+        teleop_active = dm.get_teleop_active()
+        frame = feat.assemble_frame(state, action, images, self.task, teleop_active)
         self.dataset.add_frame(frame)
         self._frame_count += 1
+
+        # Alignment telemetry + action-fallback tally (a stale/missing command
+        # while teleoperating means the action fell back to the measured state).
+        self._drift.add(self._frame_count, t_ref, drifts)
+        if teleop_active and len(feat.fresh_sides(last_commands, t_ref)) < len(
+            feat.SIDES
+        ):
+            self._fallback_frames += 1
 
     # ── Terminal transitions ─────────────────────────────────────────────────
 
@@ -246,6 +275,11 @@ class EpisodeRecorder:
             traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.end_episode(self._episode_index)
+        if self.root is not None:
+            try:
+                self._drift.write_parquet(self.root, self._episode_index)
+            except Exception:
+                traceback.print_exc()
         self._print_stats(outcome="saved")
         self._episode_index += 1
         with self._lock:
@@ -321,7 +355,17 @@ class EpisodeRecorder:
             tick_msg = f"avg tick {avg:.1f} ms, worst {worst:.1f} ms"
         else:
             tick_msg = "no ticks"
+        fallback_msg = ""
+        if self._frame_count:
+            pct = 100.0 * self._fallback_frames / self._frame_count
+            fallback_msg = (
+                f", action-fallback {self._fallback_frames}/{self._frame_count} "
+                f"({pct:.0f}%)"
+            )
         print(
             f"⏹️  episode {self._episode_index} {outcome}: "
-            f"{self._frame_count} frames, {tick_msg}"
+            f"{self._frame_count} frames, {tick_msg}{fallback_msg}"
         )
+        if len(self._drift):
+            print("  ⏱️  stream drift from tick reference:")
+            print(self._drift.format_summary())

@@ -43,14 +43,26 @@ STATE_NAMES: list[str] = [
 # joint threads write at ~100 Hz, so 30 ms comfortably admits the latest write.
 ACTION_FRESH_S = 0.030
 
+# Non-policy phase flag recorded per frame. It is a bare top-level key (not
+# under ``observation.`` and not ``action``), so LeRobot's feature classifier
+# ignores it for policy input/output (feature_utils.dataset_to_policy_features)
+# while it stays queryable in the dataset — used to mask non-teleop frames
+# (e.g. homing moves, where the action falls back to the measured state) at
+# train time. 1.0 = teleoperation active, 0.0 = not.
+TELEOP_ACTIVE_KEY = "teleop_active"
+
 
 def build_dataset_features(
     camera_specs: list[tuple[str, int, int]],
+    include_phase: bool = False,
 ) -> dict[str, dict]:
     """Return the LeRobotDataset feature spec for the enabled streams.
 
     ``camera_specs`` is a list of ``(name, height, width)`` for each ENABLED
-    camera; each becomes an ``observation.images.<name>`` video feature.
+    camera; each becomes an ``observation.images.<name>`` video feature. When
+    ``include_phase`` is set, a maskable ``teleop_active`` scalar is added (the
+    real teleop recorder opts in; the sim oracle collector leaves it off so its
+    schema is unchanged).
     """
     features: dict[str, dict] = {
         "observation.state": {
@@ -70,7 +82,32 @@ def build_dataset_features(
             "shape": (height, width, 3),
             "names": ["height", "width", "channels"],
         }
+    if include_phase:
+        features[TELEOP_ACTIVE_KEY] = {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": [TELEOP_ACTIVE_KEY],
+        }
     return features
+
+
+def fresh_sides(
+    last_commands: dict[str, tuple[np.ndarray | None, float | None, float | None]],
+    now_mono: float,
+    fresh_s: float = ACTION_FRESH_S,
+) -> set[str]:
+    """Return the sides whose last command is fresh enough to be the action.
+
+    The recorder uses this to tally how often the action fell back to the
+    measured state (a stale/missing command), which flags frames that teach a
+    spurious "hold" and should be masked or excluded at train time.
+    """
+    out: set[str] = set()
+    for side in SIDES:
+        _urdf, _grip, t_mono = last_commands[side]
+        if t_mono is not None and (now_mono - t_mono) < fresh_s:
+            out.add(side)
+    return out
 
 
 def build_observation_state(
@@ -130,17 +167,26 @@ def assemble_frame(
     action: np.ndarray,
     images: dict[str, np.ndarray],
     task: str,
+    teleop_active: bool | None = None,
 ) -> dict:
     """Build the LeRobotDataset frame dict (features + task, no bookkeeping keys).
 
     ``images`` maps each enabled camera name to its RGB (H, W, 3) uint8 array.
-    Never adds timestamp/frame_index — LeRobot derives those from fps.
+    ``teleop_active`` records whether teleoperation drove this frame (for
+    train-time masking); pass ``None`` (the default, used by the sim collector)
+    to omit the key so the frame matches a feature spec built without
+    ``include_phase``. Never adds timestamp/frame_index — LeRobot derives those
+    from fps.
     """
     frame: dict = {
         "observation.state": np.asarray(observation_state, dtype=np.float32),
         "action": np.asarray(action, dtype=np.float32),
         "task": task,
     }
+    if teleop_active is not None:
+        frame[TELEOP_ACTIVE_KEY] = np.array(
+            [1.0 if teleop_active else 0.0], dtype=np.float32
+        )
     for name, rgb in images.items():
         frame[f"observation.images.{name}"] = rgb
     return frame

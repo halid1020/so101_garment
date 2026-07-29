@@ -14,6 +14,13 @@ from typing import Any, Callable
 import numpy as np
 
 from .one_euro_filter import OneEuroFilterTransform
+from .sync import TimestampedHistory, interp_pose, lerp, select_interp
+
+# How long the timestamped stream histories retain samples (seconds). The
+# data-collection recorder aligns every stream to one reference time per frame
+# by sampling these; ~0.5 s comfortably brackets a 30 Hz tick against the
+# ~100 Hz proprio streams while keeping memory bounded.
+_HISTORY_MAX_AGE_S = 0.5
 
 
 class RobotActivityState(Enum):
@@ -77,6 +84,16 @@ class RobotState:
             "right": None,
         }
         self.activity_state: RobotActivityState = RobotActivityState.DISABLED
+        # Timestamped histories for reference-time alignment (see common.sync).
+        self.joint_history = TimestampedHistory(_HISTORY_MAX_AGE_S)
+        self.ee_history: dict[str, TimestampedHistory] = {
+            "left": TimestampedHistory(_HISTORY_MAX_AGE_S),
+            "right": TimestampedHistory(_HISTORY_MAX_AGE_S),
+        }
+        self.cur_gripper_history: dict[str, TimestampedHistory] = {
+            "left": TimestampedHistory(_HISTORY_MAX_AGE_S),
+            "right": TimestampedHistory(_HISTORY_MAX_AGE_S),
+        }
 
 
 class IKState:
@@ -86,6 +103,11 @@ class IKState:
         self.target_poses: dict[str, np.ndarray | None] = {"left": None, "right": None}
         self.solve_time_ms: float = 0.0
         self.success: bool = True
+        # Timestamped history of the projected+constrained EE target per side.
+        self.target_pose_history: dict[str, TimestampedHistory] = {
+            "left": TimestampedHistory(_HISTORY_MAX_AGE_S),
+            "right": TimestampedHistory(_HISTORY_MAX_AGE_S),
+        }
 
 
 class CameraState:
@@ -154,10 +176,40 @@ class DualDataManager:
             img = self._camera_state.rgb_images.get(camera_name)
             return img.copy() if img is not None else None
 
-    def set_rgb_image(self, image: np.ndarray, camera_name: str) -> None:
+    def set_rgb_image(
+        self, image: np.ndarray, camera_name: str, t_capture: float | None = None
+    ) -> None:
+        """Publish the latest frame for ``camera_name``.
+
+        ``t_capture`` is the ``time.monotonic()`` stamp taken at the moment the
+        device was read (the capture thread passes it so alignment reflects the
+        true capture instant, not the post-decode publish); it defaults to now.
+        Only the latest frame is kept — for a causal 30 Hz collector the
+        newest frame is always the nearest available sample to the tick, so a
+        deeper ring would not improve image alignment (unsynchronised UVC
+        cameras cannot be re-phased in software; the drift is logged instead).
+        """
         with self._camera_state._lock:
             self._camera_state.rgb_images[camera_name] = image.copy()
-            self._camera_state.rgb_timestamps[camera_name] = time.monotonic()
+            self._camera_state.rgb_timestamps[camera_name] = (
+                time.monotonic() if t_capture is None else float(t_capture)
+            )
+
+    def get_rgb_image_at(
+        self, camera_name: str, t_ref: float
+    ) -> tuple[np.ndarray, float] | None:
+        """Return ``(frame, drift_s)`` for ``camera_name`` at reference ``t_ref``.
+
+        The nearest available frame is the latest one (see
+        :meth:`set_rgb_image`); ``drift_s = t_ref - t_capture``. ``None`` if no
+        frame has been published for that camera.
+        """
+        with self._camera_state._lock:
+            img = self._camera_state.rgb_images.get(camera_name)
+            ts = self._camera_state.rgb_timestamps.get(camera_name)
+            if img is None or ts is None:
+                return None
+            return img.copy(), t_ref - ts
 
     def get_rgb_image_age(
         self, camera_name: str, now_mono: float | None = None
@@ -360,8 +412,22 @@ class DualDataManager:
             )
 
     def set_current_joint_angles(self, angles: np.ndarray) -> None:
+        snapshot = angles.copy()
         with self._robot_state._lock:
-            self._robot_state.joint_angles = angles.copy()
+            self._robot_state.joint_angles = snapshot
+        # Stamp on publish (≈ read time: the joint thread calls this straight
+        # after the hardware read) so the collector can align to a tick time.
+        self._robot_state.joint_history.append(time.monotonic(), snapshot)
+
+    def get_current_joint_angles_at(
+        self, t_ref: float
+    ) -> tuple[np.ndarray, float] | None:
+        """Interpolate the measured 10-DOF joints to reference time ``t_ref``.
+
+        Returns ``(angles, drift_s)`` where ``drift_s = t_ref - t_nearest`` (the
+        residual to the closest real sample), or ``None`` before any sample.
+        """
+        return select_interp(self._robot_state.joint_history.snapshot(), t_ref, lerp)
 
     def get_current_end_effector_pose(self, side: str) -> np.ndarray | None:
         if side not in ("left", "right"):
@@ -373,10 +439,25 @@ class DualDataManager:
     def set_current_end_effector_pose(self, side: str, pose: np.ndarray | None) -> None:
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'")
+        snapshot = pose.copy() if pose is not None else None
         with self._robot_state._lock:
-            self._robot_state.end_effector_poses[side] = (
-                pose.copy() if pose is not None else None
-            )
+            self._robot_state.end_effector_poses[side] = snapshot
+        if snapshot is not None:
+            self._robot_state.ee_history[side].append(time.monotonic(), snapshot)
+
+    def get_current_end_effector_pose_at(
+        self, side: str, t_ref: float
+    ) -> tuple[np.ndarray, float] | None:
+        """Interpolate the measured EE 4×4 pose to reference time ``t_ref``.
+
+        LERP translation, SLERP rotation. Returns ``(pose, drift_s)`` or
+        ``None`` before any sample.
+        """
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        return select_interp(
+            self._robot_state.ee_history[side].snapshot(), t_ref, interp_pose
+        )
 
     def get_current_gripper_open_value(self, side: str) -> float | None:
         if side not in ("left", "right"):
@@ -389,6 +470,26 @@ class DualDataManager:
             raise ValueError("side must be 'left' or 'right'")
         with self._robot_state._lock:
             self._robot_state.current_gripper_open_values[side] = float(value)
+        self._robot_state.cur_gripper_history[side].append(
+            time.monotonic(), np.array([float(value)])
+        )
+
+    def get_current_gripper_open_value_at(
+        self, side: str, t_ref: float
+    ) -> tuple[float, float] | None:
+        """Interpolate the measured gripper open fraction to ``t_ref``.
+
+        Returns ``(open_fraction, drift_s)`` or ``None`` before any sample.
+        """
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        result = select_interp(
+            self._robot_state.cur_gripper_history[side].snapshot(), t_ref, lerp
+        )
+        if result is None:
+            return None
+        value, drift = result
+        return float(value[0]), drift
 
     def get_target_gripper_open_value(self, side: str) -> float | None:
         if side not in ("left", "right"):
@@ -419,10 +520,11 @@ class DualDataManager:
     def set_target_pose(self, side: str, transform: np.ndarray | None) -> None:
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'")
+        snapshot = transform.copy() if transform is not None else None
         with self._ik_state._lock:
-            self._ik_state.target_poses[side] = (
-                transform.copy() if transform is not None else None
-            )
+            self._ik_state.target_poses[side] = snapshot
+        if snapshot is not None:
+            self._ik_state.target_pose_history[side].append(time.monotonic(), snapshot)
 
     def get_target_pose(self, side: str) -> np.ndarray | None:
         if side not in ("left", "right"):
@@ -430,6 +532,20 @@ class DualDataManager:
         with self._ik_state._lock:
             tf = self._ik_state.target_poses[side]
             return tf.copy() if tf is not None else None
+
+    def get_target_pose_at(
+        self, side: str, t_ref: float
+    ) -> tuple[np.ndarray, float] | None:
+        """Interpolate the projected+constrained EE target to ``t_ref``.
+
+        LERP translation, SLERP rotation. Returns ``(pose, drift_s)`` or
+        ``None`` before any sample.
+        """
+        if side not in ("left", "right"):
+            raise ValueError("side must be 'left' or 'right'")
+        return select_interp(
+            self._ik_state.target_pose_history[side].snapshot(), t_ref, interp_pose
+        )
 
     def set_ik_solve_time_ms(self, time_ms: float) -> None:
         with self._ik_state._lock:

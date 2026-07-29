@@ -141,6 +141,10 @@ class CameraCapture:
                     continue
 
                 ret, frame = self._cap.read()
+                # Stamp the capture instant immediately, before colour convert /
+                # resize, so downstream alignment reflects when the sensor was
+                # actually read rather than when the processed frame is published.
+                t_capture = time.monotonic()
                 if not ret or frame is None:
                     print(
                         f"⚠️  camera '{self.name}' read failed; "
@@ -155,9 +159,9 @@ class CameraCapture:
                 rgb = self._force_size(rgb)
                 if self.rotate180:
                     rgb = cv2.rotate(rgb, cv2.ROTATE_180)
-                data_manager.set_rgb_image(rgb, self.name)
+                data_manager.set_rgb_image(rgb, self.name, t_capture=t_capture)
                 with self._lock:
-                    self._last_frame_mono = time.monotonic()
+                    self._last_frame_mono = t_capture
 
                 sleep_time = dt - (time.time() - iteration_start)
                 if sleep_time > 0:
