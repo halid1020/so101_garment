@@ -46,6 +46,18 @@ _VALID: dict = {
     },
 }
 
+_REALSENSE: dict = {
+    "enabled": False,
+    "serial": "",
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "align_to_color": True,
+    "rgb_name": "central",
+    "depth_name": "central_depth",
+    "lock_auto_exposure": True,
+}
+
 
 def _write_yaml(data: dict, directory: str) -> Path:
     path = Path(directory) / "recording.yaml"
@@ -116,6 +128,41 @@ class TestRecordingConfig(unittest.TestCase):
     def test_missing_file_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):
             load_recording_config("/nonexistent/recording.yaml")
+
+    def test_realsense_optional_absent_ok(self) -> None:
+        # A map WITHOUT a realsense section stays valid (backward compatible).
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(_VALID, d)))
+        self.assertNotIn("realsense", cfg)
+
+    def test_realsense_present_loads(self) -> None:
+        good = copy.deepcopy(_VALID)
+        good["realsense"] = copy.deepcopy(_REALSENSE)
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(good, d)))
+        self.assertEqual(cfg["realsense"]["rgb_name"], "central")
+        self.assertEqual(cfg["realsense"]["depth_name"], "central_depth")
+
+    def test_realsense_unknown_key_raises(self) -> None:
+        bad = copy.deepcopy(_VALID)
+        bad["realsense"] = copy.deepcopy(_REALSENSE)
+        bad["realsense"]["laser_power"] = 150
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "laser_power"):
+                load_recording_config(str(_write_yaml(bad, d)))
+
+    def test_realsense_missing_key_raises(self) -> None:
+        bad = copy.deepcopy(_VALID)
+        bad["realsense"] = copy.deepcopy(_REALSENSE)
+        del bad["realsense"]["depth_name"]
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "depth_name"):
+                load_recording_config(str(_write_yaml(bad, d)))
+
+    def test_checked_in_yaml_has_realsense(self) -> None:
+        cfg = load_recording_config()
+        self.assertIn("realsense", cfg)
+        self.assertFalse(cfg["realsense"]["enabled"])  # default off
 
     def test_tactile_default_disabled(self) -> None:
         cfg = load_recording_config()

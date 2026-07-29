@@ -52,10 +52,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   sample selection used to align every stream to one reference time per
   recorded frame), and `recording/` (LeRobot episode recorder behind
   `--record` on the real teleop tool: 30 fps dataset + ~100 Hz sidecar
-  parquet + UVC camera threads; `drift.py` logs per-frame per-stream
-  temporal drift to `<root>/extra/`; the `--sensor-view` monitor shows
-  live per-stream drift + drop counts; config in
-  `src/conf/recording.yaml`, device indices are per-machine
+  parquet + UVC camera threads; `realsense_camera.py` adds a central
+  RGB-D camera (`--central-depth`: RGB video feature + aligned 16-bit
+  depth written by `depth.py` as PNG16 under `<root>/extra/depth/`, with
+  intrinsics/scale in `<root>/meta/realsense.json`); `drift.py` logs
+  per-frame per-stream temporal drift to `<root>/extra/`; the
+  `--sensor-view` monitor shows live per-stream drift + drop counts;
+  config in `src/conf/recording.yaml`, device indices are per-machine
   placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +

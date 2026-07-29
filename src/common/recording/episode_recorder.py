@@ -53,6 +53,8 @@ class EpisodeRecorder:
         sidecar: Any | None = None,
         park_arms: Callable[[], None] | None = None,
         camera_stale_s: float = 0.5,
+        depth_streams: list[str] | None = None,
+        depth_writer: Any | None = None,
     ) -> None:
         self.dataset = dataset
         self.data_manager = data_manager
@@ -63,6 +65,10 @@ class EpisodeRecorder:
         self.sidecar = sidecar
         self.park_arms = park_arms
         self.camera_stale_s = camera_stale_s
+        # Optional aligned 16-bit depth streams (RealSense), written outside the
+        # video encoder by ``depth_writer`` (a DepthWriter), keyed by frame idx.
+        self.depth_streams = list(depth_streams) if depth_streams is not None else []
+        self.depth_writer = depth_writer
 
         self._lock = threading.Lock()
         self._state = RecorderState.IDLE
@@ -114,6 +120,8 @@ class EpisodeRecorder:
         """Start the sidecar, camera threads and the record loop."""
         if self.sidecar is not None:
             self.sidecar.start()
+        if self.depth_writer is not None:
+            self.depth_writer.start()
         for cam in self.cameras:
             cam.start(self.data_manager)
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -134,6 +142,8 @@ class EpisodeRecorder:
             self.sidecar.stop()
         for cam in self.cameras:
             cam.stop()
+        if self.depth_writer is not None:
+            self.depth_writer.stop()
         try:
             self.dataset.finalize()
         except Exception:
@@ -185,6 +195,8 @@ class EpisodeRecorder:
             return
         if self.sidecar is not None:
             self.sidecar.begin_episode()
+        if self.depth_writer is not None:
+            self.depth_writer.begin_episode(self._episode_index)
         self._tick_durations = []
         self._frame_count = 0
         self._drift.reset()
@@ -253,14 +265,26 @@ class EpisodeRecorder:
                 return  # guarded by staleness, but never add a None frame
             images[name], drifts[name] = res
 
+        depth_by_stream: dict = {}
+        for name in self.depth_streams:
+            res = dm.get_depth_image_at(name, t_ref)
+            if res is None:
+                return  # depth stream not ready; keep depth 1:1 with frames
+            depth_by_stream[name], drifts[f"depth_{name}"] = res
+
+        # LeRobot assigns frame_index = position in the episode buffer (0-based
+        # = frames added so far); use that so depth files/drift rows align 1:1.
+        frame_idx = self._frame_count
         teleop_active = dm.get_teleop_active()
         frame = feat.assemble_frame(state, action, images, self.task, teleop_active)
         self.dataset.add_frame(frame)
         self._frame_count += 1
+        if self.depth_writer is not None and depth_by_stream:
+            self.depth_writer.add(frame_idx, depth_by_stream)
 
         # Alignment telemetry + action-fallback tally (a stale/missing command
         # while teleoperating means the action fell back to the measured state).
-        self._drift.add(self._frame_count, t_ref, drifts)
+        self._drift.add(frame_idx, t_ref, drifts)
         if teleop_active and len(feat.fresh_sides(last_commands, t_ref)) < len(
             feat.SIDES
         ):
@@ -275,6 +299,8 @@ class EpisodeRecorder:
             traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.end_episode(self._episode_index)
+        if self.depth_writer is not None:
+            self.depth_writer.end_episode()
         if self.root is not None:
             try:
                 self._drift.write_parquet(self.root, self._episode_index)
@@ -294,6 +320,8 @@ class EpisodeRecorder:
             traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.abort_episode()
+        if self.depth_writer is not None:
+            self.depth_writer.abort_episode()
         self._print_stats(outcome=f"discarded ({reason})")
         if park and self.park_arms is not None:
             try:
@@ -362,9 +390,12 @@ class EpisodeRecorder:
                 f", action-fallback {self._fallback_frames}/{self._frame_count} "
                 f"({pct:.0f}%)"
             )
+        depth_msg = ""
+        if self.depth_writer is not None and self.depth_writer.dropped:
+            depth_msg = f", depth-drops {self.depth_writer.dropped}"
         print(
             f"⏹️  episode {self._episode_index} {outcome}: "
-            f"{self._frame_count} frames, {tick_msg}{fallback_msg}"
+            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}"
         )
         if len(self._drift):
             print("  ⏱️  stream drift from tick reference:")

@@ -128,6 +128,21 @@ _RECORDING_SCHEMA: dict[str, frozenset[str]] = {
 _CAMERA_SCHEMA: frozenset[str] = frozenset(
     {"enabled", "device", "width", "height", "fps", "rotate180"}
 )
+# Optional central RGB-D (RealSense) section. Absent in older maps (validated
+# only when present, so existing recording.yaml files stay valid).
+_REALSENSE_SCHEMA: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "serial",
+        "width",
+        "height",
+        "fps",
+        "align_to_color",
+        "rgb_name",
+        "depth_name",
+        "lock_auto_exposure",
+    }
+)
 
 
 def load_ik_config(config_path: str) -> dict:
@@ -220,11 +235,22 @@ def load_recording_config(path: str | None = None) -> dict:
     """
     cfg_path = Path(path) if path is not None else _DEFAULT_RECORDING_PATH
     data = _load_yaml_strict(cfg_path)
-    _validate_keys(
-        cfg_path, "top-level", data, frozenset(_RECORDING_SCHEMA) | {"cameras"}
-    )
+    # Required top-level sections plus an OPTIONAL ``realsense`` one: older maps
+    # (no central RGB-D camera) omit it and must still load.
+    required_top = frozenset(_RECORDING_SCHEMA) | {"cameras"}
+    keys = set(data)
+    missing = required_top - keys
+    unknown = keys - required_top - {"realsense"}
+    if missing:
+        raise ValueError(
+            f"{cfg_path}: top-level is missing required key(s): {sorted(missing)}"
+        )
+    if unknown:
+        raise ValueError(f"{cfg_path}: top-level has unknown key(s): {sorted(unknown)}")
     for section, expected in _RECORDING_SCHEMA.items():
         _validate_keys(cfg_path, section, data[section], expected)
+    if "realsense" in data:
+        _validate_keys(cfg_path, "realsense", data["realsense"], _REALSENSE_SCHEMA)
 
     cameras = data["cameras"]
     if not isinstance(cameras, dict):

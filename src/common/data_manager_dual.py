@@ -117,6 +117,9 @@ class CameraState:
         # time.monotonic() of the most recent frame per camera name, used by
         # the recorder to detect stale streams.
         self.rgb_timestamps: dict[str, float] = {}
+        # Aligned 16-bit depth (uint16) per stream name + capture stamps.
+        self.depth_images: dict[str, np.ndarray] = {}
+        self.depth_timestamps: dict[str, float] = {}
 
 
 class LeaderMappedStateDual:
@@ -225,6 +228,53 @@ class DualDataManager:
         with self._camera_state._lock:
             ts = self._camera_state.rgb_timestamps.get(camera_name)
             return None if ts is None else now_mono - ts
+
+    def set_depth_image(
+        self, depth: np.ndarray, name: str, t_capture: float | None = None
+    ) -> None:
+        """Publish the latest aligned 16-bit depth frame for ``name``.
+
+        ``depth`` is a ``uint16`` (H, W) array in the camera's native depth
+        units (see the dataset's ``realsense.json`` for the metres-per-unit
+        scale). ``t_capture`` is the ``time.monotonic()`` capture stamp (the
+        RealSense thread passes the same stamp used for its colour frame so RGB
+        and depth stay co-timed); it defaults to now.
+        """
+        with self._camera_state._lock:
+            self._camera_state.depth_images[name] = depth.copy()
+            self._camera_state.depth_timestamps[name] = (
+                time.monotonic() if t_capture is None else float(t_capture)
+            )
+
+    def get_depth_image(self, name: str) -> np.ndarray | None:
+        with self._camera_state._lock:
+            img = self._camera_state.depth_images.get(name)
+            return img.copy() if img is not None else None
+
+    def get_depth_image_age(
+        self, name: str, now_mono: float | None = None
+    ) -> float | None:
+        """Age in seconds of the latest depth frame for ``name`` (None if never)."""
+        if now_mono is None:
+            now_mono = time.monotonic()
+        with self._camera_state._lock:
+            ts = self._camera_state.depth_timestamps.get(name)
+            return None if ts is None else now_mono - ts
+
+    def get_depth_image_at(
+        self, name: str, t_ref: float
+    ) -> tuple[np.ndarray, float] | None:
+        """Return ``(depth, drift_s)`` for ``name`` at reference ``t_ref``.
+
+        The latest depth frame is the nearest causal sample (same rationale as
+        :meth:`get_rgb_image_at`). ``None`` if no depth has been published.
+        """
+        with self._camera_state._lock:
+            img = self._camera_state.depth_images.get(name)
+            ts = self._camera_state.depth_timestamps.get(name)
+            if img is None or ts is None:
+                return None
+            return img.copy(), t_ref - ts
 
     # ── Controller ──────────────────────────────────────────────────────────────
 

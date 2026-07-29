@@ -35,6 +35,26 @@ sidecar:
   # the URDF-space command. Useful for debugging the HW<->URDF boundary.
   include_hw_frame_goal: true
 
+# Central RGB-D camera (Intel RealSense). OPTIONAL: this whole section may be
+# omitted on a rig without a depth camera. The colour stream is published as a
+# normal observation.images.<rgb_name> video feature (like the UVC cameras);
+# the aligned 16-bit depth stream is stored OUTSIDE the video encoder (a
+# per-frame lossless PNG16 under <root>/extra/depth/<depth_name>/), because
+# LeRobot's video features are 3-channel uint8 and would corrupt depth. The
+# camera intrinsics, extrinsics and depth scale are written once per dataset
+# to <root>/meta/realsense.json for replicability. --central-depth on the
+# command line overrides "enabled".
+realsense:
+  enabled: false          # capture the central RGB-D camera
+  serial: ""              # device serial ("" = first RealSense found)
+  width: 640              # colour + depth width (px); depth is aligned to colour
+  height: 480             # colour + depth height (px)
+  fps: 30                 # stream frame rate (Hz); match the dataset fps
+  align_to_color: true    # align depth into the colour frame (rs.align)
+  rgb_name: central       # observation.images.<rgb_name> video feature
+  depth_name: central_depth  # name of the 16-bit depth stream on disk
+  lock_auto_exposure: true   # lock auto-exposure once settled (stable appearance)
+
 # Camera streams. Each entry maps a stream NAME to its capture settings. The
 # name becomes the LeRobotDataset feature key (observation.images.<name>).
 # Device indices are PER-MACHINE PLACEHOLDERS — you MUST set the correct

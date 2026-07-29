@@ -81,6 +81,7 @@ from common.recording import (
     build_dataset_features,
     load_recording_config,
 )
+from common.recording.depth import DepthWriter
 from common.sensor_view import run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
@@ -158,6 +159,13 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         help="Enable the tactile_0..3 camera streams (hardware required)",
     )
     group.add_argument(
+        "--central-depth",
+        action="store_true",
+        help="Enable the central RealSense RGB-D camera (RGB video feature + "
+        "aligned 16-bit depth stream); overrides realsense.enabled in "
+        "src/conf/recording.yaml",
+    )
+    group.add_argument(
         "--no-sidecar",
         action="store_true",
         help="Disable the ~100 Hz full-rate sidecar parquet",
@@ -201,6 +209,32 @@ def check_disk_space(root: Path) -> None:
         )
     if free_gb < _DISK_WARN_GB:
         print(f"⚠️  Low disk space: {free_gb:.1f} GB free on {probe}")
+
+
+def write_realsense_meta(root: Path, rs_capture, rs_cfg: dict) -> None:
+    """Write the central camera's intrinsics/scale/config for replicability.
+
+    Saved once per dataset to ``<root>/meta/realsense.json``. The camera's
+    extrinsic pose in the rig frame is a physical measurement made separately,
+    so it is emitted as a null placeholder for the operator to fill in.
+    """
+    import json
+
+    meta_dir = root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "rgb_name": rs_capture.name,
+        "depth_name": rs_capture.depth_name,
+        "width": rs_cfg["width"],
+        "height": rs_cfg["height"],
+        "fps": rs_cfg["fps"],
+        "aligned_to_color": rs_cfg["align_to_color"],
+        "depth_scale_m_per_unit": rs_capture.depth_scale,
+        "color_intrinsics": rs_capture.intrinsics,
+        "extrinsics_camera_to_rig": None,  # measure + fill in for replicability
+    }
+    (meta_dir / "realsense.json").write_text(json.dumps(payload, indent=2))
+    print(f"  🗂  wrote {meta_dir / 'realsense.json'} (intrinsics + depth scale)")
 
 
 def build_recording_stack(
@@ -248,6 +282,41 @@ def build_recording_stack(
             )
         captures.append(cam)
 
+    # Optional central RealSense RGB-D: its colour stream joins ``captures`` as
+    # a normal video feature; its aligned 16-bit depth is written separately.
+    rs_cfg = rec_cfg.get("realsense")
+    if args.central_depth and rs_cfg is None:
+        for opened in captures:
+            opened.stop()
+        raise SystemExit(
+            "❌ --central-depth but src/conf/recording.yaml has no 'realsense' "
+            "section — add one (see the example) or drop the flag"
+        )
+    all_captures: list = list(captures)
+    rs_capture = None
+    if rs_cfg is not None and (rs_cfg["enabled"] or args.central_depth):
+        from common.recording.realsense_camera import RealSenseCapture
+
+        rs_capture = RealSenseCapture(
+            rgb_name=rs_cfg["rgb_name"],
+            depth_name=rs_cfg["depth_name"],
+            width=rs_cfg["width"],
+            height=rs_cfg["height"],
+            fps=rs_cfg["fps"],
+            serial=rs_cfg["serial"],
+            align_to_color=rs_cfg["align_to_color"],
+            lock_auto_exposure=rs_cfg["lock_auto_exposure"],
+        )
+        if not rs_capture.open():
+            for opened in captures:
+                opened.stop()
+            raise SystemExit(
+                "❌ RealSense failed to open — check the camera is connected "
+                "and the serial in src/conf/recording.yaml (or drop "
+                "--central-depth / set realsense.enabled: false)"
+            )
+        all_captures.append(rs_capture)
+
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -257,7 +326,7 @@ def build_recording_stack(
     check_disk_space(root)
 
     threads_total = rec_cfg["dataset"]["image_writer_threads_per_camera"] * len(
-        captures
+        all_captures
     )
     if args.resume:
         print(f"📂 Resuming dataset {args.repo_id} at {root}")
@@ -268,14 +337,14 @@ def build_recording_stack(
         )
     else:
         if root.exists():
-            for opened in captures:
+            for opened in all_captures:
                 opened.stop()
             raise SystemExit(
                 f"❌ {root} already exists — pass --resume to append or "
                 "choose another --repo-id/--dataset-root"
             )
         features = build_dataset_features(
-            [(c.name, c.height, c.width) for c in captures], include_phase=True
+            [(c.name, c.height, c.width) for c in all_captures], include_phase=True
         )
         print(f"📂 Creating dataset {args.repo_id} at {root} ({fps} fps)")
         dataset = LeRobotDataset.create(
@@ -286,6 +355,17 @@ def build_recording_stack(
             robot_type=rec_cfg["dataset"]["robot_type"],
             image_writer_threads=threads_total,
         )
+
+    # Persist the RealSense intrinsics + depth scale once per dataset so the
+    # depth stream is interpretable and the setup is replicable. The camera's
+    # extrinsic pose in the rig frame is a physical measurement recorded
+    # separately (left as a null placeholder for the operator to fill).
+    depth_streams: list[str] = []
+    depth_writer = None
+    if rs_capture is not None:
+        write_realsense_meta(dataset.root, rs_capture, rs_cfg)
+        depth_streams = [rs_capture.depth_name]
+        depth_writer = DepthWriter(dataset.root, depth_streams)
 
     sidecar = None
     if sidecar_cfg["enabled"] and not args.no_sidecar:
@@ -302,10 +382,12 @@ def build_recording_stack(
         data_manager=data_manager,
         task=args.task,
         fps=fps,
-        camera_names=[c.name for c in captures],
-        cameras=captures,
+        camera_names=[c.name for c in all_captures],
+        cameras=all_captures,
         sidecar=sidecar,
         park_arms=park_arms,
+        depth_streams=depth_streams,
+        depth_writer=depth_writer,
     )
 
 
