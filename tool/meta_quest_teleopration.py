@@ -65,6 +65,7 @@ from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
     CONTROLLER_MIN_CUTOFF,
+    GRIPPER_OPEN_MAX_FRAC,
     IK_SOLVER_RATE,
     MAX_JOINT_VEL_HW_RAD_S,
     ROTATION_SCALE,
@@ -417,6 +418,58 @@ def connect_leader_arms() -> dict:
     return leaders
 
 
+def apply_follower_ports_from_sensor_map(robot_conf: dict, required: bool) -> None:
+    """Bind each follower bus to the physical arm the wiggle test assigned.
+
+    robot.yaml's PORT_ID_0/1 are ``/dev/ttyACM*`` names, which reorder
+    across replugs — and with the two leaders also plugged in they can
+    resolve to a LEADER's device, so the follower bus and the leader bus
+    fight over one port ("multiple access on port").
+
+    Two conventions must be reconciled:
+      * this tool wires bus_0 = PORT_ID_0/ROBOT_NAME_0 to side "left" and
+        bus_1 = PORT_ID_1/ROBOT_NAME_1 to side "right";
+      * the sensor map (and ``connect_follower_bus``) pairs side "right"
+        with follower_0's calibration and side "left" with follower_1's.
+
+    So for teleop side "left" to be the PHYSICAL left arm with the right
+    calibration, bus_0 must take the map's ``left`` port together with
+    follower_1's calibration — i.e. the ROBOT_NAME_* pair is swapped
+    alongside the ports. This makes the Quest/leader left↔right and the
+    sensor-view labels all agree with the physical arms, and keeps each
+    bus paired with its own calibration.
+
+    ``required`` (leader mode) makes missing follower assignments fatal;
+    otherwise the robot.yaml default is left in place.
+    """
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    hint = "run tool/test_sensor_rates.py --assign and assign follower right/left"
+    arms = load_sensor_map(SENSOR_MAP_PATH)["arms"] if SENSOR_MAP_PATH.exists() else {}
+    # Calibration that the sensor convention pairs with each side.
+    calib_for = {
+        "right": robot_conf.get("ROBOT_NAME_0"),  # follower_0
+        "left": robot_conf.get("ROBOT_NAME_1"),  # follower_1
+    }
+    plan = {
+        "left": ("PORT_ID_0", "ROBOT_NAME_0"),
+        "right": ("PORT_ID_1", "ROBOT_NAME_1"),
+    }
+    for side, (port_key, name_key) in plan.items():
+        port = arms.get(side)
+        if port:
+            robot_conf[port_key] = port
+            robot_conf[name_key] = calib_for[side]
+            print(
+                f"🔌 follower {side} → {port} "
+                f"(calibration {calib_for[side]}) from sensor_map.yaml"
+            )
+        elif required:
+            raise SystemExit(
+                f"❌ follower {side} not assigned in sensor_map.yaml — {hint}"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
@@ -456,10 +509,15 @@ def main():
         "mid_pos": load_yaml(_root / "src/conf/mid_pos.yaml"),
         "ready_pos": load_yaml(_root / "src/conf/ready_pos.yaml"),
     }
+    use_leader = args.input == "leader"
+    # In leader mode all four arms are plugged in, so the followers MUST use
+    # their stable sensor_map ports (robot.yaml's ttyACM names can collide
+    # with a leader's device). Quest mode is left on robot.yaml unchanged.
+    if use_leader:
+        apply_follower_ports_from_sensor_map(config["robot"], required=True)
     dual_arm = SO101DualArm(config)
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
-    use_leader = args.input == "leader"
 
     # 3. Input layer.
     # Quest: IK stack (10 body DOF, grippers locked) built by the shared
@@ -488,20 +546,26 @@ def main():
     # (joint threads AND button callbacks) must hold that bus's lock.
     left_bus_lock = threading.Lock()
     right_bus_lock = threading.Lock()
+    # Gripper range: the Quest cap for the headset, the FULL jaw range for
+    # leader teleoperation (the leader jaw itself is the operator's control).
+    gripper_cap = 1.0 if use_leader else GRIPPER_OPEN_MAX_FRAC
     left_joint_thread = threading.Thread(
         target=dual_joint_state_thread,
         args=(data_manager, dual_arm.bus_0, "left", left_bus_lock),
+        kwargs={"gripper_open_max_frac": gripper_cap},
         daemon=True,
     )
     right_joint_thread = threading.Thread(
         target=dual_joint_state_thread,
         args=(data_manager, dual_arm.bus_1, "right", right_bus_lock),
+        kwargs={"gripper_open_max_frac": gripper_cap},
         daemon=True,
     )
     if use_leader:
         input_thread = threading.Thread(
             target=leader_arm_thread,
             args=(data_manager, leaders),
+            kwargs={"gripper_open_max_frac": gripper_cap},
             daemon=True,
         )
     else:
