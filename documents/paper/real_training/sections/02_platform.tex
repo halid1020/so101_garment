@@ -1,0 +1,45 @@
+\section{Collection platform}
+\label{sec:platform}
+
+The platform is a dual five-degree-of-freedom rig with two teleoperation
+interfaces and a multi-view sensor suite. This section walks the arms, the
+operator interfaces, the sensing, and the host and buses, and it ends with
+the fixed state the rig must reach before collection begins.
+
+\paragraph{Arms.} Two follower arms, each with five actuated body joints
+and a gripper, sit in a fixed left and right layout. That layout is shared
+with the digital twin used for earlier simulation work, so the physical
+placement and the simulated placement come from the same description. Each
+arm carries a camera at the wrist that looks along the gripper.
+
+\paragraph{Operator interfaces.} The rig accepts two kinds of
+teleoperation, and both produce demonstrations with identical recorded
+semantics. A head-mounted controller drives the arms in Cartesian space
+through an inverse-kinematics solver. A pair of leader arms, kinematically
+identical to the followers, drives them directly in joint space. The choice
+of interface changes how the operator moves, not what the recorder stores.
+
+\paragraph{Sensing.} Each gripper carries two visual-tactile fingertip
+cameras in addition to the wrist camera, and a depth camera overlooks the
+workspace from above. The colour images and the overhead aligned-depth
+image are the exterior views a policy sees; the fingertip views add local
+contact information. All views are recorded through one pipeline so that no
+stream is privileged over another.
+
+\paragraph{Host and buses.} Every device reaches a single laptop. The
+cameras and arms share two powered universal-serial-bus hubs, one per side,
+and the head-mounted controller uses a direct link. Shared-bus bandwidth is
+a genuine constraint when several compressed image streams run at once. We
+do not assume the bus copes; instead the recorder measures each stream's
+rate and dropped frames, so a saturated bus is visible rather than silent
+(Section~\ref{sec:collection}).
+
+\paragraph{Final-state readiness.} Collection is only meaningful when the
+rig starts from a fixed, known state: every arm calibrated and bound to a
+stable port alias, the wrist joints limited so the fingertip cables cannot
+be twisted, the arms at their defined home pose, and every camera opened at
+its configured resolution. A preflight check confirms these conditions and
+the host-tuning items that reduce timing jitter, and reports a single
+ready-or-not verdict. The platform's fixed dimensions and camera
+calibration are measured and stored so the rig can be rebuilt
+(Section~\ref{sec:replicability}).

@@ -1,0 +1,55 @@
+\section{Difficulties}
+\label{sec:difficulties}
+
+This section records the obstacles met while building the platform and how
+each was resolved, so the result is reproducible and its remaining weak
+points are visible. Each obstacle gets one short subsection.
+
+\paragraph{Temporal skew across streams.} Taking each stream's latest value
+at frame time placed samples captured at different instants into one frame.
+The resolution is to stamp every stream on read, align all streams to one
+reference time per frame, and log the residual drift
+(Section~\ref{sec:collection}). A residual remains: unsynchronised cameras
+keep an irreducible cross-camera skew that we measure but cannot remove in
+software, because their capture clocks are independent.
+
+\paragraph{The stale-command labelling trap.} When no fresh command exists,
+the recorded action falls back to the measured state. On a moving homing
+frame this would teach a spurious command to hold still. The resolution is
+the per-frame teleoperation flag, which marks such frames for exclusion,
+together with a logged count of how often the fallback fired, so the
+problem is visible per episode rather than hidden in the data.
+
+\paragraph{Depth cannot use the colour pipeline.} Sixteen-bit depth pushed
+through a three-channel colour-video encoder is quantised and corrupted.
+The resolution is to store depth losslessly as a per-frame image beside the
+dataset, keyed to the dataset frame index, with its scale and intrinsics
+recorded alongside.
+
+\paragraph{Shared-bus bandwidth.} Several compressed image streams on
+shared buses can starve one another and drop frames. The resolution is
+compressed capture, a per-stream rate and dropped-frame counter shown live,
+and episode-level discard when a stream is lost. \unjustified{} the exact
+number of simultaneous streams a given host and hub can sustain is
+machine-specific; we measure it per rig rather than derive it.
+
+\paragraph{Appearance drift.} Automatic exposure and white balance make the
+same scene look different across episodes and between collection and
+deployment. The resolution is to lock exposure where the device allows and
+to record the chosen settings, so appearance is a controlled and documented
+variable rather than a hidden one.
+
+\paragraph{Host timing jitter.} Background processes and power-saving
+governors cause the recorder's frame loop to overrun its budget. The
+resolution is the readiness check's host-tuning items and the recorder's
+own overrun warnings, which surface a slow tick immediately. \unjustified{}
+the overrun and staleness thresholds are set by convention and have not
+been tuned against downstream policy performance.
+
+\paragraph{Coverage for autonomy.} Clean expert trajectories
+under-represent the off-nominal and recovery states an autonomous policy
+inevitably visits, where small errors compound~\citep{ross2011dagger}. The
+resolution is a collection protocol that deliberately varies object
+placement and includes recoveries from near-failures, in the spirit of the
+low-cost bimanual demonstration collection of \citet{zhao2023aloha}. This is a data-design obligation on the
+operator, not something the recording software can supply.

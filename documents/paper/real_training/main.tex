@@ -1,0 +1,67 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+
+% Guideline convention: flag design choices that lack a solid reason.
+\newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
+
+\title{Policy-Ready Data Collection on a Dual Five-Degree-of-Freedom
+Rig: Timestamp-Aligned Multi-View Recording and a
+Teleoperation-to-Autonomy Contract}
+
+\author{so101\_garment project\thanks{Living document: this paper is the
+canonical description of the real-world data-collection and training
+platform in the \texttt{so101\_garment} repository and MUST be updated,
+in the same branch, whenever the collection platform, the recording
+system, the recorded stream set, or the teleoperation-to-autonomy
+contract change. The repository's writing guideline governs its style.
+The teleoperation system it builds on and the simulation training
+environment that precedes it each have their own living paper in the
+same repository.}}
+
+\date{Last updated: \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A teleoperated demonstration only teaches autonomy when the recorded
+observation and the recorded intent belong to the same instant, and when
+the intent is the command the robot actually executed. Multi-view rigs
+make both easy to lose: independent camera streams on shared buses arrive
+at different times, proprioception arrives faster still, and the operator's
+raw input is not the command the arm followed once limits and the
+reachable envelope have constrained it. We describe a real-rig collection
+system that timestamps every stream as it is read, aligns all streams to a
+single reference time for each recorded frame, and logs the residual drift
+so temporal quality is measured rather than assumed. The system records
+the projected, constrained target --- the quantity a policy must reproduce
+--- in both joint and end-effector form, so a joint-space or an
+end-effector policy trains from the same episodes without recollection. We
+state the contract that makes this data usable for autonomy: at inference
+the policy's output passes back through the identical command path that
+produced the labels. The platform is measured and its defining constants
+travel with the dataset for reproducibility, a readiness check confirms
+the rig is at a fixed collection state, and a difficulties section records
+every obstacle met and how it was resolved. An experiments section grows
+with this living document.
+\end{abstract}
+
+\input{sections/01_intro}
+\input{sections/02_platform}
+\input{sections/03_collection}
+\input{sections/04_contract}
+\input{sections/05_replicability}
+\input{sections/06_difficulties}
+\input{sections/07_conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

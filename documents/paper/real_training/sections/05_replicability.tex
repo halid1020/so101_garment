@@ -1,0 +1,43 @@
+\section{Replicability}
+\label{sec:replicability}
+
+Reproducing the platform needs its measured geometry, its camera
+calibration, its rates, and its action constants. This section lists what
+is measured and stored, and the procedure that confirms the rig is ready.
+
+\paragraph{Geometry and provenance.} The rig geometry derives from one
+parametric computer-aided-design description, and the same description
+generates the digital twin. The documented dimensions and the physical
+build therefore cannot drift apart. The validation object used for simple
+pick-and-place checks is a printed cube of stated side length, sized so the
+capped gripper can grasp it.
+
+\paragraph{Camera calibration.} The overhead depth camera's intrinsic
+parameters and its depth scale are read from the device and stored with
+every dataset, so the depth images are metrically interpretable after the
+fact. The exterior cameras are on fixed mounts, and their poses relative to
+the rig are measured and recorded. A camera that shifts between collection
+and deployment breaks a policy silently, so a fixed and recorded pose is
+part of the platform, not an afterthought.
+
+\paragraph{Rates and timing.} The dataset frame rate, the full-rate side
+log rate, and the proprioception rate are stated for each session, together
+with the measured drift budget of Section~\ref{sec:collection}. These
+numbers let a reader judge the temporal quality of the data without
+rerunning the rig.
+
+\paragraph{Action constants.} The frozen action definition of
+Section~\ref{sec:contract} --- units, joint order, gripper cap, input
+scales, end-effector frame and orientation convention --- travels with the
+dataset. It is exactly what an autonomous controller must reproduce, so
+storing it beside the data removes a common source of silent train and
+inference disagreement.
+
+\paragraph{Readiness procedure.} A preflight check confirms, before
+collection, that every arm is calibrated and bound to a stable alias, that
+the wrist joints are limited to protect the fingertip cables, that the arms
+are at their home pose, that every camera and the depth device open at
+their configured resolution, that the dataset volume has headroom, and that
+the host-tuning items which reduce timing jitter are set. It reports one
+ready-or-not verdict, so an operator does not begin a long session on a rig
+that is quietly misconfigured.

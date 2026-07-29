@@ -1,0 +1,49 @@
+\section{Teleoperation-to-autonomy contract}
+\label{sec:contract}
+
+A demonstration dataset is only usable for autonomy if the label a policy
+learns to emit is the same quantity, in the same frame, that the robot will
+later execute from that policy. This section states that principle, then
+its joint-space and end-effector instances, and finally the frozen
+constants that tie the two ends together.
+
+\paragraph{The principle.} The recorded action is the command the robot
+actually followed, not the raw operator input. Between operator and motors
+sit a rate limiter, the joint limits, a deliberately capped gripper
+mapping, and, for the Cartesian interface, the reachable-workspace
+projection. We record the output of that chain. At inference the policy's
+output must pass back through the same chain: a joint-space prediction
+through the same limiter and gripper cap, an end-effector prediction
+through the same solver and projection. If inference skipped these steps,
+the executed motion would leave the distribution the policy was trained on.
+
+\paragraph{Target, not measured pose.} The recorded intent is a goal the
+arm is moving towards, and it is kept strictly separate from the measured
+state, which is where the arm currently is. When no fresh target exists ---
+during a scripted homing move, for example --- the label falls back to the
+measured state for that frame, and the phase flag of
+Section~\ref{sec:collection} marks the frame so it can be excluded. This
+keeps the label defined at every frame without teaching motion where none
+was intended.
+
+\paragraph{Joint-space policy.} The joint-space label is the commanded
+joint target for both arms and the commanded gripper opening. An autonomous
+joint-space controller emits the same quantity and sends it through the
+same limiter and gripper cap that produced the labels.
+
+\paragraph{End-effector policy.} The end-effector label is the constrained
+Cartesian target for each arm, expressed in that arm's own base frame as a
+position and an orientation. An autonomous end-effector controller emits
+this target and replays it through the same inverse kinematics and the same
+envelope projection. Because that target only exists when the Cartesian
+solver runs, the end-effector features are recorded only under the
+head-mounted interface, not under direct joint teleoperation.
+
+\paragraph{Frozen action definition.} The constants that define the action
+--- the units, the joint order, the gripper cap, the input scales, the
+end-effector frame convention and the orientation representation --- are
+stored with each dataset. Training and inference read the same definition,
+so they cannot silently disagree. The end-effector state and target are
+stored under neutral keys that a standard policy loader ignores, so a
+default joint-space policy is unaffected by their presence, while an
+end-effector experiment maps the stored target onto its action explicitly.

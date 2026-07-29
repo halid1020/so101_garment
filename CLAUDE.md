@@ -185,7 +185,7 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   checkout -b <topic>`), even for docs-only changes; never commit straight
   to `main`. Finish with a commit on that branch ending in the
   `Co-Authored-By: Claude …` trailer. The user pushes/merges.
-- **Living paper rule:** there are TWO living papers, and each guards its
+- **Living paper rule:** there are THREE living papers, and each guards its
   domain in the same branch as the change:
   - `documents/paper/teleoperation/` — any change on the teleoperation
     side: methods, orientation mapping, envelope/OOE handling,
@@ -195,7 +195,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   - `documents/paper/sim_training/` — any change to the sim-VLA side:
     simulated tasks/payload/contacts, oracle demonstrators, collection
     gating/seed protocol, or the experiment protocol and its results.
-  Both build with `make paper` (or `latexmk -pdf main.tex` in the paper
+  - `documents/paper/real_training/` — any change to the real-world
+    data-collection platform: the recording system (two-rate dataset +
+    sidecar, stamp-on-read + reference-time alignment + drift budget),
+    the recorded stream set (RGB / RGB-D / tactile / proprio / joint +
+    EE targets), the teleoperation-to-autonomy contract, or the
+    replicability/readiness procedure.
+  All build with `make paper` (or `latexmk -pdf main.tex` in the paper
   dir). All paper writing follows
   `documents/academic_writing_guideline.md` (flow diagram before LaTeX,
   British English, active voice, no numbers in the abstract, no code
