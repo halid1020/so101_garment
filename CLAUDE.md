@@ -56,7 +56,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   RGB-D camera (`--central-depth`: RGB video feature + aligned 16-bit
   depth written by `depth.py` as PNG16 under `<root>/extra/depth/`, with
   intrinsics/scale in `<root>/meta/realsense.json`); `drift.py` logs
-  per-frame per-stream temporal drift to `<root>/extra/`; the
+  per-frame per-stream temporal drift to `<root>/extra/`; EE-space
+  features (`ee_pose` measured + `ee_target` projected+constrained,
+  neutral keys the LeRobot classifier ignores so the joint policy is
+  untouched) let either a joint- or EE-space policy train from the same
+  episodes (quest mode only; `--no-record-ee` opts out), with the
+  action-definition constants in `<root>/meta/action_space.json`; the
   `--sensor-view` monitor shows live per-stream drift + drop counts;
   config in `src/conf/recording.yaml`, device indices are per-machine
   placeholders).

@@ -166,6 +166,13 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         "src/conf/recording.yaml",
     )
     group.add_argument(
+        "--no-record-ee",
+        action="store_true",
+        help="Do not record the EE-space features (ee_pose measured + "
+        "ee_target projected/constrained); EE features are on by default in "
+        "quest mode and always off in --input leader (no IK targets)",
+    )
+    group.add_argument(
         "--no-sidecar",
         action="store_true",
         help="Disable the ~100 Hz full-rate sidecar parquet",
@@ -237,11 +244,51 @@ def write_realsense_meta(root: Path, rs_capture, rs_cfg: dict) -> None:
     print(f"  🗂  wrote {meta_dir / 'realsense.json'} (intrinsics + depth scale)")
 
 
+def write_action_space_meta(root: Path, fps: int, record_ee: bool) -> None:
+    """Record the action-definition constants so inference reproduces them.
+
+    A policy's output must pass back through the SAME command path that
+    produced the labels (joint clamp/gripper-cap, or the IK + workspace
+    envelope for the EE target). Persisting these constants next to the
+    dataset lets a training/inference script reproduce them exactly.
+    """
+    import json
+
+    from common.configs import GRIPPER_OPEN_MAX_FRAC, ROTATION_SCALE, TRANSLATION_SCALE
+    from common.recording.features import EE_NAMES, STATE_NAMES
+
+    meta_dir = root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "fps": fps,
+        "joint_state_names": list(STATE_NAMES),
+        "joint_units": "urdf_degrees",
+        "gripper_open_fraction": "0=closed, 1=capped-open",
+        "gripper_open_max_frac": GRIPPER_OPEN_MAX_FRAC,
+        "translation_scale": TRANSLATION_SCALE,
+        "rotation_scale": ROTATION_SCALE,
+        "ee_features": {
+            "recorded": record_ee,
+            "names": list(EE_NAMES),
+            "frame": "each arm's own base frame",
+            "quaternion_order": "wxyz",
+            "state_key": "ee_pose",
+            "target_key": "ee_target",
+            "note": "ee_target is the projected+constrained IK target; an "
+            "EE-space policy remaps ee_target -> action and replays it "
+            "through the same IK + workspace envelope at inference.",
+        },
+    }
+    (meta_dir / "action_space.json").write_text(json.dumps(payload, indent=2))
+    print(f"  🗂  wrote {meta_dir / 'action_space.json'} (action-definition constants)")
+
+
 def build_recording_stack(
     args: argparse.Namespace,
     data_manager: DualDataManager,
     quest_reader,
     park_arms,
+    record_ee: bool = False,
 ):
     """Open cameras (fail fast), create/resume the dataset, build the recorder.
 
@@ -344,7 +391,9 @@ def build_recording_stack(
                 "choose another --repo-id/--dataset-root"
             )
         features = build_dataset_features(
-            [(c.name, c.height, c.width) for c in all_captures], include_phase=True
+            [(c.name, c.height, c.width) for c in all_captures],
+            include_phase=True,
+            include_ee=record_ee,
         )
         print(f"📂 Creating dataset {args.repo_id} at {root} ({fps} fps)")
         dataset = LeRobotDataset.create(
@@ -366,6 +415,8 @@ def build_recording_stack(
         write_realsense_meta(dataset.root, rs_capture, rs_cfg)
         depth_streams = [rs_capture.depth_name]
         depth_writer = DepthWriter(dataset.root, depth_streams)
+    if not args.resume:
+        write_action_space_meta(dataset.root, fps, record_ee)
 
     sidecar = None
     if sidecar_cfg["enabled"] and not args.no_sidecar:
@@ -388,6 +439,7 @@ def build_recording_stack(
         park_arms=park_arms,
         depth_streams=depth_streams,
         depth_writer=depth_writer,
+        record_ee=record_ee,
     )
 
 
@@ -687,7 +739,17 @@ def main():
     # BEFORE the dataset is created; the recorder thread owns the writer.
     recorder: EpisodeRecorder | None = None
     if args.record:
-        recorder = build_recording_stack(args, data_manager, quest_reader, park_arms)
+        # EE-space features need the IK thread's targets/poses, which only run
+        # in quest mode — auto-disable them under --input leader.
+        record_ee = (not use_leader) and (not args.no_record_ee)
+        if use_leader and not args.no_record_ee:
+            print(
+                "ℹ️  leader mode: recording joint-space only (EE targets need "
+                "the IK thread, which does not run for --input leader)"
+            )
+        recorder = build_recording_stack(
+            args, data_manager, quest_reader, park_arms, record_ee=record_ee
+        )
         recorder.start()
 
     def _move_to_ready() -> None:

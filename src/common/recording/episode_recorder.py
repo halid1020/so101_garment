@@ -27,6 +27,8 @@ import traceback
 from enum import Enum
 from typing import Any, Callable
 
+import numpy as np
+
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording import features as feat
 from common.recording.drift import DriftLog
@@ -55,6 +57,7 @@ class EpisodeRecorder:
         camera_stale_s: float = 0.5,
         depth_streams: list[str] | None = None,
         depth_writer: Any | None = None,
+        record_ee: bool = False,
     ) -> None:
         self.dataset = dataset
         self.data_manager = data_manager
@@ -69,6 +72,17 @@ class EpisodeRecorder:
         # video encoder by ``depth_writer`` (a DepthWriter), keyed by frame idx.
         self.depth_streams = list(depth_streams) if depth_streams is not None else []
         self.depth_writer = depth_writer
+        # EE-space features (measured pose + projected+constrained target) in
+        # each arm's own base frame. Only in quest/IK mode, where EE exists.
+        self.record_ee = record_ee
+        self._world_base_inv: dict = {}
+        if record_ee:
+            from common.recording.sidecar import compute_world_base_transforms
+
+            self._world_base_inv = {
+                side: np.linalg.inv(tf)
+                for side, tf in compute_world_base_transforms().items()
+            }
 
         self._lock = threading.Lock()
         self._state = RecorderState.IDLE
@@ -272,11 +286,27 @@ class EpisodeRecorder:
                 return  # depth stream not ready; keep depth 1:1 with frames
             depth_by_stream[name], drifts[f"depth_{name}"] = res
 
+        ee_pose_vec = None
+        ee_target_vec = None
+        if self.record_ee:
+            ee_res = self._sample_ee(dm, t_ref, drifts)
+            if ee_res is None:
+                return  # EE not published yet; keep EE streams 1:1 with frames
+            ee_pose_vec, ee_target_vec = ee_res
+
         # LeRobot assigns frame_index = position in the episode buffer (0-based
         # = frames added so far); use that so depth files/drift rows align 1:1.
         frame_idx = self._frame_count
         teleop_active = dm.get_teleop_active()
-        frame = feat.assemble_frame(state, action, images, self.task, teleop_active)
+        frame = feat.assemble_frame(
+            state,
+            action,
+            images,
+            self.task,
+            teleop_active,
+            ee_pose=ee_pose_vec,
+            ee_target=ee_target_vec,
+        )
         self.dataset.add_frame(frame)
         self._frame_count += 1
         if self.depth_writer is not None and depth_by_stream:
@@ -289,6 +319,38 @@ class EpisodeRecorder:
             feat.SIDES
         ):
             self._fallback_frames += 1
+
+    def _sample_ee(
+        self, dm: DualDataManager, t_ref: float, drifts: dict
+    ) -> tuple | None:
+        """Sample measured + target EE (both in own base frame) at ``t_ref``.
+
+        Returns ``(ee_pose_14, ee_target_14)`` or ``None`` if a measured EE is
+        not yet available. The target falls back to the measured pose when it
+        is stale/missing (no fresh IK target — e.g. a homing move), mirroring
+        the joint action's fallback so the label is always defined.
+        """
+        pose_vecs: dict = {}
+        target_vecs: dict = {}
+        for side in feat.SIDES:
+            m = dm.get_current_end_effector_pose_at(side, t_ref)
+            if m is None:
+                return None
+            world_pose, ee_drift = m
+            base_pose = self._world_base_inv[side] @ world_pose
+            pose_vecs[side] = feat.pose_to_vec7(base_pose)
+            drifts[f"ee_{side}"] = ee_drift
+
+            tgt = dm.get_target_pose_at(side, t_ref)
+            if tgt is not None and abs(tgt[1]) < feat.ACTION_FRESH_S:
+                target_vecs[side] = feat.pose_to_vec7(
+                    self._world_base_inv[side] @ tgt[0]
+                )
+            else:
+                target_vecs[side] = pose_vecs[side]  # fallback to measured
+        ee_pose_vec = np.concatenate([pose_vecs["left"], pose_vecs["right"]])
+        ee_target_vec = np.concatenate([target_vecs["left"], target_vecs["right"]])
+        return ee_pose_vec, ee_target_vec
 
     # ── Terminal transitions ─────────────────────────────────────────────────
 
