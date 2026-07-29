@@ -70,6 +70,9 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
   upstream* Telegrip checkout — see `documents/telegrip_native.md`),
   `check_mirror.py` / `fit_joint_offsets.py` (arm-side/offset checks),
+  `collect_preflight.py` (green/red rig-readiness table before data
+  collection: sensor map, calibrations, poses, cameras/RealSense, disk,
+  CPU governor, USB autosuspend; `--no-hardware` for config-only),
   `view_twin.py` (`--payload` shows the collection scene), `part_drawings.py`,
   the sim-VLA pair `collect_sim_dataset.py` (oracle demonstrations in the
   twin; only verified successes are saved) / `eval_sim_policy.py` (policy
