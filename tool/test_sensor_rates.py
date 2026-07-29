@@ -614,31 +614,61 @@ def _probe_role(name: str) -> str:
     return "leader" if name.startswith("leader") else "follower"
 
 
+def _fmt_joint_value(joints: "dict | None", joint: str) -> str:
+    """Right-aligned value string for one joint, or ``--`` when absent/None."""
+    if joints is None or joints.get(joint) is None:
+        return "   --"
+    return f"{joints[joint]:7.2f}"
+
+
 def _side_panel(
-    side: str, follower: "JointProbe | None", leader: "JointProbe | None"
+    side: str,
+    c1_label: str,
+    c1_joints: "dict | None",
+    c1_hz: "float | None",
+    c2_label: str,
+    c2_joints: "dict | None",
+    c2_hz: "float | None",
 ) -> np.ndarray:
-    """One cell for a side: follower and leader joints in two big columns."""
+    """One cell for a side: two labelled joint columns in a large font.
+
+    ``cN_joints`` is a ``{joint_name: value | None}`` dict (or None); the
+    columns are data, not probes, so both the sensor-rate tool and the
+    teleop view (``common.sensor_view``) render identically.
+    """
     panel = np.zeros((_SIDE_PANEL_H, _SIDE_PANEL_W, 3), dtype=np.uint8)
     cv2.putText(panel, f"{side.upper()} ARM", (15, 46), _FONT, 1.2, (0, 255, 0), 3)
 
     # Column headers + live Hz under each.
-    cv2.putText(panel, "follower", (300, 92), _FONT, 0.9, (0, 200, 255), 2)
-    cv2.putText(panel, "leader", (490, 92), _FONT, 0.9, (0, 200, 255), 2)
-    fhz = f"{_live_hz(follower):.0f} Hz" if follower is not None else "--"
-    lhz = f"{_live_hz(leader):.0f} Hz" if leader is not None else "--"
-    cv2.putText(panel, fhz, (300, 124), _FONT, 0.7, (150, 150, 150), 1)
-    cv2.putText(panel, lhz, (490, 124), _FONT, 0.7, (150, 150, 150), 1)
+    cv2.putText(panel, c1_label, (300, 92), _FONT, 0.9, (0, 200, 255), 2)
+    cv2.putText(panel, c2_label, (490, 92), _FONT, 0.9, (0, 200, 255), 2)
+    h1 = f"{c1_hz:.0f} Hz" if c1_hz is not None else "--"
+    h2 = f"{c2_hz:.0f} Hz" if c2_hz is not None else "--"
+    cv2.putText(panel, h1, (300, 124), _FONT, 0.7, (150, 150, 150), 1)
+    cv2.putText(panel, h2, (490, 124), _FONT, 0.7, (150, 150, 150), 1)
 
-    fpos = (follower.last_positions or {}) if follower is not None else {}
-    lpos = (leader.last_positions or {}) if leader is not None else {}
-    order = list(fpos) or list(lpos) or _BODY_AND_GRIP
+    order = list(c1_joints or {}) or list(c2_joints or {}) or _BODY_AND_GRIP
     for i, joint in enumerate(order):
         y = 172 + 48 * i
         cv2.putText(panel, joint, (15, y), _FONT, 0.8, (255, 255, 255), 2)
-        fv = f"{fpos[joint]:7.2f}" if joint in fpos else "   --"
-        lv = f"{lpos[joint]:7.2f}" if joint in lpos else "   --"
-        cv2.putText(panel, fv, (300, y), _FONT, 0.8, (255, 255, 255), 2)
-        cv2.putText(panel, lv, (490, y), _FONT, 0.8, (255, 255, 255), 2)
+        cv2.putText(
+            panel,
+            _fmt_joint_value(c1_joints, joint),
+            (300, y),
+            _FONT,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            panel,
+            _fmt_joint_value(c2_joints, joint),
+            (490, y),
+            _FONT,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
     return panel
 
 
@@ -656,10 +686,15 @@ def _joint_grid(joints: "list[JointProbe]") -> "np.ndarray | None":
     ]
     if not sides:
         return None
-    panels = [
-        _side_panel(s, by_key.get(("follower", s)), by_key.get(("leader", s)))
-        for s in sides
-    ]
+
+    def col(jp: "JointProbe | None") -> "tuple[dict | None, float | None]":
+        return (jp.last_positions, _live_hz(jp)) if jp is not None else (None, None)
+
+    panels = []
+    for s in sides:
+        fj, fhz = col(by_key.get(("follower", s)))
+        lj, lhz = col(by_key.get(("leader", s)))
+        panels.append(_side_panel(s, "follower", fj, fhz, "leader", lj, lhz))
     return np.hstack(panels)
 
 

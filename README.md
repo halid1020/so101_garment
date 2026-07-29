@@ -136,6 +136,27 @@ python tool/meta_quest_teleopration.py --method pink_relaxed    # recommended fi
 python tool/meta_quest_teleopration.py --method scipy_ls --max-joint-vel 1.5
 ```
 
+Add `--sensor-view` for a live window (the same layout as
+`tool/test_sensor_rates.py --view`: a row of tactile cameras above one
+cell per side) while you teleoperate — cameras from
+`tool/test_sensor_rates.py --assign` or ad-hoc `--view-camera NAME=DEV`;
+q/Esc closes just the window.
+
+**Leader-arm mode** — drive the two followers from the two SO-101 leader
+arms instead of the Quest, in direct joint-to-joint control (no IK, no
+clutch: the followers mirror the leaders whenever enabled). Assign the
+leaders once (`tool/test_sensor_rates.py --assign`), then:
+
+```bash
+python tool/meta_quest_teleopration.py --input leader --sensor-view
+```
+
+Control is by keyboard — **Y** enable + start following, move the leaders
+(followers mirror them; squeeze the leader jaws to close the follower
+grippers), **B** re-home, **X** park, **A** episode (with `--record`),
+**Q** quit. With `--sensor-view` the keys go to that window (its cells
+then show follower vs leader per side); without it, to the terminal.
+
 Benchmark methods run through a joint-space rate limiter
 (`--max-joint-vel`, default 2 rad/s on the real arms). Based on the
 simulation benchmark: try `pink_relaxed` first (best accuracy/smoothness

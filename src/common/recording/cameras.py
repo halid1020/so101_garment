@@ -32,11 +32,12 @@ class CameraCapture:
     def __init__(
         self,
         name: str,
-        device: int,
+        device: "int | str",
         width: int,
         height: int,
         fps: int,
         rotate180: bool,
+        fourcc: str = "",
     ) -> None:
         self.name = name
         self.device = device
@@ -44,6 +45,7 @@ class CameraCapture:
         self.height = height
         self.fps = fps
         self.rotate180 = rotate180
+        self.fourcc = fourcc
 
         self._cap: cv2.VideoCapture | None = None
         self._thread: threading.Thread | None = None
@@ -55,6 +57,9 @@ class CameraCapture:
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def _configure(self, cap: "cv2.VideoCapture") -> None:
+        # Pixel format first: switching FOURCC can reset the mode.
+        if self.fourcc:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -64,7 +69,10 @@ class CameraCapture:
 
         Used at startup for a fail-fast check BEFORE the dataset is created.
         """
-        cap = cv2.VideoCapture(self.device)
+        # Pin the V4L2 backend: the default fallback chain can silently
+        # open a DIFFERENT physical camera when given a metadata node or a
+        # /dev/v4l/by-path alias (verified with the tactile cameras).
+        cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
         if not cap.isOpened():
             cap.release()
             return False
