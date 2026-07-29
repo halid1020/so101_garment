@@ -21,7 +21,7 @@ it doubles as a joint-velocity limit during tracking.
 import math
 import time
 import traceback
-from typing import Mapping
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -86,9 +86,10 @@ def slew_toward(cmd: np.ndarray, target: np.ndarray, max_step_deg: float) -> np.
 
 def leader_arm_thread(
     data_manager: DualDataManager,
-    leaders: Mapping[str, object],
+    leaders: Mapping[str, Any],  # SOLeader teleoperators (get_action())
     rate_hz: float = JOINT_STATE_STREAMING_RATE,
     max_joint_vel_rad_s: float = MAX_JOINT_VEL_HW_RAD_S,
+    gripper_open_max_frac: float = GRIPPER_OPEN_MAX_FRAC,
 ) -> None:
     """Poll both leaders and publish joint targets while teleop is active.
 
@@ -126,7 +127,7 @@ def leader_arm_thread(
                     data_manager.set_leader_mapped_state(
                         side,
                         urdf[side],
-                        (1.0 - trigger[side]) * GRIPPER_OPEN_MAX_FRAC,
+                        (1.0 - trigger[side]) * gripper_open_max_frac,
                     )
             except ConnectionError as e:
                 consecutive_failures += 1

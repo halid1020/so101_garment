@@ -5,29 +5,24 @@ Left Meta Quest hand → left SO101 arm (arm 0, PORT_ID_0).
 Right Meta Quest hand → right SO101 arm (arm 1, PORT_ID_1).
 Single 10-DOF IK solver on the dual-arm URDF.
 
+--input leader instead drives the followers from two SO-101 LEADER arms
+in direct joint-to-joint control (no IK, no clutch — the followers mirror
+the leaders whenever enabled). Leader ports/ids come from
+src/conf/sensor_map.yaml (tool/test_sensor_rates.py --assign). Control is
+by keyboard: Y enable + start follow, B home, X park, A episode (with
+--record), Q quit — typed into the --sensor-view window when it is open,
+otherwise into the terminal.
+
 Optionally records LeRobot-format episodes (--record): a training-ready
 dataset at the configured fps plus a ~100 Hz full-rate sidecar parquet per
-episode, all controlled from the Quest handles.
+episode, controlled from the Quest handles (or the A key in leader mode).
 
-Leader-arm mode (--input leader): two passive SO-101 leader arms drive the
-followers in joint space (LeRobot SOLeader; no IK solver, no Quest). The
-laptop keyboard replaces the Quest buttons — same Y/X/A/B semantics as
-below, plus SPACE as the follow clutch (engage slews the followers to the
-leader pose at a bounded joint velocity, then tracks 1:1; press again to
-pause) and Q to quit. Leader ports/ids come from src/conf/robot.yaml
-(LEADER_PORT_*/LEADER_ID_*). Calibrate each leader once with
-  lerobot-calibrate --teleop.type=so101_leader --teleop.port=<port> \\
-      --teleop.id=leader_left|leader_right
-(or answer the interactive prompts on first connect). The leader jaw maps
-onto the same capped gripper command as the Quest trigger, so recorded
-datasets are interchangeable between the two interfaces. Note: leader mode
-bypasses the workspace envelope — collisions are the operator's
-responsibility.
-
---sensor-view opens a live window with the tactile-camera feeds and both
-arms' measured/commanded joints while you teleoperate (cameras come from
-src/conf/sensor_map.yaml — run tool/test_sensor_rates.py --assign once —
-or ad-hoc --view-camera NAME=DEV). q/Esc closes just the window.
+--sensor-view opens a live window (the same layout as
+tool/test_sensor_rates.py --view): a row of tactile cameras above one
+cell per side showing that side's follower and leader joints (Quest mode:
+follower measured vs commanded). Cameras come from src/conf/sensor_map.yaml
+or ad-hoc --view-camera NAME=DEV. In Quest mode q/Esc closes just the
+window; in leader mode the window is the control surface (Q quits).
 
 Controls (the Y/X/A/B semantics apply even WITHOUT --record):
   Hold LEFT + RIGHT grip  - activate dual-arm teleoperation
@@ -70,6 +65,7 @@ from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
     CONTROLLER_MIN_CUTOFF,
+    GRIPPER_OPEN_MAX_FRAC,
     IK_SOLVER_RATE,
     MAX_JOINT_VEL_HW_RAD_S,
     ROTATION_SCALE,
@@ -313,35 +309,6 @@ def build_recording_stack(
     )
 
 
-def connect_leader_arms(robot_conf: dict) -> dict:
-    """Connect both SO-101 leader arms (torque stays off on the leaders).
-
-    Must run while the terminal is still in cooked mode: on a missing
-    calibration file, SOLeader.connect(calibrate=True) prompts on stdin.
-    """
-    from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
-    from lerobot.teleoperators.so_leader.so_leader import SOLeader
-
-    leaders = {}
-    for side, port_key, id_key in (
-        ("left", "LEADER_PORT_LEFT", "LEADER_ID_LEFT"),
-        ("right", "LEADER_PORT_RIGHT", "LEADER_ID_RIGHT"),
-    ):
-        if port_key not in robot_conf or id_key not in robot_conf:
-            raise SystemExit(
-                f"❌ --input leader needs {port_key}/{id_key} in " "src/conf/robot.yaml"
-            )
-        leader = SOLeader(
-            SOLeaderTeleopConfig(
-                port=robot_conf[port_key], id=robot_conf[id_key], use_degrees=True
-            )
-        )
-        print(f"🕹️  Connecting {side} leader ({robot_conf[port_key]})...")
-        leader.connect(calibrate=True)
-        leaders[side] = leader
-    return leaders
-
-
 def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("live sensor view")
     group.add_argument(
@@ -410,6 +377,99 @@ def build_sensor_view_captures(
     return captures
 
 
+def connect_leader_arms() -> dict:
+    """Connect the two SO-101 leader arms for ``--input leader``.
+
+    Ports and calibration ids come from ``src/conf/sensor_map.yaml``
+    (assigned with ``tool/test_sensor_rates.py --assign``), NOT robot.yaml
+    — the sensor tool is the single source of truth for which physical
+    leader is which. ``connect(calibrate=False)`` loads each leader's
+    existing calibration without the interactive stdin prompt. Torque is
+    left off (the leaders stay back-drivable).
+
+    Returns ``{"left": SOLeader, "right": SOLeader}``.
+    """
+    from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
+    from lerobot.teleoperators.so_leader.so_leader import SOLeader
+
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    hint = "run tool/test_sensor_rates.py --assign and assign leader right/left"
+    if not SENSOR_MAP_PATH.exists():
+        raise SystemExit(f"❌ --input leader needs leader arms assigned — {hint}")
+    leaders_map = load_sensor_map(SENSOR_MAP_PATH)["leaders"]
+    if not leaders_map:
+        raise SystemExit(f"❌ no leader arms in sensor_map.yaml — {hint}")
+
+    leaders: dict = {}
+    for side in ("left", "right"):
+        entry = leaders_map.get(side) or {}
+        port, calib_id = entry.get("port"), entry.get("id")
+        if not port or not calib_id:
+            raise SystemExit(
+                f"❌ leader {side} not assigned in sensor_map.yaml — {hint}"
+            )
+        cfg = SOLeaderTeleopConfig(port=port, id=calib_id, use_degrees=True)
+        leader = SOLeader(cfg)
+        print(f"🕹️  connecting {side} leader ({calib_id}) on {port} ...")
+        leader.connect(calibrate=False)
+        print(f"  ✓ {side} leader connected (torque off, back-drivable)")
+        leaders[side] = leader
+    return leaders
+
+
+def apply_follower_ports_from_sensor_map(robot_conf: dict, required: bool) -> None:
+    """Bind each follower bus to the physical arm the wiggle test assigned.
+
+    robot.yaml's PORT_ID_0/1 are ``/dev/ttyACM*`` names, which reorder
+    across replugs — and with the two leaders also plugged in they can
+    resolve to a LEADER's device, so the follower bus and the leader bus
+    fight over one port ("multiple access on port").
+
+    Two conventions must be reconciled:
+      * this tool wires bus_0 = PORT_ID_0/ROBOT_NAME_0 to side "left" and
+        bus_1 = PORT_ID_1/ROBOT_NAME_1 to side "right";
+      * the sensor map (and ``connect_follower_bus``) pairs side "right"
+        with follower_0's calibration and side "left" with follower_1's.
+
+    So for teleop side "left" to be the PHYSICAL left arm with the right
+    calibration, bus_0 must take the map's ``left`` port together with
+    follower_1's calibration — i.e. the ROBOT_NAME_* pair is swapped
+    alongside the ports. This makes the Quest/leader left↔right and the
+    sensor-view labels all agree with the physical arms, and keeps each
+    bus paired with its own calibration.
+
+    ``required`` (leader mode) makes missing follower assignments fatal;
+    otherwise the robot.yaml default is left in place.
+    """
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    hint = "run tool/test_sensor_rates.py --assign and assign follower right/left"
+    arms = load_sensor_map(SENSOR_MAP_PATH)["arms"] if SENSOR_MAP_PATH.exists() else {}
+    # Calibration that the sensor convention pairs with each side.
+    calib_for = {
+        "right": robot_conf.get("ROBOT_NAME_0"),  # follower_0
+        "left": robot_conf.get("ROBOT_NAME_1"),  # follower_1
+    }
+    plan = {
+        "left": ("PORT_ID_0", "ROBOT_NAME_0"),
+        "right": ("PORT_ID_1", "ROBOT_NAME_1"),
+    }
+    for side, (port_key, name_key) in plan.items():
+        port = arms.get(side)
+        if port:
+            robot_conf[port_key] = port
+            robot_conf[name_key] = calib_for[side]
+            print(
+                f"🔌 follower {side} → {port} "
+                f"(calibration {calib_for[side]}) from sensor_map.yaml"
+            )
+        elif required:
+            raise SystemExit(
+                f"❌ follower {side} not assigned in sensor_map.yaml — {hint}"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dual-arm SO101 teleoperation")
     parser.add_argument("--ip-address", type=str, default=None)
@@ -419,9 +479,10 @@ def main():
         default="quest",
         choices=["quest", "leader"],
         help="Operator interface: 'quest' (Meta Quest, default) or 'leader' "
-        "(two SO-101 leader arms in joint space; keyboard keys Y/X/A/B, "
-        "SPACE = follow clutch, Q = quit; ports/ids from src/conf/robot.yaml "
-        "LEADER_PORT_*/LEADER_ID_*)",
+        "(two SO-101 leader arms, direct joint-to-joint, no clutch; "
+        "keyboard Y=enable+follow, B=home, X=park, A=episode, Q=quit; "
+        "ports/ids from src/conf/sensor_map.yaml via test_sensor_rates.py "
+        "--assign)",
     )
     add_teleop_cli_args(
         parser, default_max_joint_vel=MAX_JOINT_VEL_HW_RAD_S, default_method="armplane"
@@ -448,10 +509,15 @@ def main():
         "mid_pos": load_yaml(_root / "src/conf/mid_pos.yaml"),
         "ready_pos": load_yaml(_root / "src/conf/ready_pos.yaml"),
     }
+    use_leader = args.input == "leader"
+    # In leader mode all four arms are plugged in, so the followers MUST use
+    # their stable sensor_map ports (robot.yaml's ttyACM names can collide
+    # with a leader's device). Quest mode is left on robot.yaml unchanged.
+    if use_leader:
+        apply_follower_ports_from_sensor_map(config["robot"], required=True)
     dual_arm = SO101DualArm(config)
     ready_pos = config["ready_pos"]
     rest_pos = config["rest_pos"]
-    use_leader = args.input == "leader"
 
     # 3. Input layer.
     # Quest: IK stack (10 body DOF, grippers locked) built by the shared
@@ -464,7 +530,7 @@ def main():
     ik_solver = thread_kwargs = None
     leaders = None
     if use_leader:
-        leaders = connect_leader_arms(config["robot"])
+        leaders = connect_leader_arms()
     else:
         # 'mymethod' reuses the pink_relaxed solver plus the thumbstick wrist
         # trims (--wrist-mode); armplane keeps the tuned Pink solver +
@@ -480,20 +546,26 @@ def main():
     # (joint threads AND button callbacks) must hold that bus's lock.
     left_bus_lock = threading.Lock()
     right_bus_lock = threading.Lock()
+    # Gripper range: the Quest cap for the headset, the FULL jaw range for
+    # leader teleoperation (the leader jaw itself is the operator's control).
+    gripper_cap = 1.0 if use_leader else GRIPPER_OPEN_MAX_FRAC
     left_joint_thread = threading.Thread(
         target=dual_joint_state_thread,
         args=(data_manager, dual_arm.bus_0, "left", left_bus_lock),
+        kwargs={"gripper_open_max_frac": gripper_cap},
         daemon=True,
     )
     right_joint_thread = threading.Thread(
         target=dual_joint_state_thread,
         args=(data_manager, dual_arm.bus_1, "right", right_bus_lock),
+        kwargs={"gripper_open_max_frac": gripper_cap},
         daemon=True,
     )
     if use_leader:
         input_thread = threading.Thread(
             target=leader_arm_thread,
             args=(data_manager, leaders),
+            kwargs={"gripper_open_max_frac": gripper_cap},
             daemon=True,
         )
     else:
@@ -544,6 +616,19 @@ def main():
             dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
 
+    def _start_leader_tracking() -> None:
+        """Leader mode: begin direct joint-to-joint follow (no clutch).
+
+        Seed the target from the followers' measured pose BEFORE enabling
+        teleop so the joint threads can't replay a stale target; the
+        leader thread then slews from there toward the leader pose.
+        """
+        measured = data_manager.get_current_joint_angles()
+        if measured is not None:
+            data_manager.set_target_joint_angles(measured)
+        data_manager.set_teleop_state(True)
+        print("🕹️  Leader follow active — followers mirror the leaders")
+
     # 6. Quest button callbacks.
     # MUST be crash-proof: the quest reader dispatches callbacks without an
     # except clause, so a raised exception kills its thread (no more buttons
@@ -585,6 +670,8 @@ def main():
             dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
         print("✓ 🟢 Both arms at ready pose and enabled")
+        if use_leader:
+            _start_leader_tracking()
 
     def on_park() -> None:
         """X: move to rest + torque off. Only when ENABLED and not recording."""
@@ -619,11 +706,15 @@ def main():
         if state == RecorderState.IDLE:
             print("🏁 Moving to ready, then starting the episode...")
             _move_to_ready()
+            if use_leader:
+                _start_leader_tracking()
             recorder.request_start_episode()
         elif state == RecorderState.RECORDING:
             # The ready-move stays inside the episode (still recording).
             print("🏁 Moving to ready (recorded), then stopping and saving...")
             _move_to_ready()
+            if use_leader:
+                _start_leader_tracking()
             recorder.request_stop_save()
         else:
             print(f"⚠️  A ignored: recorder is busy ({state.value})")
@@ -634,48 +725,76 @@ def main():
         if state in (RobotActivityState.ENABLED, RobotActivityState.HOMING):
             print("🏠 Moving both arms to ready pose...")
             _move_to_ready()
+            if use_leader:
+                _start_leader_tracking()
             print("✓ Both arms at ready pose and re-enabled")
         else:
             print("⚠️  Cannot home: arms not enabled")
 
-    quest_reader.on("button_y_pressed", _safe_button("Button Y", on_enable))
-    quest_reader.on("button_x_pressed", _safe_button("Button X", on_park))
-    quest_reader.on("button_a_pressed", _safe_button("Button A", on_episode_toggle))
-    quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
-    quest_reader.on(
-        "button_lj_pressed",
-        _safe_button(
-            "Left joystick click",
-            lambda: data_manager.request_roll_reset("left"),
-        ),
-    )
-    quest_reader.on(
-        "button_rj_pressed",
-        _safe_button(
-            "Right joystick click",
-            lambda: data_manager.request_roll_reset("right"),
-        ),
-    )
+    # Control surface. Quest: headset buttons via the quest reader.
+    # Leader: the same callbacks keyed to characters, dispatched either by
+    # the sensor-view window (if --sensor-view) or a terminal keyboard
+    # reader. Leader-follower has NO clutch — enabling (Y) starts the
+    # direct joint-to-joint follow; there is no engage/pause key.
+    leader_keys: dict = {}
+    if use_leader:
+        leader_keys = {
+            "y": _safe_button("Y (enable)", on_enable),
+            "x": _safe_button("X (park)", on_park),
+            "a": _safe_button("A (episode)", on_episode_toggle),
+            "b": _safe_button("B (home)", on_go_home),
+            "q": _safe_button("Q (quit)", data_manager.request_shutdown),
+        }
+    else:
+        quest_reader.on("button_y_pressed", _safe_button("Button Y", on_enable))
+        quest_reader.on("button_x_pressed", _safe_button("Button X", on_park))
+        quest_reader.on("button_a_pressed", _safe_button("Button A", on_episode_toggle))
+        quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
+        quest_reader.on(
+            "button_lj_pressed",
+            _safe_button(
+                "Left joystick click",
+                lambda: data_manager.request_roll_reset("left"),
+            ),
+        )
+        quest_reader.on(
+            "button_rj_pressed",
+            _safe_button(
+                "Right joystick click",
+                lambda: data_manager.request_roll_reset("right"),
+            ),
+        )
 
     print()
     print("🚀 Dual-arm teleoperation ready.")
-    print("   1. Press BUTTON Y to enable both arms (ready pose, torque on)")
-    print("   2. Hold LEFT + RIGHT GRIP to activate teleoperation")
-    print("   3. Move controllers — arms follow!")
-    print("   4. Hold triggers to close grippers")
-    if args.record:
-        print("   5. Press BUTTON A to start an episode; press again to save")
+    if use_leader:
+        surface = "the sensor-view window" if args.sensor_view else "this terminal"
+        print(f"   Leader-follower mode — type keys into {surface}:")
+        print("   Y = enable (ready pose, torque on) + start follow")
+        print("   move the LEADER arms — the followers mirror them directly")
+        print("   squeeze the leader jaws to close the follower grippers")
+        print("   B = re-home to ready · X = park (torque off)")
+        if args.record:
+            print("   A = start an episode; press again to save")
+        print("   Q = quit")
     else:
-        print("   5. BUTTON A records episodes (needs --record; warns otherwise)")
-    print("   6. Press BUTTON B to move both arms to the ready pose")
-    print("   7. Press BUTTON X to park (rest pose, torque off)")
-    if args.method == "mymethod":
-        print(
-            "   8. Deflect a THUMBSTICK to trim that arm's wrist (x = roll, "
-            "y = flex); its other joints freeze while deflected, then the "
-            "handle resumes from the new pose on release"
-        )
-    if args.sensor_view:
+        print("   1. Press BUTTON Y to enable both arms (ready pose, torque on)")
+        print("   2. Hold LEFT + RIGHT GRIP to activate teleoperation")
+        print("   3. Move controllers — arms follow!")
+        print("   4. Hold triggers to close grippers")
+        if args.record:
+            print("   5. Press BUTTON A to start an episode; press again to save")
+        else:
+            print("   5. BUTTON A records episodes (needs --record; warns otherwise)")
+        print("   6. Press BUTTON B to move both arms to the ready pose")
+        print("   7. Press BUTTON X to park (rest pose, torque off)")
+        if args.method == "mymethod":
+            print(
+                "   8. Deflect a THUMBSTICK to trim that arm's wrist (x = roll, "
+                "y = flex); its other joints freeze while deflected, then the "
+                "handle resumes from the new pose on release"
+            )
+    if args.sensor_view and not use_leader:
         print("   👁 --sensor-view window: q/Esc closes it (teleop keeps running)")
     print("⚠️  Press Ctrl+C to exit")
     print()
@@ -683,12 +802,25 @@ def main():
     view_captures: list[CameraCapture] = []
     if args.sensor_view:
         view_captures = build_sensor_view_captures(args, data_manager)
+    keyboard: KeyboardButtons | None = None
 
     try:
         if args.sensor_view:
-            # Runs on the main thread (sole owner of the cv2 GUI);
-            # returns when the window is closed or shutdown is requested.
-            run_sensor_view_loop(data_manager, view_captures)
+            # The view loop runs on the main thread (sole owner of the cv2
+            # GUI). In leader mode the window is also the control surface:
+            # it dispatches the Y/X/A/B/Q keys and stays open until quit.
+            run_sensor_view_loop(
+                data_manager,
+                view_captures,
+                leader_mode=use_leader,
+                key_callbacks=leader_keys if use_leader else None,
+            )
+        elif use_leader:
+            # No window: read the control keys from the terminal.
+            keyboard = KeyboardButtons()
+            for key, cb in leader_keys.items():
+                keyboard.on(key, cb)
+            keyboard.start()
         while not data_manager.is_shutdown_requested():
             time.sleep(1.0)
     except KeyboardInterrupt:
@@ -701,13 +833,22 @@ def main():
         data_manager.request_shutdown()
         data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
         # Recorder first (discards any in-flight episode, finalizes the
-        # dataset) while the quest reader is still alive.
+        # dataset) while the input reader is still alive.
         if recorder is not None:
             recorder.shutdown()
-        quest_reader.stop()
-        ik_thread.join(timeout=3.0)
+        if quest_reader is not None:
+            quest_reader.stop()
+        if keyboard is not None:
+            keyboard.stop()  # restores the terminal
+        input_thread.join(timeout=3.0)
         left_joint_thread.join(timeout=3.0)
         right_joint_thread.join(timeout=3.0)
+        if leaders is not None:
+            for leader in leaders.values():
+                try:
+                    leader.disconnect()
+                except Exception:
+                    traceback.print_exc()
         for cam in view_captures:
             cam.stop()
         with left_bus_lock, right_bus_lock:
