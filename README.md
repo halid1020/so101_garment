@@ -98,10 +98,14 @@ and [`src/sim_benchmark/README.md`](src/sim_benchmark/README.md).
   themselves (max read rates, live view), use
   `python tool/test_sensor_rates.py --view` — the first run opens an
   assignment GUI (press a gel to identify each camera and name it,
-  wiggle an arm to identify each serial port); assignments persist in
-  `src/conf/sensor_map.yaml` and `--assign` redoes them. Both arms are
-  read by default (`--arm right|left|both|none`); `--list-cameras`
-  lists raw device nodes.
+  wiggle an arm to identify each serial port, then give it a role:
+  follower right/left or leader right/left — leaders also pick their
+  `leader_0`/`leader_1` calibration); assignments persist in
+  `src/conf/sensor_map.yaml` and `--assign` redoes them. Both followers
+  are read by default (`--arm right|left|both|none`) plus any assigned
+  leaders (shown as calibrated degrees; optional — an unplugged leader
+  is skipped, or use `--no-leaders`); `--list-cameras` lists raw device
+  nodes.
 
 **Controls** (both tools): hold **both grips** to activate teleop — at the
 first grip of a session point both handles straight down (this calibrates
