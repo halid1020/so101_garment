@@ -43,6 +43,7 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
         sys.path.insert(0, _p)
 
 from common.configs import GRIPPER_OPEN_MAX_FRAC  # noqa: E402
+from common.eval_video import EvalVideoComposer  # noqa: E402
 from sim_benchmark.constants import SIDES  # noqa: E402
 from sim_datagen.env import TASKS, PickPlaceTwinEnv  # noqa: E402
 from sim_datagen.oracle import (  # noqa: E402
@@ -53,9 +54,6 @@ from sim_datagen.oracle import (  # noqa: E402
 )
 from sim_datagen.seeds import EVAL_SEEDS, VAL_SEEDS  # noqa: E402
 
-# The rgb_scene view is the one written to the per-episode eval video (the
-# analysis notebook composes head-to-head GIFs from these).
-SCENE_CAMERA = "scene"
 # A gripper counts as released once its open fraction exceeds half the cap, so
 # a cube merely held over the target is never mistaken for a placement.
 RELEASE_FRAC = 0.5 * GRIPPER_OPEN_MAX_FRAC
@@ -161,7 +159,7 @@ def run_episode(
     camera_wh: tuple[int, int],
     device: str,
     max_ticks: int,
-    scene_frames: list[np.ndarray] | None,
+    composer: EvalVideoComposer | None,
 ) -> dict[str, Any]:
     """Roll one scenario out under the policy; return the per-episode record."""
     import torch
@@ -172,14 +170,16 @@ def run_episode(
     t0 = time.time()
     for _ in range(max_ticks):
         state, images = env.observe(camera_wh)
-        if scene_frames is not None:
-            scene_frames.append(images[SCENE_CAMERA])
         batch = build_batch(state, images, task_str, device)
         with torch.inference_mode():
             batch = preprocessor(batch)
             action = policy.select_action(batch)
             action = postprocessor(action)
         action12 = np.asarray(action.squeeze(0).to("cpu")).astype(float)
+        # Record this tick's observation cameras + a free overview alongside
+        # the measured state and the action the policy just chose.
+        if composer is not None:
+            composer.add(images, env.sim.render_overview(*camera_wh), state, action12)
         q_rad, grip = decode_action(action12)
         env.tick(q_rad, grip)
 
@@ -266,7 +266,7 @@ def main() -> int:
             max_ticks = int(np.ceil(args.max_seconds * args.fps))
         else:
             max_ticks = int(np.ceil(1.5 * script.duration * args.fps))
-        scene_frames: list[np.ndarray] | None = [] if video_dir is not None else None
+        composer = EvalVideoComposer(args.fps) if video_dir is not None else None
         rec = run_episode(
             env,
             policy,
@@ -278,22 +278,21 @@ def main() -> int:
             camera_wh,
             device,
             max_ticks,
-            scene_frames,
+            composer,
         )
         rec = {"scenario_seed": int(seed), **rec}
         # simple mode reuses one scenario; disambiguate the records by trial.
         if args.seeds == "simple":
             rec["trial"] = i
         episodes.append(rec)
-        if video_dir is not None and scene_frames:
-            import imageio.v2 as imageio
-
+        if composer is not None and video_dir is not None:
             name = (
                 f"ep_seed{seed}_{i}.mp4"
                 if args.seeds == "simple"
                 else f"ep_seed{seed}.mp4"
             )
-            imageio.mimsave(video_dir / name, scene_frames, fps=args.fps)
+            composer.save(video_dir / name)
+            composer.close()
         tag = "✅" if rec["success"] else "❌"
         n_ok = sum(e["success"] for e in episodes)
         print(

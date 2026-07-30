@@ -615,6 +615,7 @@ class TwinSim:
         }
         self.headset_mocap_id = self.model.body("headset_marker").mocapid[0]
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
+        self._overview_cam: mujoco.MjvCamera | None = None
 
         if payload:
             free = self.model.joint("payload_free")
@@ -732,4 +733,31 @@ class TwinSim:
                 self.model, height=height, width=width
             )
         renderer.update_scene(self.data, camera=camera)
+        return renderer.render()
+
+    def render_overview(
+        self, width: int = CAMERA_WIDTH, height: int = CAMERA_HEIGHT
+    ) -> np.ndarray:
+        """Offscreen RGB render from a free third-person camera.
+
+        Unlike ``render_camera`` (the three fixed policy cameras), this frames
+        the whole workspace from an angled overhead viewpoint so a human can
+        watch the task unfold. The free ``MjvCamera`` is built lazily and the
+        per-resolution ``Renderer`` cache is shared with ``render_camera`` (a
+        renderer re-selects its camera on every ``update_scene``).
+        """
+        if self._overview_cam is None:
+            cam = mujoco.MjvCamera()
+            cam.lookat = [0.28, 0.0, 0.06]
+            cam.distance = 0.85
+            cam.azimuth = 160
+            cam.elevation = -32
+            self._overview_cam = cam
+        key = (width, height)
+        renderer = self._renderers.get(key)
+        if renderer is None:
+            renderer = self._renderers[key] = mujoco.Renderer(
+                self.model, height=height, width=width
+            )
+        renderer.update_scene(self.data, self._overview_cam)
         return renderer.render()
