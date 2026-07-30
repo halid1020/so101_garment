@@ -50,6 +50,7 @@ def dual_joint_state_thread(
     bus,
     arm_side: str,
     bus_lock: threading.Lock,
+    gripper_open_max_frac: float = GRIPPER_OPEN_MAX_FRAC,
 ) -> None:
     """Read/write joint state for one arm in the dual-arm setup.
 
@@ -61,6 +62,9 @@ def dual_joint_state_thread(
         bus_lock: Lock serializing all access to this bus's serial port —
                   the Feetech port handler is not thread-safe, so button
                   callbacks touching the same bus must hold this lock too.
+        gripper_open_max_frac: fraction of the jaw range a fully-released
+                  trigger opens to. Defaults to the capped Quest value;
+                  leader-arm mode passes 1.0 for the full range.
     """
     if arm_side not in ("left", "right"):
         raise ValueError("arm_side must be 'left' or 'right'")
@@ -143,9 +147,9 @@ def dual_joint_state_thread(
                     )
 
                     # Trigger controls gripper: fully pressed = fully closed,
-                    # fully released = open_max_frac of the jaw range (capped
-                    # below 100 % — see GRIPPER_OPEN_MAX_FRAC / teleop_shared).
-                    gripper_target = (1.0 - trigger_value) * GRIPPER_OPEN_MAX_FRAC
+                    # fully released = open_max_frac of the jaw range (the
+                    # Quest cap, or the full range in leader mode).
+                    gripper_target = (1.0 - trigger_value) * gripper_open_max_frac
                     goal["gripper"] = gripper_target * 100.0
                     data_manager.set_target_gripper_open_value(arm_side, gripper_target)
 

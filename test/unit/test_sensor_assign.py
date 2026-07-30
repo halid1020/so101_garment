@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 
 from tool.test_sensor_rates import (
+    _drop_serial_node,
+    _serial_node,
     grid_tiles,
     load_sensor_map,
     parse_camera_spec,
@@ -46,11 +48,23 @@ class TestSensorMapRoundTrip(unittest.TestCase):
         sensor_map = {
             "cameras": {"left_arm_left_gripper": "/dev/video4"},
             "arms": {"right": "/dev/ttyACM0", "left": "/dev/ttyACM1"},
+            "leaders": {
+                "right": {"port": "/dev/ttyACM2", "id": "leader_0"},
+                "left": {"port": "/dev/ttyACM3", "id": "leader_1"},
+            },
         }
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sensor_map.yaml"
             save_sensor_map(path, sensor_map)
             self.assertEqual(load_sensor_map(path), sensor_map)
+
+    def test_save_without_leaders_key_defaults_empty(self):
+        # Old callers may build a map without a leaders section.
+        sensor_map = {"cameras": {}, "arms": {"right": "/dev/ttyACM0"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sensor_map.yaml"
+            save_sensor_map(path, sensor_map)
+            self.assertEqual(load_sensor_map(path)["leaders"], {})
 
     def test_load_tolerates_missing_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +73,83 @@ class TestSensorMapRoundTrip(unittest.TestCase):
             loaded = load_sensor_map(path)
             self.assertEqual(loaded["cameras"], {"a": "/dev/video0"})
             self.assertEqual(loaded["arms"], {})
+            self.assertEqual(loaded["leaders"], {})
+
+
+class TestDropSerialNode(unittest.TestCase):
+    def _map(self, tmp):
+        # Real files so Path.resolve() is stable across roles.
+        for name in ("f0", "f1", "l0", "l1"):
+            (Path(tmp) / name).write_text("")
+        return {
+            "cameras": {},
+            "arms": {
+                "right": str(Path(tmp) / "f0"),
+                "left": str(Path(tmp) / "f1"),
+            },
+            "leaders": {
+                "right": {"port": str(Path(tmp) / "l0"), "id": "leader_0"},
+                "left": {"port": str(Path(tmp) / "l1"), "id": "leader_1"},
+            },
+        }
+
+    def test_serial_node_reads_both_shapes(self):
+        self.assertEqual(_serial_node("/dev/ttyACM0"), "/dev/ttyACM0")
+        self.assertEqual(
+            _serial_node({"port": "/dev/ttyACM2", "id": "x"}), "/dev/ttyACM2"
+        )
+
+    def test_drop_removes_follower_node_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._map(tmp)
+            _drop_serial_node(m, str(Path(tmp) / "f0"))
+            self.assertNotIn("right", m["arms"])
+            self.assertIn("left", m["arms"])
+            self.assertEqual(set(m["leaders"]), {"right", "left"})
+
+    def test_drop_removes_leader_node_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._map(tmp)
+            _drop_serial_node(m, str(Path(tmp) / "l1"))
+            self.assertNotIn("left", m["leaders"])
+            self.assertIn("right", m["leaders"])
+            self.assertEqual(set(m["arms"]), {"right", "left"})
+
+    def test_same_side_across_roles_is_independent(self):
+        # A follower-right and a leader-right are different physical arms;
+        # dropping the follower node must not touch the leader-right entry.
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._map(tmp)
+            _drop_serial_node(m, str(Path(tmp) / "f0"))  # follower right
+            self.assertIn("right", m["leaders"])
+
+
+class TestDiscoverLeaderCalibIds(unittest.TestCase):
+    def test_lists_sorted_json_stems(self):
+        import common.follower_bus as fb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "leader_1.json").write_text("{}")
+            (Path(tmp) / "leader_0.json").write_text("{}")
+            (Path(tmp) / "notes.txt").write_text("")  # ignored
+            orig = fb._leader_calib_dir
+            fb._leader_calib_dir = lambda: Path(tmp)
+            try:
+                self.assertEqual(
+                    fb.discover_leader_calib_ids(), ["leader_0", "leader_1"]
+                )
+            finally:
+                fb._leader_calib_dir = orig
+
+    def test_missing_dir_returns_empty(self):
+        import common.follower_bus as fb
+
+        orig = fb._leader_calib_dir
+        fb._leader_calib_dir = lambda: Path("/nonexistent/so_leader")
+        try:
+            self.assertEqual(fb.discover_leader_calib_ids(), [])
+        finally:
+            fb._leader_calib_dir = orig
 
 
 class TestGridTiles(unittest.TestCase):

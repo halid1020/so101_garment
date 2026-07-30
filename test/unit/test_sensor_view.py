@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from common.sensor_view import FrameRateCounter, build_arm_panel_lines
+from common.sensor_view import FrameRateCounter, side_joint_dict
 
 
 class TestFrameRateCounter(unittest.TestCase):
@@ -33,40 +33,41 @@ class TestFrameRateCounter(unittest.TestCase):
         self.assertEqual(c.hz(now=0.0), 0.0)
 
 
-class TestBuildArmPanelLines(unittest.TestCase):
+class TestSideJointDict(unittest.TestCase):
     def _vec(self):
         # left joints 0-4, right joints 5-9 (URDF degrees)
         return np.arange(10, dtype=float) * 10.0
 
     def test_right_side_uses_upper_slice(self):
-        lines = build_arm_panel_lines(
-            "right", self._vec(), self._vec(), 0.5, 1.0, "ENABLED", True
-        )
-        self.assertIn("right arm", lines[0])
-        self.assertIn("teleop", lines[0])
-        self.assertIn("+50.0", lines[2])  # shoulder_pan = index 5 -> 50.0
-        self.assertIn("+90.0", lines[6])  # wrist_roll = index 9 -> 90.0
+        d = side_joint_dict(self._vec(), "right", 0.5)
+        self.assertEqual(d["shoulder_pan"], 50.0)  # index 5
+        self.assertEqual(d["wrist_roll"], 90.0)  # index 9
+        self.assertEqual(d["gripper"], 0.5)
 
     def test_left_side_uses_lower_slice(self):
-        lines = build_arm_panel_lines(
-            "left", self._vec(), None, None, None, "DISABLED", False
-        )
-        self.assertNotIn("teleop", lines[0])
-        self.assertIn("+0.0", lines[2])  # shoulder_pan = index 0
-        self.assertIn("--", lines[2])  # no command vector yet
+        d = side_joint_dict(self._vec(), "left", None)
+        self.assertEqual(d["shoulder_pan"], 0.0)  # index 0
+        self.assertEqual(d["wrist_roll"], 40.0)  # index 4
+        self.assertIsNone(d["gripper"])  # no gripper value yet
 
-    def test_all_none_before_first_publish(self):
-        lines = build_arm_panel_lines("left", None, None, None, None, "DISABLED", False)
-        self.assertEqual(len(lines), 8)  # header + column row + 5 joints + gripper
-        for row in lines[2:]:
-            self.assertIn("--", row)
-
-    def test_gripper_fractions_formatted(self):
-        lines = build_arm_panel_lines(
-            "left", self._vec(), self._vec(), 0.25, 1.0, "ENABLED", False
+    def test_none_vector_gives_all_none_joints(self):
+        d = side_joint_dict(None, "left", None)
+        self.assertEqual(
+            set(d),
+            {
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow_flex",
+                "wrist_flex",
+                "wrist_roll",
+                "gripper",
+            },
         )
-        self.assertIn("0.25", lines[-1])
-        self.assertIn("1.00", lines[-1])
+        self.assertTrue(all(v is None for v in d.values()))
+
+    def test_gripper_kept_when_vector_present(self):
+        d = side_joint_dict(self._vec(), "left", 0.25)
+        self.assertEqual(d["gripper"], 0.25)
 
 
 if __name__ == "__main__":

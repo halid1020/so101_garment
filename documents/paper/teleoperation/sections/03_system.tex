@@ -61,6 +61,19 @@ fraction of their mechanical range~--- because the full splay is wider
 than garment grasps need and makes fine pinching awkward; closing is
 always complete, so grip strength is untouched.
 
+\paragraph{Leader-arm interface.}
+An alternative input replaces the headset with two passive replicas of
+the follower arms. The operator back-drives these leaders by hand, and
+each follower joint tracks its counterpart on the corresponding leader
+directly, without inverse kinematics~--- the two arms share a joint
+convention, so a leader joint angle is already the follower's target. A
+keyboard replaces the controller buttons. There is no clutch: the
+followers mirror the leaders continuously once enabled, and a per-joint
+velocity limit is the only smoothing, chiefly to soften the initial
+catch-up. The leader jaw drives the same capped gripper command as the
+trigger, so demonstrations collected through either interface share one
+format and one control convention.
+
 \paragraph{Pluggable IK methods.}
 The IK layer is a narrow interface: anchor to the measured joints,
 accept per-frame end-effector pose targets, solve, and expose the
