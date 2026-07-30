@@ -36,6 +36,9 @@ ONLY_TASKS=""                # comma list of tasks; empty = single,handover
 ORACLE="teleop"              # collection oracle (direct = faster fallback)
 SIMPLE_EPISODES=100
 FULL_EPISODES=1000
+SIMPLE_SEED_SINGLE=0         # simple-mode overfit scenario per task: the single
+SIMPLE_SEED_HANDOVER=0       # arm handles seed 0; handover picks a seed its
+                             # oracle solves reliably (avoids the 50% floor)
 GATE_EPISODES=30             # dry-run episodes per gate cell
 SINGLE_GATE=90               # abort if teleop PER-SEED success (%) is below
 HANDOVER_GATE=75             # per-seed = "each seed eventually yields a demo"
@@ -61,6 +64,8 @@ while [ $# -gt 0 ]; do
         --oracle) ORACLE="$2"; shift 2;;
         --simple-episodes) SIMPLE_EPISODES="$2"; shift 2;;
         --full-episodes) FULL_EPISODES="$2"; shift 2;;
+        --simple-seed-single) SIMPLE_SEED_SINGLE="$2"; shift 2;;
+        --simple-seed-handover) SIMPLE_SEED_HANDOVER="$2"; shift 2;;
         --act-steps) ACT_STEPS="$2"; shift 2;;
         --diffusion-steps) DIFF_STEPS="$2"; shift 2;;
         --pi05-steps) PI05_STEPS="$2"; shift 2;;
@@ -81,6 +86,15 @@ POLICIES="act diffusion pi05"
 [ -n "$ONLY" ] && POLICIES="${ONLY//,/ }"
 TASKS="single handover"
 [ -n "$ONLY_TASKS" ] && TASKS="${ONLY_TASKS//,/ }"
+
+# The simple-mode overfit seed is per task (collect + validate + eval must
+# agree so train/val/eval share one scenario).
+simple_seed_for() {
+    case "$1" in
+        single) echo "$SIMPLE_SEED_SINGLE";;
+        *) echo "$SIMPLE_SEED_HANDOVER";;
+    esac
+}
 
 # ---- environment -----------------------------------------------------
 if [ -z "${VIRTUAL_ENV:-}" ]; then
@@ -187,13 +201,16 @@ collect_cell() {  # mode task
         echo "  ↷ dataset exists: $root"; return 0
     fi
     [ "$SKIP_COLLECT" = "1" ] && fail "collect ($mode/$task): --skip-collect but no dataset at $root"
-    local eps seeds
-    if [ "$mode" = "simple" ]; then eps="$SIMPLE_EPISODES"; seeds="simple"
+    local eps seeds simple_seed_args=()
+    if [ "$mode" = "simple" ]; then
+        eps="$SIMPLE_EPISODES"; seeds="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
     else eps="$FULL_EPISODES"; seeds="full"; fi
     "$PY" tool/collect_sim_dataset.py \
         --task "$task" --oracle "$ORACLE" --seeds "$seeds" --episodes "$eps" \
         --repo-id "$repo" --stats-out "$stats" \
         --camera-width "$CAM_W" --camera-height "$CAM_H" \
+        "${simple_seed_args[@]}" \
         2>&1 | tee "$RUN_DIR/logs/collect_${mode}_${task}.log" \
         || fail "collect ($mode/$task)"
     [ -d "$root" ] || fail "collect ($mode/$task): no dataset written"
@@ -255,8 +272,11 @@ validate_cell() {  # mode task policy — roll every checkpoint on the VAL seeds
     local mode="$1" task="$2" policy="$3"
     local out="$RUN_DIR/$mode/$task/$policy"
     mkdir -p "$out/val"
-    local seeds_mode="val"
-    [ "$mode" = "simple" ] && seeds_mode="simple"   # simple mode validates on its one scenario
+    local seeds_mode="val" simple_seed_args=()
+    if [ "$mode" = "simple" ]; then   # simple mode validates on its one scenario
+        seeds_mode="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
+    fi
     local found=0
     for d in "$out"/checkpoints/*/; do
         local step; step="$(basename "$d")"
@@ -268,6 +288,7 @@ validate_cell() {  # mode task policy — roll every checkpoint on the VAL seeds
         "$PY" tool/eval_sim_policy.py \
             --task "$task" --checkpoint "$d/pretrained_model" \
             --seeds "$seeds_mode" --episodes "$VAL_TRIALS" \
+            "${simple_seed_args[@]}" \
             --camera-width "$CAM_W" --camera-height "$CAM_H" \
             --device "$DEVICE" --out "$vout" \
             > "$RUN_DIR/logs/val_${mode}_${task}_${policy}_${step}.log" 2>&1 \
@@ -298,12 +319,16 @@ eval_cell() {  # mode task policy — the selected checkpoint on all EVAL seeds
     local mode="$1" task="$2" policy="$3"
     local out="$RUN_DIR/$mode/$task/$policy"
     [ -f "$out/eval/results.json" ] && { echo "  ↷ $out/eval/results.json"; return 0; }
-    local seeds_mode="full"
-    [ "$mode" = "simple" ] && seeds_mode="simple"   # 30 trials of the seed-0 scenario
+    local seeds_mode="full" simple_seed_args=()
+    if [ "$mode" = "simple" ]; then   # 30 trials of the one overfit scenario
+        seeds_mode="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
+    fi
     local ckpt; ckpt="$("$PY" -c "import json;print(json.load(open('$out/selected.json'))['checkpoint'])")"
     "$PY" tool/eval_sim_policy.py \
         --task "$task" --checkpoint "$ckpt" \
         --seeds "$seeds_mode" \
+        "${simple_seed_args[@]}" \
         --camera-width "$CAM_W" --camera-height "$CAM_H" \
         --device "$DEVICE" --out "$out/eval/results.json" \
         --video-dir "$out/eval/videos" \

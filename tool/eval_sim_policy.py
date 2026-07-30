@@ -217,6 +217,13 @@ def main() -> int:
         help="simple mode: number of seed-0 trials (default 30); "
         "full/val modes: cap on pool seeds evaluated (default the whole pool)",
     )
+    parser.add_argument(
+        "--simple-seed",
+        type=int,
+        default=0,
+        help="simple mode: the single seed whose scenario is repeated "
+        "(default 0). Must match the collector's --simple-seed for this task.",
+    )
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
@@ -246,9 +253,9 @@ def main() -> int:
 
     if args.seeds == "simple":
         n = args.episodes if args.episodes is not None else 30
-        # The overfit-one-scenario protocol: seed 0's scenario EVERYWHERE
+        # The overfit-one-scenario protocol: --simple-seed's scenario EVERYWHERE
         # (train, val, eval) — matching the collector's simple mode.
-        seeds = [0] * n
+        seeds = [args.simple_seed] * n
     else:
         seeds = list(VAL_SEEDS if args.seeds == "val" else EVAL_SEEDS)
         if args.episodes is not None:
