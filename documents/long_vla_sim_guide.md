@@ -17,8 +17,10 @@ Two environment setups, run in order:
 
 | Mode | Train demos/task | Train seeds | Val seeds | Eval seeds |
 |---|---|---|---|---|
-| `simple` | ~100 (seed-0 scenario only) | {0} | {0} | {0} × 30 trials |
+| `simple` | ~100 (one fixed scenario) | {s} | {s} | {s} × 30 trials |
 | `full` | ~1000 (one demo per seed) | 0–999 | 10000–10009 | 20000–20029 |
+
+where `s` is the per-task `--simple-seed` (default 0; see below).
 
 The two tasks share one 2.2 cm cube. `single` is a one-arm
 pick-and-place; `handover` is a **bimanual relay** — the left arm picks
@@ -57,10 +59,14 @@ policy (`act`, `diffusion`, `pi05`):
    outcomes, selected checkpoint steps).
 
 The three seed pools are disjoint by construction; train/val/eval never
-share a scenario in `full` mode. `simple` mode deliberately reuses the
-seed-0 scenario everywhere — it is the overfit-one-scenario sanity
+share a scenario in `full` mode. `simple` mode deliberately reuses one
+fixed scenario everywhere — it is the overfit-one-scenario sanity
 check: a policy that cannot master a single fixed scenario has a bug,
-not a data problem.
+not a data problem. That scenario is seed 0 by default, but it is
+configurable per task (`--simple-seed-single` / `--simple-seed-handover`)
+so a task can avoid a seed whose oracle-collection is unreliable — the
+handover oracle solves some scenarios poorly, and `simple` mode leans
+entirely on the one it picks (collect, validate and eval all share it).
 
 ## 2. Prerequisites (once per machine)
 
@@ -94,11 +100,13 @@ Useful variants:
 
 ```bash
 bash test/system/long_vla_sim.sh --modes simple            # sanity half only
+bash test/system/long_vla_sim.sh --tasks single            # one task only
 bash test/system/long_vla_sim.sh --modes full --only pi05  # one policy
 bash test/system/long_vla_sim.sh --skip-collect            # reuse datasets
 bash test/system/long_vla_sim.sh --skip-train              # re-eval only
 bash test/system/long_vla_sim.sh --pi05-steps 20000        # higher pi0.5 quality
 bash test/system/long_vla_sim.sh --simple-episodes 50      # cheaper sanity half
+bash test/system/long_vla_sim.sh --simple-seed-handover 7  # handover overfit seed
 bash test/system/long_vla_sim.sh --val-trials 5            # 5–10 supported
 ```
 
@@ -199,6 +207,13 @@ datasets → $HF_LEROBOT_HOME/so101_sim_<task>_<mode>/   (+ stats JSON)
 <mode>/<task>/<policy>/eval/ final 30-seed results.json (+ videos if enabled)
 results.md, results.json     the aggregate report
 ```
+
+Each eval video (`eval/videos/ep_seed<n>.mp4`) is a composite per tick:
+the three policy cameras (`scene`, `wrist_left`, `wrist_right`) and a free
+third-person overview across the top, with a signal panel below plotting
+the measured joint state (solid) against the commanded action target
+(dashed) per arm plus both gripper channels — enough to see where a
+rollout diverges without re-running it.
 
 Send back (or commit on the experiment branch): `results.md`,
 `results.json`, the collection stats JSONs, and the final-eval
