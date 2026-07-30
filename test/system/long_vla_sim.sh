@@ -173,11 +173,14 @@ if [ "$SKIP_GATE" = "0" ]; then
             echo "  $task/$oracle: $("$PY" -c "import json;d=json.load(open('$out'));print(f\"{d['per_seed_success_rate']*100:.0f}% per-seed ({d['oracle_success_rate']*100:.0f}% per-attempt, {d['episodes_collected']}/{d['episode_attempts']})\")")"
         done
     done
-    "$PY" - "$RUN_DIR" "$SINGLE_GATE" "$HANDOVER_GATE" <<'PY' || fail "oracle gate (teleop below threshold — do not train on a broken oracle)"
+    "$PY" - "$RUN_DIR" "$SINGLE_GATE" "$HANDOVER_GATE" "$TASKS" <<'PY' || fail "oracle gate (teleop below threshold — do not train on a broken oracle)"
 import json, sys
 from pathlib import Path
 run, sgate, hgate = Path(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
-gates = {"single": sgate, "handover": hgate}
+all_gates = {"single": sgate, "handover": hgate}
+# Only gate the tasks this run actually collected (see --tasks).
+tasks = sys.argv[4].split()
+gates = {t: all_gates[t] for t in tasks if t in all_gates}
 ok = True
 for task, gate in gates.items():
     d = json.loads((run / "oracle_gate" / f"{task}_teleop.json").read_text())
