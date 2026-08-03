@@ -49,6 +49,7 @@ HANDOVER_GATE=75             # per-seed = "each seed eventually yields a demo"
                              # 30-episode sampling noise (~3.2pp per seed).
 ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
+DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
 PI05_STEPS=10000; PI05_BATCH=8
 VAL_TRIALS=5                 # VAL-seed rollouts per checkpoint (5-10)
 CAM_W=640; CAM_H=480
@@ -68,6 +69,8 @@ while [ $# -gt 0 ]; do
         --simple-seed-handover) SIMPLE_SEED_HANDOVER="$2"; shift 2;;
         --act-steps) ACT_STEPS="$2"; shift 2;;
         --diffusion-steps) DIFF_STEPS="$2"; shift 2;;
+        --diffusion-batch) DIFF_BATCH="$2"; shift 2;;
+        --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
         --pi05-steps) PI05_STEPS="$2"; shift 2;;
         --val-trials) VAL_TRIALS="$2"; shift 2;;
         --camera-width) CAM_W="$2"; shift 2;;
@@ -258,7 +261,12 @@ train_cell() {  # mode task policy
         act)
             args+=(--policy.type=act --steps="$ACT_STEPS" --batch_size="$ACT_BATCH" --save_freq="$ACT_SAVE");;
         diffusion)
-            args+=(--policy.type=diffusion --steps="$DIFF_STEPS" --batch_size="$DIFF_BATCH" --save_freq="$DIFF_SAVE");;
+            # Downsample the 640x480 cameras before the vision backbone: the
+            # default (resize_shape=None) feeds full-res frames through THREE
+            # separate ResNet18 encoders (use_separate_rgb_encoder_per_camera),
+            # which OOMs the 24 GB GPU. (H,W) preserves the 3:4 aspect.
+            args+=(--policy.type=diffusion --steps="$DIFF_STEPS" --batch_size="$DIFF_BATCH"
+                   --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]" --save_freq="$DIFF_SAVE");;
         pi05)
             # LoRA-finetune the published base — full finetuning OOMs 24 GB.
             args+=(--policy.path=lerobot/pi05_base --peft.r=16
