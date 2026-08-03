@@ -265,6 +265,11 @@ into the run directory.
   is cached; re-run with `HF_HUB_OFFLINE=1` exported.
 - **pi0.5 OOM** — confirm the run uses LoRA (`--peft.r=16` in the train
   log); full finetuning does not fit in 24 GB.
+- **Diffusion OOM** — Diffusion Policy defaults to full-resolution image
+  inputs and a separate ResNet18 encoder per camera, so three 640×480
+  views at batch 32 exhaust 24 GB. The script downsamples the encoder
+  inputs (`--diffusion-resize 180 240`, 3:4 aspect); lower the batch with
+  `--diffusion-batch` if a smaller card still overflows.
 - **Oracle gate fails** — the contact-grasp tuning has regressed;
   re-run the tuning loop
   (`venv/bin/python tool/collect_sim_dataset.py --task single
@@ -273,3 +278,10 @@ into the run directory.
 - **Eval success is 0 for every policy** — check the eval camera
   resolution matches collection (the script passes identical values;
   a hand-run of `tool/eval_sim_policy.py` must repeat them).
+- **One checkpoint succeeds, its neighbours score 0** — expected, not a
+  bug. On the tiny simple-mode dataset ACT training is non-monotonic: a
+  losing checkpoint often collapses to the scripted motion while grasping
+  empty air (placement error pins at the fixed cube→target distance and is
+  identical across those checkpoints). This is exactly why every
+  checkpoint is validated and the best is selected — never judge a cell by
+  its last checkpoint alone.
