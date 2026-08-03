@@ -37,8 +37,11 @@ ORACLE="teleop"              # collection oracle (direct = faster fallback)
 SIMPLE_EPISODES=100
 FULL_EPISODES=1000
 SIMPLE_SEED_SINGLE=0         # simple-mode overfit scenario per task: the single
-SIMPLE_SEED_HANDOVER=0       # arm handles seed 0; handover picks a seed its
-                             # oracle solves reliably (avoids the 50% floor)
+SIMPLE_SEED_HANDOVER=14      # arm handles seed 0 (97%); handover seed 0 is a
+                             # hard geometry the teleop oracle only solves ~28%
+                             # of the time (trips the 50% collection floor), so
+                             # simple mode uses seed 14 instead (teleop 20/20,
+                             # 3-7 mm placement in the seed search).
 GATE_EPISODES=30             # dry-run episodes per gate cell
 SINGLE_GATE=90               # abort if teleop PER-SEED success (%) is below
 HANDOVER_GATE=75             # per-seed = "each seed eventually yields a demo"
