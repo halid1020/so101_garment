@@ -20,7 +20,8 @@ Two environment setups, run in order:
 | `simple` | ~100 (one fixed scenario) | {s} | {s} | {s} × 30 trials |
 | `full` | ~1000 (one demo per seed) | 0–999 | 10000–10009 | 20000–20029 |
 
-where `s` is the per-task `--simple-seed` (default 0; see below).
+where `s` is the per-task `--simple-seed` (default 0 for `single`, 14 for
+`handover`; see below).
 
 The two tasks share one 2.2 cm cube. `single` is a one-arm
 pick-and-place; `handover` is a **bimanual relay** — the left arm picks
@@ -62,11 +63,20 @@ The three seed pools are disjoint by construction; train/val/eval never
 share a scenario in `full` mode. `simple` mode deliberately reuses one
 fixed scenario everywhere — it is the overfit-one-scenario sanity
 check: a policy that cannot master a single fixed scenario has a bug,
-not a data problem. That scenario is seed 0 by default, but it is
-configurable per task (`--simple-seed-single` / `--simple-seed-handover`)
-so a task can avoid a seed whose oracle-collection is unreliable — the
-handover oracle solves some scenarios poorly, and `simple` mode leans
-entirely on the one it picks (collect, validate and eval all share it).
+not a data problem. The scenario is configurable per task
+(`--simple-seed-single` / `--simple-seed-handover`) because `simple` mode
+does **no** oracle retries — it leans entirely on the one scenario it
+picks (collect, validate and eval all share it), so that scenario must be
+one the oracle solves reliably or collection trips its 50 % floor.
+`single` uses seed 0 (teleop ~97 %). `handover` uses **seed 14**
+(teleop 60/60 in the seed search): its default seed 0 is a near-envelope
+geometry the *teleop* oracle solves only ~30 % of the time — all failures
+in the `place` phase — even though the `direct` oracle solves it 100 %, so
+the demonstration script is sound and the miss is a teleop differential-IK
+limit that raising the alignment-servo gain does not fix. When a handover
+seed collects poorly, search for a better one rather than tuning the
+oracle (`--task handover --oracle teleop --seeds simple --simple-seed <s>
+--episodes 20 --dry-run` and read `oracle_success_rate`).
 
 ## 2. Prerequisites (once per machine)
 
