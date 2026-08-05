@@ -54,6 +54,10 @@ ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
 DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
 PI05_STEPS=10000; PI05_BATCH=8
+# pi0.5's pretrained base expects fixed camera keys; rename our sim dataset's
+# (scene, wrist_left, wrist_right) to (base_0_rgb, left_wrist_0_rgb,
+# right_wrist_0_rgb). Baked into the saved preprocessor, so eval inherits it.
+PI05_RENAME_MAP='{"observation.images.scene": "observation.images.base_0_rgb", "observation.images.wrist_left": "observation.images.left_wrist_0_rgb", "observation.images.wrist_right": "observation.images.right_wrist_0_rgb"}'
 VAL_TRIALS=5                 # VAL-seed rollouts per checkpoint (5-10)
 CAM_W=640; CAM_H=480
 DEVICE=""
@@ -274,6 +278,7 @@ train_cell() {  # mode task policy
             # LoRA-finetune the published base — full finetuning OOMs 24 GB.
             args+=(--policy.path=lerobot/pi05_base --peft.r=16
                    --steps="$PI05_STEPS" --batch_size="$PI05_BATCH"
+                   --rename_map="$PI05_RENAME_MAP"
                    --save_freq=$(( PI05_STEPS / 5 )))
             watch_speed "$log" "$PI05_STEPS";;
     esac
