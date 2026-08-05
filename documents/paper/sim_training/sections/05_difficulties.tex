@@ -5,9 +5,9 @@ Every environment of this kind embodies dozens of small decisions made
 under failure. Hiding them would make the result irreproducible: a
 reader rebuilding the environment would meet the same failures with no
 record of the fixes. This section catalogues each difficulty in the
-order we met it --- contact, geometry, control, then tooling --- with
-its symptom, diagnosis and resolution, and closes with what remains
-unjustified.
+order we met it --- contact, geometry and control, then collection,
+training and tooling --- with its symptom, diagnosis and resolution, and
+closes with what remains unjustified.
 
 \subsection{Contact grasping}
 \label{sec:diff-grasp}
@@ -49,6 +49,34 @@ lifted cube is detected back at rest while still gripped. The general
 lesson: any closed-loop correction acting through a laggy actuation
 path needs an explicit end-of-life rule, not just a gain.
 
+\subsection{The fixed simple-mode scenario}
+\label{sec:diff-simpleseed}
+
+Simple mode stakes an entire dataset on repeated demonstrations of one
+fixed scenario (Section~\ref{sec:experiments}), so that scenario must be
+one the oracle solves at a high per-attempt rate. The relay's default
+scenario was not: the teleoperation oracle completed it only about once
+in four attempts, every failure in the place phase, and collection
+aborted at its minimum-yield floor before writing a usable dataset. The
+single-arm task, whose default scenario the oracle solves almost always,
+never showed the problem, which is what made the cause easy to
+misattribute.
+
+Two oracles turned the diagnosis into a controlled experiment. The
+lag-free analytic oracle solved the very same scenario on every attempt,
+while the real-time teleoperation oracle --- the one collection actually
+uses --- solved it only intermittently. The deficit therefore lay in the
+teleoperation pipeline's tracking lag on that particular contact
+configuration, not in the contact script or the scene geometry, both of
+which the two oracles share. A confirming negative result followed:
+raising the place-phase servo gain, the change the script-tuning
+hypothesis predicts, moved the rate not at all. The resolution is to
+choose the fixed scenario by a short seed search rather than accept an
+arbitrary default; the selected relay scenario is then solved on every
+attempt. The lesson is that a fixed-scenario dataset inherits the
+oracle's worst case, not its average, so the scenario must be measured
+and selected, never assumed.
+
 \subsection{Workspace envelope versus the twin table}
 \label{sec:diff-envelope}
 
@@ -87,6 +115,22 @@ wrong height for one of them. The cache is now keyed by the full
 resolution. A one-line bug, but it cost a debugging session because the
 symptom (distorted frames in one stream) appeared far from the cause.
 
+\subsection{Non-monotonic training and checkpoint selection}
+\label{sec:diff-checkpoint}
+
+A from-scratch imitation policy does not improve monotonically with
+training step. On the single-arm task one intermediate checkpoint placed
+the cube on every trial, yet several of its neighbours --- both earlier
+and later --- scored zero, closing the jaws on empty air with the cube
+never moving. Reading only the final checkpoint would have reported the
+whole method as a failure. This is a property of the optimisation rather
+than a bug to be removed, so the resolution treats checkpoint choice as
+part of the method: every saved checkpoint rolls out on a held-out
+validation seed set and the best advances to evaluation
+(Section~\ref{sec:experiments}), ties broken towards the later step. The
+price is one validation sweep per run; the alternative is mistaking a
+training-step artefact for a verdict on the policy.
+
 \subsection{Training-stack pitfalls}
 \label{sec:diff-tooling}
 
@@ -124,6 +168,22 @@ message at the point of failure:
     \SI{24}{\gibi\byte} GPU once optimiser state is counted; low-rank
     adaptation of the published base fits comfortably and is the
     configuration our long-run script uses.
+  \item \textbf{Multi-camera activation memory.} The from-scratch
+    diffusion policy builds a separate convolutional encoder per camera
+    and, by default, encodes frames at collection resolution; three
+    full-resolution streams exhaust the same \SI{24}{\gibi\byte} GPU at
+    the batch size the other policies train at. This is an activation, not
+    a parameter, cost, so low-rank adaptation cannot help; downsampling
+    the camera observations before the encoders restores ample headroom
+    and costs nothing on a task whose control signal is already
+    low-dimensional.
+  \item \textbf{Fixed observation keys in a pretrained policy.} The
+    vision-language base names its camera inputs by a fixed convention; a
+    locally collected dataset whose streams are named differently aborts
+    training with a feature mismatch before the first step. A rename map,
+    baked into the saved observation processor so that evaluation inherits
+    it unchanged, aligns the dataset to the policy without altering
+    either.
 \end{itemize}
 
 \subsection{What remains unjustified}
