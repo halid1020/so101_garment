@@ -943,15 +943,21 @@ def main() -> None:
     buses = []
     try:
         for name, device in camera_specs:
+            # Cameras are OPTIONAL in the view: a stream that is unplugged
+            # (its by-path node is gone) or won't open warns and is skipped,
+            # so the view still shows whatever IS connected. Only an explicit
+            # --camera override that fails is worth an abort (handled below).
             if isinstance(device, str) and not Path(device).exists():
-                raise SystemExit(
-                    f"❌ camera {name} device {device} is missing — "
-                    "replug or re-run with --assign"
-                )
+                print(f"⚠️  camera {name} device {device} missing — skipped")
+                continue
             cam = CameraProbe(
                 name, device, args.width, args.height, args.request_fps, args.fourcc
             )
-            cam.open()  # fail fast before touching the arms
+            try:
+                cam.open()
+            except SystemExit as e:
+                print(f"⚠️  {e}")
+                continue
             cameras.append(cam)
             probes.append(cam)
 
