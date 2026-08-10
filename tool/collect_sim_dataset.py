@@ -454,7 +454,14 @@ def main() -> int:
         choices=["simple", "full"],
         default="full",
         help="full = one demo per TRAIN seed, walking 0,1,2,…; simple = every "
-        "demo uses only seed 0's scenario (overfit-one-scenario sanity mode)",
+        "demo uses only --simple-seed's scenario (overfit-one-scenario mode)",
+    )
+    parser.add_argument(
+        "--simple-seed",
+        type=int,
+        default=0,
+        help="simple mode: the single TRAIN seed whose scenario is repeated "
+        "(default 0). Lets a task avoid a scenario its oracle handles poorly.",
     )
     parser.add_argument("--repo-id", type=str, default=None)
     parser.add_argument("--root", type=str, default=None)
@@ -601,7 +608,7 @@ def main() -> int:
     def seed_walk() -> Any:
         if args.seeds == "simple":
             for _ in range(n * args.max_attempts_factor):
-                yield 0
+                yield args.simple_seed
         else:
             yield from TRAIN_SEEDS
 

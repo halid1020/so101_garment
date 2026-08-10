@@ -15,6 +15,7 @@
 #   bash test/system/long_vla_sim.sh                  # both modes, all cells
 #   bash test/system/long_vla_sim.sh --modes simple   # sanity half only
 #   bash test/system/long_vla_sim.sh --only pi05      # one policy
+#   bash test/system/long_vla_sim.sh --tasks single   # one task
 #   bash test/system/long_vla_sim.sh --skip-collect   # reuse datasets
 #   bash test/system/long_vla_sim.sh --skip-train     # re-validate/eval only
 #   bash test/system/long_vla_sim.sh --pi05-steps 20000
@@ -31,17 +32,32 @@ cd "$REPO_ROOT"
 # ---- defaults --------------------------------------------------------
 MODES="simple,full"
 ONLY=""                      # comma list of policies; empty = all three
+ONLY_TASKS=""                # comma list of tasks; empty = single,handover
 ORACLE="teleop"              # collection oracle (direct = faster fallback)
 SIMPLE_EPISODES=100
 FULL_EPISODES=1000
+SIMPLE_SEED_SINGLE=0         # simple-mode overfit scenario per task: the single
+SIMPLE_SEED_HANDOVER=14      # arm handles seed 0 (97%); handover seed 0 is a
+                             # hard geometry the teleop oracle only solves ~28%
+                             # of the time (trips the 50% collection floor), so
+                             # simple mode uses seed 14 instead (teleop 20/20,
+                             # 3-7 mm placement in the seed search).
 GATE_EPISODES=30             # dry-run episodes per gate cell
-SINGLE_GATE=95               # abort if teleop single success (%) is below
-HANDOVER_GATE=70             # relay teleop measures ~75-86%/attempt; gate
-                             # well below that band (but far above a broken
-                             # <50% oracle) so sampling noise never aborts
+SINGLE_GATE=90               # abort if teleop PER-SEED success (%) is below
+HANDOVER_GATE=75             # per-seed = "each seed eventually yields a demo"
+                             # (retries recover flaky seeds; the per-attempt
+                             # rate only reflects collection speed). Observed
+                             # ~97% single / ~88% handover; bars sit well
+                             # above a broken (<50%) oracle with headroom for
+                             # 30-episode sampling noise (~3.2pp per seed).
 ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
+DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
 PI05_STEPS=10000; PI05_BATCH=8
+# pi0.5's pretrained base expects fixed camera keys; rename our sim dataset's
+# (scene, wrist_left, wrist_right) to (base_0_rgb, left_wrist_0_rgb,
+# right_wrist_0_rgb). Baked into the saved preprocessor, so eval inherits it.
+PI05_RENAME_MAP='{"observation.images.scene": "observation.images.base_0_rgb", "observation.images.wrist_left": "observation.images.left_wrist_0_rgb", "observation.images.wrist_right": "observation.images.right_wrist_0_rgb"}'
 VAL_TRIALS=5                 # VAL-seed rollouts per checkpoint (5-10)
 CAM_W=640; CAM_H=480
 DEVICE=""
@@ -52,11 +68,16 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --modes) MODES="$2"; shift 2;;
         --only) ONLY="$2"; shift 2;;
+        --tasks) ONLY_TASKS="$2"; shift 2;;
         --oracle) ORACLE="$2"; shift 2;;
         --simple-episodes) SIMPLE_EPISODES="$2"; shift 2;;
         --full-episodes) FULL_EPISODES="$2"; shift 2;;
+        --simple-seed-single) SIMPLE_SEED_SINGLE="$2"; shift 2;;
+        --simple-seed-handover) SIMPLE_SEED_HANDOVER="$2"; shift 2;;
         --act-steps) ACT_STEPS="$2"; shift 2;;
         --diffusion-steps) DIFF_STEPS="$2"; shift 2;;
+        --diffusion-batch) DIFF_BATCH="$2"; shift 2;;
+        --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
         --pi05-steps) PI05_STEPS="$2"; shift 2;;
         --val-trials) VAL_TRIALS="$2"; shift 2;;
         --camera-width) CAM_W="$2"; shift 2;;
@@ -74,6 +95,16 @@ done
 POLICIES="act diffusion pi05"
 [ -n "$ONLY" ] && POLICIES="${ONLY//,/ }"
 TASKS="single handover"
+[ -n "$ONLY_TASKS" ] && TASKS="${ONLY_TASKS//,/ }"
+
+# The simple-mode overfit seed is per task (collect + validate + eval must
+# agree so train/val/eval share one scenario).
+simple_seed_for() {
+    case "$1" in
+        single) echo "$SIMPLE_SEED_SINGLE";;
+        *) echo "$SIMPLE_SEED_HANDOVER";;
+    esac
+}
 
 # ---- environment -----------------------------------------------------
 if [ -z "${VIRTUAL_ENV:-}" ]; then
@@ -107,7 +138,7 @@ cat <<BANNER
 ----------------------------------------------------------------------
  modes    : $MODES     tasks: $TASKS     policies: $POLICIES
  collect  : $ORACLE oracle, ${CAM_W}x${CAM_H}; simple=$SIMPLE_EPISODES, full=$FULL_EPISODES eps/task
- gate     : teleop >= ${SINGLE_GATE}% (single) / ${HANDOVER_GATE}% (handover), $GATE_EPISODES eps/cell
+ gate     : teleop per-seed >= ${SINGLE_GATE}% (single) / ${HANDOVER_GATE}% (handover), $GATE_EPISODES eps/cell
  train    : act ${ACT_STEPS}, diffusion ${DIFF_STEPS}, pi05 ${PI05_STEPS} (LoRA r=16 from pi05_base)
  validate : $VAL_TRIALS VAL-seed rollouts per checkpoint
  evaluate : all 30 EVAL seeds, videos on
@@ -149,20 +180,23 @@ if [ "$SKIP_GATE" = "0" ]; then
                 --camera-width "$CAM_W" --camera-height "$CAM_H" \
                 > "$RUN_DIR/logs/gate_${task}_${oracle}.log" 2>&1 \
                 || fail "oracle gate ($task/$oracle)"
-            echo "  $task/$oracle: $("$PY" -c "import json;d=json.load(open('$out'));print(f\"{d['oracle_success_rate']*100:.0f}% ({d['episodes_collected']}/{d['episode_attempts']})\")")"
+            echo "  $task/$oracle: $("$PY" -c "import json;d=json.load(open('$out'));print(f\"{d['per_seed_success_rate']*100:.0f}% per-seed ({d['oracle_success_rate']*100:.0f}% per-attempt, {d['episodes_collected']}/{d['episode_attempts']})\")")"
         done
     done
-    "$PY" - "$RUN_DIR" "$SINGLE_GATE" "$HANDOVER_GATE" <<'PY' || fail "oracle gate (teleop below threshold — do not train on a broken oracle)"
+    "$PY" - "$RUN_DIR" "$SINGLE_GATE" "$HANDOVER_GATE" "$TASKS" <<'PY' || fail "oracle gate (teleop below threshold — do not train on a broken oracle)"
 import json, sys
 from pathlib import Path
 run, sgate, hgate = Path(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
-gates = {"single": sgate, "handover": hgate}
+all_gates = {"single": sgate, "handover": hgate}
+# Only gate the tasks this run actually collected (see --tasks).
+tasks = sys.argv[4].split()
+gates = {t: all_gates[t] for t in tasks if t in all_gates}
 ok = True
 for task, gate in gates.items():
     d = json.loads((run / "oracle_gate" / f"{task}_teleop.json").read_text())
-    rate = 100 * d["oracle_success_rate"]
+    rate = 100 * d["per_seed_success_rate"]
     mark = "✓" if rate >= gate else "✗"
-    print(f"  {mark} teleop {task}: {rate:.0f}% (gate {gate:.0f}%)")
+    print(f"  {mark} teleop {task}: {rate:.0f}% per-seed (gate {gate:.0f}%)")
     ok &= rate >= gate
 sys.exit(0 if ok else 1)
 PY
@@ -180,13 +214,16 @@ collect_cell() {  # mode task
         echo "  ↷ dataset exists: $root"; return 0
     fi
     [ "$SKIP_COLLECT" = "1" ] && fail "collect ($mode/$task): --skip-collect but no dataset at $root"
-    local eps seeds
-    if [ "$mode" = "simple" ]; then eps="$SIMPLE_EPISODES"; seeds="simple"
+    local eps seeds simple_seed_args=()
+    if [ "$mode" = "simple" ]; then
+        eps="$SIMPLE_EPISODES"; seeds="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
     else eps="$FULL_EPISODES"; seeds="full"; fi
     "$PY" tool/collect_sim_dataset.py \
         --task "$task" --oracle "$ORACLE" --seeds "$seeds" --episodes "$eps" \
         --repo-id "$repo" --stats-out "$stats" \
         --camera-width "$CAM_W" --camera-height "$CAM_H" \
+        "${simple_seed_args[@]}" \
         2>&1 | tee "$RUN_DIR/logs/collect_${mode}_${task}.log" \
         || fail "collect ($mode/$task)"
     [ -d "$root" ] || fail "collect ($mode/$task): no dataset written"
@@ -231,11 +268,17 @@ train_cell() {  # mode task policy
         act)
             args+=(--policy.type=act --steps="$ACT_STEPS" --batch_size="$ACT_BATCH" --save_freq="$ACT_SAVE");;
         diffusion)
-            args+=(--policy.type=diffusion --steps="$DIFF_STEPS" --batch_size="$DIFF_BATCH" --save_freq="$DIFF_SAVE");;
+            # Downsample the 640x480 cameras before the vision backbone: the
+            # default (resize_shape=None) feeds full-res frames through THREE
+            # separate ResNet18 encoders (use_separate_rgb_encoder_per_camera),
+            # which OOMs the 24 GB GPU. (H,W) preserves the 3:4 aspect.
+            args+=(--policy.type=diffusion --steps="$DIFF_STEPS" --batch_size="$DIFF_BATCH"
+                   --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]" --save_freq="$DIFF_SAVE");;
         pi05)
             # LoRA-finetune the published base — full finetuning OOMs 24 GB.
             args+=(--policy.path=lerobot/pi05_base --peft.r=16
                    --steps="$PI05_STEPS" --batch_size="$PI05_BATCH"
+                   --rename_map="$PI05_RENAME_MAP"
                    --save_freq=$(( PI05_STEPS / 5 )))
             watch_speed "$log" "$PI05_STEPS";;
     esac
@@ -248,8 +291,11 @@ validate_cell() {  # mode task policy — roll every checkpoint on the VAL seeds
     local mode="$1" task="$2" policy="$3"
     local out="$RUN_DIR/$mode/$task/$policy"
     mkdir -p "$out/val"
-    local seeds_mode="val"
-    [ "$mode" = "simple" ] && seeds_mode="simple"   # simple mode validates on its one scenario
+    local seeds_mode="val" simple_seed_args=()
+    if [ "$mode" = "simple" ]; then   # simple mode validates on its one scenario
+        seeds_mode="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
+    fi
     local found=0
     for d in "$out"/checkpoints/*/; do
         local step; step="$(basename "$d")"
@@ -261,6 +307,7 @@ validate_cell() {  # mode task policy — roll every checkpoint on the VAL seeds
         "$PY" tool/eval_sim_policy.py \
             --task "$task" --checkpoint "$d/pretrained_model" \
             --seeds "$seeds_mode" --episodes "$VAL_TRIALS" \
+            "${simple_seed_args[@]}" \
             --camera-width "$CAM_W" --camera-height "$CAM_H" \
             --device "$DEVICE" --out "$vout" \
             > "$RUN_DIR/logs/val_${mode}_${task}_${policy}_${step}.log" 2>&1 \
@@ -291,12 +338,16 @@ eval_cell() {  # mode task policy — the selected checkpoint on all EVAL seeds
     local mode="$1" task="$2" policy="$3"
     local out="$RUN_DIR/$mode/$task/$policy"
     [ -f "$out/eval/results.json" ] && { echo "  ↷ $out/eval/results.json"; return 0; }
-    local seeds_mode="full"
-    [ "$mode" = "simple" ] && seeds_mode="simple"   # 30 trials of the seed-0 scenario
+    local seeds_mode="full" simple_seed_args=()
+    if [ "$mode" = "simple" ]; then   # 30 trials of the one overfit scenario
+        seeds_mode="simple"
+        simple_seed_args=(--simple-seed "$(simple_seed_for "$task")")
+    fi
     local ckpt; ckpt="$("$PY" -c "import json;print(json.load(open('$out/selected.json'))['checkpoint'])")"
     "$PY" tool/eval_sim_policy.py \
         --task "$task" --checkpoint "$ckpt" \
         --seeds "$seeds_mode" \
+        "${simple_seed_args[@]}" \
         --camera-width "$CAM_W" --camera-height "$CAM_H" \
         --device "$DEVICE" --out "$out/eval/results.json" \
         --video-dir "$out/eval/videos" \

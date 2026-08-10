@@ -22,9 +22,14 @@ The campaign runs per mode (simple, then full), per task, per policy:
     \SIrange{75}{86}{\percent}) so a thirty-episode sample's noise
     cannot false-abort, yet far above the failure regime of a broken
     oracle.
-  \item \textbf{Collection.} Simple mode collects on its one scenario;
-    full mode collects one demonstration per training seed. Failed
-    episodes are discarded and retried; only verified successes are
+  \item \textbf{Collection.} Simple mode collects repeated demonstrations
+    of a single fixed scenario, which must therefore be one the oracle
+    completes at a high per-attempt rate; the relay's per-scenario
+    reliability varies, so its fixed scenario is selected by a short seed
+    search rather than left at an arbitrary default. Full mode instead
+    spreads collection across many training seeds and retries a failed
+    seed a bounded number of times, so an occasional hard scenario is
+    tolerated. Failed episodes are discarded and only verified successes
     saved.
   \item \textbf{Training.} ACT and Diffusion Policy train from scratch;
     $\pi_{0.5}$ is adapted from its published base with low-rank

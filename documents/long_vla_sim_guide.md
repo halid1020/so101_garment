@@ -17,8 +17,11 @@ Two environment setups, run in order:
 
 | Mode | Train demos/task | Train seeds | Val seeds | Eval seeds |
 |---|---|---|---|---|
-| `simple` | ~100 (seed-0 scenario only) | {0} | {0} | {0} × 30 trials |
+| `simple` | ~100 (one fixed scenario) | {s} | {s} | {s} × 30 trials |
 | `full` | ~1000 (one demo per seed) | 0–999 | 10000–10009 | 20000–20029 |
+
+where `s` is the per-task `--simple-seed` (default 0 for `single`, 14 for
+`handover`; see below).
 
 The two tasks share one 2.2 cm cube. `single` is a one-arm
 pick-and-place; `handover` is a **bimanual relay** — the left arm picks
@@ -32,13 +35,17 @@ policy (`act`, `diffusion`, `pi05`):
 0. **Oracle gate** — dry-runs both oracles (`teleop` = scripted
    operator through the full teleoperation pipeline, `direct` = IK
    fallback) and prints a success-rate table. Aborts if the teleop
-   oracle is below 95 % (single) / 70 % (handover): do not train on a
-   broken oracle. The handover bar sits well below the teleop relay's
-   measured ~75–86 % per-attempt band so sampling noise on a 30-episode
-   dry run never false-aborts, yet far above a genuinely broken (<50 %)
-   oracle. Every saved episode is still a verified success (failures
-   are discarded, not trained on); the `direct` oracle remains at 100 %
-   for either task if a fuller dataset is wanted.
+   oracle's **per-seed** success — "each seed eventually yields a demo
+   within its retries" — is below 90 % (single) / 75 % (handover): do
+   not train on a broken oracle. Per-seed is the right health signal:
+   failed attempts are retried (up to 3×), so the *per-attempt* rate
+   only reflects collection speed, not oracle quality. Observed on a
+   30-episode dry run is ~97 % single / ~88 % handover, so both bars
+   clear with headroom for sampling noise (~3.2 pp per seed) yet sit
+   far above a genuinely broken (<50 %) oracle. Every saved episode is
+   still a verified success (failures are discarded, not trained on);
+   the `direct` oracle remains at 100 % for either task if a fuller
+   dataset is wanted.
 1. **Collect** — demonstrations through the teleop oracle; failed
    episodes are never saved (a failed seed retries up to 3×, then is
    skipped and recorded).
@@ -53,10 +60,23 @@ policy (`act`, `diffusion`, `pi05`):
    outcomes, selected checkpoint steps).
 
 The three seed pools are disjoint by construction; train/val/eval never
-share a scenario in `full` mode. `simple` mode deliberately reuses the
-seed-0 scenario everywhere — it is the overfit-one-scenario sanity
+share a scenario in `full` mode. `simple` mode deliberately reuses one
+fixed scenario everywhere — it is the overfit-one-scenario sanity
 check: a policy that cannot master a single fixed scenario has a bug,
-not a data problem.
+not a data problem. The scenario is configurable per task
+(`--simple-seed-single` / `--simple-seed-handover`) because `simple` mode
+does **no** oracle retries — it leans entirely on the one scenario it
+picks (collect, validate and eval all share it), so that scenario must be
+one the oracle solves reliably or collection trips its 50 % floor.
+`single` uses seed 0 (teleop ~97 %). `handover` uses **seed 14**
+(teleop 60/60 in the seed search): its default seed 0 is a near-envelope
+geometry the *teleop* oracle solves only ~30 % of the time — all failures
+in the `place` phase — even though the `direct` oracle solves it 100 %, so
+the demonstration script is sound and the miss is a teleop differential-IK
+limit that raising the alignment-servo gain does not fix. When a handover
+seed collects poorly, search for a better one rather than tuning the
+oracle (`--task handover --oracle teleop --seeds simple --simple-seed <s>
+--episodes 20 --dry-run` and read `oracle_success_rate`).
 
 ## 2. Prerequisites (once per machine)
 
@@ -90,11 +110,13 @@ Useful variants:
 
 ```bash
 bash test/system/long_vla_sim.sh --modes simple            # sanity half only
+bash test/system/long_vla_sim.sh --tasks single            # one task only
 bash test/system/long_vla_sim.sh --modes full --only pi05  # one policy
 bash test/system/long_vla_sim.sh --skip-collect            # reuse datasets
 bash test/system/long_vla_sim.sh --skip-train              # re-eval only
 bash test/system/long_vla_sim.sh --pi05-steps 20000        # higher pi0.5 quality
 bash test/system/long_vla_sim.sh --simple-episodes 50      # cheaper sanity half
+bash test/system/long_vla_sim.sh --simple-seed-handover 7  # handover overfit seed
 bash test/system/long_vla_sim.sh --val-trials 5            # 5–10 supported
 ```
 
@@ -196,6 +218,13 @@ datasets → $HF_LEROBOT_HOME/so101_sim_<task>_<mode>/   (+ stats JSON)
 results.md, results.json     the aggregate report
 ```
 
+Each eval video (`eval/videos/ep_seed<n>.mp4`) is a composite per tick:
+the three policy cameras (`scene`, `wrist_left`, `wrist_right`) and a free
+third-person overview across the top, with a signal panel below plotting
+the measured joint state (solid) against the commanded action target
+(dashed) per arm plus both gripper channels — enough to see where a
+rollout diverges without re-running it.
+
 Send back (or commit on the experiment branch): `results.md`,
 `results.json`, the collection stats JSONs, and the final-eval
 `videos/` directories. These feed the paper's experiments section.
@@ -246,6 +275,11 @@ into the run directory.
   is cached; re-run with `HF_HUB_OFFLINE=1` exported.
 - **pi0.5 OOM** — confirm the run uses LoRA (`--peft.r=16` in the train
   log); full finetuning does not fit in 24 GB.
+- **Diffusion OOM** — Diffusion Policy defaults to full-resolution image
+  inputs and a separate ResNet18 encoder per camera, so three 640×480
+  views at batch 32 exhaust 24 GB. The script downsamples the encoder
+  inputs (`--diffusion-resize 180 240`, 3:4 aspect); lower the batch with
+  `--diffusion-batch` if a smaller card still overflows.
 - **Oracle gate fails** — the contact-grasp tuning has regressed;
   re-run the tuning loop
   (`venv/bin/python tool/collect_sim_dataset.py --task single
@@ -254,3 +288,10 @@ into the run directory.
 - **Eval success is 0 for every policy** — check the eval camera
   resolution matches collection (the script passes identical values;
   a hand-run of `tool/eval_sim_policy.py` must repeat them).
+- **One checkpoint succeeds, its neighbours score 0** — expected, not a
+  bug. On the tiny simple-mode dataset ACT training is non-monotonic: a
+  losing checkpoint often collapses to the scripted motion while grasping
+  empty air (placement error pins at the fixed cube→target distance and is
+  identical across those checkpoints). This is exactly why every
+  checkpoint is validated and the best is selected — never judge a cell by
+  its last checkpoint alone.
