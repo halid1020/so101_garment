@@ -74,7 +74,7 @@ class TestRecordingConfig(unittest.TestCase):
         self.assertIn("cameras", cfg)
         self.assertIsInstance(cfg["dataset"]["fps"], int)
         # Expected stream names present (schema, not device values).
-        for name in ("scene", "wrist_left", "wrist_right"):
+        for name in ("scene", "wrist_camera_left", "wrist_camera_right"):
             self.assertIn(name, cfg["cameras"])
 
     def test_valid_dict_loads(self) -> None:

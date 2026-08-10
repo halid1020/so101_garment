@@ -203,6 +203,23 @@ def resolve_camera_streams(rec_cfg: dict, args: argparse.Namespace) -> dict:
     return enabled
 
 
+def overlay_sensor_map_devices(streams: dict, sensor_map: dict) -> dict:
+    """Prefer the stable by-path node from ``sensor_map`` over the index.
+
+    For every enabled stream whose name is also assigned in
+    ``sensor_map["cameras"]`` (via ``tool/test_sensor_rates.py --assign``),
+    replace its ``device`` with that stable ``/dev/v4l/by-path`` node so a
+    replug cannot reorder it. Streams absent from the map keep their
+    ``recording.yaml`` index. Returns a NEW dict and does not mutate the input.
+    """
+    cams = (sensor_map or {}).get("cameras") or {}
+    out: dict = {}
+    for name, cfg in streams.items():
+        node = cams.get(name)
+        out[name] = {**cfg, "device": node} if node else cfg
+    return out
+
+
 def check_disk_space(root: Path) -> None:
     """Warn below 10 GB free, refuse to record below 2 GB."""
     probe = root
@@ -306,6 +323,14 @@ def build_recording_stack(
     streams = resolve_camera_streams(rec_cfg, args)
     if not streams:
         raise SystemExit("❌ --record with every camera disabled is not supported")
+
+    # Prefer the stable by-path node for any stream assigned in sensor_map.yaml
+    # (the wrist cameras especially), so the recorded device matches the live
+    # view and survives a replug. Unassigned streams keep their yaml index.
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if SENSOR_MAP_PATH.exists():
+        streams = overlay_sensor_map_devices(streams, load_sensor_map(SENSOR_MAP_PATH))
 
     # Open every enabled camera BEFORE creating the dataset: an unopenable
     # device at startup is a wiring problem, not a mid-session dropout.
@@ -448,8 +473,10 @@ def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--sensor-view",
         action="store_true",
-        help="Live window with tactile-camera feeds + both arms' joint "
-        "state while teleoperating (q/Esc closes just the window)",
+        help="Live window with camera feeds + both arms' joint state while "
+        "teleoperating; with --record it mirrors the recorded streams (scene, "
+        "wrist cameras, tactile, central RGB) with per-stream drift, otherwise "
+        "the sensor_map cameras (q/Esc closes just the window)",
     )
     group.add_argument(
         "--view-camera",
@@ -943,9 +970,18 @@ def main():
     print("⚠️  Press Ctrl+C to exit")
     print()
 
-    view_captures: list[CameraCapture] = []
+    view_captures: list = []
+    owned_view_captures: list[CameraCapture] = []
     if args.sensor_view:
-        view_captures = build_sensor_view_captures(args, data_manager)
+        if recorder is not None and recorder.cameras:
+            # Reuse the recorder's already-open captures: they publish RGB into
+            # the DataManager, so the view shows scene + both wrist cameras +
+            # tactile + central RGB with drift WITHOUT opening the same by-path
+            # device a second time. The recorder owns their lifecycle.
+            view_captures = list(recorder.cameras)
+        else:
+            owned_view_captures = build_sensor_view_captures(args, data_manager)
+            view_captures = owned_view_captures
     keyboard: KeyboardButtons | None = None
 
     try:
@@ -993,7 +1029,7 @@ def main():
                     leader.disconnect()
                 except Exception:
                     traceback.print_exc()
-        for cam in view_captures:
+        for cam in owned_view_captures:
             cam.stop()
         with left_bus_lock, right_bus_lock:
             dual_arm.disable_torque()

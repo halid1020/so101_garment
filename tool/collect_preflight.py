@@ -231,10 +231,17 @@ def check_cameras() -> list[CheckResult]:
     import cv2  # type: ignore[import]
 
     from common.config_parser import load_recording_config
+    from tool.meta_quest_teleopration import overlay_sensor_map_devices
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
     cfg = load_recording_config()
+    cameras = cfg["cameras"]
+    # Match what the recorder opens: a stream assigned in sensor_map.yaml is
+    # resolved to its stable by-path node, not the recording.yaml index.
+    if SENSOR_MAP_PATH.exists():
+        cameras = overlay_sensor_map_devices(cameras, load_sensor_map(SENSOR_MAP_PATH))
     out: list[CheckResult] = []
-    for name, cam in cfg["cameras"].items():
+    for name, cam in cameras.items():
         if not cam["enabled"]:
             continue
         cap = cv2.VideoCapture(cam["device"], cv2.CAP_V4L2)

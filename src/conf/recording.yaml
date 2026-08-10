@@ -69,18 +69,22 @@ cameras:
     height: 480          # forced capture height (px)
     fps: 30              # requested device frame rate (Hz)
     rotate180: false     # rotate the frame 180 deg (camera mounted upside down)
-  # Left wrist RGB camera (follower_1 = LEFT arm).
-  wrist_left:
+  # Left wrist RGB camera (follower_1 = LEFT arm). The device index here is a
+  # fallback: once this stream is assigned in src/conf/sensor_map.yaml
+  # (tool/test_sensor_rates.py --assign) the recorder resolves it to that
+  # stable /dev/v4l/by-path node instead, so replugging cannot reorder it.
+  wrist_camera_left:
     enabled: true
-    device: 2            # PLACEHOLDER: set for your machine
+    device: 2            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480
     fps: 30
     rotate180: false
-  # Right wrist RGB camera (follower_0 = RIGHT arm).
-  wrist_right:
+  # Right wrist RGB camera (follower_0 = RIGHT arm). By-path resolved from
+  # sensor_map.yaml when assigned (see wrist_camera_left).
+  wrist_camera_right:
     enabled: true
-    device: 4            # PLACEHOLDER: set for your machine
+    device: 4            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480
     fps: 30

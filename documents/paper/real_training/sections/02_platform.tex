@@ -38,7 +38,11 @@ rate and dropped frames, so a saturated bus is visible rather than silent
 rig starts from a fixed, known state: every arm calibrated and bound to a
 stable port alias, the wrist joints limited so the fingertip cables cannot
 be twisted, the arms at their defined home pose, and every camera opened at
-its configured resolution. A preflight check confirms these conditions and
+its configured resolution. Each camera is likewise bound to a stable
+per-socket alias rather than an enumeration index, so replugging a hub can
+never silently swap one view for another between collection and deployment;
+the same alias drives both the live monitor and the recorder. A preflight
+check confirms these conditions and
 the host-tuning items that reduce timing jitter, and reports a single
 ready-or-not verdict. The platform's fixed dimensions and camera
 calibration are measured and stored so the rig can be rebuilt

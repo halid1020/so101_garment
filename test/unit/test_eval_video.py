@@ -10,7 +10,7 @@ from common.eval_video import CAMERA_ORDER, EvalVideoComposer
 def _cameras(rng):
     return {
         name: rng.integers(0, 255, (480, 640, 3), dtype=np.uint8)
-        for name in ("scene", "wrist_left", "wrist_right")
+        for name in ("scene", "wrist_camera_left", "wrist_camera_right")
     }
 
 
@@ -39,9 +39,9 @@ class TestEvalVideoComposer(unittest.TestCase):
         comp = EvalVideoComposer(fps=30, tile_wh=(80, 60), plot_h=160)
         rng = np.random.default_rng(2)
         overview = rng.integers(0, 255, (480, 640, 3), dtype=np.uint8)
-        # omit wrist_right -> its tile must be zero-filled, not crash
+        # omit wrist_camera_right -> its tile must be zero-filled, not crash
         cams = _cameras(rng)
-        del cams["wrist_right"]
+        del cams["wrist_camera_right"]
         comp.add(cams, overview, np.zeros(12), np.zeros(12))
         self.assertEqual(len(comp._frames), 1)
         comp.close()

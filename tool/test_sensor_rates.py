@@ -57,11 +57,19 @@ import cv2  # type: ignore[import]  # noqa: E402
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
 
-GRIPPER_CAMERA_NAMES = [
+# Stream names offered by the --assign GUI, each bound to a stable
+# /dev/v4l/by-path node in sensor_map.yaml. The four tactile gripper cameras
+# plus the two follower wrist cameras; the wrist names match the recorder's
+# dataset feature keys (observation.images.wrist_camera_*), so a by-path
+# assignment here also drives the recording stack (build_recording_stack
+# overlays these nodes onto recording.yaml).
+ASSIGNABLE_CAMERA_NAMES = [
     "left_arm_left_gripper",
     "left_arm_right_gripper",
     "right_arm_left_gripper",
     "right_arm_right_gripper",
+    "wrist_camera_left",
+    "wrist_camera_right",
 ]
 SENSOR_MAP_PATH = _root / "src/conf/sensor_map.yaml"
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -391,7 +399,7 @@ def _assign_cameras(devices: list, existing: dict) -> dict:
                     (f"camera {i + 1}/{len(devices)}: {dev}", (0, 255, 0)),
                     ("press a gel to identify this camera", (255, 255, 255)),
                 ]
-                for k, name in enumerate(GRIPPER_CAMERA_NAMES):
+                for k, name in enumerate(ASSIGNABLE_CAMERA_NAMES):
                     node = assigned.get(name)
                     tag = f"  [{node}]" if node else ""
                     colour = (0, 255, 255) if node else (255, 255, 255)
@@ -404,8 +412,8 @@ def _assign_cameras(devices: list, existing: dict) -> dict:
                     break
                 if key in (27, ord("q")):
                     return assigned
-                if ord("1") <= key <= ord(str(len(GRIPPER_CAMERA_NAMES))):
-                    name = GRIPPER_CAMERA_NAMES[key - ord("1")]
+                if ord("1") <= key <= ord(str(len(ASSIGNABLE_CAMERA_NAMES))):
+                    name = ASSIGNABLE_CAMERA_NAMES[key - ord("1")]
                     node = stable_device_path(dev)
                     assigned = _drop_node(assigned, node)
                     assigned[name] = node
@@ -730,8 +738,14 @@ _CAM_TILE_H = 240
 
 
 def _camera_short_label(name: str) -> str:
-    """Compact camera name for the tile overlay (e.g. ``left-left``)."""
-    return name.replace("_arm", "").replace("_gripper", "").replace("_", "-")
+    """Compact camera name for the tile overlay (e.g. ``left-left``,
+    ``wrist-left``)."""
+    return (
+        name.replace("_arm", "")
+        .replace("_gripper", "")
+        .replace("_camera", "")
+        .replace("_", "-")
+    )
 
 
 def run_view(

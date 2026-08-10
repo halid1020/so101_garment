@@ -219,7 +219,8 @@ results.md, results.json     the aggregate report
 ```
 
 Each eval video (`eval/videos/ep_seed<n>.mp4`) is a composite per tick:
-the three policy cameras (`scene`, `wrist_left`, `wrist_right`) and a free
+the three policy cameras (`scene`, `wrist_camera_left`, `wrist_camera_right`)
+and a free
 third-person overview across the top, with a signal panel below plotting
 the measured joint state (solid) against the commanded action target
 (dashed) per arm plus both gripper channels — enough to see where a
