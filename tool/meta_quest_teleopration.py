@@ -753,11 +753,16 @@ def main():
         recorder.start()
 
     def _move_to_ready() -> None:
-        """HOMING → interpolate both arms to ready → ENABLED (teleop off)."""
+        """HOMING → interpolate both arms to the ready pose → ENABLED (teleop off).
+
+        Leader mode has no separate ready pose — the rest pose IS the ready
+        pose — so both arms interpolate to rest_pos there instead of ready_pos.
+        """
+        home = rest_pos if use_leader else ready_pos
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
         data_manager.set_teleop_state(False)
         with left_bus_lock, right_bus_lock:
-            dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
+            dual_arm.move_to_joint_pose(home, home, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
 
     def _start_leader_tracking() -> None:
@@ -802,11 +807,27 @@ def main():
         return wrapped
 
     def on_enable() -> None:
-        """Y: torque on + move to ready. Only from DISABLED."""
+        """Y: enable torque. Only from DISABLED.
+
+        Quest mode moves the followers to the ready pose first — the defined
+        start pose behind the clutch. Leader mode has no separate ready pose
+        (the rest pose IS the ready pose), so Y just turns torque on and hands
+        control straight to the leaders: the leader thread then slews the
+        followers from their current pose toward the leader pose at a bounded
+        velocity, so no homing sweep is needed.
+        """
         if data_manager.get_robot_activity_state() != RobotActivityState.DISABLED:
             print("⚠️  Y ignored: arms are not DISABLED")
             return
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
+        if use_leader:
+            print("🟢 Enabling: torque on, handing control to the leaders...")
+            with left_bus_lock, right_bus_lock:
+                dual_arm.bus_0.enable_torque()
+                dual_arm.bus_1.enable_torque()
+            data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+            _start_leader_tracking()
+            return
         print("🟢 Enabling: moving both arms to ready pose...")
         with left_bus_lock, right_bus_lock:
             dual_arm.bus_0.enable_torque()
@@ -814,8 +835,6 @@ def main():
             dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
         print("✓ 🟢 Both arms at ready pose and enabled")
-        if use_leader:
-            _start_leader_tracking()
 
     def on_park() -> None:
         """X: move to rest + torque off. Only when ENABLED and not recording."""
