@@ -106,6 +106,10 @@ GRIPPER_OPEN_MAX_FRAC = _gripper["open_max_frac"]
 # Handle geometry (controller frame -> gripper orientation).
 HANDLE_PITCH_OFFSET_DEG = _handle["pitch_offset_deg"]
 HANDLE_AXIS = _handle["axis"]
+# Fixed roll about the gripper tip axis that frames the wrist camera on top
+# (applied to the target orientation before IK, and to the leader wrist_roll
+# joint). See the YAML for the rationale and sign convention.
+HANDLE_ROLL_OFFSET_DEG = _handle["roll_offset_deg"]
 
 # Operator control frame origin offsets (moved here from common/utils.py so
 # utils imports them from configs; configs does not import utils, so no cycle).

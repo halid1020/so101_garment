@@ -16,7 +16,10 @@ from scipy.spatial.transform import Rotation
 from common.utils import (
     gripper_orientation_from_pitch_roll,
     gripper_pitch_roll_from_rotation,
+    hand_to_gripper_orientation,
+    hand_to_gripper_orientation_armplane,
     signed_angle_about,
+    tip_roll_matrix,
     wrist_roll_pitch_delta,
 )
 
@@ -83,6 +86,38 @@ class TestSignedAngleAbout(unittest.TestCase):
     def test_parallel_to_axis_is_zero(self) -> None:
         axis = np.array([0.0, 0.0, 1.0])
         self.assertEqual(signed_angle_about(axis, axis, np.array([1.0, 0.0, 0.0])), 0.0)
+
+
+class TestWristCameraRollOffset(unittest.TestCase):
+    """The wrist-camera framing offset rolls the gripper about its tip."""
+
+    def test_tip_roll_matrix_is_rotation_about_x(self) -> None:
+        m = tip_roll_matrix(90.0)
+        self.assertTrue(np.allclose(m.T @ m, np.eye(3), atol=1e-9))
+        self.assertAlmostEqual(float(np.linalg.det(m)), 1.0, places=9)
+        # x is fixed; y -> z, z -> -y for +90 deg.
+        np.testing.assert_allclose(m @ [1, 0, 0], [1, 0, 0], atol=1e-9)
+        np.testing.assert_allclose(m @ [0, 1, 0], [0, 0, 1], atol=1e-9)
+
+    def test_zero_offset_is_identity(self) -> None:
+        np.testing.assert_allclose(tip_roll_matrix(0.0), np.eye(3), atol=1e-12)
+
+    def test_armplane_offset_keeps_tip_rotates_frame(self) -> None:
+        hand = Rotation.from_euler("xyz", [0.3, -0.4, 0.9]).as_matrix()
+        base = hand_to_gripper_orientation_armplane(hand, 0.6, 0.0, [1.0, 0.0, 0.0])
+        rolled = hand_to_gripper_orientation_armplane(
+            hand, 0.6, 0.0, [1.0, 0.0, 0.0], roll_offset_deg=90.0
+        )
+        # Tip (first column) is unchanged; the frame is rolled 90 deg about it.
+        np.testing.assert_allclose(rolled[:, 0], base[:, 0], atol=1e-9)
+        np.testing.assert_allclose(rolled, base @ tip_roll_matrix(90.0), atol=1e-9)
+        self.assertFalse(np.allclose(rolled, base))
+
+    def test_hand_orientation_offset_matches_tip_roll(self) -> None:
+        hand = Rotation.from_euler("xyz", [0.1, 0.2, -0.3]).as_matrix()
+        base = hand_to_gripper_orientation(hand, 65.0)
+        rolled = hand_to_gripper_orientation(hand, 65.0, roll_offset_deg=-90.0)
+        np.testing.assert_allclose(rolled, base @ tip_roll_matrix(-90.0), atol=1e-9)
 
 
 if __name__ == "__main__":

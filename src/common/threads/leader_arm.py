@@ -27,6 +27,7 @@ import numpy as np
 
 from common.configs import (
     GRIPPER_OPEN_MAX_FRAC,
+    HANDLE_ROLL_OFFSET_DEG,
     JOINT_STATE_STREAMING_RATE,
     LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
     LEFT_ARM_HW_TO_URDF_SIGNS,
@@ -61,10 +62,18 @@ def leader_action_to_urdf(action: Mapping[str, float], side: str) -> np.ndarray:
     The leader's DEGREES reading shares the follower's hardware-frame
     convention (zero at the calibrated mid-range), so the follower's own
     conversion applies: ``urdf = sign * hw + offset``.
+
+    A fixed ``HANDLE_ROLL_OFFSET_DEG`` is added to the wrist_roll joint so the
+    follower's wrist camera sits on top of the gripper at the neutral pose —
+    the joint-space counterpart of the Quest-mode tip-roll bias (roll about
+    the tip is the wrist_roll joint), keeping the two input modes' framing
+    consistent.
     """
     signs, offsets = _HW_TO_URDF[side]
     hw = np.array([action[f"{j}.pos"] for j in _BODY_JOINTS], dtype=np.float64)
-    return signs * hw + offsets
+    urdf = signs * hw + offsets
+    urdf[_BODY_JOINTS.index("wrist_roll")] += HANDLE_ROLL_OFFSET_DEG
+    return urdf
 
 
 def leader_gripper_to_trigger(gripper_0_100: float) -> float:

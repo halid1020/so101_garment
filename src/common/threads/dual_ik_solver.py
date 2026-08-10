@@ -16,6 +16,7 @@ import numpy as np
 import pinocchio as pin
 
 from common.configs import (
+    HANDLE_ROLL_OFFSET_DEG,
     IK_SOLVER_RATE,
     JOYSTICK_DEADZONE,
     JOYSTICK_EXPO,
@@ -619,6 +620,7 @@ def dual_ik_solver_thread(
                         0.0,
                         handle_axes["left"],
                         knuckle_axes.get("left"),
+                        roll_offset_deg=HANDLE_ROLL_OFFSET_DEG,
                     )
                     right_abs_rot = hand_to_gripper_orientation_armplane(
                         right_tf[:3, :3],
@@ -626,6 +628,7 @@ def dual_ik_solver_thread(
                         0.0,
                         handle_axes["right"],
                         knuckle_axes.get("right"),
+                        roll_offset_deg=HANDLE_ROLL_OFFSET_DEG,
                     )
                 blend_alpha = min(
                     1.0, (time.time() - activation_time) / ORIENTATION_BLEND_TIME_S
