@@ -13,6 +13,7 @@ from tool.test_sensor_rates import (
     load_sensor_map,
     parse_camera_spec,
     save_sensor_map,
+    select_realsense_serial,
     stable_device_path,
 )
 
@@ -52,6 +53,7 @@ class TestSensorMapRoundTrip(unittest.TestCase):
                 "right": {"port": "/dev/ttyACM2", "id": "leader_0"},
                 "left": {"port": "/dev/ttyACM3", "id": "leader_1"},
             },
+            "realsense": {"serial": "ABC123", "name": "central"},
         }
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sensor_map.yaml"
@@ -65,6 +67,26 @@ class TestSensorMapRoundTrip(unittest.TestCase):
             path = Path(tmp) / "sensor_map.yaml"
             save_sensor_map(path, sensor_map)
             self.assertEqual(load_sensor_map(path)["leaders"], {})
+
+    def test_realsense_round_trips(self):
+        sensor_map = {
+            "cameras": {},
+            "arms": {},
+            "leaders": {},
+            "realsense": {"serial": "ABC123", "name": "central"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sensor_map.yaml"
+            save_sensor_map(path, sensor_map)
+            self.assertEqual(
+                load_sensor_map(path)["realsense"], sensor_map["realsense"]
+            )
+
+    def test_old_map_without_realsense_defaults_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sensor_map.yaml"
+            path.write_text("cameras:\n  a: /dev/video0\n")
+            self.assertEqual(load_sensor_map(path)["realsense"], {})
 
     def test_load_tolerates_missing_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,6 +190,23 @@ class TestGridTiles(unittest.TestCase):
     def test_mixed_heights_align_within_row(self):
         out = grid_tiles([self._tile(h=10), self._tile(h=20)], max_per_row=3)
         self.assertEqual(out.shape[0], 20)
+
+
+class TestSelectRealsenseSerial(unittest.TestCase):
+    def test_empty_is_none(self):
+        self.assertIsNone(select_realsense_serial([]))
+
+    def test_single_device(self):
+        self.assertEqual(select_realsense_serial([("S1", "D435")]), "S1")
+
+    def test_multiple_prefers_previous(self):
+        devs = [("S1", "D435"), ("S2", "D455")]
+        self.assertEqual(select_realsense_serial(devs, prefer="S2"), "S2")
+
+    def test_multiple_without_valid_prefer_takes_first(self):
+        devs = [("S1", "D435"), ("S2", "D455")]
+        self.assertEqual(select_realsense_serial(devs, prefer="GONE"), "S1")
+        self.assertEqual(select_realsense_serial(devs), "S1")
 
 
 class TestStableDevicePath(unittest.TestCase):

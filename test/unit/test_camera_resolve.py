@@ -1,13 +1,19 @@
-"""Unit tests for wrist-camera assignment + by-path device resolution.
+"""Unit tests for camera assignment + device/serial resolution.
 
 Covers the pure ``overlay_sensor_map_devices`` helper (recording resolves an
-assigned stream to its stable /dev/v4l/by-path node) and the assignable-name
-list the --assign GUI offers.
+assigned wrist stream to its stable /dev/v4l/by-path node), the assignable-name
+list the --assign GUI offers, and the central RealSense serial resolution +
+capture-gating helpers.
 """
 
+import argparse
 import unittest
 
-from tool.meta_quest_teleopration import overlay_sensor_map_devices
+from tool.meta_quest_teleopration import (
+    build_realsense_capture,
+    overlay_sensor_map_devices,
+    resolve_realsense_serial,
+)
 from tool.test_sensor_rates import ASSIGNABLE_CAMERA_NAMES
 
 
@@ -65,6 +71,49 @@ class TestOverlaySensorMapDevices(unittest.TestCase):
         sm = {"cameras": {"wrist_camera_left": "/dev/v4l/by-path/x"}}
         overlay_sensor_map_devices(streams, sm)
         self.assertEqual(streams["wrist_camera_left"]["device"], 2)  # unchanged
+
+
+class TestResolveRealsenseSerial(unittest.TestCase):
+    def test_sensor_map_serial_wins(self):
+        rs_cfg = {"serial": "YAML123"}
+        sm = {"realsense": {"serial": "MAP456"}}
+        self.assertEqual(resolve_realsense_serial(rs_cfg, sm), "MAP456")
+
+    def test_falls_back_to_recording_yaml(self):
+        self.assertEqual(resolve_realsense_serial({"serial": "YAML123"}, {}), "YAML123")
+
+    def test_empty_when_neither(self):
+        self.assertEqual(resolve_realsense_serial({"serial": ""}, {}), "")
+        self.assertEqual(resolve_realsense_serial({}, {"realsense": {}}), "")
+
+
+class TestBuildRealsenseCaptureGating(unittest.TestCase):
+    """The gate is exercised WITHOUT importing pyrealsense2 (None paths)."""
+
+    def _args(self, central_depth=False):
+        return argparse.Namespace(central_depth=central_depth)
+
+    def test_none_when_no_realsense_section(self):
+        self.assertIsNone(build_realsense_capture({}, self._args(), {}, for_view=False))
+        self.assertIsNone(build_realsense_capture({}, self._args(), {}, for_view=True))
+
+    def test_none_when_configured_but_not_wanted(self):
+        rec_cfg = {"realsense": {"enabled": False}}
+        # Recording: off + no --central-depth → None.
+        self.assertIsNone(
+            build_realsense_capture(rec_cfg, self._args(), {}, for_view=False)
+        )
+        # View: off + no flag + no assigned serial → None.
+        self.assertIsNone(
+            build_realsense_capture(rec_cfg, self._args(), {}, for_view=True)
+        )
+
+    def test_view_without_serial_stays_none(self):
+        rec_cfg = {"realsense": {"enabled": False}}
+        sm = {"realsense": {"serial": ""}}  # assigned but empty
+        self.assertIsNone(
+            build_realsense_capture(rec_cfg, self._args(), sm, for_view=True)
+        )
 
 
 if __name__ == "__main__":

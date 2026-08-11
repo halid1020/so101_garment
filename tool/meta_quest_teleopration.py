@@ -220,6 +220,53 @@ def overlay_sensor_map_devices(streams: dict, sensor_map: dict) -> dict:
     return out
 
 
+def resolve_realsense_serial(rs_cfg: dict, sensor_map: dict) -> str:
+    """Serial for the central RealSense: sensor_map assignment wins.
+
+    Prefers the serial stored by ``tool/test_sensor_rates.py --assign``
+    (``sensor_map["realsense"]["serial"]``), falling back to the
+    ``recording.yaml`` serial, then ``""`` (= the first RealSense found).
+    Pure — unit-tested.
+    """
+    assigned = (sensor_map or {}).get("realsense") or {}
+    return assigned.get("serial") or (rs_cfg or {}).get("serial") or ""
+
+
+def build_realsense_capture(
+    rec_cfg: dict, args: argparse.Namespace, sensor_map: dict, *, for_view: bool
+):
+    """Construct (not open) the central RealSenseCapture, or None if unwanted.
+
+    Recording wants it when it is ``enabled`` or ``--central-depth``; the live
+    view additionally wants it when a serial is assigned in ``sensor_map`` (so
+    an assigned central camera shows in ``--sensor-view`` with no extra flag,
+    mirroring the wrist cameras). Returns None WITHOUT importing pyrealsense2
+    when the camera is not wanted, so the import cost is paid only on the
+    hardware path.
+    """
+    rs_cfg = rec_cfg.get("realsense")
+    if rs_cfg is None:
+        return None
+    wanted = rs_cfg["enabled"] or args.central_depth
+    if for_view:
+        assigned = bool((sensor_map or {}).get("realsense", {}).get("serial"))
+        wanted = wanted or assigned
+    if not wanted:
+        return None
+    from common.recording.realsense_camera import RealSenseCapture
+
+    return RealSenseCapture(
+        rgb_name=rs_cfg["rgb_name"],
+        depth_name=rs_cfg["depth_name"],
+        width=rs_cfg["width"],
+        height=rs_cfg["height"],
+        fps=rs_cfg["fps"],
+        serial=resolve_realsense_serial(rs_cfg, sensor_map),
+        align_to_color=rs_cfg["align_to_color"],
+        lock_auto_exposure=rs_cfg["lock_auto_exposure"],
+    )
+
+
 def check_disk_space(root: Path) -> None:
     """Warn below 10 GB free, refuse to record below 2 GB."""
     probe = root
@@ -326,11 +373,13 @@ def build_recording_stack(
 
     # Prefer the stable by-path node for any stream assigned in sensor_map.yaml
     # (the wrist cameras especially), so the recorded device matches the live
-    # view and survives a replug. Unassigned streams keep their yaml index.
+    # view and survives a replug. Unassigned streams keep their yaml index. The
+    # same map also supplies the central RealSense serial below.
     from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
-    if SENSOR_MAP_PATH.exists():
-        streams = overlay_sensor_map_devices(streams, load_sensor_map(SENSOR_MAP_PATH))
+    sensor_map = load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
+    if sensor_map:
+        streams = overlay_sensor_map_devices(streams, sensor_map)
 
     # Open every enabled camera BEFORE creating the dataset: an unopenable
     # device at startup is a wiring problem, not a mid-session dropout.
@@ -365,27 +414,15 @@ def build_recording_stack(
             "section — add one (see the example) or drop the flag"
         )
     all_captures: list = list(captures)
-    rs_capture = None
-    if rs_cfg is not None and (rs_cfg["enabled"] or args.central_depth):
-        from common.recording.realsense_camera import RealSenseCapture
-
-        rs_capture = RealSenseCapture(
-            rgb_name=rs_cfg["rgb_name"],
-            depth_name=rs_cfg["depth_name"],
-            width=rs_cfg["width"],
-            height=rs_cfg["height"],
-            fps=rs_cfg["fps"],
-            serial=rs_cfg["serial"],
-            align_to_color=rs_cfg["align_to_color"],
-            lock_auto_exposure=rs_cfg["lock_auto_exposure"],
-        )
+    rs_capture = build_realsense_capture(rec_cfg, args, sensor_map, for_view=False)
+    if rs_capture is not None:
         if not rs_capture.open():
             for opened in captures:
                 opened.stop()
             raise SystemExit(
                 "❌ RealSense failed to open — check the camera is connected "
-                "and the serial in src/conf/recording.yaml (or drop "
-                "--central-depth / set realsense.enabled: false)"
+                "and the assigned serial (tool/test_sensor_rates.py --assign) "
+                "or drop --central-depth / set realsense.enabled: false"
             )
         all_captures.append(rs_capture)
 
@@ -491,31 +528,30 @@ def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
 
 def build_sensor_view_captures(
     args: argparse.Namespace, data_manager: DualDataManager
-) -> list[CameraCapture]:
-    """Open + start the viewer's tactile-camera capture threads.
+) -> list:
+    """Open + start the viewer's camera capture threads (UVC + central RGB-D).
 
-    The view is a convenience: a camera that fails to open is warned
-    about and skipped (joints-only view if none open) — it never kills
-    teleoperation. Only NO cameras being configured at all is an error.
+    The view is a convenience: a camera that fails to open is warned about and
+    skipped (joints-only view if none open) — it never kills teleoperation. The
+    central RealSense colour stream is added when it is enabled, requested with
+    --central-depth, or assigned in sensor_map, so an assigned central camera
+    shows here without --record. Only NO camera being configured at all is an
+    error.
     """
+    from common.config_parser import load_recording_config
     from tool.test_sensor_rates import (
         SENSOR_MAP_PATH,
         load_sensor_map,
         parse_camera_spec,
     )
 
+    sensor_map = load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
     if args.view_camera:
         specs = [parse_camera_spec(spec) for spec in args.view_camera]
-    elif SENSOR_MAP_PATH.exists():
-        specs = sorted(load_sensor_map(SENSOR_MAP_PATH)["cameras"].items())
     else:
-        raise SystemExit(
-            "❌ --sensor-view has no cameras: run "
-            "tool/test_sensor_rates.py --assign once, or pass "
-            "--view-camera NAME=DEV"
-        )
+        specs = sorted((sensor_map.get("cameras") or {}).items())
 
-    captures: list[CameraCapture] = []
+    captures: list = []
     for name, device in specs:
         cam = CameraCapture(
             name=name,
@@ -533,6 +569,26 @@ def build_sensor_view_captures(
             continue
         cam.start(data_manager)
         captures.append(cam)
+
+    # Central RealSense colour stream (opens its own pipeline; only reached
+    # WITHOUT --record — the record path reuses the recorder's capture instead,
+    # so the single pipeline is never opened twice).
+    rs_capture = build_realsense_capture(
+        load_recording_config(), args, sensor_map, for_view=True
+    )
+    if rs_capture is not None:
+        if rs_capture.open():
+            rs_capture.start(data_manager)
+            captures.append(rs_capture)
+        else:
+            print("⚠️  sensor-view: central RealSense failed to open — skipped")
+
+    if not captures and not args.view_camera and not sensor_map:
+        raise SystemExit(
+            "❌ --sensor-view has no cameras: run "
+            "tool/test_sensor_rates.py --assign once, or pass "
+            "--view-camera NAME=DEV"
+        )
     if not captures:
         print("⚠️  no sensor-view camera opened — showing joint panels only")
     return captures
@@ -971,7 +1027,7 @@ def main():
     print()
 
     view_captures: list = []
-    owned_view_captures: list[CameraCapture] = []
+    owned_view_captures: list = []
     if args.sensor_view:
         if recorder is not None and recorder.cameras:
             # Reuse the recorder's already-open captures: they publish RGB into
