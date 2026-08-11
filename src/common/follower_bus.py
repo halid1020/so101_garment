@@ -85,7 +85,7 @@ def _leader_calib_dir() -> Path:
 
 
 def discover_leader_calib_ids() -> list[str]:
-    """Sorted ids of the calibrated SO-101 leaders (``leader_0`` …).
+    """Sorted ids of the calibrated SO-101 leaders (``leader_left`` …).
 
     Empty if no leader has been calibrated yet (directory missing/empty).
     """
@@ -93,6 +93,25 @@ def discover_leader_calib_ids() -> list[str]:
     if not directory.is_dir():
         return []
     return sorted(p.stem for p in directory.glob("*.json"))
+
+
+def leader_calib_id_for_side(side: str) -> str:
+    """Calibration id for a leader arm by side, from ``robot.yaml``.
+
+    Leader ids are fixed by side (``LEADER_ID_LEFT`` / ``LEADER_ID_RIGHT``
+    in ``src/conf/robot.yaml``), so the sensor-assignment GUI no longer
+    asks the operator to pick one — it stores only the port. Both the
+    assignment view and the teleop leader connection resolve the id here,
+    keeping a single source of truth for the side → id mapping.
+    """
+    if side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    robot_conf = yaml.safe_load((_root / "src/conf/robot.yaml").read_text())
+    key = "LEADER_ID_LEFT" if side == "left" else "LEADER_ID_RIGHT"
+    calib_id = robot_conf.get(key)
+    if not calib_id:
+        raise KeyError(f"{key} missing from src/conf/robot.yaml")
+    return str(calib_id)
 
 
 def connect_leader_bus(port: str, calib_id: str) -> FeetechMotorsBus:
