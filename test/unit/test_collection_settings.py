@@ -10,6 +10,7 @@ from common.recording.collection_settings import (
     selection_to_teleop_flags,
     uvc_cameras,
 )
+from tool.collect_dataset import nearest_existing_ancestor
 
 
 def _write_dataset(root: Path, features: dict, fps: int, realsense: dict | None = None):
@@ -141,6 +142,25 @@ class TestSelectionToTeleopFlags(unittest.TestCase):
             self.assertEqual(flags[si - 1], "--enable-camera")
             wi = flags.index("wrist_camera_left")
             self.assertEqual(flags[wi - 1], "--disable-camera")
+
+
+class TestNearestExistingAncestor(unittest.TestCase):
+    def test_returns_path_itself_when_it_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(nearest_existing_ancestor(Path(tmp)), Path(tmp))
+
+    def test_walks_up_to_existing_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "no" / "such" / "child"
+            self.assertEqual(nearest_existing_ancestor(missing), Path(tmp))
+
+    def test_backslash_escaped_path_resolves_above_mount(self):
+        # A quoted path that kept its backslashes (a common shell mistake)
+        # has no real component under the mount, so the nearest existing
+        # ancestor is the mount root, not the intended directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "Seagate\\ Portable\\ Drive" / "so101"
+            self.assertEqual(nearest_existing_ancestor(bad), Path(tmp))
 
 
 if __name__ == "__main__":
