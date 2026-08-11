@@ -4,7 +4,15 @@ import unittest
 
 import numpy as np
 
-from common.sensor_view import FrameRateCounter, _age_color, side_joint_dict
+from common.sensor_view import (
+    FrameRateCounter,
+    ViewPanel,
+    _age_color,
+    _vec5_to_dict,
+    colourise_depth,
+    compose_sensor_view_frame,
+    side_joint_dict,
+)
 
 
 class TestFrameRateCounter(unittest.TestCase):
@@ -90,6 +98,82 @@ class TestSideJointDict(unittest.TestCase):
     def test_gripper_kept_when_vector_present(self):
         d = side_joint_dict(self._vec(), "left", 0.25)
         self.assertEqual(d["gripper"], 0.25)
+
+
+class TestColouriseDepth(unittest.TestCase):
+    def test_shape_and_dtype(self):
+        depth = np.full((8, 12), 1000, dtype=np.uint16)  # 1 m at 0.001 scale
+        out = colourise_depth(depth, scale_m=0.001)
+        self.assertEqual(out.shape, (8, 12, 3))
+        self.assertEqual(out.dtype, np.uint8)
+
+    def test_zero_pixels_stay_black(self):
+        depth = np.full((4, 4), 1000, dtype=np.uint16)
+        depth[0, 0] = 0  # no return
+        out = colourise_depth(depth, scale_m=0.001)
+        self.assertTrue(np.all(out[0, 0] == 0))
+        self.assertFalse(np.all(out[1, 1] == 0))
+
+    def test_near_and_far_differ(self):
+        near = colourise_depth(np.full((2, 2), 200, np.uint16), scale_m=0.001)
+        far = colourise_depth(np.full((2, 2), 2000, np.uint16), scale_m=0.001)
+        self.assertFalse(np.array_equal(near, far))
+
+    def test_zero_scale_falls_back(self):
+        # A capture that never populated depth_scale (0.0) must not divide by
+        # zero or blow up — it falls back to a sane default.
+        out = colourise_depth(np.full((3, 3), 500, np.uint16), scale_m=0.0)
+        self.assertEqual(out.shape, (3, 3, 3))
+
+
+class TestComposeSensorViewFrame(unittest.TestCase):
+    def _cols(self):
+        d = _vec5_to_dict(np.zeros(5), 0.5)
+        return {"left": d, "right": d}
+
+    def test_composites_rgb_and_depth_panels(self):
+        rgb = ViewPanel(
+            label="central",
+            image_bgr=np.zeros((48, 64, 3), np.uint8),
+            fallback_hw=(48, 64),
+            line1="central 30Hz",
+            line2="drift 5ms  drop 0",
+            line2_color=(0, 255, 0),
+        )
+        depth = ViewPanel(
+            label="central_depth",
+            image_bgr=colourise_depth(np.full((48, 64), 1000, np.uint16)),
+            fallback_hw=(48, 64),
+            line1="central_depth 30Hz",
+        )
+        out = compose_sensor_view_frame(
+            [rgb, depth],
+            self._cols(),
+            self._cols(),
+            "cmd",
+            joint_strip=("j", (0, 255, 0)),
+        )
+        self.assertEqual(out.ndim, 3)
+        self.assertEqual(out.shape[2], 3)
+        self.assertGreater(out.shape[0], 0)
+
+    def test_missing_image_uses_black_fallback(self):
+        panel = ViewPanel(
+            label="scene",
+            image_bgr=None,
+            fallback_hw=(48, 64),
+            line1="scene 0Hz",
+        )
+        out = compose_sensor_view_frame(
+            [panel], self._cols(), self._cols(), "cmd", joint_strip=None
+        )
+        self.assertEqual(out.ndim, 3)
+
+    def test_no_panels_still_renders_joint_cells(self):
+        out = compose_sensor_view_frame(
+            [], self._cols(), self._cols(), "cmd", joint_strip=None
+        )
+        self.assertGreater(out.shape[0], 0)
 
 
 if __name__ == "__main__":
