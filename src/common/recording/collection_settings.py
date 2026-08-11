@@ -57,6 +57,25 @@ def read_existing_streams(root: "str | Path") -> dict:
     }
 
 
+def is_resumable_dataset(root: "str | Path") -> bool:
+    """Whether the dataset at ``root`` can be appended to (has ≥ 1 episode).
+
+    A dataset created but quit before any episode was saved has an
+    ``info.json`` but no ``meta/tasks.parquet`` and ``total_episodes == 0``.
+    LeRobot's ``resume`` cannot load such a stillborn dataset: its metadata
+    read fails and it then wrongly falls back to the HuggingFace Hub (a
+    misleading 401 for a local repo id). Gating resume on this predicate keeps
+    that case a clear local error. Pure — unit-tested.
+    """
+    info = Path(root) / "meta" / "info.json"
+    if not info.is_file():
+        return False
+    try:
+        return int(json.loads(info.read_text()).get("total_episodes", 0)) > 0
+    except (ValueError, json.JSONDecodeError):
+        return False
+
+
 def uvc_cameras(cameras: "set[str]", depth_rgb_name: "str | None") -> "set[str]":
     """The UVC camera names in ``cameras`` (excluding the RealSense RGB name).
 

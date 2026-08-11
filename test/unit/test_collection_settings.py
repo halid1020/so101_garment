@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from common.recording.collection_settings import (
+    is_resumable_dataset,
     read_existing_streams,
     selection_to_teleop_flags,
     uvc_cameras,
@@ -13,10 +14,18 @@ from common.recording.collection_settings import (
 from tool.collect_dataset import nearest_existing_ancestor
 
 
-def _write_dataset(root: Path, features: dict, fps: int, realsense: dict | None = None):
+def _write_dataset(
+    root: Path,
+    features: dict,
+    fps: int,
+    realsense: dict | None = None,
+    total_episodes: int = 1,
+):
     meta = root / "meta"
     meta.mkdir(parents=True)
-    (meta / "info.json").write_text(json.dumps({"fps": fps, "features": features}))
+    (meta / "info.json").write_text(
+        json.dumps({"fps": fps, "features": features, "total_episodes": total_episodes})
+    )
     if realsense is not None:
         (meta / "realsense.json").write_text(json.dumps(realsense))
 
@@ -142,6 +151,24 @@ class TestSelectionToTeleopFlags(unittest.TestCase):
             self.assertEqual(flags[si - 1], "--enable-camera")
             wi = flags.index("wrist_camera_left")
             self.assertEqual(flags[wi - 1], "--disable-camera")
+
+
+class TestIsResumableDataset(unittest.TestCase):
+    def test_missing_info_is_not_resumable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(is_resumable_dataset(Path(tmp)))
+
+    def test_zero_episodes_is_not_resumable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_dataset(root, {"observation.images.scene": {}}, 30, total_episodes=0)
+            self.assertFalse(is_resumable_dataset(root))
+
+    def test_has_episodes_is_resumable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_dataset(root, {"observation.images.scene": {}}, 30, total_episodes=2)
+            self.assertTrue(is_resumable_dataset(root))
 
 
 class TestNearestExistingAncestor(unittest.TestCase):
