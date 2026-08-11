@@ -31,7 +31,7 @@ _SHARED_SCHEMA: dict[str, frozenset[str]] = {
     "filtering": frozenset({"min_cutoff", "beta", "d_cutoff"}),
     "clutch": frozenset({"grip_threshold", "orientation_blend_time_s"}),
     "gripper": frozenset({"open_max_frac"}),
-    "handle": frozenset({"pitch_offset_deg", "axis"}),
+    "handle": frozenset({"pitch_offset_deg", "axis", "roll_offset_deg"}),
     "operator_frame": frozenset({"back_m", "up_m"}),
     "envelope": frozenset(
         {"r_min", "r_max", "z_floor", "safety_margin", "soft_margin", "oob_mode"}

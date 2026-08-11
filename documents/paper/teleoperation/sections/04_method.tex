@@ -123,6 +123,19 @@ direction \(\hat t = (\cos\theta\cos\phi,\ \cos\theta\sin\phi,\
 orientation axes can then be fully costed in the tracker without risking
 the \(180^\circ\) tip-flip that a zero-costed yaw axis admits.
 
+A fixed roll about the tip is applied on top of this constructed target,
+so that the wrist-mounted camera looks along the top of the gripper at
+the neutral pose rather than from the side. Because it rolls the whole
+target frame about the tip, it leaves the commanded tip direction and the
+position target untouched; the tracker and the recorded end-effector
+target therefore stay mutually consistent, which matters when the same
+demonstrations train a policy that predicts the end-effector target
+directly. The joint-space leader interface applies the same bias directly
+to the wrist-roll joint, since that joint \emph{is} the roll about the
+tip, so both interfaces frame the camera identically. The offset is a
+fixed rig choice; its sign keeps the neutral roll inside the joint's
+travel and is mirrored per arm to suit the camera mounting.
+
 Because the azimuth follows the arm's live end-effector heading, and the
 roll frame is orthogonalised against the tip, any change in that heading
 also moves the commanded roll. This matters at the reach boundary: while
