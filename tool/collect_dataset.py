@@ -42,6 +42,31 @@ from pathlib import Path
 _TELEOP = Path(__file__).resolve().parent / "meta_quest_teleopration.py"
 
 
+def nearest_existing_ancestor(path: Path) -> Path:
+    """The closest existing directory at or above ``path``. Pure — unit-tested."""
+    p = path
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return p
+
+
+def check_writable_root(root: Path) -> None:
+    """Fail fast (before connecting any hardware) if ``root`` cannot be written.
+
+    Catches the common collection mishaps — an unmounted data drive, a wrong
+    ``--dir``, or a quoted path that still contains backslash escapes — so the
+    session aborts here instead of after both arms and every camera are open.
+    """
+    anchor = nearest_existing_ancestor(root)
+    if not anchor.exists() or not os.access(anchor, os.W_OK):
+        raise SystemExit(
+            f"❌ cannot create the dataset at {root}: nothing writable at or above "
+            f"it ({anchor}). Check that the data drive is mounted and that --dir is "
+            "correct — a quoted path must NOT contain backslash escapes, e.g. use "
+            '--dir "/media/you/My Drive/so101", not "/media/you/My\\ Drive/so101".'
+        )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -155,6 +180,7 @@ def main() -> None:
 
     root = Path(args.dir).expanduser() / args.name
     resuming = root.exists()
+    check_writable_root(root)
 
     if resuming:
         settings = read_existing_streams(root)
@@ -163,8 +189,6 @@ def main() -> None:
             args, settings, rs_rgb_name
         )
     else:
-        if not Path(args.dir).expanduser().exists():
-            print(f"⚠️  collection directory {args.dir} does not exist yet")
         enabled_uvc, depth, record_ee, fps = _resolve_new(
             args, known_cameras, default_enabled
         )
