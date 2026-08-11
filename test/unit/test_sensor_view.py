@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from common.sensor_view import FrameRateCounter, side_joint_dict
+from common.sensor_view import FrameRateCounter, _age_color, side_joint_dict
 
 
 class TestFrameRateCounter(unittest.TestCase):
@@ -31,6 +31,28 @@ class TestFrameRateCounter(unittest.TestCase):
         c = FrameRateCounter()
         c.tick(None, now=0.0)
         self.assertEqual(c.hz(now=0.0), 0.0)
+
+    def test_no_drops_without_expected_hz(self):
+        c = FrameRateCounter()  # expected_hz unset → drop detection off
+        c.tick(object(), now=0.0)
+        c.tick(object(), now=5.0)  # huge gap, but no baseline to judge it
+        self.assertEqual(c.drops, 0)
+
+    def test_drops_counted_against_expected_period(self):
+        c = FrameRateCounter(expected_hz=30.0)  # nominal 33.3 ms/frame
+        c.tick(object(), now=0.0)
+        c.tick(object(), now=1.0 / 30.0)  # on-time: no drop
+        self.assertEqual(c.drops, 0)
+        c.tick(object(), now=1.0 / 30.0 + 3.0 / 30.0)  # ~3 periods gap → 2 dropped
+        self.assertEqual(c.drops, 2)
+
+
+class TestAgeColor(unittest.TestCase):
+    def test_thresholds(self):
+        self.assertEqual(_age_color(0.005), (0, 255, 0))  # green ≤ ½ frame
+        self.assertEqual(_age_color(0.020), (0, 210, 255))  # amber ≤ 1 frame
+        self.assertEqual(_age_color(0.050), (0, 0, 255))  # red beyond
+        self.assertEqual(_age_color(None), (0, 0, 255))  # missing → red
 
 
 class TestSideJointDict(unittest.TestCase):

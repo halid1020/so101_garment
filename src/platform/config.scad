@@ -206,4 +206,14 @@ base_holes_x        = 21.2;  // mm, base-hole trapezoid center ahead of
                               // base_link origin (+X, arm-forward)
 base_bottom_z       = -2.4;  // mm, base underside below base_link origin
 
+// ---- 3D-printed validation cube (simple pick-and-place task object for
+//      collection/eval sanity checks; see tool/collect_preflight.py) ----
+task_cube_size          = 25;   // mm, cube side — keep <= the jaw opening so
+                                 // the capped gripper can grasp it (the sim
+                                 // payload cross-section is ~22 mm)
+task_cube_chamfer       = 2;    // mm, rounded-edge radius for printability
+task_cube_marker_recess = 16;   // mm, square recess on the top face for a
+                                 // fiducial/marker sticker (0 = flat top)
+task_cube_marker_depth  = 1.0;  // mm, recess depth
+
 $fn = 64;

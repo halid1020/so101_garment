@@ -81,6 +81,7 @@ from common.recording import (
     build_dataset_features,
     load_recording_config,
 )
+from common.recording.depth import DepthWriter
 from common.sensor_view import run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
@@ -158,6 +159,20 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         help="Enable the tactile_0..3 camera streams (hardware required)",
     )
     group.add_argument(
+        "--central-depth",
+        action="store_true",
+        help="Enable the central RealSense RGB-D camera (RGB video feature + "
+        "aligned 16-bit depth stream); overrides realsense.enabled in "
+        "src/conf/recording.yaml",
+    )
+    group.add_argument(
+        "--no-record-ee",
+        action="store_true",
+        help="Do not record the EE-space features (ee_pose measured + "
+        "ee_target projected/constrained); EE features are on by default in "
+        "quest mode and always off in --input leader (no IK targets)",
+    )
+    group.add_argument(
         "--no-sidecar",
         action="store_true",
         help="Disable the ~100 Hz full-rate sidecar parquet",
@@ -188,6 +203,70 @@ def resolve_camera_streams(rec_cfg: dict, args: argparse.Namespace) -> dict:
     return enabled
 
 
+def overlay_sensor_map_devices(streams: dict, sensor_map: dict) -> dict:
+    """Prefer the stable by-path node from ``sensor_map`` over the index.
+
+    For every enabled stream whose name is also assigned in
+    ``sensor_map["cameras"]`` (via ``tool/test_sensor_rates.py --assign``),
+    replace its ``device`` with that stable ``/dev/v4l/by-path`` node so a
+    replug cannot reorder it. Streams absent from the map keep their
+    ``recording.yaml`` index. Returns a NEW dict and does not mutate the input.
+    """
+    cams = (sensor_map or {}).get("cameras") or {}
+    out: dict = {}
+    for name, cfg in streams.items():
+        node = cams.get(name)
+        out[name] = {**cfg, "device": node} if node else cfg
+    return out
+
+
+def resolve_realsense_serial(rs_cfg: dict, sensor_map: dict) -> str:
+    """Serial for the central RealSense: sensor_map assignment wins.
+
+    Prefers the serial stored by ``tool/test_sensor_rates.py --assign``
+    (``sensor_map["realsense"]["serial"]``), falling back to the
+    ``recording.yaml`` serial, then ``""`` (= the first RealSense found).
+    Pure — unit-tested.
+    """
+    assigned = (sensor_map or {}).get("realsense") or {}
+    return assigned.get("serial") or (rs_cfg or {}).get("serial") or ""
+
+
+def build_realsense_capture(
+    rec_cfg: dict, args: argparse.Namespace, sensor_map: dict, *, for_view: bool
+):
+    """Construct (not open) the central RealSenseCapture, or None if unwanted.
+
+    Recording wants it when it is ``enabled`` or ``--central-depth``; the live
+    view additionally wants it when a serial is assigned in ``sensor_map`` (so
+    an assigned central camera shows in ``--sensor-view`` with no extra flag,
+    mirroring the wrist cameras). Returns None WITHOUT importing pyrealsense2
+    when the camera is not wanted, so the import cost is paid only on the
+    hardware path.
+    """
+    rs_cfg = rec_cfg.get("realsense")
+    if rs_cfg is None:
+        return None
+    wanted = rs_cfg["enabled"] or args.central_depth
+    if for_view:
+        assigned = bool((sensor_map or {}).get("realsense", {}).get("serial"))
+        wanted = wanted or assigned
+    if not wanted:
+        return None
+    from common.recording.realsense_camera import RealSenseCapture
+
+    return RealSenseCapture(
+        rgb_name=rs_cfg["rgb_name"],
+        depth_name=rs_cfg["depth_name"],
+        width=rs_cfg["width"],
+        height=rs_cfg["height"],
+        fps=rs_cfg["fps"],
+        serial=resolve_realsense_serial(rs_cfg, sensor_map),
+        align_to_color=rs_cfg["align_to_color"],
+        lock_auto_exposure=rs_cfg["lock_auto_exposure"],
+    )
+
+
 def check_disk_space(root: Path) -> None:
     """Warn below 10 GB free, refuse to record below 2 GB."""
     probe = root
@@ -203,11 +282,77 @@ def check_disk_space(root: Path) -> None:
         print(f"⚠️  Low disk space: {free_gb:.1f} GB free on {probe}")
 
 
+def write_realsense_meta(root: Path, rs_capture, rs_cfg: dict) -> None:
+    """Write the central camera's intrinsics/scale/config for replicability.
+
+    Saved once per dataset to ``<root>/meta/realsense.json``. The camera's
+    extrinsic pose in the rig frame is a physical measurement made separately,
+    so it is emitted as a null placeholder for the operator to fill in.
+    """
+    import json
+
+    meta_dir = root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "rgb_name": rs_capture.name,
+        "depth_name": rs_capture.depth_name,
+        "width": rs_cfg["width"],
+        "height": rs_cfg["height"],
+        "fps": rs_cfg["fps"],
+        "aligned_to_color": rs_cfg["align_to_color"],
+        "depth_scale_m_per_unit": rs_capture.depth_scale,
+        "color_intrinsics": rs_capture.intrinsics,
+        "extrinsics_camera_to_rig": None,  # measure + fill in for replicability
+    }
+    (meta_dir / "realsense.json").write_text(json.dumps(payload, indent=2))
+    print(f"  🗂  wrote {meta_dir / 'realsense.json'} (intrinsics + depth scale)")
+
+
+def write_action_space_meta(root: Path, fps: int, record_ee: bool) -> None:
+    """Record the action-definition constants so inference reproduces them.
+
+    A policy's output must pass back through the SAME command path that
+    produced the labels (joint clamp/gripper-cap, or the IK + workspace
+    envelope for the EE target). Persisting these constants next to the
+    dataset lets a training/inference script reproduce them exactly.
+    """
+    import json
+
+    from common.configs import GRIPPER_OPEN_MAX_FRAC, ROTATION_SCALE, TRANSLATION_SCALE
+    from common.recording.features import EE_NAMES, STATE_NAMES
+
+    meta_dir = root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "fps": fps,
+        "joint_state_names": list(STATE_NAMES),
+        "joint_units": "urdf_degrees",
+        "gripper_open_fraction": "0=closed, 1=capped-open",
+        "gripper_open_max_frac": GRIPPER_OPEN_MAX_FRAC,
+        "translation_scale": TRANSLATION_SCALE,
+        "rotation_scale": ROTATION_SCALE,
+        "ee_features": {
+            "recorded": record_ee,
+            "names": list(EE_NAMES),
+            "frame": "each arm's own base frame",
+            "quaternion_order": "wxyz",
+            "state_key": "ee_pose",
+            "target_key": "ee_target",
+            "note": "ee_target is the projected+constrained IK target; an "
+            "EE-space policy remaps ee_target -> action and replays it "
+            "through the same IK + workspace envelope at inference.",
+        },
+    }
+    (meta_dir / "action_space.json").write_text(json.dumps(payload, indent=2))
+    print(f"  🗂  wrote {meta_dir / 'action_space.json'} (action-definition constants)")
+
+
 def build_recording_stack(
     args: argparse.Namespace,
     data_manager: DualDataManager,
     quest_reader,
     park_arms,
+    record_ee: bool = False,
 ):
     """Open cameras (fail fast), create/resume the dataset, build the recorder.
 
@@ -225,6 +370,16 @@ def build_recording_stack(
     streams = resolve_camera_streams(rec_cfg, args)
     if not streams:
         raise SystemExit("❌ --record with every camera disabled is not supported")
+
+    # Prefer the stable by-path node for any stream assigned in sensor_map.yaml
+    # (the wrist cameras especially), so the recorded device matches the live
+    # view and survives a replug. Unassigned streams keep their yaml index. The
+    # same map also supplies the central RealSense serial below.
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    sensor_map = load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
+    if sensor_map:
+        streams = overlay_sensor_map_devices(streams, sensor_map)
 
     # Open every enabled camera BEFORE creating the dataset: an unopenable
     # device at startup is a wiring problem, not a mid-session dropout.
@@ -248,6 +403,29 @@ def build_recording_stack(
             )
         captures.append(cam)
 
+    # Optional central RealSense RGB-D: its colour stream joins ``captures`` as
+    # a normal video feature; its aligned 16-bit depth is written separately.
+    rs_cfg = rec_cfg.get("realsense")
+    if args.central_depth and rs_cfg is None:
+        for opened in captures:
+            opened.stop()
+        raise SystemExit(
+            "❌ --central-depth but src/conf/recording.yaml has no 'realsense' "
+            "section — add one (see the example) or drop the flag"
+        )
+    all_captures: list = list(captures)
+    rs_capture = build_realsense_capture(rec_cfg, args, sensor_map, for_view=False)
+    if rs_capture is not None:
+        if not rs_capture.open():
+            for opened in captures:
+                opened.stop()
+            raise SystemExit(
+                "❌ RealSense failed to open — check the camera is connected "
+                "and the assigned serial (tool/test_sensor_rates.py --assign) "
+                "or drop --central-depth / set realsense.enabled: false"
+            )
+        all_captures.append(rs_capture)
+
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -257,7 +435,7 @@ def build_recording_stack(
     check_disk_space(root)
 
     threads_total = rec_cfg["dataset"]["image_writer_threads_per_camera"] * len(
-        captures
+        all_captures
     )
     if args.resume:
         print(f"📂 Resuming dataset {args.repo_id} at {root}")
@@ -268,14 +446,16 @@ def build_recording_stack(
         )
     else:
         if root.exists():
-            for opened in captures:
+            for opened in all_captures:
                 opened.stop()
             raise SystemExit(
                 f"❌ {root} already exists — pass --resume to append or "
                 "choose another --repo-id/--dataset-root"
             )
         features = build_dataset_features(
-            [(c.name, c.height, c.width) for c in captures]
+            [(c.name, c.height, c.width) for c in all_captures],
+            include_phase=True,
+            include_ee=record_ee,
         )
         print(f"📂 Creating dataset {args.repo_id} at {root} ({fps} fps)")
         dataset = LeRobotDataset.create(
@@ -286,6 +466,19 @@ def build_recording_stack(
             robot_type=rec_cfg["dataset"]["robot_type"],
             image_writer_threads=threads_total,
         )
+
+    # Persist the RealSense intrinsics + depth scale once per dataset so the
+    # depth stream is interpretable and the setup is replicable. The camera's
+    # extrinsic pose in the rig frame is a physical measurement recorded
+    # separately (left as a null placeholder for the operator to fill).
+    depth_streams: list[str] = []
+    depth_writer = None
+    if rs_capture is not None:
+        write_realsense_meta(dataset.root, rs_capture, rs_cfg)
+        depth_streams = [rs_capture.depth_name]
+        depth_writer = DepthWriter(dataset.root, depth_streams)
+    if not args.resume:
+        write_action_space_meta(dataset.root, fps, record_ee)
 
     sidecar = None
     if sidecar_cfg["enabled"] and not args.no_sidecar:
@@ -302,10 +495,13 @@ def build_recording_stack(
         data_manager=data_manager,
         task=args.task,
         fps=fps,
-        camera_names=[c.name for c in captures],
-        cameras=captures,
+        camera_names=[c.name for c in all_captures],
+        cameras=all_captures,
         sidecar=sidecar,
         park_arms=park_arms,
+        depth_streams=depth_streams,
+        depth_writer=depth_writer,
+        record_ee=record_ee,
     )
 
 
@@ -314,8 +510,10 @@ def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--sensor-view",
         action="store_true",
-        help="Live window with tactile-camera feeds + both arms' joint "
-        "state while teleoperating (q/Esc closes just the window)",
+        help="Live window with camera feeds + both arms' joint state while "
+        "teleoperating; with --record it mirrors the recorded streams (scene, "
+        "wrist cameras, tactile, central RGB) with per-stream drift, otherwise "
+        "the sensor_map cameras (q/Esc closes just the window)",
     )
     group.add_argument(
         "--view-camera",
@@ -330,31 +528,30 @@ def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
 
 def build_sensor_view_captures(
     args: argparse.Namespace, data_manager: DualDataManager
-) -> list[CameraCapture]:
-    """Open + start the viewer's tactile-camera capture threads.
+) -> list:
+    """Open + start the viewer's camera capture threads (UVC + central RGB-D).
 
-    The view is a convenience: a camera that fails to open is warned
-    about and skipped (joints-only view if none open) — it never kills
-    teleoperation. Only NO cameras being configured at all is an error.
+    The view is a convenience: a camera that fails to open is warned about and
+    skipped (joints-only view if none open) — it never kills teleoperation. The
+    central RealSense colour stream is added when it is enabled, requested with
+    --central-depth, or assigned in sensor_map, so an assigned central camera
+    shows here without --record. Only NO camera being configured at all is an
+    error.
     """
+    from common.config_parser import load_recording_config
     from tool.test_sensor_rates import (
         SENSOR_MAP_PATH,
         load_sensor_map,
         parse_camera_spec,
     )
 
+    sensor_map = load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
     if args.view_camera:
         specs = [parse_camera_spec(spec) for spec in args.view_camera]
-    elif SENSOR_MAP_PATH.exists():
-        specs = sorted(load_sensor_map(SENSOR_MAP_PATH)["cameras"].items())
     else:
-        raise SystemExit(
-            "❌ --sensor-view has no cameras: run "
-            "tool/test_sensor_rates.py --assign once, or pass "
-            "--view-camera NAME=DEV"
-        )
+        specs = sorted((sensor_map.get("cameras") or {}).items())
 
-    captures: list[CameraCapture] = []
+    captures: list = []
     for name, device in specs:
         cam = CameraCapture(
             name=name,
@@ -372,6 +569,26 @@ def build_sensor_view_captures(
             continue
         cam.start(data_manager)
         captures.append(cam)
+
+    # Central RealSense colour stream (opens its own pipeline; only reached
+    # WITHOUT --record — the record path reuses the recorder's capture instead,
+    # so the single pipeline is never opened twice).
+    rs_capture = build_realsense_capture(
+        load_recording_config(), args, sensor_map, for_view=True
+    )
+    if rs_capture is not None:
+        if rs_capture.open():
+            rs_capture.start(data_manager)
+            captures.append(rs_capture)
+        else:
+            print("⚠️  sensor-view: central RealSense failed to open — skipped")
+
+    if not captures and not args.view_camera and not sensor_map:
+        raise SystemExit(
+            "❌ --sensor-view has no cameras: run "
+            "tool/test_sensor_rates.py --assign once, or pass "
+            "--view-camera NAME=DEV"
+        )
     if not captures:
         print("⚠️  no sensor-view camera opened — showing joint panels only")
     return captures
@@ -605,15 +822,30 @@ def main():
     # BEFORE the dataset is created; the recorder thread owns the writer.
     recorder: EpisodeRecorder | None = None
     if args.record:
-        recorder = build_recording_stack(args, data_manager, quest_reader, park_arms)
+        # EE-space features need the IK thread's targets/poses, which only run
+        # in quest mode — auto-disable them under --input leader.
+        record_ee = (not use_leader) and (not args.no_record_ee)
+        if use_leader and not args.no_record_ee:
+            print(
+                "ℹ️  leader mode: recording joint-space only (EE targets need "
+                "the IK thread, which does not run for --input leader)"
+            )
+        recorder = build_recording_stack(
+            args, data_manager, quest_reader, park_arms, record_ee=record_ee
+        )
         recorder.start()
 
     def _move_to_ready() -> None:
-        """HOMING → interpolate both arms to ready → ENABLED (teleop off)."""
+        """HOMING → interpolate both arms to the ready pose → ENABLED (teleop off).
+
+        Leader mode has no separate ready pose — the rest pose IS the ready
+        pose — so both arms interpolate to rest_pos there instead of ready_pos.
+        """
+        home = rest_pos if use_leader else ready_pos
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
         data_manager.set_teleop_state(False)
         with left_bus_lock, right_bus_lock:
-            dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
+            dual_arm.move_to_joint_pose(home, home, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
 
     def _start_leader_tracking() -> None:
@@ -658,11 +890,27 @@ def main():
         return wrapped
 
     def on_enable() -> None:
-        """Y: torque on + move to ready. Only from DISABLED."""
+        """Y: enable torque. Only from DISABLED.
+
+        Quest mode moves the followers to the ready pose first — the defined
+        start pose behind the clutch. Leader mode has no separate ready pose
+        (the rest pose IS the ready pose), so Y just turns torque on and hands
+        control straight to the leaders: the leader thread then slews the
+        followers from their current pose toward the leader pose at a bounded
+        velocity, so no homing sweep is needed.
+        """
         if data_manager.get_robot_activity_state() != RobotActivityState.DISABLED:
             print("⚠️  Y ignored: arms are not DISABLED")
             return
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
+        if use_leader:
+            print("🟢 Enabling: torque on, handing control to the leaders...")
+            with left_bus_lock, right_bus_lock:
+                dual_arm.bus_0.enable_torque()
+                dual_arm.bus_1.enable_torque()
+            data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
+            _start_leader_tracking()
+            return
         print("🟢 Enabling: moving both arms to ready pose...")
         with left_bus_lock, right_bus_lock:
             dual_arm.bus_0.enable_torque()
@@ -670,8 +918,6 @@ def main():
             dual_arm.move_to_joint_pose(ready_pos, ready_pos, 2.0)
         data_manager.set_robot_activity_state(RobotActivityState.ENABLED)
         print("✓ 🟢 Both arms at ready pose and enabled")
-        if use_leader:
-            _start_leader_tracking()
 
     def on_park() -> None:
         """X: move to rest + torque off. Only when ENABLED and not recording."""
@@ -799,9 +1045,18 @@ def main():
     print("⚠️  Press Ctrl+C to exit")
     print()
 
-    view_captures: list[CameraCapture] = []
+    view_captures: list = []
+    owned_view_captures: list = []
     if args.sensor_view:
-        view_captures = build_sensor_view_captures(args, data_manager)
+        if recorder is not None and recorder.cameras:
+            # Reuse the recorder's already-open captures: they publish RGB into
+            # the DataManager, so the view shows scene + both wrist cameras +
+            # tactile + central RGB with drift WITHOUT opening the same by-path
+            # device a second time. The recorder owns their lifecycle.
+            view_captures = list(recorder.cameras)
+        else:
+            owned_view_captures = build_sensor_view_captures(args, data_manager)
+            view_captures = owned_view_captures
     keyboard: KeyboardButtons | None = None
 
     try:
@@ -849,7 +1104,7 @@ def main():
                     leader.disconnect()
                 except Exception:
                     traceback.print_exc()
-        for cam in view_captures:
+        for cam in owned_view_captures:
             cam.stop()
         with left_bus_lock, right_bus_lock:
             dual_arm.disable_torque()

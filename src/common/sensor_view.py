@@ -47,28 +47,53 @@ _SIDE_SLICE = {"left": slice(0, 5), "right": slice(5, 10)}
 
 
 class FrameRateCounter:
-    """Counts frame-object changes to estimate a stream's live Hz.
+    """Counts frame-object changes to estimate a stream's live Hz and drops.
 
     ``set_rgb_image`` stores a fresh array object per frame, so object
-    identity change == new frame (no pixel comparison needed).
+    identity change == new frame (no pixel comparison needed). When
+    ``expected_hz`` is given, an inter-frame gap longer than ~1.5 nominal
+    periods is counted as dropped frame(s) so the live monitor can flag a
+    stream that is silently skipping frames (USB bandwidth starvation).
     """
 
-    def __init__(self, window_s: float = 2.0) -> None:
+    def __init__(self, window_s: float = 2.0, expected_hz: float = 0.0) -> None:
         self.window_s = window_s
+        self._expected_dt = 1.0 / expected_hz if expected_hz > 0 else 0.0
         self._last_obj: object | None = None
+        self._last_stamp: float | None = None
         self._stamps: deque[float] = deque()
+        self.drops = 0
 
     def tick(self, frame: object, now: float | None = None) -> None:
         if frame is None or frame is self._last_obj:
             return
+        now = time.monotonic() if now is None else now
+        if (
+            self._expected_dt > 0.0
+            and self._last_stamp is not None
+            and (now - self._last_stamp) > 1.5 * self._expected_dt
+        ):
+            self.drops += int(round((now - self._last_stamp) / self._expected_dt)) - 1
         self._last_obj = frame
-        self._stamps.append(time.monotonic() if now is None else now)
+        self._last_stamp = now
+        self._stamps.append(now)
 
     def hz(self, now: float | None = None) -> float:
         now = time.monotonic() if now is None else now
         while self._stamps and self._stamps[0] < now - self.window_s:
             self._stamps.popleft()
         return len(self._stamps) / self.window_s
+
+
+def _age_color(age_s: float | None) -> tuple[int, int, int]:
+    """BGR colour for a stream age/drift: green ≤ ½ frame, amber ≤ 1 frame, red."""
+    if age_s is None:
+        return (0, 0, 255)
+    if age_s <= 0.016:
+        return (0, 255, 0)
+    if age_s <= 0.033:
+        return (0, 210, 255)
+    return (0, 0, 255)
 
 
 def _vec5_to_dict(vec5: "np.ndarray | None", gripper: "float | None") -> dict:
@@ -142,14 +167,19 @@ def run_sensor_view_loop(
         grid_tiles,
     )
 
-    counters = {cam.name: FrameRateCounter() for cam in captures}
+    counters = {
+        cam.name: FrameRateCounter(expected_hz=float(getattr(cam, "fps", 0) or 0))
+        for cam in captures
+    }
     col2_label = "leader" if leader_mode else "cmd"
     try:
         while not data_manager.is_shutdown_requested():
+            now = time.monotonic()
             cam_tiles = []
             for cam in captures:
                 rgb = data_manager.get_rgb_image(cam.name)
-                counters[cam.name].tick(rgb)
+                counters[cam.name].tick(rgb, now)
+                age = data_manager.get_rgb_image_age(cam.name, now)
                 if rgb is None:
                     tile = np.zeros((cam.height, cam.width, 3), dtype=np.uint8)
                 else:
@@ -162,6 +192,18 @@ def run_sensor_view_loop(
                     _FONT,
                     0.7,
                     (0, 255, 0),
+                    2,
+                )
+                # Live drift line: age from the collection reference (now) +
+                # cumulative dropped-frame count, colour-coded by frame budget.
+                age_ms = "--" if age is None else f"{age * 1e3:.0f}ms"
+                cv2.putText(
+                    tile,
+                    f"drift {age_ms}  drop {counters[cam.name].drops}",
+                    (6, 52),
+                    _FONT,
+                    0.6,
+                    _age_color(age),
                     2,
                 )
                 cam_tiles.append(tile)
@@ -185,9 +227,26 @@ def run_sensor_view_loop(
                 )
             joint_row = np.hstack(cells)
 
+            # Proprio drift strip: how stale the measured joints are at the
+            # collection reference time (100 Hz stream → normally < 10 ms).
+            joints_res = data_manager.get_current_joint_angles_at(now)
+            joint_age = None if joints_res is None else joints_res[1]
+            strip = np.zeros((34, joint_row.shape[1], 3), dtype=np.uint8)
+            j_ms = "--" if joint_age is None else f"{joint_age * 1e3:.0f}ms"
+            cv2.putText(
+                strip,
+                f"joints drift {j_ms}",
+                (8, 24),
+                _FONT,
+                0.7,
+                _age_color(joint_age),
+                2,
+            )
+
             blocks = []
             if cam_tiles:
                 blocks.append(grid_tiles(cam_tiles, max_per_row=max(len(cam_tiles), 1)))
+            blocks.append(strip)
             blocks.append(joint_row)
             cv2.imshow(window, _fit_to_screen(_vstack_pad(blocks), max_w, max_h))
 

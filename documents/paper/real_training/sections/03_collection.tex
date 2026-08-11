@@ -1,0 +1,63 @@
+\section{Data-collection system}
+\label{sec:collection}
+
+The system produces two artefacts per session: a training-ready dataset and
+a full-rate diagnostic log. This section walks the two-rate design, the
+stamp-on-read rule, the reference-time alignment, the drift budget, the
+recorded stream set, and the phase flag and gating.
+
+\paragraph{Two-rate design.} A dataset carries a single frame
+rate~\citep{lerobot}, so the training-ready features are recorded at one
+fixed rate suited to the policy. Diagnosis, however, needs the control signals at their native, much
+higher rate. We therefore keep a separate full-rate side log with
+wall-clock stamps that holds every control signal, stored beside the
+dataset and never fed to the policy. The dataset trains; the side log
+explains.
+
+\paragraph{Stamp on read.} Each stream is timestamped at the instant it is
+read from its device, before any decoding or resizing, on a monotonic
+clock. Stamping at read rather than at publication means the recorded time
+reflects when the sensor was actually sampled, not when the processed
+result happened to arrive.
+
+\paragraph{Reference-time alignment.} When the recorder builds a frame it
+fixes one reference time and samples every stream at that time. Images take
+the nearest captured frame; proprioception and end-effector poses are
+interpolated to the reference time, with orientations interpolated along
+the shortest rotation. This replaces the naive rule of taking each stream's
+latest value, which would place streams captured at different instants into
+one frame as though they were simultaneous.
+
+\paragraph{Drift budget.} For every stream and every frame the collector
+records the residual between the reference time and that stream's nearest
+real sample, and a live monitor shows these residuals during collection.
+This matters because unsynchronised cameras cannot be re-phased in
+software: their capture instants are fixed by their own clocks. The honest
+deliverable is therefore a \emph{measured} drift, not a claim of perfect
+synchronisation. We target a per-stream drift well within half a frame
+period for the proprioceptive streams; the cross-camera residual is
+whatever the hardware imposes, and the monitor makes it visible so an
+operator can react to a starved bus. \unjustified{} the half-frame target
+is a working rule of thumb, not a value validated against downstream policy
+performance.
+
+\paragraph{Recorded stream set.} The dataset records the colour views, the
+overhead depth image, the twelve-dimensional proprioceptive state (five
+joints and a gripper per arm), and the executed target
+(Section~\ref{sec:contract}). Depth is sixteen-bit and is stored losslessly
+outside the colour-video pipeline, because a depth image is not
+three-channel colour and a colour-video encoder would corrupt it; the depth
+scale and camera intrinsics are stored alongside. The full-rate side log
+additionally holds the measured and target end-effector poses, the raw and
+filtered operator input, and the gripper signals. Proprioception, command
+and target share one unit convention and one channel layout, so a reader
+never has to reconcile two coordinate conventions.
+
+\paragraph{Phase flag and gating.} Each frame carries a flag stating
+whether teleoperation drove it. Homing moves and other non-teleoperation
+motion are thereby marked and can be excluded when a policy is trained, so
+the policy does not learn to freeze from frames where the recorded intent
+fell back to the measured state (Section~\ref{sec:contract}). Gating is
+strict at the episode level: if an enabled stream goes stale or the session
+faults, the episode is discarded rather than saved with a gap, so only
+clean episodes reach the dataset.

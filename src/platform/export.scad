@@ -6,6 +6,7 @@ use <camera_tower.scad>
 use <wrist_camera_mount.scad>
 use <tower_camera_cradle.scad>
 use <cam_body.scad>
+use <task_cube.scad>
 
 // ============================================================
 // EXPORT DISPATCHER — single entry point for headless STL/PNG
@@ -86,6 +87,7 @@ else if (part == "tower_assembled")      tower_assembled();
 else if (part == "wrist_camera_mount")   wrist_camera_mount();
 else if (part == "tower_camera_cradle")  tower_camera_cradle();
 else if (part == "cam_body")             cam_body();
+else if (part == "task_cube")            task_cube();
 else if (part == "wrist_assembly")       wrist_assembly();
 else if (part == "wrist_assembly_bare")  wrist_assembly(with_wrist=false);
 else if (part == "cradle_assembly")      cradle_assembly();

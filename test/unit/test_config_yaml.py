@@ -47,6 +47,7 @@ class TestFrozenSharedValues(unittest.TestCase):
     def test_handle(self):
         self.assertEqual(configs.HANDLE_PITCH_OFFSET_DEG, 65.0)
         self.assertEqual(list(configs.HANDLE_AXIS), [0.8242, 0.2110, -0.5255])
+        self.assertEqual(configs.HANDLE_ROLL_OFFSET_DEG, -90.0)
 
     def test_operator_frame(self):
         self.assertEqual(configs.OPERATOR_FRAME_BACK_M, 0.20)
@@ -116,7 +117,11 @@ class TestSharedStrictValidation(unittest.TestCase):
             "filtering": {"min_cutoff": 0.8, "beta": 5.0, "d_cutoff": 0.9},
             "clutch": {"grip_threshold": 0.9, "orientation_blend_time_s": 1.0},
             "gripper": {"open_max_frac": 0.5},
-            "handle": {"pitch_offset_deg": 65.0, "axis": [0.1, 0.2, 0.3]},
+            "handle": {
+                "pitch_offset_deg": 65.0,
+                "axis": [0.1, 0.2, 0.3],
+                "roll_offset_deg": -90.0,
+            },
             "operator_frame": {"back_m": 0.2, "up_m": 0.2},
             "envelope": {
                 "r_min": 0.08,

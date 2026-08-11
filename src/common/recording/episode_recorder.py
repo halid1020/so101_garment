@@ -27,8 +27,11 @@ import traceback
 from enum import Enum
 from typing import Any, Callable
 
+import numpy as np
+
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording import features as feat
+from common.recording.drift import DriftLog
 
 
 class RecorderState(Enum):
@@ -52,6 +55,9 @@ class EpisodeRecorder:
         sidecar: Any | None = None,
         park_arms: Callable[[], None] | None = None,
         camera_stale_s: float = 0.5,
+        depth_streams: list[str] | None = None,
+        depth_writer: Any | None = None,
+        record_ee: bool = False,
     ) -> None:
         self.dataset = dataset
         self.data_manager = data_manager
@@ -62,6 +68,21 @@ class EpisodeRecorder:
         self.sidecar = sidecar
         self.park_arms = park_arms
         self.camera_stale_s = camera_stale_s
+        # Optional aligned 16-bit depth streams (RealSense), written outside the
+        # video encoder by ``depth_writer`` (a DepthWriter), keyed by frame idx.
+        self.depth_streams = list(depth_streams) if depth_streams is not None else []
+        self.depth_writer = depth_writer
+        # EE-space features (measured pose + projected+constrained target) in
+        # each arm's own base frame. Only in quest/IK mode, where EE exists.
+        self.record_ee = record_ee
+        self._world_base_inv: dict = {}
+        if record_ee:
+            from common.recording.sidecar import compute_world_base_transforms
+
+            self._world_base_inv = {
+                side: np.linalg.inv(tf)
+                for side, tf in compute_world_base_transforms().items()
+            }
 
         self._lock = threading.Lock()
         self._state = RecorderState.IDLE
@@ -76,6 +97,10 @@ class EpisodeRecorder:
         self._frame_count = 0
         self._last_reuse_warn = 0.0
         self._last_overrun_warn = 0.0
+        # Temporal-alignment telemetry + action-fallback tally.
+        self._drift = DriftLog()
+        self._fallback_frames = 0
+        self.root = getattr(dataset, "root", None)
 
         # Episode index tracking (kept in sync with the dataset, works on
         # resume where num_episodes > 0).
@@ -109,6 +134,8 @@ class EpisodeRecorder:
         """Start the sidecar, camera threads and the record loop."""
         if self.sidecar is not None:
             self.sidecar.start()
+        if self.depth_writer is not None:
+            self.depth_writer.start()
         for cam in self.cameras:
             cam.start(self.data_manager)
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -129,6 +156,8 @@ class EpisodeRecorder:
             self.sidecar.stop()
         for cam in self.cameras:
             cam.stop()
+        if self.depth_writer is not None:
+            self.depth_writer.stop()
         try:
             self.dataset.finalize()
         except Exception:
@@ -180,8 +209,12 @@ class EpisodeRecorder:
             return
         if self.sidecar is not None:
             self.sidecar.begin_episode()
+        if self.depth_writer is not None:
+            self.depth_writer.begin_episode(self._episode_index)
         self._tick_durations = []
         self._frame_count = 0
+        self._drift.reset()
+        self._fallback_frames = 0
         with self._lock:
             self._state = RecorderState.RECORDING
         print(f"🔴 recording episode {self._episode_index} (task: {self.task!r})")
@@ -215,27 +248,109 @@ class EpisodeRecorder:
 
     def _record_frame(self) -> None:
         dm = self.data_manager
-        measured = dm.get_current_joint_angles()
-        if measured is None or len(measured) < feat.BODY_DOF * len(feat.SIDES):
+        # One reference time for the whole frame: every stream is sampled at
+        # t_ref (interpolated proprio, nearest image) and reports its drift, so
+        # the frame is temporally coherent instead of a mix of latest values.
+        t_ref = time.monotonic()
+        drifts: dict[str, float] = {}
+
+        joints_res = dm.get_current_joint_angles_at(t_ref)
+        if joints_res is None:
             return  # no joint state yet; skip this tick
-        gripper_open = {
-            side: (dm.get_current_gripper_open_value(side) or 0.0)
-            for side in feat.SIDES
-        }
+        measured, joint_drift = joints_res
+        if len(measured) < feat.BODY_DOF * len(feat.SIDES):
+            return
+        drifts["joints"] = joint_drift
+
+        gripper_open: dict[str, float] = {}
+        for side in feat.SIDES:
+            g = dm.get_current_gripper_open_value_at(side, t_ref)
+            gripper_open[side] = 0.0 if g is None else g[0]
+            drifts[f"grip_{side}"] = float("nan") if g is None else g[1]
+
         state = feat.build_observation_state(measured, gripper_open)
         last_commands = {side: dm.get_last_sent_command(side) for side in feat.SIDES}
-        action = feat.build_action(state, last_commands, time.monotonic())
+        action = feat.build_action(state, last_commands, t_ref)
 
         images = {}
         for name in self.camera_names:
-            img = dm.get_rgb_image(name)
-            if img is None:
+            res = dm.get_rgb_image_at(name, t_ref)
+            if res is None:
                 return  # guarded by staleness, but never add a None frame
-            images[name] = img
+            images[name], drifts[name] = res
 
-        frame = feat.assemble_frame(state, action, images, self.task)
+        depth_by_stream: dict = {}
+        for name in self.depth_streams:
+            res = dm.get_depth_image_at(name, t_ref)
+            if res is None:
+                return  # depth stream not ready; keep depth 1:1 with frames
+            depth_by_stream[name], drifts[f"depth_{name}"] = res
+
+        ee_pose_vec = None
+        ee_target_vec = None
+        if self.record_ee:
+            ee_res = self._sample_ee(dm, t_ref, drifts)
+            if ee_res is None:
+                return  # EE not published yet; keep EE streams 1:1 with frames
+            ee_pose_vec, ee_target_vec = ee_res
+
+        # LeRobot assigns frame_index = position in the episode buffer (0-based
+        # = frames added so far); use that so depth files/drift rows align 1:1.
+        frame_idx = self._frame_count
+        teleop_active = dm.get_teleop_active()
+        frame = feat.assemble_frame(
+            state,
+            action,
+            images,
+            self.task,
+            teleop_active,
+            ee_pose=ee_pose_vec,
+            ee_target=ee_target_vec,
+        )
         self.dataset.add_frame(frame)
         self._frame_count += 1
+        if self.depth_writer is not None and depth_by_stream:
+            self.depth_writer.add(frame_idx, depth_by_stream)
+
+        # Alignment telemetry + action-fallback tally (a stale/missing command
+        # while teleoperating means the action fell back to the measured state).
+        self._drift.add(frame_idx, t_ref, drifts)
+        if teleop_active and len(feat.fresh_sides(last_commands, t_ref)) < len(
+            feat.SIDES
+        ):
+            self._fallback_frames += 1
+
+    def _sample_ee(
+        self, dm: DualDataManager, t_ref: float, drifts: dict
+    ) -> tuple | None:
+        """Sample measured + target EE (both in own base frame) at ``t_ref``.
+
+        Returns ``(ee_pose_14, ee_target_14)`` or ``None`` if a measured EE is
+        not yet available. The target falls back to the measured pose when it
+        is stale/missing (no fresh IK target — e.g. a homing move), mirroring
+        the joint action's fallback so the label is always defined.
+        """
+        pose_vecs: dict = {}
+        target_vecs: dict = {}
+        for side in feat.SIDES:
+            m = dm.get_current_end_effector_pose_at(side, t_ref)
+            if m is None:
+                return None
+            world_pose, ee_drift = m
+            base_pose = self._world_base_inv[side] @ world_pose
+            pose_vecs[side] = feat.pose_to_vec7(base_pose)
+            drifts[f"ee_{side}"] = ee_drift
+
+            tgt = dm.get_target_pose_at(side, t_ref)
+            if tgt is not None and abs(tgt[1]) < feat.ACTION_FRESH_S:
+                target_vecs[side] = feat.pose_to_vec7(
+                    self._world_base_inv[side] @ tgt[0]
+                )
+            else:
+                target_vecs[side] = pose_vecs[side]  # fallback to measured
+        ee_pose_vec = np.concatenate([pose_vecs["left"], pose_vecs["right"]])
+        ee_target_vec = np.concatenate([target_vecs["left"], target_vecs["right"]])
+        return ee_pose_vec, ee_target_vec
 
     # ── Terminal transitions ─────────────────────────────────────────────────
 
@@ -246,6 +361,13 @@ class EpisodeRecorder:
             traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.end_episode(self._episode_index)
+        if self.depth_writer is not None:
+            self.depth_writer.end_episode()
+        if self.root is not None:
+            try:
+                self._drift.write_parquet(self.root, self._episode_index)
+            except Exception:
+                traceback.print_exc()
         self._print_stats(outcome="saved")
         self._episode_index += 1
         with self._lock:
@@ -260,6 +382,8 @@ class EpisodeRecorder:
             traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.abort_episode()
+        if self.depth_writer is not None:
+            self.depth_writer.abort_episode()
         self._print_stats(outcome=f"discarded ({reason})")
         if park and self.park_arms is not None:
             try:
@@ -321,7 +445,20 @@ class EpisodeRecorder:
             tick_msg = f"avg tick {avg:.1f} ms, worst {worst:.1f} ms"
         else:
             tick_msg = "no ticks"
+        fallback_msg = ""
+        if self._frame_count:
+            pct = 100.0 * self._fallback_frames / self._frame_count
+            fallback_msg = (
+                f", action-fallback {self._fallback_frames}/{self._frame_count} "
+                f"({pct:.0f}%)"
+            )
+        depth_msg = ""
+        if self.depth_writer is not None and self.depth_writer.dropped:
+            depth_msg = f", depth-drops {self.depth_writer.dropped}"
         print(
             f"⏹️  episode {self._episode_index} {outcome}: "
-            f"{self._frame_count} frames, {tick_msg}"
+            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}"
         )
+        if len(self._drift):
+            print("  ⏱️  stream drift from tick reference:")
+            print(self._drift.format_summary())

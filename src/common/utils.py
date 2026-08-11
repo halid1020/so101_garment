@@ -177,6 +177,19 @@ def map_head_frame_hand_to_robot_target(
     return target
 
 
+def tip_roll_matrix(roll_offset_deg: float) -> np.ndarray:
+    """Rotation about the gripper's local x (the tip/roll axis) by the offset.
+
+    Post-multiplying a gripper orientation ``[tip, y, z]`` by this matrix rolls
+    the jaws about the tip while leaving the tip direction unchanged, which is
+    how the wrist-camera framing offset (``HANDLE_ROLL_OFFSET_DEG``) reorients
+    the gripper without moving where it points.
+    """
+    r = np.radians(roll_offset_deg)
+    c, s = np.cos(r), np.sin(r)
+    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+
 def _handle_to_gripper_offset(
     handle_pitch_offset_deg: float,
     handle_axis: Sequence[float] | None = None,
@@ -216,12 +229,17 @@ def hand_to_gripper_orientation(
     hand_rot: np.ndarray,
     handle_pitch_offset_deg: float,
     handle_axis: Sequence[float] | None = None,
+    roll_offset_deg: float = 0.0,
 ) -> np.ndarray:
     """Absolute hand->gripper orientation: the gripper's long axis (EE local
     x, wrist -> tip) mirrors the controller's handle axis (top -> bottom),
     1:1 and independent of grip-press history.
+
+    ``roll_offset_deg`` adds a fixed roll about the tip (the wrist-camera
+    framing offset), applied after the handle mapping.
     """
-    return hand_rot @ _handle_to_gripper_offset(handle_pitch_offset_deg, handle_axis)
+    m = hand_rot @ _handle_to_gripper_offset(handle_pitch_offset_deg, handle_axis)
+    return m @ tip_roll_matrix(roll_offset_deg) if roll_offset_deg else m
 
 
 def hand_to_gripper_orientation_armplane(
@@ -230,6 +248,7 @@ def hand_to_gripper_orientation_armplane(
     handle_pitch_offset_deg: float,
     handle_axis: Sequence[float] | None = None,
     knuckle_axis: Sequence[float] | None = None,
+    roll_offset_deg: float = 0.0,
 ) -> np.ndarray:
     """Build a FULLY-REACHABLE gripper orientation target for a 5-DOF arm.
 
@@ -278,7 +297,11 @@ def hand_to_gripper_orientation_armplane(
         norm = np.linalg.norm(z_axis)
     z_axis = z_axis / norm
     y_axis = np.cross(z_axis, tip)
-    return np.column_stack([tip, y_axis, z_axis])
+    frame = np.column_stack([tip, y_axis, z_axis])
+    # Fixed wrist-camera framing roll about the tip (memoryless absolute
+    # mapping, so it must be added here; the incremental/hold modes inherit it
+    # through their grip anchor instead).
+    return frame @ tip_roll_matrix(roll_offset_deg) if roll_offset_deg else frame
 
 
 def signed_angle_about(axis: np.ndarray, vec: np.ndarray, ref: np.ndarray) -> float:

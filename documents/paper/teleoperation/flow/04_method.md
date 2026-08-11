@@ -15,6 +15,11 @@ S3  Armplane orientation construction (kept) + ADD: while the target
     is out of envelope the tip-azimuth reference is FROZEN, so the
     commanded roll (orthogonalised against the tip) does not drift as
     the saturated arm slides along the boundary; forward-link envelope
+    + ADD: a FIXED roll-about-tip offset frames the wrist camera on top
+    at neutral; rolls the whole target frame so tip/position are
+    untouched and the tracker + recorded EE target stay consistent; the
+    leader interface biases the wrist_roll joint identically; sign keeps
+    neutral in-band, mirrored per arm (rig choice)
 S4  Gripper orientation at engagement (kept)
 S5  Roll ratcheting and the wrist-roll limit (kept)
 S6  Workspace envelope + policies (kept), with:

@@ -80,6 +80,17 @@ handle:
   # Note the dominant +x: the tracked frame's axes are nothing like the
   # OpenXR aim convention we first assumed — measuring was the right call.
   axis: [0.8242, 0.2110, -0.5255]
+  # Fixed roll about the gripper's long axis (wrist -> tip), in degrees,
+  # applied on top of the hand/leader orientation. It reframes the wrist so
+  # the follower's wrist camera sits at the TOP of the gripper at the neutral
+  # pose (the camera looks along the gripper; without this offset it points
+  # sideways). Applied identically per arm (same wrist-camera mount on each);
+  # the target orientation is biased BEFORE IK, so the joint action and the
+  # recorded EE target stay consistent. -90 keeps the wrist_roll neutral in
+  # the URDF band; flip the sign if a side mounts the camera mirrored, and
+  # re-run tool/set_wrist_roll_limits.py after changing this (the working
+  # band shifts). Set to 0 to disable the reframe.
+  roll_offset_deg: -90.0
 
 # ---------------------------------------------------------------------------
 # Operator control frame — the robot-aligned frame rebuilt at every grip

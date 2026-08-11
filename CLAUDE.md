@@ -47,16 +47,32 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `threads/dual_ik_solver.py` (the production IK loop),
   `workspace_envelope.py` (analytic reach envelope + out-of-envelope
   policies), `pink_ik_solver.py`, `one_euro_filter.py`,
-  `data_manager_dual.py`, `utils.py` (operator control frame), and
-  `recording/` (LeRobot episode recorder behind `--record` on the real
-  teleop tool: 30 fps dataset + ~100 Hz sidecar parquet + UVC camera
-  threads; config in `src/conf/recording.yaml`, device indices are
-  per-machine placeholders).
+  `data_manager_dual.py`, `utils.py` (operator control frame),
+  `sync.py` (pure timestamped-history buffers + nearest/interpolated
+  sample selection used to align every stream to one reference time per
+  recorded frame), and `recording/` (LeRobot episode recorder behind
+  `--record` on the real teleop tool: 30 fps dataset + ~100 Hz sidecar
+  parquet + UVC camera threads; `realsense_camera.py` adds a central
+  RGB-D camera (`--central-depth`: RGB video feature + aligned 16-bit
+  depth written by `depth.py` as PNG16 under `<root>/extra/depth/`, with
+  intrinsics/scale in `<root>/meta/realsense.json`); `drift.py` logs
+  per-frame per-stream temporal drift to `<root>/extra/`; EE-space
+  features (`ee_pose` measured + `ee_target` projected+constrained,
+  neutral keys the LeRobot classifier ignores so the joint policy is
+  untouched) let either a joint- or EE-space policy train from the same
+  episodes (quest mode only; `--no-record-ee` opts out), with the
+  action-definition constants in `<root>/meta/action_space.json`; the
+  `--sensor-view` monitor shows live per-stream drift + drop counts;
+  config in `src/conf/recording.yaml`, device indices are per-machine
+  placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
   upstream* Telegrip checkout — see `documents/telegrip_native.md`),
   `check_mirror.py` / `fit_joint_offsets.py` (arm-side/offset checks),
+  `collect_preflight.py` (green/red rig-readiness table before data
+  collection: sensor map, calibrations, poses, cameras/RealSense, disk,
+  CPU governor, USB autosuspend; `--no-hardware` for config-only),
   `view_twin.py` (`--payload` shows the collection scene), `part_drawings.py`,
   the sim-VLA pair `collect_sim_dataset.py` (oracle demonstrations in the
   twin; only verified successes are saved) / `eval_sim_policy.py` (policy
@@ -169,7 +185,7 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   checkout -b <topic>`), even for docs-only changes; never commit straight
   to `main`. Finish with a commit on that branch ending in the
   `Co-Authored-By: Claude …` trailer. The user pushes/merges.
-- **Living paper rule:** there are TWO living papers, and each guards its
+- **Living paper rule:** there are THREE living papers, and each guards its
   domain in the same branch as the change:
   - `documents/paper/teleoperation/` — any change on the teleoperation
     side: methods, orientation mapping, envelope/OOE handling,
@@ -179,7 +195,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   - `documents/paper/sim_training/` — any change to the sim-VLA side:
     simulated tasks/payload/contacts, oracle demonstrators, collection
     gating/seed protocol, or the experiment protocol and its results.
-  Both build with `make paper` (or `latexmk -pdf main.tex` in the paper
+  - `documents/paper/real_training/` — any change to the real-world
+    data-collection platform: the recording system (two-rate dataset +
+    sidecar, stamp-on-read + reference-time alignment + drift budget),
+    the recorded stream set (RGB / RGB-D / tactile / proprio / joint +
+    EE targets), the teleoperation-to-autonomy contract, or the
+    replicability/readiness procedure.
+  All build with `make paper` (or `latexmk -pdf main.tex` in the paper
   dir). All paper writing follows
   `documents/academic_writing_guideline.md` (flow diagram before LaTeX,
   British English, active voice, no numbers in the abstract, no code

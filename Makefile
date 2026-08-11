@@ -30,6 +30,7 @@ test-system-vla:
 paper:
 	cd documents/paper/teleoperation && latexmk -pdf main.tex
 	cd documents/paper/sim_training && latexmk -pdf main.tex
+	cd documents/paper/real_training && latexmk -pdf main.tex
 
 lint:
 	venv/bin/pre-commit run --all-files

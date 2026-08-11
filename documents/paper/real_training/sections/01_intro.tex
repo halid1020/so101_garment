@@ -1,0 +1,49 @@
+\section{Introduction}
+
+This paper describes how we collect real-world demonstrations on a dual
+five-degree-of-freedom manipulation rig so that the data can train a
+policy which runs autonomously on the same platform. It first presents the
+collection platform, then the recording system, then the contract that
+links a teleoperated demonstration to autonomous control, then the
+measurements needed to reproduce the setup, and finally an honest account
+of the difficulties met. Each part forward-links to the next.
+
+Behaviour cloning learns a map from an observation at one moment to the
+intended command at that same moment~\citep{ross2011dagger}. A
+demonstration is therefore only as good as two properties: the observation and the intent must belong to the
+same instant, and the recorded intent must be the command the robot
+actually executed. Break either property and the policy learns a jittery
+or non-causal map that fails when it drives the arm on its own.
+
+Our rig makes both properties hard to hold. Several cameras stream over
+shared buses and arrive at slightly different times, while the arm's joint
+signals arrive several times faster. If the recorder simply takes each
+stream's most recent value when it writes a frame, the streams in that
+frame are silently skewed against one another. Separately, the operator's
+raw input is not what the arm followed: a rate limiter, the joint limits, a
+deliberately capped gripper opening, and the reachable-workspace projection
+all sit between the operator and the motors.
+
+The first idea addresses timing. Every stream is timestamped at the instant
+it is read from its device, on a monotonic clock. For each recorded frame
+the collector fixes a single reference time and samples every stream at
+that time, and it records the residual gap between the reference time and
+each stream's nearest real sample. Temporal alignment thus becomes a
+measured quantity, shown live during collection, rather than an assumption.
+
+The second idea addresses intent. We record the projected and constrained
+target --- the command the robot actually followed --- and we record it in
+both joint and end-effector form. We then require that, at inference, a
+policy's output passes back through the same command path that produced the
+labels. A joint-space policy replays through the same limiter and gripper
+cap; an end-effector policy replays through the same inverse kinematics and
+envelope projection.
+
+Our contributions are: a timestamp-aligned multi-view recorder with a
+logged per-stream drift budget (Section~\ref{sec:collection}); a
+teleoperation-to-autonomy contract that records the executed, constrained
+target for both a joint-space and an end-effector policy
+(Section~\ref{sec:contract}); a measured, reproducible platform whose
+defining constants travel with the dataset (Sections~\ref{sec:platform}
+and~\ref{sec:replicability}); and a candid difficulties record
+(Section~\ref{sec:difficulties}).

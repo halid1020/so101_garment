@@ -3,7 +3,8 @@
 Each frame stacks two blocks:
 
 * a row of the four camera panels a human wants while judging a rollout —
-  the three policy cameras (``scene``, ``wrist_left``, ``wrist_right``, the
+  the three policy cameras (``scene``, ``wrist_camera_left``,
+  ``wrist_camera_right``, the
   exact views the policy consumes) plus a free third-person ``overview``
   (``TwinSim.render_overview``); and
 * a matplotlib panel of the joint signals: the measured ``observation.state``
@@ -39,7 +40,7 @@ from common.recording.features import BODY_JOINTS
 
 # Camera panels, left to right. The first three are policy inputs; "overview"
 # is the free third-person view rendered separately by the caller.
-CAMERA_ORDER = ("scene", "wrist_left", "wrist_right", "overview")
+CAMERA_ORDER = ("scene", "wrist_camera_left", "wrist_camera_right", "overview")
 
 # 12-D state/action channel indices for each side (5 body joints + gripper),
 # matching common.recording.features.STATE_NAMES (side outer, gripper last).

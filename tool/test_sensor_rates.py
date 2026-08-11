@@ -57,11 +57,19 @@ import cv2  # type: ignore[import]  # noqa: E402
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
 
-GRIPPER_CAMERA_NAMES = [
+# Stream names offered by the --assign GUI, each bound to a stable
+# /dev/v4l/by-path node in sensor_map.yaml. The four tactile gripper cameras
+# plus the two follower wrist cameras; the wrist names match the recorder's
+# dataset feature keys (observation.images.wrist_camera_*), so a by-path
+# assignment here also drives the recording stack (build_recording_stack
+# overlays these nodes onto recording.yaml).
+ASSIGNABLE_CAMERA_NAMES = [
     "left_arm_left_gripper",
     "left_arm_right_gripper",
     "right_arm_left_gripper",
     "right_arm_right_gripper",
+    "wrist_camera_left",
+    "wrist_camera_right",
 ]
 SENSOR_MAP_PATH = _root / "src/conf/sensor_map.yaml"
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -128,6 +136,7 @@ def load_sensor_map(path: Path) -> dict:
         "cameras": dict(data.get("cameras") or {}),
         "arms": dict(data.get("arms") or {}),
         "leaders": dict(data.get("leaders") or {}),
+        "realsense": dict(data.get("realsense") or {}),
     }
 
 
@@ -137,13 +146,15 @@ def save_sensor_map(path: Path, sensor_map: dict) -> None:
             "cameras": sensor_map["cameras"],
             "arms": sensor_map["arms"],
             "leaders": sensor_map.get("leaders", {}),
+            "realsense": sensor_map.get("realsense", {}),
         },
         sort_keys=True,
     )
     path.write_text(
         "# Sensor assignments written by tool/test_sensor_rates.py.\n"
         "# Per-machine (gitignored) — re-run with --assign to redo.\n"
-        "# arms: follower ports; leaders: optional leader {port, id}.\n" + body
+        "# arms: follower ports; leaders: optional leader {port, id};\n"
+        "# realsense: central RGB-D device {serial, name}.\n" + body
     )
 
 
@@ -337,11 +348,46 @@ def discover_serial_ports() -> list[str]:
     return sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
 
 
+def discover_realsense_devices() -> list:
+    """Connected RealSense devices as ``(serial, name)`` pairs.
+
+    The RealSense is identified by its globally-unique serial (stable across
+    replug), not a /dev/video node. ``pyrealsense2`` is imported lazily so the
+    tool runs on machines without it; any failure yields an empty list rather
+    than raising (RealSense is optional).
+    """
+    try:
+        import pyrealsense2 as rs  # type: ignore[import]
+
+        out = []
+        for dev in rs.context().query_devices():
+            serial = dev.get_info(rs.camera_info.serial_number)
+            name = dev.get_info(rs.camera_info.name)
+            out.append((serial, name))
+        return sorted(out)
+    except Exception:  # noqa: BLE001 — no pyrealsense2, no permissions, no device
+        return []
+
+
+def select_realsense_serial(devices: list, prefer: "str | None" = None) -> "str | None":
+    """Pick one serial from ``(serial, name)`` devices. Pure — unit-tested.
+
+    Empty → None; a single device → its serial; several → ``prefer`` when it is
+    still connected, otherwise the first (the caller warns). ``prefer`` lets a
+    re-run keep the previously-assigned device when several are attached.
+    """
+    serials = [s for s, _ in devices]
+    if not serials:
+        return None
+    if prefer and prefer in serials:
+        return prefer
+    return serials[0]
+
+
 def list_cameras() -> None:
     devices = sorted(glob.glob("/dev/video*"), key=_video_sort_key)
     if not devices:
         print("no /dev/video* devices found")
-        return
     for dev in devices:
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if cap.isOpened() and cap.grab():
@@ -351,6 +397,12 @@ def list_cameras() -> None:
         else:
             print(f"  {dev}: not a capture device (metadata node or busy)")
         cap.release()
+    rs_devices = discover_realsense_devices()
+    if rs_devices:
+        for serial, name in rs_devices:
+            print(f"  RealSense: {name} (serial {serial})")
+    else:
+        print("  no RealSense devices found (or pyrealsense2 unavailable)")
 
 
 # ── Assignment GUI ───────────────────────────────────────────────────────────
@@ -391,7 +443,7 @@ def _assign_cameras(devices: list, existing: dict) -> dict:
                     (f"camera {i + 1}/{len(devices)}: {dev}", (0, 255, 0)),
                     ("press a gel to identify this camera", (255, 255, 255)),
                 ]
-                for k, name in enumerate(GRIPPER_CAMERA_NAMES):
+                for k, name in enumerate(ASSIGNABLE_CAMERA_NAMES):
                     node = assigned.get(name)
                     tag = f"  [{node}]" if node else ""
                     colour = (0, 255, 255) if node else (255, 255, 255)
@@ -404,8 +456,8 @@ def _assign_cameras(devices: list, existing: dict) -> dict:
                     break
                 if key in (27, ord("q")):
                     return assigned
-                if ord("1") <= key <= ord(str(len(GRIPPER_CAMERA_NAMES))):
-                    name = GRIPPER_CAMERA_NAMES[key - ord("1")]
+                if ord("1") <= key <= ord(str(len(ASSIGNABLE_CAMERA_NAMES))):
+                    name = ASSIGNABLE_CAMERA_NAMES[key - ord("1")]
                     node = stable_device_path(dev)
                     assigned = _drop_node(assigned, node)
                     assigned[name] = node
@@ -579,8 +631,30 @@ def run_assignment(sensor_map: dict) -> dict:
         _assign_serial(ports, sensor_map)
     else:
         print("  no serial ports found — arm step skipped")
+    _assign_realsense(sensor_map)
     cv2.destroyAllWindows()
     return sensor_map
+
+
+def _assign_realsense(sensor_map: dict) -> None:
+    """Detect the central RealSense and store its serial (no gel identify).
+
+    The RealSense is keyed by its stable serial, so assignment is just
+    detection: pick the connected device (keeping the previously-assigned one
+    when several are attached) and save ``{serial, name}``. Skipped with a note
+    when none is present or ``pyrealsense2`` is unavailable.
+    """
+    rs_devices = discover_realsense_devices()
+    if not rs_devices:
+        print("  no RealSense found — central-camera step skipped")
+        return
+    prev = (sensor_map.get("realsense") or {}).get("serial") or None
+    serial = select_realsense_serial(rs_devices, prefer=prev)
+    name_by_serial = dict(rs_devices)
+    if len(rs_devices) > 1:
+        print(f"  ⚠️  {len(rs_devices)} RealSense devices — using serial {serial}")
+    sensor_map["realsense"] = {"serial": serial, "name": "central"}
+    print(f"  ✓ central RealSense = {name_by_serial.get(serial, '?')} ({serial})")
 
 
 # ── Measurement phases ───────────────────────────────────────────────────────
@@ -730,8 +804,14 @@ _CAM_TILE_H = 240
 
 
 def _camera_short_label(name: str) -> str:
-    """Compact camera name for the tile overlay (e.g. ``left-left``)."""
-    return name.replace("_arm", "").replace("_gripper", "").replace("_", "-")
+    """Compact camera name for the tile overlay (e.g. ``left-left``,
+    ``wrist-left``)."""
+    return (
+        name.replace("_arm", "")
+        .replace("_gripper", "")
+        .replace("_camera", "")
+        .replace("_", "-")
+    )
 
 
 def run_view(
@@ -929,15 +1009,21 @@ def main() -> None:
     buses = []
     try:
         for name, device in camera_specs:
+            # Cameras are OPTIONAL in the view: a stream that is unplugged
+            # (its by-path node is gone) or won't open warns and is skipped,
+            # so the view still shows whatever IS connected. Only an explicit
+            # --camera override that fails is worth an abort (handled below).
             if isinstance(device, str) and not Path(device).exists():
-                raise SystemExit(
-                    f"❌ camera {name} device {device} is missing — "
-                    "replug or re-run with --assign"
-                )
+                print(f"⚠️  camera {name} device {device} missing — skipped")
+                continue
             cam = CameraProbe(
                 name, device, args.width, args.height, args.request_fps, args.fourcc
             )
-            cam.open()  # fail fast before touching the arms
+            try:
+                cam.open()
+            except SystemExit as e:
+                print(f"⚠️  {e}")
+                continue
             cameras.append(cam)
             probes.append(cam)
 

@@ -35,8 +35,8 @@ from sim_twin.scene import TwinSim
 # recorder (common.recording) so policies transfer between sim and hardware.
 CAMERAS = {
     "scene": "rgb_scene",
-    "wrist_left": "rgb_wrist_left",
-    "wrist_right": "rgb_wrist_right",
+    "wrist_camera_left": "rgb_wrist_left",
+    "wrist_camera_right": "rgb_wrist_right",
 }
 
 # Twin table top world height (build_spec puts the table top at world z = 0).

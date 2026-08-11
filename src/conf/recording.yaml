@@ -35,6 +35,26 @@ sidecar:
   # the URDF-space command. Useful for debugging the HW<->URDF boundary.
   include_hw_frame_goal: true
 
+# Central RGB-D camera (Intel RealSense). OPTIONAL: this whole section may be
+# omitted on a rig without a depth camera. The colour stream is published as a
+# normal observation.images.<rgb_name> video feature (like the UVC cameras);
+# the aligned 16-bit depth stream is stored OUTSIDE the video encoder (a
+# per-frame lossless PNG16 under <root>/extra/depth/<depth_name>/), because
+# LeRobot's video features are 3-channel uint8 and would corrupt depth. The
+# camera intrinsics, extrinsics and depth scale are written once per dataset
+# to <root>/meta/realsense.json for replicability. --central-depth on the
+# command line overrides "enabled".
+realsense:
+  enabled: false          # capture the central RGB-D camera
+  serial: ""              # device serial ("" = first RealSense found)
+  width: 640              # colour + depth width (px); depth is aligned to colour
+  height: 480             # colour + depth height (px)
+  fps: 30                 # stream frame rate (Hz); match the dataset fps
+  align_to_color: true    # align depth into the colour frame (rs.align)
+  rgb_name: central       # observation.images.<rgb_name> video feature
+  depth_name: central_depth  # name of the 16-bit depth stream on disk
+  lock_auto_exposure: true   # lock auto-exposure once settled (stable appearance)
+
 # Camera streams. Each entry maps a stream NAME to its capture settings. The
 # name becomes the LeRobotDataset feature key (observation.images.<name>).
 # Device indices are PER-MACHINE PLACEHOLDERS — you MUST set the correct
@@ -49,18 +69,22 @@ cameras:
     height: 480          # forced capture height (px)
     fps: 30              # requested device frame rate (Hz)
     rotate180: false     # rotate the frame 180 deg (camera mounted upside down)
-  # Left wrist RGB camera (follower_1 = LEFT arm).
-  wrist_left:
+  # Left wrist RGB camera (follower_1 = LEFT arm). The device index here is a
+  # fallback: once this stream is assigned in src/conf/sensor_map.yaml
+  # (tool/test_sensor_rates.py --assign) the recorder resolves it to that
+  # stable /dev/v4l/by-path node instead, so replugging cannot reorder it.
+  wrist_camera_left:
     enabled: true
-    device: 2            # PLACEHOLDER: set for your machine
+    device: 2            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480
     fps: 30
     rotate180: false
-  # Right wrist RGB camera (follower_0 = RIGHT arm).
-  wrist_right:
+  # Right wrist RGB camera (follower_0 = RIGHT arm). By-path resolved from
+  # sensor_map.yaml when assigned (see wrist_camera_left).
+  wrist_camera_right:
     enabled: true
-    device: 4            # PLACEHOLDER: set for your machine
+    device: 4            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480
     fps: 30

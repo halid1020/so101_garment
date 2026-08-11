@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from common.sync import mat_to_quat
+
 # The five actuated body joints per SO-101 arm, in URDF order.
 BODY_JOINTS = [
     "shoulder_pan",
@@ -43,14 +45,51 @@ STATE_NAMES: list[str] = [
 # joint threads write at ~100 Hz, so 30 ms comfortably admits the latest write.
 ACTION_FRESH_S = 0.030
 
+# Non-policy phase flag recorded per frame. It is a bare top-level key (not
+# under ``observation.`` and not ``action``), so LeRobot's feature classifier
+# ignores it for policy input/output (feature_utils.dataset_to_policy_features)
+# while it stays queryable in the dataset — used to mask non-teleop frames
+# (e.g. homing moves, where the action falls back to the measured state) at
+# train time. 1.0 = teleoperation active, 0.0 = not.
+TELEOP_ACTIVE_KEY = "teleop_active"
+
+# End-effector pose channels per side: 3 position + 4 quaternion (w, x, y, z),
+# expressed in that arm's OWN base frame. ``ee_pose`` is the measured pose;
+# ``ee_target`` is the projected+constrained TARGET pose (the label an EE-space
+# policy predicts). BOTH use NEUTRAL top-level keys (not ``observation.`` /
+# ``action``) so LeRobot's feature classifier ignores them for the default
+# joint-space policy — its state/action are unchanged by their presence. An
+# EE-space experiment remaps ``ee_target`` → action (and optionally ``ee_pose``
+# → an observation) explicitly, so both policies train from the SAME episodes
+# with no re-collection. Recorded only in quest/IK mode, where EE targets exist.
+_EE_COMPONENTS = ["x", "y", "z", "qw", "qx", "qy", "qz"]
+EE_NAMES: list[str] = [f"{side}_{c}" for side in SIDES for c in _EE_COMPONENTS]
+EE_DOF = len(EE_NAMES)  # 14
+OBS_EE_KEY = "ee_pose"
+ACTION_EE_KEY = "ee_target"
+
+
+def pose_to_vec7(pose_4x4: np.ndarray) -> np.ndarray:
+    """4×4 homogeneous pose → (7,) float32 [x, y, z, qw, qx, qy, qz]."""
+    p = np.asarray(pose_4x4, dtype=np.float64)
+    quat = mat_to_quat(p[:3, :3])  # (w, x, y, z)
+    return np.array([*p[:3, 3], *quat], dtype=np.float32)
+
 
 def build_dataset_features(
     camera_specs: list[tuple[str, int, int]],
+    include_phase: bool = False,
+    include_ee: bool = False,
 ) -> dict[str, dict]:
     """Return the LeRobotDataset feature spec for the enabled streams.
 
     ``camera_specs`` is a list of ``(name, height, width)`` for each ENABLED
-    camera; each becomes an ``observation.images.<name>`` video feature.
+    camera; each becomes an ``observation.images.<name>`` video feature. When
+    ``include_phase`` is set, a maskable ``teleop_active`` scalar is added (the
+    real teleop recorder opts in; the sim oracle collector leaves it off so its
+    schema is unchanged). When ``include_ee`` is set, the EE-space state
+    (``observation.ee_pose``) and target (``action_ee``) features are added so
+    an EE-space policy trains from the same episodes as the joint-space one.
     """
     features: dict[str, dict] = {
         "observation.state": {
@@ -64,13 +103,49 @@ def build_dataset_features(
             "names": list(STATE_NAMES),
         },
     }
+    if include_ee:
+        features[OBS_EE_KEY] = {
+            "dtype": "float32",
+            "shape": (EE_DOF,),
+            "names": list(EE_NAMES),
+        }
+        features[ACTION_EE_KEY] = {
+            "dtype": "float32",
+            "shape": (EE_DOF,),
+            "names": list(EE_NAMES),
+        }
     for name, height, width in camera_specs:
         features[f"observation.images.{name}"] = {
             "dtype": "video",
             "shape": (height, width, 3),
             "names": ["height", "width", "channels"],
         }
+    if include_phase:
+        features[TELEOP_ACTIVE_KEY] = {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": [TELEOP_ACTIVE_KEY],
+        }
     return features
+
+
+def fresh_sides(
+    last_commands: dict[str, tuple[np.ndarray | None, float | None, float | None]],
+    now_mono: float,
+    fresh_s: float = ACTION_FRESH_S,
+) -> set[str]:
+    """Return the sides whose last command is fresh enough to be the action.
+
+    The recorder uses this to tally how often the action fell back to the
+    measured state (a stale/missing command), which flags frames that teach a
+    spurious "hold" and should be masked or excluded at train time.
+    """
+    out: set[str] = set()
+    for side in SIDES:
+        _urdf, _grip, t_mono = last_commands[side]
+        if t_mono is not None and (now_mono - t_mono) < fresh_s:
+            out.add(side)
+    return out
 
 
 def build_observation_state(
@@ -130,17 +205,34 @@ def assemble_frame(
     action: np.ndarray,
     images: dict[str, np.ndarray],
     task: str,
+    teleop_active: bool | None = None,
+    ee_pose: np.ndarray | None = None,
+    ee_target: np.ndarray | None = None,
 ) -> dict:
     """Build the LeRobotDataset frame dict (features + task, no bookkeeping keys).
 
     ``images`` maps each enabled camera name to its RGB (H, W, 3) uint8 array.
-    Never adds timestamp/frame_index — LeRobot derives those from fps.
+    ``teleop_active`` records whether teleoperation drove this frame (for
+    train-time masking); pass ``None`` (the default, used by the sim collector)
+    to omit the key so the frame matches a feature spec built without
+    ``include_phase``. ``ee_pose`` / ``ee_target`` are the (14,) measured and
+    projected+constrained EE vectors; pass ``None`` to omit them (feature spec
+    built without ``include_ee``). Never adds timestamp/frame_index — LeRobot
+    derives those from fps.
     """
     frame: dict = {
         "observation.state": np.asarray(observation_state, dtype=np.float32),
         "action": np.asarray(action, dtype=np.float32),
         "task": task,
     }
+    if teleop_active is not None:
+        frame[TELEOP_ACTIVE_KEY] = np.array(
+            [1.0 if teleop_active else 0.0], dtype=np.float32
+        )
+    if ee_pose is not None:
+        frame[OBS_EE_KEY] = np.asarray(ee_pose, dtype=np.float32)
+    if ee_target is not None:
+        frame[ACTION_EE_KEY] = np.asarray(ee_target, dtype=np.float32)
     for name, rgb in images.items():
         frame[f"observation.images.{name}"] = rgb
     return frame

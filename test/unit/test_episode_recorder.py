@@ -24,7 +24,12 @@ import numpy as np
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording.episode_recorder import EpisodeRecorder, RecorderState
-from common.recording.features import ACTION_FRESH_S, STATE_NAMES, build_action
+from common.recording.features import (
+    ACTION_FRESH_S,
+    STATE_NAMES,
+    TELEOP_ACTIVE_KEY,
+    build_action,
+)
 
 _CAMERAS = ["cam_a", "cam_b"]
 _FPS = 100  # fast ticks so tests stay quick
@@ -146,6 +151,7 @@ class TestEpisodeRecorder(RecorderTestBase):
         expected = {
             "observation.state",
             "action",
+            TELEOP_ACTIVE_KEY,
             "task",
             *(f"observation.images.{n}" for n in _CAMERAS),
         }
@@ -224,6 +230,14 @@ class TestEpisodeRecorder(RecorderTestBase):
         # Right side had no command: falls back to measured state.
         np.testing.assert_allclose(frame["action"][6:], frame["observation.state"][6:])
 
+    def test_teleop_active_flag_recorded(self) -> None:
+        # Flag mirrors DualDataManager.get_teleop_active() at record time.
+        self.dm.set_teleop_state(True)
+        self._record_some_frames()
+        frame = self.dataset.frames[-1]
+        self.assertEqual(frame[TELEOP_ACTIVE_KEY].shape, (1,))
+        self.assertEqual(float(frame[TELEOP_ACTIVE_KEY][0]), 1.0)
+
     def test_build_action_unit(self) -> None:
         # Direct check of the pure builder (no threads involved).
         state = np.arange(12, dtype=np.float32)
@@ -249,6 +263,188 @@ class TestEpisodeRecorder(RecorderTestBase):
         self.assertTrue(
             _wait_for(lambda: self.recorder.get_state() == RecorderState.IDLE)
         )
+
+
+class FakeDepthWriter:
+    """Records DepthWriter lifecycle calls (no disk, no hardware)."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.begun: list[int] = []
+        self.added: list[int] = []
+        self.ended = 0
+        self.aborted = 0
+        self.dropped = 0
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def begin_episode(self, ep_idx: int) -> None:
+        self.begun.append(ep_idx)
+
+    def add(self, frame_index: int, depth_by_stream: dict) -> None:
+        self.added.append(frame_index)
+
+    def end_episode(self) -> None:
+        self.ended += 1
+
+    def abort_episode(self) -> None:
+        self.aborted += 1
+
+
+class TestDepthWiring(unittest.TestCase):
+    """Depth streams are sampled per frame and handed to the writer 1:1."""
+
+    def setUp(self) -> None:
+        self.dm = DualDataManager()
+        self.dm.set_robot_activity_state(RobotActivityState.ENABLED)
+        self.dm.set_current_joint_angles(np.arange(10, dtype=np.float64))
+        self.dm.set_current_gripper_open_value("left", 0.4)
+        self.dm.set_current_gripper_open_value("right", 0.6)
+        self.dataset = FakeDataset()
+        self.depth_writer = FakeDepthWriter()
+        self.recorder = EpisodeRecorder(
+            dataset=self.dataset,
+            data_manager=self.dm,
+            task="t",
+            fps=_FPS,
+            camera_names=list(_CAMERAS),
+            sidecar=None,
+            depth_streams=["central_depth"],
+            depth_writer=self.depth_writer,
+        )
+        self.pusher = FramePusher(self.dm, _CAMERAS)
+        self.pusher.start()
+        self._stop_depth = threading.Event()
+
+        def push_depth() -> None:
+            while not self._stop_depth.is_set():
+                self.dm.set_depth_image(
+                    np.zeros((6, 8), dtype=np.uint16), "central_depth"
+                )
+                time.sleep(0.002)
+
+        self._depth_thread = threading.Thread(target=push_depth, daemon=True)
+        self._depth_thread.start()
+        self.assertTrue(
+            _wait_for(
+                lambda: all(self.dm.get_rgb_image_age(n) is not None for n in _CAMERAS)
+                and self.dm.get_depth_image_age("central_depth") is not None
+            )
+        )
+        self.recorder.start()
+
+    def tearDown(self) -> None:
+        self.recorder.shutdown()
+        self._stop_depth.set()
+        self._depth_thread.join(timeout=2.0)
+        self.pusher.stop()
+
+    def test_depth_written_with_zero_based_indices_and_saved(self) -> None:
+        self.assertTrue(self.depth_writer.started)
+        self.assertTrue(self.recorder.request_start_episode())
+        self.assertTrue(_wait_for(lambda: len(self.depth_writer.added) >= 3))
+        self.assertTrue(self.recorder.request_stop_save())
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.IDLE)
+        )
+        # begin was called with the episode index; frame indices are 0-based
+        # and match the dataset add_frame count.
+        self.assertEqual(self.depth_writer.begun[0], 0)
+        self.assertEqual(self.depth_writer.added[0], 0)
+        self.assertEqual(len(self.depth_writer.added), len(self.dataset.frames))
+        self.assertEqual(self.depth_writer.ended, 1)
+        self.assertEqual(self.depth_writer.aborted, 0)
+
+
+class TestEeWiring(unittest.TestCase):
+    """record_ee samples measured + target EE (own base frame) per frame."""
+
+    def _make(self, push_target: bool):
+        dm = DualDataManager()
+        dm.set_robot_activity_state(RobotActivityState.ENABLED)
+        dm.set_current_joint_angles(np.arange(10, dtype=np.float64))
+        dm.set_current_gripper_open_value("left", 0.4)
+        dm.set_current_gripper_open_value("right", 0.6)
+        dataset = FakeDataset()
+        recorder = EpisodeRecorder(
+            dataset=dataset,
+            data_manager=dm,
+            task="t",
+            fps=_FPS,
+            camera_names=list(_CAMERAS),
+            sidecar=None,
+            record_ee=True,
+        )
+        pusher = FramePusher(dm, _CAMERAS)
+        pusher.start()
+        stop = threading.Event()
+
+        def push_ee() -> None:
+            measured = np.eye(4)
+            measured[:3, 3] = [0.3, 0.0, 0.2]
+            target = np.eye(4)
+            target[:3, 3] = [0.35, 0.05, 0.25]  # distinct from measured
+            while not stop.is_set():
+                for side in ("left", "right"):
+                    dm.set_current_end_effector_pose(side, measured)
+                    if push_target:
+                        dm.set_target_pose(side, target)
+                time.sleep(0.002)
+
+        ee_thread = threading.Thread(target=push_ee, daemon=True)
+        ee_thread.start()
+        return dm, dataset, recorder, pusher, stop, ee_thread
+
+    def test_ee_features_present_and_target_used(self):
+        dm, dataset, recorder, pusher, stop, ee_thread = self._make(push_target=True)
+        try:
+            self.assertTrue(
+                _wait_for(
+                    lambda: all(dm.get_rgb_image_age(n) is not None for n in _CAMERAS)
+                    and dm.get_current_end_effector_pose_at("left", time.monotonic())
+                    is not None
+                )
+            )
+            recorder.start()
+            self.assertTrue(recorder.request_start_episode())
+            self.assertTrue(_wait_for(lambda: len(dataset.frames) >= 3))
+            frame = dataset.frames[-1]
+            self.assertEqual(frame["ee_pose"].shape, (14,))
+            self.assertEqual(frame["ee_target"].shape, (14,))
+            # Fresh, distinct target → ee_target differs from measured ee_pose.
+            self.assertFalse(np.allclose(frame["ee_target"], frame["ee_pose"]))
+        finally:
+            recorder.shutdown()
+            stop.set()
+            ee_thread.join(timeout=2.0)
+            pusher.stop()
+
+    def test_ee_target_falls_back_to_measured_when_no_target(self):
+        dm, dataset, recorder, pusher, stop, ee_thread = self._make(push_target=False)
+        try:
+            self.assertTrue(
+                _wait_for(
+                    lambda: all(dm.get_rgb_image_age(n) is not None for n in _CAMERAS)
+                    and dm.get_current_end_effector_pose_at("left", time.monotonic())
+                    is not None
+                )
+            )
+            recorder.start()
+            self.assertTrue(recorder.request_start_episode())
+            self.assertTrue(_wait_for(lambda: len(dataset.frames) >= 3))
+            frame = dataset.frames[-1]
+            # No target ever published → ee_target falls back to measured pose.
+            np.testing.assert_allclose(frame["ee_target"], frame["ee_pose"])
+        finally:
+            recorder.shutdown()
+            stop.set()
+            ee_thread.join(timeout=2.0)
+            pusher.stop()
 
 
 class TestCameraStalenessDiscard(RecorderTestBase):

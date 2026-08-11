@@ -1,0 +1,23 @@
+\section{Conclusion and ongoing work}
+\label{sec:conclusion}
+
+We have described a real-world data-collection platform whose design is
+governed by a single requirement: the recorded data must let a policy run
+autonomously on the same rig. Two commitments follow from that requirement.
+Every stream is timestamped on read and aligned to one reference time per
+frame, with the residual drift logged, so temporal quality is measured
+rather than assumed. And the recorded action is the constrained command the
+robot actually executed, stored in both joint and end-effector form, with a
+contract that inference replays a policy's output through the identical
+command path.
+
+The platform is measured and its defining constants travel with each
+dataset, a readiness check confirms the rig is at a fixed collection state,
+and the difficulties section keeps an honest record of what remains
+imperfect --- chiefly the irreducible cross-camera skew and the several
+thresholds still set by convention.
+
+This is a living document. An experiments section will report the first
+datasets collected on the platform, the measured drift budgets achieved,
+and the autonomous performance of a joint-space and an end-effector policy
+trained from the same episodes, once those runs exist.
