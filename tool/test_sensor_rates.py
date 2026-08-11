@@ -136,6 +136,7 @@ def load_sensor_map(path: Path) -> dict:
         "cameras": dict(data.get("cameras") or {}),
         "arms": dict(data.get("arms") or {}),
         "leaders": dict(data.get("leaders") or {}),
+        "realsense": dict(data.get("realsense") or {}),
     }
 
 
@@ -145,13 +146,15 @@ def save_sensor_map(path: Path, sensor_map: dict) -> None:
             "cameras": sensor_map["cameras"],
             "arms": sensor_map["arms"],
             "leaders": sensor_map.get("leaders", {}),
+            "realsense": sensor_map.get("realsense", {}),
         },
         sort_keys=True,
     )
     path.write_text(
         "# Sensor assignments written by tool/test_sensor_rates.py.\n"
         "# Per-machine (gitignored) — re-run with --assign to redo.\n"
-        "# arms: follower ports; leaders: optional leader {port, id}.\n" + body
+        "# arms: follower ports; leaders: optional leader {port, id};\n"
+        "# realsense: central RGB-D device {serial, name}.\n" + body
     )
 
 
@@ -345,11 +348,46 @@ def discover_serial_ports() -> list[str]:
     return sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
 
 
+def discover_realsense_devices() -> list:
+    """Connected RealSense devices as ``(serial, name)`` pairs.
+
+    The RealSense is identified by its globally-unique serial (stable across
+    replug), not a /dev/video node. ``pyrealsense2`` is imported lazily so the
+    tool runs on machines without it; any failure yields an empty list rather
+    than raising (RealSense is optional).
+    """
+    try:
+        import pyrealsense2 as rs  # type: ignore[import]
+
+        out = []
+        for dev in rs.context().query_devices():
+            serial = dev.get_info(rs.camera_info.serial_number)
+            name = dev.get_info(rs.camera_info.name)
+            out.append((serial, name))
+        return sorted(out)
+    except Exception:  # noqa: BLE001 — no pyrealsense2, no permissions, no device
+        return []
+
+
+def select_realsense_serial(devices: list, prefer: "str | None" = None) -> "str | None":
+    """Pick one serial from ``(serial, name)`` devices. Pure — unit-tested.
+
+    Empty → None; a single device → its serial; several → ``prefer`` when it is
+    still connected, otherwise the first (the caller warns). ``prefer`` lets a
+    re-run keep the previously-assigned device when several are attached.
+    """
+    serials = [s for s, _ in devices]
+    if not serials:
+        return None
+    if prefer and prefer in serials:
+        return prefer
+    return serials[0]
+
+
 def list_cameras() -> None:
     devices = sorted(glob.glob("/dev/video*"), key=_video_sort_key)
     if not devices:
         print("no /dev/video* devices found")
-        return
     for dev in devices:
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if cap.isOpened() and cap.grab():
@@ -359,6 +397,12 @@ def list_cameras() -> None:
         else:
             print(f"  {dev}: not a capture device (metadata node or busy)")
         cap.release()
+    rs_devices = discover_realsense_devices()
+    if rs_devices:
+        for serial, name in rs_devices:
+            print(f"  RealSense: {name} (serial {serial})")
+    else:
+        print("  no RealSense devices found (or pyrealsense2 unavailable)")
 
 
 # ── Assignment GUI ───────────────────────────────────────────────────────────
@@ -587,8 +631,30 @@ def run_assignment(sensor_map: dict) -> dict:
         _assign_serial(ports, sensor_map)
     else:
         print("  no serial ports found — arm step skipped")
+    _assign_realsense(sensor_map)
     cv2.destroyAllWindows()
     return sensor_map
+
+
+def _assign_realsense(sensor_map: dict) -> None:
+    """Detect the central RealSense and store its serial (no gel identify).
+
+    The RealSense is keyed by its stable serial, so assignment is just
+    detection: pick the connected device (keeping the previously-assigned one
+    when several are attached) and save ``{serial, name}``. Skipped with a note
+    when none is present or ``pyrealsense2`` is unavailable.
+    """
+    rs_devices = discover_realsense_devices()
+    if not rs_devices:
+        print("  no RealSense found — central-camera step skipped")
+        return
+    prev = (sensor_map.get("realsense") or {}).get("serial") or None
+    serial = select_realsense_serial(rs_devices, prefer=prev)
+    name_by_serial = dict(rs_devices)
+    if len(rs_devices) > 1:
+        print(f"  ⚠️  {len(rs_devices)} RealSense devices — using serial {serial}")
+    sensor_map["realsense"] = {"serial": serial, "name": "central"}
+    print(f"  ✓ central RealSense = {name_by_serial.get(serial, '?')} ({serial})")
 
 
 # ── Measurement phases ───────────────────────────────────────────────────────
