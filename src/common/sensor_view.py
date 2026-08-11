@@ -46,6 +46,20 @@ _JOINT_NAMES = [
 # 10-DOF joint-vector layout used throughout the teleop stack.
 _SIDE_SLICE = {"left": slice(0, 5), "right": slice(5, 10)}
 
+# Cameras that are opened for recording/teleop but NOT drawn in the live
+# monitor. "scene" is hidden from the view (its tile crowded the panel without
+# aiding teleoperation); it is still recorded like any other stream.
+VIEW_HIDDEN_CAMERAS = {"scene"}
+
+
+def visible_view_captures(captures: list, hidden: "set[str]" = VIEW_HIDDEN_CAMERAS):
+    """Captures to draw in the live view, dropping ``hidden`` camera names.
+
+    Filters the display only — hidden cameras are still recorded. Pure —
+    unit-tested.
+    """
+    return [c for c in captures if getattr(c, "name", None) not in hidden]
+
 
 class FrameRateCounter:
     """Counts frame-object changes to estimate a stream's live Hz and drops.
@@ -274,6 +288,9 @@ def run_sensor_view_loop(
     manager; the layout itself is built by ``compose_sensor_view_frame``.
     """
     from tool.test_sensor_rates import _camera_short_label
+
+    # Drop cameras hidden from the monitor (e.g. "scene"); still recorded.
+    captures = visible_view_captures(captures)
 
     # One rate counter per displayed stream: each camera's RGB plus, for a
     # RealSense, its depth stream (a distinct key so both rates are tracked).

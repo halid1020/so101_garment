@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from common.sensor_view import (
+    VIEW_HIDDEN_CAMERAS,
     FrameRateCounter,
     ViewPanel,
     _age_color,
@@ -12,6 +13,7 @@ from common.sensor_view import (
     colourise_depth,
     compose_sensor_view_frame,
     side_joint_dict,
+    visible_view_captures,
 )
 
 
@@ -174,6 +176,29 @@ class TestComposeSensorViewFrame(unittest.TestCase):
             [], self._cols(), self._cols(), "cmd", joint_strip=None
         )
         self.assertGreater(out.shape[0], 0)
+
+
+class _Cam:
+    def __init__(self, name):
+        self.name = name
+
+
+class TestVisibleViewCaptures(unittest.TestCase):
+    def test_scene_hidden_by_default(self):
+        cams = [_Cam("scene"), _Cam("wrist_camera_left"), _Cam("central")]
+        out = visible_view_captures(cams)
+        self.assertEqual([c.name for c in out], ["wrist_camera_left", "central"])
+        self.assertIn("scene", VIEW_HIDDEN_CAMERAS)
+
+    def test_custom_hidden_set(self):
+        cams = [_Cam("scene"), _Cam("wrist_camera_left")]
+        out = visible_view_captures(cams, hidden={"wrist_camera_left"})
+        self.assertEqual([c.name for c in out], ["scene"])
+
+    def test_nothing_hidden_when_empty(self):
+        cams = [_Cam("scene"), _Cam("central")]
+        out = visible_view_captures(cams, hidden=set())
+        self.assertEqual(len(out), 2)
 
 
 if __name__ == "__main__":
