@@ -61,3 +61,12 @@ fell back to the measured state (Section~\ref{sec:contract}). Gating is
 strict at the episode level: if an enabled stream goes stale or the session
 faults, the episode is discarded rather than saved with a gap, so only
 clean episodes reach the dataset.
+
+\paragraph{Session consistency.} A dataset is usually gathered over several
+sittings, so its stream configuration must not drift between them. When a
+session extends an existing dataset, the recorder reads back which streams
+that dataset already holds --- the colour cameras, whether depth is present,
+whether the end-effector channels were stored, and the frame rate --- and
+follows them, rather than trusting flags typed afresh each time. The operator
+therefore names the dataset and the task; the schema comes from the dataset
+itself, and every episode in it shares one definition.
