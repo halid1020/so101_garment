@@ -47,6 +47,7 @@ Controls (the Y/X/A/B semantics apply even WITHOUT --record):
 """
 
 import argparse
+import os
 import shutil
 import sys
 import threading
@@ -1109,6 +1110,17 @@ def main():
         with left_bus_lock, right_bus_lock:
             dual_arm.disable_torque()
         print("👋 Done.")
+        # Hard-exit to skip interpreter finalisation. pyrealsense2 keeps an
+        # internal C++ context thread that pipeline.stop() does not fully join;
+        # at normal shutdown CPython force-unwinds it via pthread_exit, which
+        # raises a forced-unwind exception across librealsense's non-unwindable
+        # callback boundary -> std::terminate -> SIGABRT. On Ubuntu apport then
+        # dumps a ~500 MB core to /var/crash on EVERY run. All our own teardown
+        # (torque off, cameras/pipeline stopped, leaders disconnected) has
+        # already run above, so exiting now is clean for us and dodges the abort.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
