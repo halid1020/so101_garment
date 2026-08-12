@@ -66,12 +66,17 @@ sinfo -s
 # account, if the cluster enforces one  ->  <account>   (empty output => delete the sbatch --account line)
 sacctmgr -np show assoc user=$USER format=account
 
-# a Python >=3.12 module  ->  <python-module>
-module avail python 2>&1 | grep -iE '3\.1[2-9]'
+# a Python >=3.12 module, IF one exists  ->  <python-module>
+module avail python 2>&1 | grep -iE 'python[-/][._]*3\.1[2-9]'
 ```
 
 Python must be **≥3.12** — LeRobot's editable install silently fails on an
-older `python3` (see CLAUDE.md).
+older `python3` (see CLAUDE.md). **CREATE has no ≥3.12 module today** (the
+command above comes back empty; its 3.10/3.11 modules are too old), so
+`provision_create.sh` bootstraps a self-contained CPython 3.12 with
+[`uv`](https://docs.astral.sh/uv/) automatically — nothing to `module
+load`. If your cluster *does* expose a ≥3.12 module, note its name as
+`<python-module>` and load it in step 4 to use it instead.
 
 ### 3. Clone the repo — *login node*
 
@@ -89,9 +94,16 @@ The login node has internet; compute nodes do **not**, which is why this
 (and the cache warm-up) happens here.
 
 ```bash
-module load <python-module>
+# module load <python-module>   # ONLY if step 2 found a >=3.12 module
 bash hpc/provision_create.sh
 ```
+
+On CREATE there is no ≥3.12 module, so leave the `module load` out: the
+script finds no qualifying `python3` and bootstraps a standalone CPython
+3.12 with `uv` (it installs `uv` to `~/.local/bin` on first run). It then
+prints `=> Using interpreter: … (Python 3.12.x)` and continues. If step 2
+*did* find a module, `module load` it first and the script uses that
+instead.
 
 Success signals: the venv builds and the script prints
 `✓ ResNet18 weights cached …` then `✓ CREATE provisioning complete`.
@@ -168,8 +180,12 @@ rsync -avP \
   is likely on a GPU other than the one Slurm gave you: uncomment
   `MUJOCO_EGL_DEVICE_ID` in the sbatch (it pins MuJoCo to the allocated
   GPU).
-- **`Python … < 3.12`** from provisioning — you did not `module load` the
-  ≥3.12 module (step 2) before running it.
+- **Provisioning can't get Python ≥3.12** — normally the `uv` bootstrap
+  handles this, but it needs the login node's internet. If `uv` itself
+  fails to install (`❌ uv not found after install`), check `curl` and
+  outbound HTTPS work on this node, or `module load` a ≥3.12 module if one
+  exists (step 2) and re-run. Never run `provision_create.sh` on a compute
+  node — they are offline.
 - **Hit the wall-time** — resubmit with the **same** `--run-name` (edit the
   sbatch to hard-code it instead of `create_${SLURM_JOB_ID}`); the driver
   reuses finished checkpoints, val results and eval results.

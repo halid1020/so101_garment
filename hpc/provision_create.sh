@@ -14,8 +14,10 @@
 # and their `sudo apt install` steps abort on a cluster with no sudo.
 #
 # Run ONCE, on a CREATE *login* node (compute nodes have no internet):
-#     module load <a Python >=3.12 module>     # see hpc/README.md
 #     bash hpc/provision_create.sh
+# It needs a Python >=3.12: it uses one on PATH if present (e.g. a
+# `module load`ed Python), else bootstraps a standalone CPython via `uv`
+# (CREATE has no >=3.12 module -- see hpc/README.md).
 #
 # Idempotent: safe to re-run. The pins below MUST match install.sh --
 # keep them in sync if install.sh changes.
@@ -29,21 +31,47 @@ LEROBOT_EXTRAS="feetech,dataset,pi,libero,pusht,training,diffusion,peft"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# LeRobot requires Python >=3.12. On CREATE, `module load` a suitable
-# Python before running this so that `python3` below resolves to >=3.12 --
-# a venv built on an older python3 silently fails LeRobot's editable
-# install (see CLAUDE.md: the Anaconda-python3.9-ahead-of-PATH pitfall).
-py_ver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-echo "=> python3 = $(command -v python3) (Python ${py_ver})"
-case "$py_ver" in
-    3.1[2-9] | 3.[2-9][0-9]) : ;;
-    *) echo "❌ Python ${py_ver} < 3.12 -- module load a newer Python first." >&2; exit 1 ;;
-esac
+# LeRobot requires Python >=3.12, and a venv built on an older python3
+# silently fails its editable install (see CLAUDE.md: the
+# Anaconda-python3.9-ahead-of-PATH pitfall). We resolve a >=3.12
+# interpreter into $PYTHON: first anything already on PATH (e.g. a
+# `module load`ed Python), otherwise a self-contained CPython bootstrapped
+# with `uv`. CREATE has NO >=3.12 module (`module avail python` shows only
+# 3.10/3.11), so the uv path is the normal one there: the login node has
+# internet, and uv stores the interpreter under ~/.local (shared home), so
+# the compute node sees it through the venv that references it.
+py_ok() {  # return 0 iff "$1" is a runnable Python >=3.12
+    command -v "$1" >/dev/null 2>&1 || return 1
+    local v
+    v="$("$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" || return 1
+    case "$v" in 3.1[2-9] | 3.[2-9][0-9]) return 0 ;; *) return 1 ;; esac
+}
+
+PYTHON=""
+for cand in python3.13 python3.12 python3; do
+    if py_ok "$cand"; then PYTHON="$(command -v "$cand")"; break; fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo "=> No Python >=3.12 on PATH; bootstrapping a standalone one with uv..."
+    if ! command -v uv >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    fi
+    # uv installs to ~/.local/bin (or ~/.cargo/bin on older installers).
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    command -v uv >/dev/null 2>&1 || {
+        echo "❌ uv not found after install -- is curl/internet available on this node?" >&2
+        exit 1
+    }
+    uv python install 3.12
+    PYTHON="$(uv python find 3.12)"
+fi
+echo "=> Using interpreter: ${PYTHON} ($("$PYTHON" --version))"
 
 # 1. Virtual environment ------------------------------------------------
 if [ ! -d venv ]; then
     echo "=> Creating Python venv..."
-    python3 -m venv venv
+    "$PYTHON" -m venv venv
 fi
 # shellcheck disable=SC1091
 source venv/bin/activate
