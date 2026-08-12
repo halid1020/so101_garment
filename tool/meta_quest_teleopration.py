@@ -47,6 +47,7 @@ Controls (the Y/X/A/B semantics apply even WITHOUT --record):
 """
 
 import argparse
+import os
 import shutil
 import sys
 import threading
@@ -597,18 +598,20 @@ def build_sensor_view_captures(
 def connect_leader_arms() -> dict:
     """Connect the two SO-101 leader arms for ``--input leader``.
 
-    Ports and calibration ids come from ``src/conf/sensor_map.yaml``
-    (assigned with ``tool/test_sensor_rates.py --assign``), NOT robot.yaml
-    — the sensor tool is the single source of truth for which physical
-    leader is which. ``connect(calibrate=False)`` loads each leader's
-    existing calibration without the interactive stdin prompt. Torque is
-    left off (the leaders stay back-drivable).
+    Each leader's PORT comes from ``src/conf/sensor_map.yaml`` (assigned
+    with ``tool/test_sensor_rates.py --assign``), which is the single
+    source of truth for which physical leader is which. Its calibration
+    ID is fixed by side in ``robot.yaml`` (``LEADER_ID_LEFT/RIGHT``), so
+    assignment no longer stores it. ``connect(calibrate=False)`` loads
+    each leader's existing calibration without the interactive stdin
+    prompt. Torque is left off (the leaders stay back-drivable).
 
     Returns ``{"left": SOLeader, "right": SOLeader}``.
     """
     from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
     from lerobot.teleoperators.so_leader.so_leader import SOLeader
 
+    from common.follower_bus import leader_calib_id_for_side
     from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
     hint = "run tool/test_sensor_rates.py --assign and assign leader right/left"
@@ -621,11 +624,12 @@ def connect_leader_arms() -> dict:
     leaders: dict = {}
     for side in ("left", "right"):
         entry = leaders_map.get(side) or {}
-        port, calib_id = entry.get("port"), entry.get("id")
-        if not port or not calib_id:
+        port = entry.get("port")
+        if not port:
             raise SystemExit(
                 f"❌ leader {side} not assigned in sensor_map.yaml — {hint}"
             )
+        calib_id = leader_calib_id_for_side(side)
         cfg = SOLeaderTeleopConfig(port=port, id=calib_id, use_degrees=True)
         leader = SOLeader(cfg)
         print(f"🕹️  connecting {side} leader ({calib_id}) on {port} ...")
@@ -1109,6 +1113,17 @@ def main():
         with left_bus_lock, right_bus_lock:
             dual_arm.disable_torque()
         print("👋 Done.")
+        # Hard-exit to skip interpreter finalisation. pyrealsense2 keeps an
+        # internal C++ context thread that pipeline.stop() does not fully join;
+        # at normal shutdown CPython force-unwinds it via pthread_exit, which
+        # raises a forced-unwind exception across librealsense's non-unwindable
+        # callback boundary -> std::terminate -> SIGABRT. On Ubuntu apport then
+        # dumps a ~500 MB core to /var/crash on EVERY run. All our own teardown
+        # (torque off, cameras/pipeline stopped, leaders disconnected) has
+        # already run above, so exiting now is clean for us and dodges the abort.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

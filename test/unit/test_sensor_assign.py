@@ -46,12 +46,14 @@ class TestParseCameraSpec(unittest.TestCase):
 
 class TestSensorMapRoundTrip(unittest.TestCase):
     def test_save_then_load(self):
+        # Leaders now store only their port; the calibration id is fixed by
+        # side in robot.yaml (LEADER_ID_LEFT/RIGHT), not in the map.
         sensor_map = {
             "cameras": {"left_arm_left_gripper": "/dev/video4"},
             "arms": {"right": "/dev/ttyACM0", "left": "/dev/ttyACM1"},
             "leaders": {
-                "right": {"port": "/dev/ttyACM2", "id": "leader_0"},
-                "left": {"port": "/dev/ttyACM3", "id": "leader_1"},
+                "right": {"port": "/dev/ttyACM2"},
+                "left": {"port": "/dev/ttyACM3"},
             },
             "realsense": {"serial": "ABC123", "name": "central"},
         }
@@ -59,6 +61,18 @@ class TestSensorMapRoundTrip(unittest.TestCase):
             path = Path(tmp) / "sensor_map.yaml"
             save_sensor_map(path, sensor_map)
             self.assertEqual(load_sensor_map(path), sensor_map)
+
+    def test_legacy_leader_id_is_tolerated(self):
+        # A map written before the id-free assignment change still loads;
+        # the extra "id" key is preserved but consumers ignore it.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sensor_map.yaml"
+            path.write_text(
+                "arms: {right: /dev/ttyACM0, left: /dev/ttyACM1}\n"
+                "leaders:\n  right: {port: /dev/ttyACM2, id: leader_0}\n"
+            )
+            loaded = load_sensor_map(path)
+            self.assertEqual(loaded["leaders"]["right"]["port"], "/dev/ttyACM2")
 
     def test_save_without_leaders_key_defaults_empty(self):
         # Old callers may build a map without a leaders section.
@@ -172,6 +186,21 @@ class TestDiscoverLeaderCalibIds(unittest.TestCase):
             self.assertEqual(fb.discover_leader_calib_ids(), [])
         finally:
             fb._leader_calib_dir = orig
+
+
+class TestLeaderCalibIdForSide(unittest.TestCase):
+    def test_reads_side_ids_from_robot_yaml(self):
+        from common.follower_bus import leader_calib_id_for_side
+
+        # The locked convention (src/conf/robot.yaml LEADER_ID_LEFT/RIGHT).
+        self.assertEqual(leader_calib_id_for_side("left"), "leader_left")
+        self.assertEqual(leader_calib_id_for_side("right"), "leader_right")
+
+    def test_invalid_side_raises(self):
+        from common.follower_bus import leader_calib_id_for_side
+
+        with self.assertRaises(ValueError):
+            leader_calib_id_for_side("middle")
 
 
 class TestGridTiles(unittest.TestCase):

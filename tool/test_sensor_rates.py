@@ -17,11 +17,12 @@ serial ports, several /dev/video nodes), so the tool carries a runtime
 each detected camera's live feed — press a gel to identify it, then
 keys 1-4 name it (left_arm_left_gripper, ...) — and each serial port's
 live raw joint ticks — wiggle an arm to identify it, then assign it a
-role: follower right/left, or leader right/left (leaders also pick their
-calibration id, leader_0/leader_1). Assignments are saved to
+role: follower right/left, or leader right/left. Assignments are saved to
 ``src/conf/sensor_map.yaml`` (per-machine, gitignored) and reused on
-later runs. Follower joints show as calibrated degrees; leader joints
-show as calibrated degrees too (via their leader_N calibration).
+later runs. A leader's calibration id is fixed by side (LEADER_ID_LEFT /
+LEADER_ID_RIGHT in robot.yaml), so assignment stores only its port.
+Follower joints show as calibrated degrees; leader joints show as
+calibrated degrees too (via that side's leader calibration).
 
 Usage:
 
@@ -128,8 +129,10 @@ def load_sensor_map(path: Path) -> dict:
     """Read the saved assignment map; missing sections become empty.
 
     ``arms`` holds follower ports (``{side: node}``); ``leaders`` holds
-    the optional leader arms (``{side: {port: node, id: leader_N}}``).
-    Old maps without a ``leaders`` section load as ``{}`` (leaders off).
+    the optional leader arms (``{side: {port: node}}`` — the calibration
+    id is fixed by side in robot.yaml, not stored here). Old maps without
+    a ``leaders`` section load as ``{}`` (leaders off); a legacy ``id``
+    key is loaded but ignored.
     """
     data = yaml.safe_load(path.read_text()) or {}
     return {
@@ -153,7 +156,7 @@ def save_sensor_map(path: Path, sensor_map: dict) -> None:
     path.write_text(
         "# Sensor assignments written by tool/test_sensor_rates.py.\n"
         "# Per-machine (gitignored) — re-run with --assign to redo.\n"
-        "# arms: follower ports; leaders: optional leader {port, id};\n"
+        "# arms: follower ports; leaders: optional leader {port};\n"
         "# realsense: central RGB-D device {serial, name}.\n" + body
     )
 
@@ -507,15 +510,14 @@ def _assign_serial(ports: list, sensor_map: dict) -> None:
     """Assign each serial port to a role: follower or leader, right/left.
 
     Wiggle an arm to see which port's ticks move, then press a role key.
-    Leader roles also pick a calibration id (leader_0/leader_1) so the
-    later view can show calibrated degrees. Mutates ``sensor_map`` in
-    place ("arms" = followers, "leaders" = {side: {port, id}}).
+    A leader role stores only the port; its calibration id is fixed by
+    side in robot.yaml. Mutates ``sensor_map`` in place ("arms" =
+    followers, "leaders" = {side: {port}}).
     """
     from lerobot.motors.feetech import FeetechMotorsBus
 
-    from common.follower_bus import discover_leader_calib_ids, follower_motors
+    from common.follower_bus import follower_motors
 
-    leader_ids = discover_leader_calib_ids()
     for i, port in enumerate(ports):
         # Uncalibrated identification bus: raw ticks only, torque off.
         bus = FeetechMotorsBus(port=port, motors=follower_motors())
@@ -530,7 +532,7 @@ def _assign_serial(ports: list, sensor_map: dict) -> None:
                 pass
             continue
         try:
-            if _interact_serial_port(bus, port, i, len(ports), sensor_map, leader_ids):
+            if _interact_serial_port(bus, port, i, len(ports), sensor_map):
                 return  # user pressed q — finish the whole serial step
         finally:
             try:
@@ -539,19 +541,16 @@ def _assign_serial(ports: list, sensor_map: dict) -> None:
                 print(f"⚠️  {port} disconnect failed: {e}")
 
 
-def _interact_serial_port(
-    bus, port: str, i: int, n: int, sensor_map: dict, leader_ids: list
-) -> bool:
+def _interact_serial_port(bus, port: str, i: int, n: int, sensor_map: dict) -> bool:
     """Drive the assign menu for one port. Returns True iff the user quit.
 
-    A single ``waitKey`` loop with two modes: the role menu, and (after
-    a leader role) the calibration-id picker. The raw ticks keep
-    streaming in both so the wiggle stays visible throughout.
+    A single ``waitKey`` role menu: the raw joint ticks stream live so
+    the wiggle stays visible while the operator picks a role. A leader
+    role stores only the port (its calibration id is fixed by side in
+    robot.yaml).
     """
     baseline: dict | None = None
     positions: dict = {}
-    mode = "role"  # "role" or "leader"
-    pending_side = ""
     while True:
         try:
             positions = bus.sync_read("Present_Position", normalize=False, num_retry=0)
@@ -567,53 +566,32 @@ def _interact_serial_port(
         ]
         lines += _tick_lines(positions, baseline)
         lines.append(("", (255, 255, 255)))
-        if mode == "role":
-            lines += [
-                (" 1 follower right    2 follower left", (255, 255, 255)),
-                (" 3 leader right      4 leader left", (255, 255, 255)),
-                (" s skip   q finish", (255, 255, 255)),
-            ]
-        else:
-            lines.append(
-                (f" leader {pending_side}: pick calibration id", (0, 255, 255))
-            )
-            for k, cid in enumerate(leader_ids):
-                lines.append((f"  {k + 1}  {cid}", (255, 255, 255)))
-            lines.append((" s cancel", (255, 255, 255)))
+        lines += [
+            (" 1 follower right    2 follower left", (255, 255, 255)),
+            (" 3 leader right      4 leader left", (255, 255, 255)),
+            (" s skip   q finish", (255, 255, 255)),
+        ]
         _put_lines(panel, lines)
         cv2.imshow(_ASSIGN_WINDOW, panel)
         key = cv2.waitKey(30) & 0xFF
 
-        if mode == "role":
-            if key == ord("s"):
-                return False
-            if key in (27, ord("q")):
-                return True
-            if key in (ord("1"), ord("2")):
-                side = "right" if key == ord("1") else "left"
-                node = stable_device_path(port)
-                _drop_serial_node(sensor_map, node)
-                sensor_map["arms"][side] = node
-                print(f"  ✓ follower {side} = {node}")
-                return False
-            if key in (ord("3"), ord("4")):
-                if not leader_ids:
-                    print(
-                        "  ⚠️  no leader calibration found — run "
-                        "lerobot-calibrate --teleop.type=so101_leader first"
-                    )
-                    continue
-                mode, pending_side = "leader", ("right" if key == ord("3") else "left")
-        else:  # leader id picker
-            if key in (27, ord("s")):
-                mode, pending_side = "role", ""
-            elif ord("1") <= key <= ord(str(min(len(leader_ids), 9))):
-                cid = leader_ids[key - ord("1")]
-                node = stable_device_path(port)
-                _drop_serial_node(sensor_map, node)
-                sensor_map["leaders"][pending_side] = {"port": node, "id": cid}
-                print(f"  ✓ leader {pending_side} = {node} ({cid})")
-                return False
+        if key == ord("s"):
+            return False
+        if key in (27, ord("q")):
+            return True
+        node = stable_device_path(port)
+        if key in (ord("1"), ord("2")):
+            side = "right" if key == ord("1") else "left"
+            _drop_serial_node(sensor_map, node)
+            sensor_map["arms"][side] = node
+            print(f"  ✓ follower {side} = {node}")
+            return False
+        if key in (ord("3"), ord("4")):
+            side = "right" if key == ord("3") else "left"
+            _drop_serial_node(sensor_map, node)
+            sensor_map["leaders"][side] = {"port": node}
+            print(f"  ✓ leader {side} = {node}")
+            return False
 
 
 def run_assignment(sensor_map: dict) -> dict:
@@ -974,7 +952,11 @@ def main() -> None:
         list_cameras()
         return
 
-    from common.follower_bus import connect_follower_bus, connect_leader_bus
+    from common.follower_bus import (
+        connect_follower_bus,
+        connect_leader_bus,
+        leader_calib_id_for_side,
+    )
 
     # Resolve sensor assignments: CLI --camera wins; otherwise the saved
     # map; no map and no --camera => the assignment GUI runs.
@@ -1053,10 +1035,10 @@ def main() -> None:
         if not args.no_leaders:
             for side, entry in sorted(sensor_map.get("leaders", {}).items()):
                 port = entry.get("port") if isinstance(entry, dict) else None
-                calib_id = entry.get("id") if isinstance(entry, dict) else None
-                if not port or not calib_id:
-                    print(f"⚠️  leader {side} not fully assigned — skipped")
+                if not port:
+                    print(f"⚠️  leader {side} not assigned — skipped")
                     continue
+                calib_id = leader_calib_id_for_side(side)
                 if not Path(port).exists():
                     print(f"⚠️  leader {side} port {port} missing — skipped")
                     continue

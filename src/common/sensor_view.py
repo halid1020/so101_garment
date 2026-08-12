@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from typing import Callable
 
 import cv2  # type: ignore[import]
@@ -44,6 +45,20 @@ _JOINT_NAMES = [
 ]
 # 10-DOF joint-vector layout used throughout the teleop stack.
 _SIDE_SLICE = {"left": slice(0, 5), "right": slice(5, 10)}
+
+# Cameras that are opened for recording/teleop but NOT drawn in the live
+# monitor. "scene" is hidden from the view (its tile crowded the panel without
+# aiding teleoperation); it is still recorded like any other stream.
+VIEW_HIDDEN_CAMERAS = {"scene"}
+
+
+def visible_view_captures(captures: list, hidden: "set[str]" = VIEW_HIDDEN_CAMERAS):
+    """Captures to draw in the live view, dropping ``hidden`` camera names.
+
+    Filters the display only — hidden cameras are still recorded. Pure —
+    unit-tested.
+    """
+    return [c for c in captures if getattr(c, "name", None) not in hidden]
 
 
 class FrameRateCounter:
@@ -94,6 +109,119 @@ def _age_color(age_s: float | None) -> tuple[int, int, int]:
     if age_s <= 0.033:
         return (0, 210, 255)
     return (0, 0, 255)
+
+
+def _age_ms(age_s: float | None) -> str:
+    return "--" if age_s is None else f"{age_s * 1e3:.0f}ms"
+
+
+def colourise_depth(
+    depth16: np.ndarray,
+    scale_m: float = 0.001,
+    near_m: float = 0.2,
+    far_m: float = 2.0,
+) -> np.ndarray:
+    """Turn a 16-bit aligned-depth frame into a viewable BGR heat map.
+
+    ``depth16`` holds raw depth units; ``scale_m`` (metres per unit, from the
+    RealSense) converts to metres, which are clipped to ``[near_m, far_m]`` and
+    mapped through a JET colour map. Zero (no return) pixels stay black. Pure —
+    unit-tested; used by both the live view and the replay viewer so depth
+    reads the same in both.
+    """
+    depth = np.asarray(depth16)
+    valid = depth > 0
+    metres = depth.astype(np.float32) * float(scale_m or 0.001)
+    clipped = np.clip(metres, near_m, far_m)
+    norm = ((clipped - near_m) / max(far_m - near_m, 1e-6) * 255.0).astype(np.uint8)
+    colour = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+    colour[~valid] = 0
+    return colour
+
+
+@dataclass
+class ViewPanel:
+    """One camera tile for the composited sensor view.
+
+    ``image_bgr`` is the already-BGR frame (RGB converted / depth colourised)
+    or ``None`` for a not-yet-arrived stream (drawn as a black tile of
+    ``fallback_hw``). ``line1`` is the green header (name + rate); ``line2``
+    is the optional drift/drop status in ``line2_color`` (omitted in replay).
+    """
+
+    label: str
+    image_bgr: "np.ndarray | None"
+    fallback_hw: tuple[int, int]
+    line1: str
+    line2: "str | None" = None
+    line2_color: tuple[int, int, int] = field(default=(0, 255, 0))
+
+
+def compose_sensor_view_frame(
+    panels: "list[ViewPanel]",
+    col1_by_side: dict,
+    col2_by_side: dict,
+    col2_label: str,
+    joint_strip: "tuple[str, tuple[int, int, int]] | None",
+    col1_label: str = "follower",
+    max_w: int = 1280,
+    max_h: int = 720,
+) -> np.ndarray:
+    """Composite one sensor-view frame: a camera row over the joint cells.
+
+    ``panels`` are the ordered camera tiles (RGB then any depth). ``col1_by_side``
+    / ``col2_by_side`` map each side to its ``{joint: value|None}`` dict (column
+    one is the follower/measured state, column two the leader or command).
+    ``joint_strip`` is the optional ``(text, colour)`` proprio-drift line (live
+    only; ``None`` in replay). Returns a screen-fitted BGR image. Pure (no data
+    manager, no hardware) so the live loop and the replay viewer render an
+    identical layout.
+    """
+    from tool.test_sensor_rates import (
+        _CAM_TILE_H,
+        _CAM_TILE_W,
+        _fit_to_screen,
+        _side_panel,
+        _vstack_pad,
+        grid_tiles,
+    )
+
+    cam_tiles = []
+    for p in panels:
+        if p.image_bgr is None:
+            tile = np.zeros((p.fallback_hw[0], p.fallback_hw[1], 3), dtype=np.uint8)
+        else:
+            tile = np.ascontiguousarray(p.image_bgr)
+        tile = cv2.resize(tile, (_CAM_TILE_W, _CAM_TILE_H))
+        cv2.putText(tile, p.line1, (6, 26), _FONT, 0.7, (0, 255, 0), 2)
+        if p.line2 is not None:
+            cv2.putText(tile, p.line2, (6, 52), _FONT, 0.6, p.line2_color, 2)
+        cam_tiles.append(tile)
+
+    cells = [
+        _side_panel(
+            side,
+            col1_label,
+            col1_by_side[side],
+            None,
+            col2_label,
+            col2_by_side[side],
+            None,
+        )
+        for side in ("left", "right")
+    ]
+    joint_row = np.hstack(cells)
+
+    blocks = []
+    if cam_tiles:
+        blocks.append(grid_tiles(cam_tiles, max_per_row=max(len(cam_tiles), 1)))
+    if joint_strip is not None:
+        text, colour = joint_strip
+        strip = np.zeros((34, joint_row.shape[1], 3), dtype=np.uint8)
+        cv2.putText(strip, text, (8, 24), _FONT, 0.7, colour, 2)
+        blocks.append(strip)
+    blocks.append(joint_row)
+    return _fit_to_screen(_vstack_pad(blocks), max_w, max_h)
 
 
 def _vec5_to_dict(vec5: "np.ndarray | None", gripper: "float | None") -> dict:
@@ -153,102 +281,109 @@ def run_sensor_view_loop(
 ) -> None:
     """~30 Hz view loop; returns on q/Esc (Quest) or shutdown request.
 
-    ``captures`` are started ``CameraCapture`` objects — only their
-    ``name``/``width``/``height`` are read here; frames come from the
-    data manager.
+    ``captures`` are started camera objects — their ``name``/``width``/
+    ``height``/``fps`` are read here; a ``RealSenseCapture`` additionally
+    exposes ``depth_name``/``depth_scale``, whose depth stream is shown as an
+    extra colourised tile right after its RGB. Frames come from the data
+    manager; the layout itself is built by ``compose_sensor_view_frame``.
     """
-    from tool.test_sensor_rates import (
-        _CAM_TILE_H,
-        _CAM_TILE_W,
-        _camera_short_label,
-        _fit_to_screen,
-        _side_panel,
-        _vstack_pad,
-        grid_tiles,
-    )
+    from tool.test_sensor_rates import _camera_short_label
 
-    counters = {
-        cam.name: FrameRateCounter(expected_hz=float(getattr(cam, "fps", 0) or 0))
-        for cam in captures
-    }
+    # Drop cameras hidden from the monitor (e.g. "scene"); still recorded.
+    captures = visible_view_captures(captures)
+
+    # One rate counter per displayed stream: each camera's RGB plus, for a
+    # RealSense, its depth stream (a distinct key so both rates are tracked).
+    counters: dict = {}
+    depth_scales: dict = {}
+    for cam in captures:
+        exp_hz = float(getattr(cam, "fps", 0) or 0)
+        counters[cam.name] = FrameRateCounter(expected_hz=exp_hz)
+        dname = getattr(cam, "depth_name", None)
+        if dname:
+            counters[dname] = FrameRateCounter(expected_hz=exp_hz)
+            depth_scales[dname] = float(getattr(cam, "depth_scale", 0.0) or 0.0)
+
     col2_label = "leader" if leader_mode else "cmd"
     try:
         while not data_manager.is_shutdown_requested():
             now = time.monotonic()
-            cam_tiles = []
+            panels: list[ViewPanel] = []
             for cam in captures:
                 rgb = data_manager.get_rgb_image(cam.name)
                 counters[cam.name].tick(rgb, now)
                 age = data_manager.get_rgb_image_age(cam.name, now)
-                if rgb is None:
-                    tile = np.zeros((cam.height, cam.width, 3), dtype=np.uint8)
-                else:
-                    tile = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                tile = cv2.resize(tile, (_CAM_TILE_W, _CAM_TILE_H))
-                cv2.putText(
-                    tile,
-                    f"{_camera_short_label(cam.name)} {counters[cam.name].hz():.0f}Hz",
-                    (6, 26),
-                    _FONT,
-                    0.7,
-                    (0, 255, 0),
-                    2,
+                label = _camera_short_label(cam.name)
+                panels.append(
+                    ViewPanel(
+                        label=label,
+                        image_bgr=(
+                            None
+                            if rgb is None
+                            else cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                        ),
+                        fallback_hw=(cam.height, cam.width),
+                        line1=f"{label} {counters[cam.name].hz(now):.0f}Hz",
+                        # Live drift line: age from the collection reference +
+                        # cumulative dropped frames, colour-coded by budget.
+                        line2=f"drift {_age_ms(age)}  drop {counters[cam.name].drops}",
+                        line2_color=_age_color(age),
+                    )
                 )
-                # Live drift line: age from the collection reference (now) +
-                # cumulative dropped-frame count, colour-coded by frame budget.
-                age_ms = "--" if age is None else f"{age * 1e3:.0f}ms"
-                cv2.putText(
-                    tile,
-                    f"drift {age_ms}  drop {counters[cam.name].drops}",
-                    (6, 52),
-                    _FONT,
-                    0.6,
-                    _age_color(age),
-                    2,
-                )
-                cam_tiles.append(tile)
+                dname = getattr(cam, "depth_name", None)
+                if dname:
+                    depth = data_manager.get_depth_image(dname)
+                    counters[dname].tick(depth, now)
+                    dage = data_manager.get_depth_image_age(dname, now)
+                    dlabel = _camera_short_label(dname)
+                    panels.append(
+                        ViewPanel(
+                            label=dlabel,
+                            image_bgr=(
+                                None
+                                if depth is None
+                                else colourise_depth(
+                                    depth, depth_scales.get(dname, 0.0)
+                                )
+                            ),
+                            fallback_hw=(cam.height, cam.width),
+                            line1=f"{dlabel} {counters[dname].hz(now):.0f}Hz",
+                            line2=f"drift {_age_ms(dage)}  drop {counters[dname].drops}",
+                            line2_color=_age_color(dage),
+                        )
+                    )
 
             measured = data_manager.get_current_joint_angles()
             target = None if leader_mode else data_manager.get_target_joint_angles()
-            cells = []
+            col1_by_side, col2_by_side = {}, {}
             for side in ("left", "right"):
-                c1 = side_joint_dict(
+                col1_by_side[side] = side_joint_dict(
                     measured, side, data_manager.get_current_gripper_open_value(side)
                 )
                 if leader_mode:
                     lvec, lgrip = data_manager.get_leader_mapped_state(side)
-                    c2 = _vec5_to_dict(lvec, lgrip)
+                    col2_by_side[side] = _vec5_to_dict(lvec, lgrip)
                 else:
-                    c2 = side_joint_dict(
+                    col2_by_side[side] = side_joint_dict(
                         target, side, data_manager.get_target_gripper_open_value(side)
                     )
-                cells.append(
-                    _side_panel(side, "follower", c1, None, col2_label, c2, None)
-                )
-            joint_row = np.hstack(cells)
 
             # Proprio drift strip: how stale the measured joints are at the
             # collection reference time (100 Hz stream → normally < 10 ms).
             joints_res = data_manager.get_current_joint_angles_at(now)
             joint_age = None if joints_res is None else joints_res[1]
-            strip = np.zeros((34, joint_row.shape[1], 3), dtype=np.uint8)
-            j_ms = "--" if joint_age is None else f"{joint_age * 1e3:.0f}ms"
-            cv2.putText(
-                strip,
-                f"joints drift {j_ms}",
-                (8, 24),
-                _FONT,
-                0.7,
-                _age_color(joint_age),
-                2,
-            )
+            joint_strip = (f"joints drift {_age_ms(joint_age)}", _age_color(joint_age))
 
-            blocks = []
-            if cam_tiles:
-                blocks.append(grid_tiles(cam_tiles, max_per_row=max(len(cam_tiles), 1)))
-            blocks.append(strip)
-            blocks.append(joint_row)
-            cv2.imshow(window, _fit_to_screen(_vstack_pad(blocks), max_w, max_h))
+            frame = compose_sensor_view_frame(
+                panels,
+                col1_by_side,
+                col2_by_side,
+                col2_label,
+                joint_strip,
+                max_w=max_w,
+                max_h=max_h,
+            )
+            cv2.imshow(window, frame)
 
             key = cv2.waitKey(33) & 0xFF
             if _handle_view_key(key, key_callbacks):

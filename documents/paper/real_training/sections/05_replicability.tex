@@ -40,4 +40,7 @@ are at their home pose, that every camera and the depth device open at
 their configured resolution, that the dataset volume has headroom, and that
 the host-tuning items which reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
-that is quietly misconfigured.
+that is quietly misconfigured. A single guided pass calibrates all four
+arms in turn, so bringing the rig to its calibrated state is one step
+rather than four, and each arm's calibration is bound to its side rather
+than to the order in which its bus happens to enumerate.
