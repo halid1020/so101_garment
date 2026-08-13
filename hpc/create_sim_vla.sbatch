@@ -10,8 +10,8 @@
 # >>> FILL EVERY <...> PLACEHOLDER BELOW BEFORE SUBMITTING <<<
 # =====================================================================
 #SBATCH --job-name=sim_vla_single
-#SBATCH --partition=<gpu-partition>        # e.g. gpu  -- check `sinfo -s`
-#SBATCH --account=<account-or-delete-line> # delete this line if CREATE needs no account
+#SBATCH --partition=gpu        # e.g. gpu  -- check `sinfo -s`
+#SBATCH --account=k2694428 # delete this line if CREATE needs no account
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -23,8 +23,8 @@
 set -euo pipefail
 
 # ---- paths (EDIT) ----------------------------------------------------
-REPO_ROOT="<path-to>/so101_garment"         # where you cloned this repo on CREATE
-SCRATCH="<scratch>"                          # big, node-visible scratch, e.g. /scratch/users/<k-number>
+REPO_ROOT="/user/k2694428/so101_garment"         # where you cloned this repo on CREATE
+SCRATCH="/scratch/users/k2694428"                          # big, node-visible scratch, e.g. /scratch/users/<k-number>
 
 # ---- modules (EDIT / verify) -----------------------------------------
 # The pip torch wheel bundles its own CUDA runtime; the NVIDIA driver on
