@@ -13,6 +13,7 @@ from common.sensor_view import (
     _vec5_to_dict,
     colourise_depth,
     compose_sensor_view_frame,
+    footer_state_badge,
     progress_bar_text,
     side_joint_dict,
     visible_view_captures,
@@ -201,6 +202,52 @@ class TestComposeSensorViewFrame(unittest.TestCase):
         self.assertEqual(with_footer.ndim, 3)
         # A footer block only adds rows; it never removes the joint cells.
         self.assertGreaterEqual(with_footer.shape[0], base.shape[0])
+
+    def test_saving_status_still_renders(self):
+        out = compose_sensor_view_frame(
+            [],
+            self._cols(),
+            self._cols(),
+            "cmd",
+            joint_strip=None,
+            status=CollectionStatus(
+                state_label="SAVING",
+                episodes_done=4,
+                episodes_goal=20,
+                current_frames=812,
+                recording=False,
+            ),
+        )
+        self.assertEqual(out.ndim, 3)
+        self.assertGreater(out.shape[0], 0)
+
+
+class TestFooterStateBadge(unittest.TestCase):
+    def test_recording_is_red(self):
+        text, col = footer_state_badge("RECORDING", True)
+        self.assertIn("REC", text)
+        self.assertEqual(col, (0, 0, 255))
+
+    def test_saving_is_amber(self):
+        text, col = footer_state_badge("SAVING", False)
+        self.assertIn("SAVING", text)
+        self.assertEqual(col, (0, 180, 255))
+
+    def test_discarding_is_amber(self):
+        text, col = footer_state_badge("DISCARDING", False)
+        self.assertIn("DISCARDING", text)
+        self.assertEqual(col, (0, 180, 255))
+
+    def test_idle_is_grey(self):
+        text, col = footer_state_badge("IDLE", False)
+        self.assertEqual(text, "IDLE")
+        self.assertEqual(col, (150, 150, 150))
+
+    def test_recording_flag_overrides_label(self):
+        # A stale label still reads as recording when the flag says so.
+        text, col = footer_state_badge("", True)
+        self.assertIn("REC", text)
+        self.assertEqual(col, (0, 0, 255))
 
 
 class TestProgressBarText(unittest.TestCase):

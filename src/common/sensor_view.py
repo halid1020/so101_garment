@@ -213,6 +213,26 @@ def progress_bar_text(done: int, goal: int) -> str:
     return f"episodes {done}/{goal} ({pct}%)"
 
 
+def footer_state_badge(
+    state_label: str, recording: bool
+) -> "tuple[str, tuple[int, int, int]]":
+    """Footer state marker ``(text, BGR)`` for the recorder state. Pure.
+
+    RECORDING is red, the two writing states (SAVING/DISCARDING) are amber so the
+    operator sees an in-flight episode write on the view, and anything else
+    (IDLE) is grey. ``recording`` disambiguates RECORDING from the ``state_label``
+    so the caller can drive it straight from ``CollectionStatus``.
+    """
+    label = (state_label or "").upper()
+    if recording or label == "RECORDING":
+        return "● REC", (0, 0, 255)
+    if label == "SAVING":
+        return "💾 SAVING", (0, 180, 255)
+    if label == "DISCARDING":
+        return "… DISCARDING", (0, 180, 255)
+    return "IDLE", (150, 150, 150)
+
+
 def _render_footer(
     width: int, key_help: "list[str] | None", status: "CollectionStatus | None"
 ) -> "np.ndarray | None":
@@ -225,8 +245,7 @@ def _render_footer(
         cv2.putText(line, "  ".join(key_help), (8, 21), _FONT, 0.6, (200, 200, 200), 1)
         rows.append(line)
     if status is not None:
-        state_col = (0, 0, 255) if status.recording else (150, 150, 150)
-        mark = "● REC" if status.recording else "IDLE"
+        mark, state_col = footer_state_badge(status.state_label, status.recording)
         strip = np.zeros((34, width, 3), dtype=np.uint8)
         cv2.putText(
             strip,
