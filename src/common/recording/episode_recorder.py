@@ -152,16 +152,33 @@ class EpisodeRecorder:
         self._thread.start()
 
     def shutdown(self) -> None:
-        """Discard any in-flight episode, stop everything, finalize the dataset.
+        """Finish any in-flight save, stop everything, finalize the dataset.
 
-        The in-flight discard runs on the loop thread (sole writer owner); this
-        method signals it, joins, then tears down the auxiliary threads and
+        The in-flight save/discard runs on the loop thread (sole writer owner);
+        this method signals it, joins, then tears down the auxiliary threads and
         finalizes so the parquet footers are written.
+
+        A save already in progress must run to completion: encoding a long,
+        multi-camera episode takes far more than the discard budget, and if the
+        join gave up on it the auxiliary teardown and ``finalize`` below would
+        race the unfinished ``save_episode`` — leaving the videos unencoded and
+        ``info.json`` never updated, i.e. the just-recorded episode lost. So the
+        wait is bounded only while no episode is being written; while the
+        recorder is SAVING it keeps waiting until the save finishes.
         """
         self._external_shutdown = True
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=10.0)
+            announced = False
+            while self._thread.is_alive():
+                if self.get_state() == RecorderState.SAVING:
+                    if not announced:
+                        print("💾 finishing in-flight episode save before quitting...")
+                        announced = True
+                    self._thread.join(timeout=1.0)  # save in progress; keep waiting
+                    continue
+                self._thread.join(timeout=10.0)  # no save pending; bound the wait
+                break
         if self.sidecar is not None:
             self.sidecar.stop()
         for cam in self.cameras:
@@ -230,6 +247,18 @@ class EpisodeRecorder:
         print(f"🔴 recording episode {self._episode_index} (task: {self.task!r})")
 
     def _step_recording(self) -> None:
+        # A requested stop-save wins over every discard trigger: if the operator
+        # pressed A to save and then quit, the episode they asked to keep must be
+        # saved, not thrown away by the shutdown/disabled/stale checks below.
+        with self._lock:
+            stop = self._pending_stop
+            self._pending_stop = False
+        if stop:
+            with self._lock:
+                self._state = RecorderState.SAVING
+            self._save()
+            return
+
         # Discard triggers, highest priority first.
         if self.data_manager.is_shutdown_requested():
             self._discard(reason="shutdown", park=True)
@@ -241,15 +270,6 @@ class EpisodeRecorder:
         stale = self._stale_camera()
         if stale is not None:
             self._discard(reason=f"camera_stale:{stale}", park=False)
-            return
-
-        with self._lock:
-            stop = self._pending_stop
-            self._pending_stop = False
-        if stop:
-            with self._lock:
-                self._state = RecorderState.SAVING
-            self._save()
             return
 
         self._record_frame()
