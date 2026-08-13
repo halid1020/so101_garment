@@ -265,6 +265,86 @@ class TestEpisodeRecorder(RecorderTestBase):
         )
 
 
+class TestSaveOnQuit(unittest.TestCase):
+    """Pressing A (save) then Q (quit) must keep the episode, not lose it."""
+
+    def _make(self, gate: bool = False):
+        dm = DualDataManager()
+        dm.set_robot_activity_state(RobotActivityState.ENABLED)
+        dm.set_current_joint_angles(np.arange(10, dtype=np.float64))
+        dm.set_current_gripper_open_value("left", 0.4)
+        dm.set_current_gripper_open_value("right", 0.6)
+        dataset = FakeDataset()
+        if gate:
+            dataset.save_gate = threading.Event()
+        recorder = EpisodeRecorder(
+            dataset=dataset,
+            data_manager=dm,
+            task="t",
+            fps=_FPS,
+            camera_names=list(_CAMERAS),
+            sidecar=None,
+        )
+        return dm, dataset, recorder
+
+    def test_pending_save_wins_over_shutdown_discard(self) -> None:
+        # A then Q, with the quit arriving before the loop processes the save:
+        # the requested save must win over the shutdown-discard trigger. Driven
+        # single-threaded (no start()) so the ordering is deterministic.
+        dm, dataset, recorder = self._make()
+        with recorder._lock:
+            recorder._state = RecorderState.RECORDING
+        self.assertTrue(recorder.request_stop_save())  # A: sets _pending_stop
+        dm.request_shutdown()  # Q: arrives after A
+        recorder._step_recording()  # one loop tick
+        self.assertEqual(dataset.save_calls, 1)
+        self.assertEqual(dataset.clear_calls, 0, "episode must be saved, not discarded")
+        self.assertEqual(recorder.get_state(), RecorderState.IDLE)
+
+    def test_shutdown_waits_for_in_flight_save(self) -> None:
+        # The cube-pnp failure: a long save is still encoding when shutdown runs.
+        # shutdown() must not finalize until the save finishes, or the episode is
+        # lost (videos unencoded, info.json never updated).
+        dm, dataset, recorder = self._make(gate=True)
+        pusher = FramePusher(dm, _CAMERAS)
+        pusher.start()
+        self.assertTrue(
+            _wait_for(
+                lambda: all(dm.get_rgb_image_age(n) is not None for n in _CAMERAS)
+            )
+        )
+        recorder.start()
+        try:
+            self.assertTrue(recorder.request_start_episode())
+            self.assertTrue(_wait_for(lambda: len(dataset.frames) >= 2))
+            self.assertTrue(recorder.request_stop_save())
+            self.assertTrue(
+                _wait_for(lambda: recorder.get_state() == RecorderState.SAVING)
+            )
+            done = threading.Event()
+
+            def _run_shutdown() -> None:
+                recorder.shutdown()
+                done.set()
+
+            threading.Thread(target=_run_shutdown, daemon=True).start()
+            time.sleep(0.2)  # shutdown must be blocking on the save
+            self.assertFalse(dataset.finalized, "finalize ran before the save finished")
+            self.assertFalse(
+                done.is_set(), "shutdown returned before the save finished"
+            )
+            assert dataset.save_gate is not None
+            dataset.save_gate.set()  # let the save complete
+            self.assertTrue(done.wait(timeout=5.0))
+            self.assertEqual(dataset.save_calls, 1)
+            self.assertEqual(dataset.clear_calls, 0, "saved, not discarded")
+            self.assertTrue(dataset.finalized)
+        finally:
+            if dataset.save_gate is not None:
+                dataset.save_gate.set()
+            pusher.stop()
+
+
 class FakeDepthWriter:
     """Records DepthWriter lifecycle calls (no disk, no hardware)."""
 
