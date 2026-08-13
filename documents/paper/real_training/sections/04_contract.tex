@@ -47,3 +47,13 @@ so they cannot silently disagree. The end-effector state and target are
 stored under neutral keys that a standard policy loader ignores, so a
 default joint-space policy is unaffected by their presence, while an
 end-effector experiment maps the stored target onto its action explicitly.
+
+\paragraph{Training parity with simulation.} Because a collected dataset is
+an ordinary dataset in the standard format, a policy trains on it through
+exactly the pipeline the simulated study uses --- the same learner, the same
+policy families --- with no real-specific training code. A small
+plumbing check trains a policy on a collected dataset for a handful of steps
+and reloads the resulting checkpoint, confirming the real recordings feed the
+learner and that the checkpoint is ready for on-robot inference before any
+long training run is committed. \unjustified{} the check validates wiring, not
+learned skill.

@@ -11,7 +11,7 @@
 PY := venv/bin/python
 PYTHONPATH := .:src
 
-.PHONY: test test-unit test-integration test-system test-system-vla paper lint
+.PHONY: test test-unit test-integration test-system test-system-vla test-system-vla-real paper lint
 
 test: test-unit test-integration
 
@@ -26,6 +26,12 @@ test-system:
 
 test-system-vla:
 	bash test/system/smoke_vla_sim.sh
+
+# Real-data plumbing smoke: trains a policy on a collected dataset and reloads
+# the checkpoint. Needs the data drive mounted; pass the dataset via DATASET_ROOT.
+#   make test-system-vla-real DATASET_ROOT=/media/hdd/so101/short_fold
+test-system-vla-real:
+	bash test/system/smoke_vla_real.sh --dataset-root "$(DATASET_ROOT)"
 
 paper:
 	cd documents/paper/teleoperation && latexmk -pdf main.tex
