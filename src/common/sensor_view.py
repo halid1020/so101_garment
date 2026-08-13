@@ -115,6 +115,35 @@ def _age_ms(age_s: float | None) -> str:
     return "--" if age_s is None else f"{age_s * 1e3:.0f}ms"
 
 
+def depth_range_from_frame(
+    depth16: np.ndarray,
+    scale_m: float = 0.001,
+    lo_pct: float = 2.0,
+    hi_pct: float = 98.0,
+    min_span_m: float = 0.1,
+) -> "tuple[float, float] | None":
+    """Near/far metric range (metres) for colourising, from one depth frame.
+
+    Uses the ``lo_pct``/``hi_pct`` percentiles of the valid (>0) pixels so a few
+    stray near/far returns do not stretch the scale, then widens to at least
+    ``min_span_m`` so a flat scene still spans the colour map. Returns ``None``
+    when the frame has no valid pixels (caller keeps waiting for a good frame).
+    This range is computed once from the first good frame and then held fixed
+    (session-first live, episode-first in replay). Pure — unit-tested.
+    """
+    depth = np.asarray(depth16)
+    valid = depth[depth > 0]
+    if valid.size == 0:
+        return None
+    metres = valid.astype(np.float32) * float(scale_m or 0.001)
+    near = float(np.percentile(metres, lo_pct))
+    far = float(np.percentile(metres, hi_pct))
+    if far - near < min_span_m:
+        mid = 0.5 * (near + far)
+        near, far = mid - 0.5 * min_span_m, mid + 0.5 * min_span_m
+    return near, far
+
+
 def colourise_depth(
     depth16: np.ndarray,
     scale_m: float = 0.001,
@@ -125,9 +154,12 @@ def colourise_depth(
 
     ``depth16`` holds raw depth units; ``scale_m`` (metres per unit, from the
     RealSense) converts to metres, which are clipped to ``[near_m, far_m]`` and
-    mapped through a JET colour map. Zero (no return) pixels stay black. Pure —
-    unit-tested; used by both the live view and the replay viewer so depth
-    reads the same in both.
+    mapped through a JET colour map (blue = near, red = far). Zero (no return)
+    pixels stay black. Callers pass ``near_m``/``far_m`` locked to the first
+    good frame (see ``depth_range_from_frame``) so the scene's own depth spread
+    fills the colour map instead of a fixed metric window. Pure — unit-tested;
+    used by both the live view and the replay viewer so depth reads the same in
+    both.
     """
     depth = np.asarray(depth16)
     valid = depth > 0
@@ -380,6 +412,9 @@ def run_sensor_view_loop(
     # RealSense, its depth stream (a distinct key so both rates are tracked).
     counters: dict = {}
     depth_scales: dict = {}
+    # Per-depth-stream colour range, locked to the first frame that has valid
+    # pixels and then held fixed so the tile does not flicker as the scene moves.
+    depth_ranges: dict = {}
     for cam in captures:
         exp_hz = float(getattr(cam, "fps", 0) or 0)
         counters[cam.name] = FrameRateCounter(expected_hz=exp_hz)
@@ -420,15 +455,19 @@ def run_sensor_view_loop(
                     counters[dname].tick(depth, now)
                     dage = data_manager.get_depth_image_age(dname, now)
                     dlabel = _camera_short_label(dname)
+                    dscale = depth_scales.get(dname, 0.0)
+                    if depth is not None and dname not in depth_ranges:
+                        rng = depth_range_from_frame(depth, dscale)
+                        if rng is not None:
+                            depth_ranges[dname] = rng
+                    drng = depth_ranges.get(dname)
                     panels.append(
                         ViewPanel(
                             label=dlabel,
                             image_bgr=(
                                 None
-                                if depth is None
-                                else colourise_depth(
-                                    depth, depth_scales.get(dname, 0.0)
-                                )
+                                if depth is None or drng is None
+                                else colourise_depth(depth, dscale, drng[0], drng[1])
                             ),
                             fallback_hw=(cam.height, cam.width),
                             line1=f"{dlabel} {counters[dname].hz(now):.0f}Hz",

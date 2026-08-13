@@ -5,7 +5,39 @@ from pathlib import Path
 
 import numpy as np
 
+from common.sensor_view import colourise_depth, depth_range_from_frame
 from tool.replay_recording import depth_png_path, frame_to_bgr, state12_to_side_dicts
+
+
+class TestDepthRangeFromFrame(unittest.TestCase):
+    def test_ignores_zeros_and_orders_near_far(self):
+        # metres 0.5..1.5 at 0.001 m/unit → units 500..1500, plus zero holes
+        depth = np.zeros((10, 10), dtype=np.uint16)
+        depth[:, :5] = np.linspace(500, 1500, 50).reshape(10, 5).astype(np.uint16)
+        rng = depth_range_from_frame(depth, 0.001)
+        assert rng is not None
+        near, far = rng
+        self.assertLess(near, far)
+        self.assertGreater(near, 0.4)
+        self.assertLess(far, 1.6)
+
+    def test_all_zero_returns_none(self):
+        self.assertIsNone(depth_range_from_frame(np.zeros((4, 4), dtype=np.uint16)))
+
+    def test_flat_frame_widens_to_min_span(self):
+        depth = np.full((8, 8), 1000, dtype=np.uint16)  # all 1.0 m
+        near, far = depth_range_from_frame(depth, 0.001, min_span_m=0.2)
+        self.assertAlmostEqual(far - near, 0.2, places=5)
+
+
+class TestColouriseDepthBounds(unittest.TestCase):
+    def test_shape_dtype_and_zero_stays_black(self):
+        depth = np.full((6, 7), 1000, dtype=np.uint16)
+        depth[0, 0] = 0  # no-return pixel
+        out = colourise_depth(depth, 0.001, near_m=0.5, far_m=1.5)
+        self.assertEqual(out.shape, (6, 7, 3))
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertTrue(np.all(out[0, 0] == 0))
 
 
 class TestState12ToSideDicts(unittest.TestCase):
