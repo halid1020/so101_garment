@@ -1,17 +1,15 @@
-"""Unit tests for the pure helpers of tool/dataset_browser.py.
+"""Unit tests for the pure curation helpers of common.recording.dataset_edit.
 
-No cv2 window and no hardware: the GUI calls all live inside ``main`` so the
-module imports cleanly in CI, and these tests exercise only the deletion
-re-indexing and the click hit-test.
+No LeRobot and no filesystem: exercises the deletion re-indexing arithmetic that
+keeps our ``extra/`` side files aligned with LeRobot's renumbered dataset.
 """
 
 import unittest
 
-from tool.dataset_browser import (
+from common.recording.dataset_edit import (
     deletion_mapping,
-    episode_at_y,
+    episode_lengths,
     extra_reindex_ops,
-    list_scroll_offset,
 )
 
 
@@ -26,7 +24,7 @@ class TestDeletionMapping(unittest.TestCase):
     def test_last_delete_leaves_prefix_unchanged(self):
         self.assertEqual(deletion_mapping(3, [2]), {0: 0, 1: 1})
 
-    def test_multi_delete(self):
+    def test_batch_delete(self):
         self.assertEqual(deletion_mapping(5, [1, 3]), {0: 0, 2: 1, 4: 2})
 
     def test_deleted_index_absent_from_map(self):
@@ -56,40 +54,24 @@ class TestExtraReindexOps(unittest.TestCase):
         self.assertTrue(all("depth" not in dst for _, dst in ops))
         self.assertEqual(len(ops), 2)  # drift + sidecar only
 
-    def test_deleted_episode_not_in_ops(self):
-        ops = extra_reindex_ops(deletion_mapping(3, [1]), ["d"])
+    def test_batch_deleted_episodes_not_in_ops(self):
+        ops = extra_reindex_ops(deletion_mapping(5, [1, 3]), ["d"])
         srcs = [s for s, _ in ops]
-        self.assertFalse(any("000001" in s for s in srcs))  # ep1 was deleted
+        self.assertFalse(any("000001" in s or "000003" in s for s in srcs))
 
 
-class TestEpisodeAtY(unittest.TestCase):
-    def test_first_row(self):
-        self.assertEqual(episode_at_y(y=44, n_visible=5, row_h=34, y0=44), 0)
-
-    def test_second_row(self):
-        self.assertEqual(episode_at_y(y=44 + 34, n_visible=5, row_h=34, y0=44), 1)
-
-    def test_above_list_is_none(self):
-        self.assertIsNone(episode_at_y(y=10, n_visible=5, row_h=34, y0=44))
-
-    def test_below_last_row_is_none(self):
-        self.assertIsNone(episode_at_y(y=44 + 34 * 5, n_visible=5, row_h=34, y0=44))
+class _FakeMeta:
+    def __init__(self, lengths):
+        self.total_episodes = len(lengths)
+        self.episodes = [{"length": L} for L in lengths]
 
 
-class TestListScrollOffset(unittest.TestCase):
-    def test_no_scroll_when_all_fit(self):
-        self.assertEqual(list_scroll_offset(selected=3, n=5, max_rows=10), 0)
+class TestEpisodeLengths(unittest.TestCase):
+    def test_reads_lengths_in_order(self):
+        self.assertEqual(episode_lengths(_FakeMeta([650, 12, 7])), [650, 12, 7])
 
-    def test_centres_selection_when_overflowing(self):
-        # 20 episodes, 10 visible, selected 12 -> first = 12 - 5 = 7
-        self.assertEqual(list_scroll_offset(selected=12, n=20, max_rows=10), 7)
-
-    def test_clamps_to_last_window(self):
-        # near the end it stops so the window stays full
-        self.assertEqual(list_scroll_offset(selected=19, n=20, max_rows=10), 10)
-
-    def test_clamps_to_zero_near_start(self):
-        self.assertEqual(list_scroll_offset(selected=1, n=20, max_rows=10), 0)
+    def test_empty(self):
+        self.assertEqual(episode_lengths(_FakeMeta([])), [])
 
 
 if __name__ == "__main__":
