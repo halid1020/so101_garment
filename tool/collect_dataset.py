@@ -169,6 +169,7 @@ def main() -> None:
 
     from common.config_parser import load_recording_config
     from common.recording.collection_settings import (
+        is_resumable_dataset,
         read_existing_streams,
         selection_to_teleop_flags,
     )
@@ -179,8 +180,19 @@ def main() -> None:
     rs_rgb_name = (rec_cfg.get("realsense") or {}).get("rgb_name")
 
     root = Path(args.dir).expanduser() / args.name
-    resuming = root.exists()
+    resuming = is_resumable_dataset(root)
     check_writable_root(root)
+
+    # A directory that exists but holds no saved episodes is a stillborn
+    # dataset (created, then quit before recording). It can be neither created
+    # into (create refuses an existing root) nor resumed (its metadata is
+    # incomplete), so stop with an actionable message instead of a deep crash.
+    if root.exists() and not resuming:
+        raise SystemExit(
+            f"❌ {root} exists but has no saved episodes yet (incomplete dataset). "
+            f"Record at least one episode, or delete it to start over:\n"
+            f"    rm -rf '{root}'"
+        )
 
     if resuming:
         settings = read_existing_streams(root)
@@ -227,9 +239,14 @@ def main() -> None:
         print("  " + " ".join([sys.executable, *argv]))
         return
 
-    # Hand off to the real recorder in THIS process: collection is a full teleop
-    # session, so a clean exec (which also inherits the teleop shutdown path)
-    # beats duplicating the arm/IK/camera stack here.
+    # Collection is local-only (the dataset is never pushed), so keep the
+    # recorder off the network: a stray Hub lookup during create/resume would
+    # otherwise fail with a misleading credentials error instead of staying
+    # local. Hand off in THIS process — collection is a full teleop session, so
+    # a clean exec (which also inherits the teleop shutdown path) beats
+    # duplicating the arm/IK/camera stack here.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
     sys.stdout.flush()
     os.execv(sys.executable, [sys.executable, *argv])
 
