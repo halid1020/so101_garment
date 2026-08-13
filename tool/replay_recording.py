@@ -35,7 +35,12 @@ from pathlib import Path
 import cv2  # type: ignore[import]
 import numpy as np
 
-from common.sensor_view import ViewPanel, colourise_depth, compose_sensor_view_frame
+from common.sensor_view import (
+    ViewPanel,
+    colourise_depth,
+    compose_sensor_view_frame,
+    depth_range_from_frame,
+)
 
 _IMAGE_PREFIX = "observation.images."
 
@@ -110,7 +115,24 @@ def _load_realsense(root: Path) -> tuple[str | None, float]:
     return meta.get("depth_name"), float(meta.get("depth_scale_m_per_unit") or 0.001)
 
 
-def build_frame(ds, i, episode, camera_names, depth_name, depth_scale, root):
+def load_depth_range(root, depth_name, episode, depth_scale):
+    """Lock the depth colour range to the episode's first depth frame.
+
+    Returns ``(near_m, far_m)`` from ``depth_range_from_frame`` on frame 0's
+    PNG16 so replay scales depth exactly like the live view did during
+    collection, or ``None`` if the frame is missing/empty (then the default
+    metric window is used).
+    """
+    dp = depth_png_path(root, depth_name, episode, 0)
+    if not dp.is_file():
+        return None
+    depth = cv2.imread(str(dp), cv2.IMREAD_UNCHANGED)
+    return None if depth is None else depth_range_from_frame(depth, depth_scale)
+
+
+def build_frame(
+    ds, i, episode, camera_names, depth_name, depth_scale, root, depth_range=None
+):
     """Composite one recorded frame into the live-view layout (BGR)."""
     from tool.test_sensor_rates import _camera_short_label
 
@@ -131,12 +153,18 @@ def build_frame(ds, i, episode, camera_names, depth_name, depth_scale, root):
     if depth_name is not None:
         dp = depth_png_path(root, depth_name, episode, i)
         depth = cv2.imread(str(dp), cv2.IMREAD_UNCHANGED) if dp.is_file() else None
+        if depth is None:
+            depth_bgr = None
+        elif depth_range is not None:
+            depth_bgr = colourise_depth(
+                depth, depth_scale, depth_range[0], depth_range[1]
+            )
+        else:
+            depth_bgr = colourise_depth(depth, depth_scale)
         panels.append(
             ViewPanel(
                 label=_camera_short_label(depth_name),
-                image_bgr=None
-                if depth is None
-                else colourise_depth(depth, depth_scale),
+                image_bgr=depth_bgr,
                 fallback_hw=(480, 640),
                 line1=_camera_short_label(depth_name),
             )
@@ -183,6 +211,11 @@ def main() -> None:
     fps = args.fps or int(ds.meta.fps)
     camera_names = [(k, k[len(_IMAGE_PREFIX) :]) for k in ds.meta.camera_keys]
     depth_name, depth_scale = _load_realsense(root)
+    depth_range = (
+        None
+        if depth_name is None
+        else load_depth_range(root, depth_name, args.episode, depth_scale)
+    )
     print(
         f"▶ replaying episode {args.episode}: {n} frames @ {fps} fps, "
         f"cameras={[n for _, n in camera_names]}"
@@ -196,7 +229,14 @@ def main() -> None:
     while True:
         for i in range(n):
             frame = build_frame(
-                ds, i, args.episode, camera_names, depth_name, depth_scale, root
+                ds,
+                i,
+                args.episode,
+                camera_names,
+                depth_name,
+                depth_scale,
+                root,
+                depth_range,
             )
             if args.mp4:
                 mp4_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
