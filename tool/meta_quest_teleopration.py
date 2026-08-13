@@ -96,6 +96,12 @@ from src.so101_dual_arm import SO101DualArm
 _DISK_WARN_GB = 10.0
 _DISK_REFUSE_GB = 2.0
 
+# Streaming video-encoder backlog PER camera (frames) when streaming encoding is
+# on. Each camera frame is encoded in a background thread during recording so the
+# A-to-save pause stays short; this bounds how far the encoder may fall behind
+# before LeRobot drops a backlogged frame (with a warning). ~90 ≈ 3 s at 30 fps.
+_ENCODER_QUEUE_MAXSIZE = 90
+
 
 def load_yaml(filepath):
     with open(filepath, "r") as file:
@@ -179,6 +185,14 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         "--no-sidecar",
         action="store_true",
         help="Disable the ~100 Hz full-rate sidecar parquet",
+    )
+    group.add_argument(
+        "--no-streaming-encode",
+        action="store_true",
+        help="Encode each episode's videos in one blocking pass at save time "
+        "instead of streaming them during recording. Streaming (the default) "
+        "keeps the A-to-save pause short so collection stays continuous; opt "
+        "out if a CPU-starved rig drops encoder frames",
     )
     group.add_argument(
         "--episode-goal",
@@ -448,12 +462,22 @@ def build_recording_stack(
     threads_total = rec_cfg["dataset"]["image_writer_threads_per_camera"] * len(
         all_captures
     )
+    # Real-time (streaming) video encoding: each camera frame is encoded in a
+    # background thread as it is recorded, so the A-to-save step only has to
+    # flush the last queued frames instead of encoding the whole episode. This
+    # keeps the pause between episodes short so collection stays continuous. On
+    # a CPU-starved rig the encoder can fall behind — LeRobot then DROPS the
+    # backlogged video frame with a warning (never crashes), so opt out with
+    # --no-streaming-encode if that trade-off is not wanted.
+    streaming = not args.no_streaming_encode
     if args.resume:
         print(f"📂 Resuming dataset {args.repo_id} at {root}")
         dataset = LeRobotDataset.resume(
             repo_id=args.repo_id,
             root=root,
             image_writer_threads=threads_total,
+            streaming_encoding=streaming,
+            encoder_queue_maxsize=_ENCODER_QUEUE_MAXSIZE,
         )
     else:
         if root.exists():
@@ -476,6 +500,8 @@ def build_recording_stack(
             root=root,
             robot_type=rec_cfg["dataset"]["robot_type"],
             image_writer_threads=threads_total,
+            streaming_encoding=streaming,
+            encoder_queue_maxsize=_ENCODER_QUEUE_MAXSIZE,
         )
 
     # Persist the RealSense intrinsics + depth scale once per dataset so the
