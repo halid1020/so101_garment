@@ -11,7 +11,6 @@
 # =====================================================================
 #SBATCH --job-name=sim_vla_single
 #SBATCH --partition=gpu        # e.g. gpu  -- check `sinfo -s`
-#SBATCH --account=k2694428 # delete this line if CREATE needs no account
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
