@@ -1,12 +1,19 @@
 """Unit tests for the pure helpers of tool/replay_recording.py."""
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 
 from common.sensor_view import colourise_depth, depth_range_from_frame
-from tool.replay_recording import depth_png_path, frame_to_bgr, state12_to_side_dicts
+from tool.replay_recording import (
+    depth_png_path,
+    frame_to_bgr,
+    saved_episode_count,
+    state12_to_side_dicts,
+)
 
 
 class TestDepthRangeFromFrame(unittest.TestCase):
@@ -87,6 +94,34 @@ class TestFrameToBgr(unittest.TestCase):
         gray = np.full((4, 5), 128, dtype=np.uint8)
         out = frame_to_bgr(gray)
         self.assertEqual(out.shape, (4, 5, 3))
+
+
+class TestSavedEpisodeCount(unittest.TestCase):
+    def _write_info(self, root: Path, total: int) -> None:
+        meta = root / "meta"
+        meta.mkdir(parents=True)
+        (meta / "info.json").write_text(json.dumps({"total_episodes": total}))
+
+    def test_missing_info_is_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(saved_episode_count(Path(tmp)), 0)
+
+    def test_zero_episodes_dataset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_info(Path(tmp), 0)
+            self.assertEqual(saved_episode_count(Path(tmp)), 0)
+
+    def test_counts_saved_episodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_info(Path(tmp), 5)
+            self.assertEqual(saved_episode_count(Path(tmp)), 5)
+
+    def test_corrupt_info_is_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "meta"
+            meta.mkdir(parents=True)
+            (meta / "info.json").write_text("{not valid json")
+            self.assertEqual(saved_episode_count(Path(tmp)), 0)
 
 
 if __name__ == "__main__":

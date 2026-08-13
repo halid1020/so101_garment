@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import cv2  # type: ignore[import]
@@ -90,6 +91,25 @@ def frame_to_bgr(image) -> np.ndarray:
     if arr.ndim == 2:
         arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
     return np.ascontiguousarray(cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
+
+
+def saved_episode_count(root: Path) -> int:
+    """Episodes actually written to the local dataset at ``root`` (0 if none).
+
+    A dataset directory can exist with full metadata but no saved episodes — a
+    collection session that quit before the A-to-save finished leaves
+    ``meta/episodes`` empty. Reading ``total_episodes`` from ``meta/info.json``
+    lets replay fail with a clear message instead of letting LeRobotDataset fall
+    back to the Hub (a misleading ``401 Unauthorized`` on the dataset name).
+    Pure — unit-tested.
+    """
+    info = Path(root) / "meta" / "info.json"
+    if not info.is_file():
+        return 0
+    try:
+        return int(json.loads(info.read_text()).get("total_episodes", 0))
+    except (ValueError, json.JSONDecodeError):
+        return 0
 
 
 def _resolve_root_repo(args) -> tuple[Path, str]:
@@ -201,6 +221,25 @@ def main() -> None:
         raise SystemExit("❌ --no-view needs --mp4 (nothing to show or save otherwise)")
 
     root, repo_id = _resolve_root_repo(args)
+
+    # This is a purely local replay; never reach out to the Hub. Without this a
+    # dataset with incomplete metadata makes LeRobotDataset fall back to a Hub
+    # lookup on the bare dataset name, surfacing a misleading 401.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+
+    n_saved = saved_episode_count(root)
+    if n_saved == 0:
+        raise SystemExit(
+            f"❌ {root} has no saved episodes yet — nothing to replay. "
+            "(A collection session that quits before the A-to-save completes "
+            "leaves the dataset empty; record and save at least one episode.)"
+        )
+    if not 0 <= args.episode < n_saved:
+        raise SystemExit(
+            f"❌ episode {args.episode} out of range; dataset has {n_saved} "
+            f"episode(s) (valid: 0..{n_saved - 1})"
+        )
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
