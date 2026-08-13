@@ -44,3 +44,13 @@ that is quietly misconfigured. A single guided pass calibrates all four
 arms in turn, so bringing the rig to its calibrated state is one step
 rather than four, and each arm's calibration is bound to its side rather
 than to the order in which its bus happens to enumerate.
+
+\paragraph{On-robot replay check.} A recorded episode can be played back on
+the physical followers: the stored targets are re-sent frame by frame and
+the measured joints are read back, so the difference between the recorded
+and the reproduced motion is quantified per joint. This exposes any
+open-loop tracking error --- gravity sag at reach, a stiff joint, a drifted
+calibration --- that a purely on-screen review would hide, and it confirms
+that the frozen action definition genuinely drives the arms as the dataset
+claims. \unjustified{} the check is open-loop and single-arm-workspace, so
+it measures follower tracking, not task success.
