@@ -49,6 +49,7 @@ Controls (the Y/X/A/B semantics apply even WITHOUT --record):
 import argparse
 import os
 import shutil
+import signal
 import sys
 import threading
 import time
@@ -1088,7 +1089,16 @@ def main():
         print(f"\n❌ Error: {e}")
         traceback.print_exc()
     finally:
-        print("\n🧹 Cleaning up...")
+        # A second Ctrl+C here must NOT abort shutdown. The teardown below (park
+        # torque off, stop cameras/RealSense, let an in-flight episode finish
+        # saving) ends in the os._exit(0) at the bottom, which deliberately
+        # dodges the librealsense std::terminate -> SIGABRT. If an interrupt is
+        # allowed to escape mid-teardown it skips that exit, so CPython
+        # force-unwinds the RealSense C++ thread (core dump) AND the in-flight
+        # save is lost. Ignore SIGINT/SIGTERM so shutdown always runs to _exit.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        print("\n🧹 Cleaning up... (interrupt ignored until shutdown completes)")
         data_manager.request_shutdown()
         data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
         # Recorder first (discards any in-flight episode, finalizes the
