@@ -112,6 +112,16 @@ class EpisodeRecorder:
         with self._lock:
             return self._state
 
+    def get_episode_count(self) -> int:
+        """Episodes saved so far (== the next episode's index)."""
+        with self._lock:
+            return self._episode_index
+
+    def get_current_frame_count(self) -> int:
+        """Frames captured in the episode currently RECORDING (0 when idle)."""
+        with self._lock:
+            return self._frame_count
+
     def request_start_episode(self) -> bool:
         """Ask the loop to start recording. Rejected unless currently IDLE."""
         with self._lock:

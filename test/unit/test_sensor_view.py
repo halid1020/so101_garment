@@ -6,12 +6,14 @@ import numpy as np
 
 from common.sensor_view import (
     VIEW_HIDDEN_CAMERAS,
+    CollectionStatus,
     FrameRateCounter,
     ViewPanel,
     _age_color,
     _vec5_to_dict,
     colourise_depth,
     compose_sensor_view_frame,
+    progress_bar_text,
     side_joint_dict,
     visible_view_captures,
 )
@@ -176,6 +178,40 @@ class TestComposeSensorViewFrame(unittest.TestCase):
             [], self._cols(), self._cols(), "cmd", joint_strip=None
         )
         self.assertGreater(out.shape[0], 0)
+
+    def test_footer_adds_height_and_still_renders(self):
+        base = compose_sensor_view_frame(
+            [], self._cols(), self._cols(), "cmd", joint_strip=None
+        )
+        with_footer = compose_sensor_view_frame(
+            [],
+            self._cols(),
+            self._cols(),
+            "cmd",
+            joint_strip=None,
+            key_help=["Y enable", "A record", "Q quit"],
+            status=CollectionStatus(
+                state_label="RECORDING",
+                episodes_done=3,
+                episodes_goal=20,
+                current_frames=42,
+                recording=True,
+            ),
+        )
+        self.assertEqual(with_footer.ndim, 3)
+        # A footer block only adds rows; it never removes the joint cells.
+        self.assertGreaterEqual(with_footer.shape[0], base.shape[0])
+
+
+class TestProgressBarText(unittest.TestCase):
+    def test_with_goal_shows_fraction_and_pct(self):
+        self.assertEqual(progress_bar_text(3, 20), "episodes 3/20 (15%)")
+
+    def test_no_goal_shows_bare_count(self):
+        self.assertEqual(progress_bar_text(7, 0), "episodes 7")
+
+    def test_clamps_overshoot_to_100(self):
+        self.assertEqual(progress_bar_text(25, 20), "episodes 25/20 (100%)")
 
 
 class _Cam:

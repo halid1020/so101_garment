@@ -55,6 +55,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Callable
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
@@ -84,7 +85,7 @@ from common.recording import (
     load_recording_config,
 )
 from common.recording.depth import DepthWriter
-from common.sensor_view import run_sensor_view_loop
+from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
 from common.threads.dual_joint_state import dual_joint_state_thread
@@ -178,6 +179,14 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         "--no-sidecar",
         action="store_true",
         help="Disable the ~100 Hz full-rate sidecar parquet",
+    )
+    group.add_argument(
+        "--episode-goal",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Target episode count; shows an episodes n/N progress bar on the "
+        "--sensor-view footer (0 = no goal, bar hidden)",
     )
 
 
@@ -1062,6 +1071,38 @@ def main():
         else:
             owned_view_captures = build_sensor_view_captures(args, data_manager)
             view_captures = owned_view_captures
+
+    # Footer for the view: the control-key hints plus, when recording, a live
+    # RECORDING/IDLE + episodes-to-goal readout, so the operator drives the
+    # session from the window without watching the terminal.
+    view_key_help: list[str] | None = None
+    view_status_provider: "Callable[[], CollectionStatus] | None" = None
+    if args.sensor_view:
+        rec_hint = "A record" if args.record else "A —"
+        if use_leader:
+            view_key_help = ["Y enable", rec_hint, "B home", "X park", "Q quit"]
+        else:
+            view_key_help = [
+                "btn Y enable",
+                f"btn {rec_hint}",
+                "btn B home",
+                "btn X park",
+            ]
+        if recorder is not None:
+            _rec = recorder
+            _goal = args.episode_goal
+
+            def _collection_status() -> CollectionStatus:
+                st = _rec.get_state()
+                return CollectionStatus(
+                    state_label=st.value,
+                    episodes_done=_rec.get_episode_count(),
+                    episodes_goal=_goal,
+                    current_frames=_rec.get_current_frame_count(),
+                    recording=(st == RecorderState.RECORDING),
+                )
+
+            view_status_provider = _collection_status
     keyboard: KeyboardButtons | None = None
 
     try:
@@ -1074,6 +1115,8 @@ def main():
                 view_captures,
                 leader_mode=use_leader,
                 key_callbacks=leader_keys if use_leader else None,
+                key_help=view_key_help,
+                status_provider=view_status_provider,
             )
         elif use_leader:
             # No window: read the control keys from the terminal.

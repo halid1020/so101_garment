@@ -110,6 +110,14 @@ def _parse_args() -> argparse.Namespace:
         "--sensor-view", action="store_true", help="Open the live monitor"
     )
     parser.add_argument(
+        "--goal",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Target episode count; shows an episodes n/N progress bar on the "
+        "--sensor-view footer (0 = no goal)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the resolved teleop command and exit without running",
@@ -225,6 +233,8 @@ def main() -> None:
         argv += ["--ip-address", args.ip_address]
     if args.sensor_view:
         argv.append("--sensor-view")
+    if args.goal:
+        argv += ["--episode-goal", str(args.goal)]
 
     depth_str = "on" if depth else "off"
     ee_str = "on" if record_ee else "off"

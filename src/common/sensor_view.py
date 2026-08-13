@@ -157,6 +157,78 @@ class ViewPanel:
     line2_color: tuple[int, int, int] = field(default=(0, 255, 0))
 
 
+@dataclass
+class CollectionStatus:
+    """Live collection status drawn on the view footer (live only, not replay).
+
+    ``state_label`` is the recorder state (e.g. ``"RECORDING"`` / ``"IDLE"``);
+    ``episodes_done`` / ``episodes_goal`` drive the progress bar (goal ``0``
+    hides the bar); ``current_frames`` is the length of the episode in progress.
+    """
+
+    state_label: str
+    episodes_done: int
+    episodes_goal: int
+    current_frames: int
+    recording: bool = False
+
+
+def progress_bar_text(done: int, goal: int) -> str:
+    """``"episodes 3/20 (15%)"`` for a goal, or a bare count when goal ≤ 0. Pure."""
+    if goal <= 0:
+        return f"episodes {done}"
+    pct = int(round(100.0 * min(max(done, 0), goal) / goal))
+    return f"episodes {done}/{goal} ({pct}%)"
+
+
+def _render_footer(
+    width: int, key_help: "list[str] | None", status: "CollectionStatus | None"
+) -> "np.ndarray | None":
+    """Footer block: control-key help + collection status/progress bar (or None)."""
+    if not key_help and status is None:
+        return None
+    rows: list[np.ndarray] = []
+    if key_help:
+        line = np.zeros((30, width, 3), dtype=np.uint8)
+        cv2.putText(line, "  ".join(key_help), (8, 21), _FONT, 0.6, (200, 200, 200), 1)
+        rows.append(line)
+    if status is not None:
+        state_col = (0, 0, 255) if status.recording else (150, 150, 150)
+        mark = "● REC" if status.recording else "IDLE"
+        strip = np.zeros((34, width, 3), dtype=np.uint8)
+        cv2.putText(
+            strip,
+            f"{mark}  ep {status.episodes_done} - {status.current_frames} frames",
+            (8, 24),
+            _FONT,
+            0.7,
+            state_col,
+            2,
+        )
+        rows.append(strip)
+        if status.episodes_goal > 0:
+            bar = np.zeros((26, width, 3), dtype=np.uint8)
+            x0, x1 = 8, width - 8
+            frac = min(max(status.episodes_done, 0), status.episodes_goal) / max(
+                status.episodes_goal, 1
+            )
+            cv2.rectangle(bar, (x0, 5), (x1, 20), (70, 70, 70), 1)
+            fill = x0 + int((x1 - x0) * frac)
+            if fill > x0:
+                cv2.rectangle(bar, (x0, 5), (fill, 20), (0, 180, 0), -1)
+            cv2.putText(
+                bar,
+                progress_bar_text(status.episodes_done, status.episodes_goal),
+                (x0 + 6, 18),
+                _FONT,
+                0.55,
+                (255, 255, 255),
+                1,
+            )
+            rows.append(bar)
+    return np.vstack(rows) if rows else None
+
+
 def compose_sensor_view_frame(
     panels: "list[ViewPanel]",
     col1_by_side: dict,
@@ -166,6 +238,8 @@ def compose_sensor_view_frame(
     col1_label: str = "follower",
     max_w: int = 1280,
     max_h: int = 720,
+    key_help: "list[str] | None" = None,
+    status: "CollectionStatus | None" = None,
 ) -> np.ndarray:
     """Composite one sensor-view frame: a camera row over the joint cells.
 
@@ -173,9 +247,11 @@ def compose_sensor_view_frame(
     / ``col2_by_side`` map each side to its ``{joint: value|None}`` dict (column
     one is the follower/measured state, column two the leader or command).
     ``joint_strip`` is the optional ``(text, colour)`` proprio-drift line (live
-    only; ``None`` in replay). Returns a screen-fitted BGR image. Pure (no data
-    manager, no hardware) so the live loop and the replay viewer render an
-    identical layout.
+    only; ``None`` in replay). ``key_help`` (control-key hints) and ``status``
+    (collection progress) add a footer, both live-only and defaulting to
+    ``None`` so replay renders exactly as before. Returns a screen-fitted BGR
+    image. Pure (no data manager, no hardware) so the live loop and the replay
+    viewer render an identical layout.
     """
     from tool.test_sensor_rates import (
         _CAM_TILE_H,
@@ -221,6 +297,9 @@ def compose_sensor_view_frame(
         cv2.putText(strip, text, (8, 24), _FONT, 0.7, colour, 2)
         blocks.append(strip)
     blocks.append(joint_row)
+    footer = _render_footer(joint_row.shape[1], key_help, status)
+    if footer is not None:
+        blocks.append(footer)
     return _fit_to_screen(_vstack_pad(blocks), max_w, max_h)
 
 
@@ -278,6 +357,8 @@ def run_sensor_view_loop(
     key_callbacks: "dict[str, Callable[[], None]] | None" = None,
     max_w: int = 1280,
     max_h: int = 720,
+    key_help: "list[str] | None" = None,
+    status_provider: "Callable[[], CollectionStatus] | None" = None,
 ) -> None:
     """~30 Hz view loop; returns on q/Esc (Quest) or shutdown request.
 
@@ -286,6 +367,9 @@ def run_sensor_view_loop(
     exposes ``depth_name``/``depth_scale``, whose depth stream is shown as an
     extra colourised tile right after its RGB. Frames come from the data
     manager; the layout itself is built by ``compose_sensor_view_frame``.
+    ``key_help`` (control-key hints) and ``status_provider`` (queried each tick
+    for a ``CollectionStatus``) add the collection footer so the operator need
+    not watch the terminal.
     """
     from tool.test_sensor_rates import _camera_short_label
 
@@ -374,6 +458,7 @@ def run_sensor_view_loop(
             joint_age = None if joints_res is None else joints_res[1]
             joint_strip = (f"joints drift {_age_ms(joint_age)}", _age_color(joint_age))
 
+            status = status_provider() if status_provider is not None else None
             frame = compose_sensor_view_frame(
                 panels,
                 col1_by_side,
@@ -382,6 +467,8 @@ def run_sensor_view_loop(
                 joint_strip,
                 max_w=max_w,
                 max_h=max_h,
+                key_help=key_help,
+                status=status,
             )
             cv2.imshow(window, frame)
 
