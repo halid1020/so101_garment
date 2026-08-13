@@ -17,6 +17,14 @@ and the difficulties section keeps an honest record of what remains
 imperfect --- chiefly the irreducible cross-camera skew and the several
 thresholds still set by convention.
 
+The contract is closed at deployment: a policy trained on the collected data
+runs on the physical followers by building its observation from the live
+cameras and the measured joints and sending its predicted action through the
+same command path that produced the labels, so the arms execute exactly the
+action definition the dataset froze. The same reads first drive slowly to the
+policy's opening action and disable torque on exit, keeping the on-robot trial
+within the platform's safety envelope.
+
 This is a living document. An experiments section will report the first
 datasets collected on the platform, the measured drift budgets achieved,
 and the autonomous performance of a joint-space and an end-effector policy
