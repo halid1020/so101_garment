@@ -55,12 +55,13 @@ that the frozen action definition genuinely drives the arms as the dataset
 claims. \unjustified{} the check is open-loop and single-arm-workspace, so
 it measures follower tracking, not task success.
 
-\paragraph{Episode review and curation.} A recorded dataset is inspected
-frame by frame in an interactive review tool that shows each episode's
-sensor streams in the same layout the operator watched while collecting,
-with a draggable scrub control to move through an episode. A flawed episode
---- a mistimed grasp, a dropped object, a stream that went stale --- can be
-removed there, and the dataset is rewritten with the remaining episodes
-renumbered consistently across the training features and the side files, so
-curation leaves a valid dataset rather than a gap. Reviewing and pruning
-before training keeps a collection honest without re-running the rig.
+\paragraph{Episode review and curation.} A recorded dataset is inspected in
+a browser-based review tool served on the collection host: it lists the
+datasets, lists each dataset's recordings, and plays a selected recording as
+the same composited sensor view the operator watched while collecting, with a
+draggable scrub control to move through it. A flawed episode --- a mistimed
+grasp, a dropped object, a stream that went stale --- can be removed there,
+individually or in batches, and the dataset is rewritten with the remaining
+episodes renumbered consistently across the training features and the side
+files, so curation leaves a valid dataset rather than a gap. Reviewing and
+pruning before training keeps a collection honest without re-running the rig.

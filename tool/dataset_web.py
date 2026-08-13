@@ -1,0 +1,370 @@
+"""Localhost web browser for collected LeRobot datasets (aiohttp).
+
+Serves a small single-page app on ``127.0.0.1:<port>`` with three panes: the
+DATASET list (every dataset under ``--dir`` with at least one saved episode),
+the RECORDING list for the selected dataset (with checkboxes for batch delete
+and a per-row delete), and the sensor-view VIDEO of the selected recording. The
+video is the SAME composited layout the operator watched while collecting
+(rendered by ``tool/replay_recording.build_frame``) written to an mp4 and shown
+in an HTML5 ``<video controls>`` element, so the browser's own draggable scrub
+bar seeks through the episode.
+
+Deletion is destructive and OFF unless ``--allow-delete`` is passed (a delete
+request returns 403 otherwise). A confirmed delete renumbers the surviving
+episodes across the training features AND our side files, via
+``common.recording.dataset_edit.delete_episodes_in_place``.
+
+Usage:
+
+    venv/bin/python tool/dataset_web.py --dir /media/hdd/so101
+    venv/bin/python tool/dataset_web.py --dir /media/hdd/so101 --port 8000 --allow-delete
+
+Then open http://127.0.0.1:8000/ in a browser.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+from functools import partial
+from pathlib import Path
+
+from aiohttp import web  # type: ignore[import]
+
+from common.recording.dataset_edit import delete_episodes_in_place, episode_lengths
+from tool.replay_recording import _load_realsense, load_depth_range, saved_episode_count
+
+_IMAGE_PREFIX = "observation.images."
+
+
+# ── Dataset discovery + rendering (blocking; run in a thread executor) ─────────
+
+
+def list_datasets(root: Path) -> "list[dict]":
+    """Every immediate sub-directory of ``root`` that is a non-empty dataset."""
+    out: list[dict] = []
+    if not root.is_dir():
+        return out
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        n = saved_episode_count(child)
+        if n > 0:
+            out.append({"name": child.name, "episodes": n})
+    return out
+
+
+def dataset_root(root: Path, name: str) -> Path:
+    """Resolve + validate a dataset directory under ``root`` (no traversal)."""
+    if "/" in name or name in ("", ".", ".."):
+        raise web.HTTPBadRequest(text="bad dataset name")
+    path = root / name
+    if not path.is_dir() or saved_episode_count(path) == 0:
+        raise web.HTTPNotFound(text=f"no dataset {name!r}")
+    return path
+
+
+def episodes_of(root: Path, name: str) -> "list[dict]":
+    from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+
+    path = dataset_root(root, name)
+    meta = LeRobotDatasetMetadata(name, root=path)
+    lengths = episode_lengths(meta)
+    return [{"index": k, "length": L} for k, L in enumerate(lengths)]
+
+
+def _cache_path(cache_dir: Path, root: Path, name: str, episode: int) -> Path:
+    """mp4 cache path keyed by the dataset's info.json mtime (any edit busts it)."""
+    info = dataset_root(root, name) / "meta" / "info.json"
+    stamp = int(info.stat().st_mtime) if info.is_file() else 0
+    return cache_dir / name / f"ep_{episode:06d}_{stamp}.mp4"
+
+
+def render_episode_mp4(
+    root: Path, name: str, episode: int, out_path: Path, fps_override: "int | None"
+) -> Path:
+    """Render one episode's composited sensor view to ``out_path`` (cached)."""
+    import imageio.v2 as imageio  # type: ignore[import]
+    from cv2 import COLOR_BGR2RGB, cvtColor  # type: ignore[import]
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    from tool.replay_recording import build_frame
+
+    if out_path.is_file():
+        return out_path
+    path = dataset_root(root, name)
+    ds = LeRobotDataset(name, root=path, episodes=[episode])
+    n = len(ds)
+    if n == 0:
+        raise web.HTTPNotFound(text=f"episode {episode} has no frames")
+    fps = fps_override or int(ds.meta.fps)
+    camera_names = [(k, k[len(_IMAGE_PREFIX) :]) for k in ds.meta.camera_keys]
+    depth_name, depth_scale = _load_realsense(path)
+    depth_range = (
+        None
+        if depth_name is None
+        else load_depth_range(path, depth_name, episode, depth_scale)
+    )
+    frames = []
+    for i in range(n):
+        frame = build_frame(
+            ds, i, episode, camera_names, depth_name, depth_scale, path, depth_range
+        )
+        frames.append(cvtColor(frame, COLOR_BGR2RGB))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(".partial.mp4")
+    imageio.mimsave(tmp, frames, fps=fps)
+    os.replace(tmp, out_path)
+    return out_path
+
+
+# ── HTTP handlers ─────────────────────────────────────────────────────────────
+
+
+async def _in_executor(app: web.Application, fn, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(app["executor"], partial(fn, *args))
+
+
+async def handle_index(request: web.Request) -> web.Response:
+    return web.Response(text=_INDEX_HTML, content_type="text/html")
+
+
+async def handle_datasets(request: web.Request) -> web.Response:
+    app = request.app
+    data = await _in_executor(app, list_datasets, app["root"])
+    return web.json_response(data)
+
+
+async def handle_episodes(request: web.Request) -> web.Response:
+    app = request.app
+    name = request.match_info["name"]
+    data = await _in_executor(app, episodes_of, app["root"], name)
+    return web.json_response(data)
+
+
+async def handle_video(request: web.Request) -> web.StreamResponse:
+    app = request.app
+    name = request.match_info["name"]
+    episode = int(request.match_info["episode"])
+    out = await _in_executor(
+        app, _cache_path, app["cache_dir"], app["root"], name, episode
+    )
+    await _in_executor(
+        app, render_episode_mp4, app["root"], name, episode, out, app["fps"]
+    )
+    return web.FileResponse(out)
+
+
+async def handle_delete(request: web.Request) -> web.Response:
+    app = request.app
+    if not app["allow_delete"]:
+        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
+    name = request.match_info["name"]
+    body = await request.json()
+    indices = [int(i) for i in body.get("episodes", [])]
+    if not indices:
+        raise web.HTTPBadRequest(text="no episodes given")
+    path = dataset_root(app["root"], name)
+    depth_name, _ = await _in_executor(app, _load_realsense, path)
+    depth_names = [depth_name] if depth_name else []
+    new_total = await _in_executor(
+        app, delete_episodes_in_place, path, name, indices, depth_names
+    )
+    return web.json_response({"episodes": new_total})
+
+
+def build_app(args: argparse.Namespace) -> web.Application:
+    from concurrent.futures import ThreadPoolExecutor
+
+    app = web.Application(client_max_size=1024)
+    app["root"] = Path(args.dir).expanduser()
+    app["allow_delete"] = bool(args.allow_delete)
+    app["fps"] = args.fps
+    app["executor"] = ThreadPoolExecutor(max_workers=2)
+    cache = os.environ.get("SO101_OUTPUT_DIR", "outputs")
+    app["cache_dir"] = Path(cache).expanduser() / "dataset_web_cache"
+    app.add_routes(
+        [
+            web.get("/", handle_index),
+            web.get("/api/datasets", handle_datasets),
+            web.get("/api/datasets/{name}/episodes", handle_episodes),
+            web.get("/api/datasets/{name}/episodes/{episode}.mp4", handle_video),
+            web.post("/api/datasets/{name}/delete", handle_delete),
+        ]
+    )
+    return app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--dir", required=True, help="Collection directory holding the datasets"
+    )
+    parser.add_argument("--port", type=int, default=8000, help="Localhost port")
+    parser.add_argument(
+        "--allow-delete",
+        action="store_true",
+        help="Enable episode deletion (destructive; renumbers the survivors)",
+    )
+    parser.add_argument(
+        "--fps", type=int, default=None, help="Playback fps override (default dataset)"
+    )
+    args = parser.parse_args()
+
+    # Purely local; never reach out to the Hub for an incomplete dataset.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+
+    app = build_app(args)
+    print(f"📺 dataset browser on http://127.0.0.1:{args.port}/  (dir: {args.dir})")
+    if args.allow_delete:
+        print("⚠️  --allow-delete: episode deletion is ENABLED (renumbers survivors)")
+    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+
+
+_INDEX_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SO-101 dataset browser</title>
+<style>
+  :root { color-scheme: light dark; --bd:#8883; --sel:#3b82f6; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui,sans-serif; display:flex; height:100vh; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; opacity:.6;
+       margin:0; padding:10px 12px; border-bottom:1px solid var(--bd); }
+  .col { display:flex; flex-direction:column; border-right:1px solid var(--bd);
+         overflow:hidden; }
+  #datasets { width:220px; } #episodes { width:260px; }
+  #viewer { flex:1; padding:12px; overflow:auto; }
+  ul { list-style:none; margin:0; padding:0; overflow:auto; flex:1; }
+  li { padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--bd);
+       display:flex; gap:8px; align-items:center; }
+  li:hover { background:#8881; }
+  li.sel { background:var(--sel); color:#fff; }
+  .grow { flex:1; } .muted { opacity:.6; font-size:12px; }
+  .bar { padding:8px 12px; border-bottom:1px solid var(--bd); display:flex;
+         gap:8px; align-items:center; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd);
+           border-radius:6px; background:#8881; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.danger { color:#dc2626; border-color:#dc262688; }
+  video { width:100%; max-height:calc(100vh - 90px); background:#000; border-radius:8px; }
+  .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
+</style></head>
+<body>
+  <div class="col" id="datasets"><h2>Datasets</h2><ul id="ds-list"></ul></div>
+  <div class="col" id="episodes">
+    <h2 id="ep-title">Recordings</h2>
+    <div class="bar">
+      <label><input type="checkbox" id="all"> all</label>
+      <button id="del-sel" class="danger" disabled>Delete selected</button>
+    </div>
+    <ul id="ep-list"></ul>
+  </div>
+  <div id="viewer"><p class="muted">Select a recording to play its sensor view.</p></div>
+<script>
+const $ = (s) => document.querySelector(s);
+let curDataset = null, curEpisode = null, allowDelete = false;
+
+async function j(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.json();
+}
+
+async function loadDatasets() {
+  const list = await j('/api/datasets');
+  const ul = $('#ds-list'); ul.innerHTML = '';
+  for (const d of list) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="grow">${d.name}</span>
+                    <span class="muted">${d.episodes}</span>`;
+    li.onclick = () => selectDataset(d.name, li);
+    ul.appendChild(li);
+  }
+  if (!list.length) ul.innerHTML = '<li class="muted">no datasets found</li>';
+}
+
+async function selectDataset(name, li) {
+  curDataset = name; curEpisode = null;
+  document.querySelectorAll('#ds-list li').forEach(x => x.classList.remove('sel'));
+  if (li) li.classList.add('sel');
+  $('#ep-title').textContent = name;
+  await loadEpisodes();
+  $('#viewer').innerHTML = '<p class="muted">Select a recording.</p>';
+}
+
+async function loadEpisodes() {
+  const eps = await j(`/api/datasets/${curDataset}/episodes`);
+  const ul = $('#ep-list'); ul.innerHTML = '';
+  for (const e of eps) {
+    const li = document.createElement('li');
+    li.dataset.idx = e.index;
+    li.innerHTML =
+      `<input type="checkbox" class="pick" onclick="event.stopPropagation()">
+       <span class="grow">episode ${e.index}</span>
+       <span class="muted">${e.length}f</span>` +
+      (allowDelete ? `<span class="del" title="delete">🗑</span>` : '');
+    li.onclick = () => selectEpisode(e.index, li);
+    if (allowDelete) li.querySelector('.del').onclick = (ev) => {
+      ev.stopPropagation(); doDelete([e.index]);
+    };
+    li.querySelector('.pick').onchange = updateSelCount;
+    ul.appendChild(li);
+  }
+  $('#all').checked = false; updateSelCount();
+}
+
+function picked() {
+  return [...document.querySelectorAll('#ep-list .pick')]
+    .filter(c => c.checked).map(c => +c.closest('li').dataset.idx);
+}
+function updateSelCount() {
+  $('#del-sel').disabled = !allowDelete || picked().length === 0;
+}
+
+function selectEpisode(idx, li) {
+  curEpisode = idx;
+  document.querySelectorAll('#ep-list li').forEach(x => x.classList.remove('sel'));
+  if (li) li.classList.add('sel');
+  $('#viewer').innerHTML =
+    `<video controls autoplay muted src="/api/datasets/${curDataset}/episodes/${idx}.mp4"></video>
+     <p class="muted">episode ${idx} — drag the scrub bar to seek. First load renders the mp4.</p>`;
+}
+
+async function doDelete(indices) {
+  if (!allowDelete) return;
+  if (!confirm(`Delete ${indices.length} episode(s) from ${curDataset}? `
+      + `Survivors are renumbered. This cannot be undone.`)) return;
+  try {
+    await j(`/api/datasets/${curDataset}/delete`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({episodes: indices}),
+    });
+    await loadDatasets(); await loadEpisodes();
+    $('#viewer').innerHTML = '<p class="muted">Deleted. Select a recording.</p>';
+  } catch (e) { alert('delete failed: ' + e.message); }
+}
+
+$('#all').onchange = (e) => {
+  document.querySelectorAll('#ep-list .pick').forEach(c => c.checked = e.target.checked);
+  updateSelCount();
+};
+$('#del-sel').onclick = () => doDelete(picked());
+
+// Probe whether deletion is enabled (a disabled server 403s the delete route).
+fetch('/api/datasets/__probe__/delete', {method: 'POST',
+  headers: {'Content-Type': 'application/json'}, body: '{}'})
+  .then(r => { allowDelete = (r.status !== 403); loadDatasets(); })
+  .catch(() => loadDatasets());
+</script>
+</body></html>
+"""
+
+
+if __name__ == "__main__":
+    main()
