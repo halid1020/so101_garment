@@ -193,6 +193,39 @@ rsync -avP \
   `HF_LEROBOT_HOME` (`<scratch>/hf_lerobot`) with the dataset under
   `local/so101_sim_single_simple`.
 
+## Real-data cell (`create_real_vla.sbatch`)
+
+Training a policy on a dataset **collected on the physical rig** reuses the
+same environment (`provision_create.sh` is unchanged) but a different job.
+There is no simulation here, so the job has no MuJoCo probe; and there is no
+in-loop evaluation, because a real policy is evaluated **on the robot** with
+`tool/run_policy_real.py` back at the rig, not on the cluster.
+
+1. **Provision** — as above (`bash hpc/provision_create.sh`, once). The sim
+   and real cells share the venv.
+2. **Stage the real dataset** — *from the collection box*, push the dataset
+   directory to your CREATE scratch under `HF_LEROBOT_HOME/local`:
+   ```bash
+   rsync -avP /media/<you>/<drive>/so101/<dataset> \
+     <user>@<create-login-host>:<scratch>/hf_lerobot/local/
+   ```
+3. **Fill the placeholders in `hpc/create_real_vla.sbatch`** — the same
+   `REPO_ROOT` / `SCRATCH` / partition / account as the sim cell, plus
+   `DATASET_NAME="<dataset>"` (the staged directory's name).
+4. **Submit** — `sbatch hpc/create_real_vla.sbatch`, monitor with
+   `squeue --me` and `tail -f real_vla-<jobid>.out`. It trains ACT then
+   Diffusion on the staged dataset (resumable with the same `--run-name`) and
+   writes `results.md` + the checkpoints under
+   `<scratch>/so101_outputs/vla_real_long/create_<jobid>/`.
+5. **Evaluate** — copy a checkpoint back to the rig and run
+   `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` (start with
+   `--dry-run`).
+
+**pi0.5 is a deliberate follow-up.** Unlike ACT/Diffusion it finetunes a
+licence-gated base (`lerobot/pi05_base`), which must be pre-staged to the
+offline node, and it needs LoRA (`--peft.r=16`) to fit a 24 GB GPU (see
+CLAUDE.md). Add it to `long_vla_real.sh` once the base is staged.
+
 ## Scaling out later
 
 - More cells: drop `--only`/`--tasks`/`--modes` (or widen them) to run the
