@@ -23,7 +23,7 @@ set -euo pipefail
 # ---- paths (EDIT) ----------------------------------------------------
 REPO_ROOT="/user/k2694428/so101_garment"         # where you cloned this repo on CREATE
 SCRATCH="/scratch/users/k2694428"                # big, node-visible scratch
-DATASET_NAME="<your-real-dataset>"               # e.g. towel_fold — staged below
+DATASET_NAME="cube-pnp"               # e.g. towel_fold — staged below
 
 # ---- modules (EDIT / verify) -----------------------------------------
 # The pip torch wheel bundles its own CUDA runtime; the driver supplies
