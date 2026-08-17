@@ -8,6 +8,12 @@ RGB, optionally rotating 180 deg, and publishing into the shared
 ``DualDataManager`` via ``set_rgb_image(rgb, name)``. On device loss the loop
 retries the open every 2 s so a bumped USB cable does not kill the session.
 
+Freshness is a design constraint, not an accident: every stream is opened with a
+compressed pixel format (``fourcc``, MJPG by default — several uncompressed
+640x480@30 streams do not fit through the shared USB controllers) and with the
+shortest driver queue, and the loop is paced by the blocking read alone so no
+queue of stale frames can build up. See :meth:`_configure`.
+
 The recorder polls :meth:`seconds_since_last_frame` to detect stale streams.
 """
 
@@ -24,6 +30,15 @@ from common.data_manager_dual import DualDataManager
 
 # How often (seconds) to retry opening a device that failed or was lost.
 _REOPEN_INTERVAL_S = 2.0
+
+# Minimum time one capture iteration may take. A blocking V4L2 read paces the
+# loop by itself; this only stops a device that returns frames instantly from
+# spinning a core.
+_BUSY_SPIN_S = 0.001
+
+# V4L2 buffers per stream. The smallest value that still sustains the device's
+# full frame rate (1 halves it — see _configure).
+_CAPTURE_BUFFERS = 2
 
 
 class CameraCapture:
@@ -63,6 +78,13 @@ class CameraCapture:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
+        # Short driver queue, to bound how stale a delivered frame can be if this
+        # thread is momentarily late. Two is deliberate and MEASURED: a single
+        # buffer starves the driver (it has nowhere to put the next frame while
+        # we hold the only one, so it drops every other frame and the stream
+        # halves to ~15 fps), while 2 and above all sustain the device's full
+        # rate. Do not "optimise" this to 1.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, _CAPTURE_BUFFERS)
 
     def open(self) -> bool:
         """Attempt to open the device once. Returns whether it opened.
@@ -163,9 +185,13 @@ class CameraCapture:
                 with self._lock:
                     self._last_frame_mono = t_capture
 
-                sleep_time = dt - (time.time() - iteration_start)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                # No fps sleep here: the V4L2 ``read`` above already blocks until
+                # the next frame, so it paces this loop at the device rate. An
+                # extra sleep on top would hold the loop below that rate and let
+                # the driver queue build up — the very drift this avoids. Only
+                # guard against a device that returns instantly (busy-spin).
+                if time.time() - iteration_start < _BUSY_SPIN_S:
+                    time.sleep(_BUSY_SPIN_S)
         except Exception as e:  # pragma: no cover - hardware failure path
             print(f"❌ camera '{self.name}' thread error: {e}")
             traceback.print_exc()

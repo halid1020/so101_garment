@@ -45,6 +45,24 @@ session from the window rather than the terminal. \unjustified{} the half-frame 
 is a working rule of thumb, not a value validated against downstream policy
 performance.
 
+\paragraph{Capture budget.} The bus, not only the clock, sets that residual.
+Several colour streams share the host's controllers, and an uncompressed
+transport does not fit: one uncompressed view at our resolution and rate needs
+roughly eighteen megabytes per second, so a few of them exceed what the
+controllers carry. The cameras then negotiate a fraction of the rate we ask
+for. Nothing reports an error, because each frame that does arrive is valid;
+the newest frame is simply already half an inter-arrival gap old, and the
+measured residual reflects the capture rate rather than clock skew. We
+therefore require a compressed transport on every stream, and a driver queue
+short enough to bound staleness yet deep enough not to starve the camera. Both
+halves are measured, not assumed. Requesting an uncompressed format held our
+wrist cameras to under a third of their rate and left them a mean of
+\SI{54}{\milli\second} behind the reference time; compressing them recovered
+the full rate and cut that residual to \SI{20}{\milli\second}. A single-frame
+queue looks attractive for freshness but halves the achieved rate, because the
+driver has nowhere to place the next frame while the reader holds the only
+buffer; two buffers sustain the full rate.
+
 \paragraph{Recorded stream set.} The dataset records the colour views --- the
 overhead, wrist and fingertip cameras --- the twelve-dimensional
 proprioceptive state (five joints and a gripper per arm), the executed target

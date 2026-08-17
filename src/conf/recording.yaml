@@ -60,6 +60,13 @@ realsense:
 # Device indices are PER-MACHINE PLACEHOLDERS — you MUST set the correct
 # /dev/videoN index for each stream on your rig (a -1 device is only valid for
 # a disabled stream). --enable-camera / --disable-camera override "enabled".
+#
+# Each stream also accepts an OPTIONAL "fourcc" key (the capture pixel format,
+# default MJPG) which may be omitted. Do not set it to an uncompressed format
+# such as YUYV for several simultaneous streams: one 640x480@30 YUYV stream needs
+# ~18 MB/s, so a few of them exceed what the shared USB controllers can carry —
+# the cameras then run well under their requested fps, lag tens of milliseconds
+# behind the rest of the frame, and can drop off the bus mid-episode.
 cameras:
   # Overhead / scene RGB camera. DISABLED by default: the current rig does not
   # record a scene view (re-enable here if one is wired).

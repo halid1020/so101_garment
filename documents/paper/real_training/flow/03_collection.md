@@ -20,6 +20,14 @@ P5  Drift budget: for every stream and frame the collector records the residual
     shows it during collection; unsynchronised cameras cannot be re-phased in
     software, so the honest deliverable is a measured drift, not a claim of
     perfect sync. State the target budget relative to the frame period.
+P5b Capture budget (why the bus, not just the clock, sets the drift): several
+    colour streams share the host's USB controllers, and an uncompressed format
+    does not fit — the cameras then negotiate a fraction of their requested rate,
+    so the newest frame is already half an inter-arrival gap old and the residual
+    of P5 is dominated by the capture rate rather than by clock skew. State the
+    remedy (compressed transport, a queue short enough to bound staleness but
+    deep enough not to starve the driver) and give the measured before/after.
+    Hands over to the stream set.
 P6  Stream set: enumerate what is recorded — colour views, aligned depth
     (stored losslessly outside the video pipeline because it is not
     three-channel colour), proprioception, measured end-effector pose, and both

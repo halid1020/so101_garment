@@ -215,6 +215,27 @@ class TestRecordingConfig(unittest.TestCase):
         self.assertIn("audio", cfg)
         self.assertTrue(cfg["audio"]["enabled"])
 
+    def test_camera_fourcc_defaults_to_compressed(self) -> None:
+        # A camera entry WITHOUT a fourcc key stays valid and is defaulted, so a
+        # stream can never silently capture in an uncompressed format.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(_VALID, d)))
+        self.assertEqual(cfg["cameras"]["scene"]["fourcc"], "MJPG")
+
+    def test_camera_fourcc_override_honoured(self) -> None:
+        good = copy.deepcopy(_VALID)
+        good["cameras"]["scene"]["fourcc"] = "YUYV"
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(good, d)))
+        self.assertEqual(cfg["cameras"]["scene"]["fourcc"], "YUYV")
+
+    def test_every_checked_in_camera_has_a_fourcc(self) -> None:
+        # Every stream must resolve a format, so the record path can index it
+        # unconditionally (tool/meta_quest_teleopration.py).
+        cfg = load_recording_config()
+        for name, cam in cfg["cameras"].items():
+            self.assertTrue(cam["fourcc"], f"camera {name} has no fourcc")
+
 
 if __name__ == "__main__":
     unittest.main()

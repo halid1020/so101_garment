@@ -423,6 +423,7 @@ def build_recording_stack(
             height=cfg["height"],
             fps=cfg["fps"],
             rotate180=cfg["rotate180"],
+            fourcc=cfg["fourcc"],
         )
         if not cam.open():
             for opened in captures:
