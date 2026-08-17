@@ -85,6 +85,13 @@ def _parse_args() -> argparse.Namespace:
         help="Teleoperation interface (default quest)",
     )
     parser.add_argument(
+        "--assign",
+        action="store_true",
+        help="Run the sensor-assignment GUI first (reassign follower/leader "
+        "arms and cameras to their names in src/conf/sensor_map.yaml), then "
+        "start this collection session",
+    )
+    parser.add_argument(
         "--stream",
         action="append",
         default=[],
@@ -234,6 +241,8 @@ def main() -> None:
         args.task,
         *flags,
     ]
+    if args.assign:
+        argv.append("--assign")
     if resuming:
         argv.append("--resume")
     if args.ip_address:
