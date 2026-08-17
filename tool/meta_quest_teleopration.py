@@ -1042,7 +1042,14 @@ def main():
         print("✓ 🔴 Both arms at rest and disabled (torque off)")
 
     def on_episode_toggle() -> None:
-        """A: start/stop-save an episode (requires ENABLED and --record)."""
+        """A: start/stop-save an episode (requires ENABLED and --record).
+
+        Leader mode records in place: enabling (Y) already hands control to the
+        leaders, and the followers keep tracking them for the whole session, so
+        A only toggles the recorder — it never homes the arms. Quest mode still
+        bookends each episode with a move to the ready pose (recorded), the
+        defined start/end frame behind the clutch.
+        """
         if recorder is None:
             print("⚠️  A ignored: started without --record")
             return
@@ -1051,17 +1058,19 @@ def main():
             return
         state = recorder.get_state()
         if state == RecorderState.IDLE:
-            print("🏁 Moving to ready, then starting the episode...")
-            _move_to_ready()
             if use_leader:
-                _start_leader_tracking()
+                print("🔴 Recording — the leaders keep driving the followers")
+            else:
+                print("🏁 Moving to ready, then starting the episode...")
+                _move_to_ready()
             recorder.request_start_episode()
         elif state == RecorderState.RECORDING:
-            # The ready-move stays inside the episode (still recording).
-            print("🏁 Moving to ready (recorded), then stopping and saving...")
-            _move_to_ready()
             if use_leader:
-                _start_leader_tracking()
+                print("💾 Stopping and saving the episode...")
+            else:
+                # The ready-move stays inside the episode (still recording).
+                print("🏁 Moving to ready (recorded), then stopping and saving...")
+                _move_to_ready()
             recorder.request_stop_save()
         else:
             print(f"⚠️  A ignored: recorder is busy ({state.value})")
