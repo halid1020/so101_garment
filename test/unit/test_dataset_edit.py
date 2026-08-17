@@ -4,7 +4,9 @@ No LeRobot and no filesystem: exercises the deletion re-indexing arithmetic that
 keeps our ``extra/`` side files aligned with LeRobot's renumbered dataset.
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from common.recording.dataset_edit import (
@@ -13,6 +15,9 @@ from common.recording.dataset_edit import (
     deletion_mapping,
     episode_lengths,
     extra_reindex_ops,
+    new_episode_uid,
+    read_episode_uid,
+    write_episode_uid,
 )
 
 
@@ -55,12 +60,49 @@ class TestExtraReindexOps(unittest.TestCase):
     def test_no_depth_streams_omits_depth_ops(self):
         ops = extra_reindex_ops({0: 0}, [])
         self.assertTrue(all("depth" not in dst for _, dst in ops))
-        self.assertEqual(len(ops), 2)  # drift + sidecar only
+        self.assertEqual(len(ops), 3)  # drift + sidecar + identity only
 
     def test_batch_deleted_episodes_not_in_ops(self):
         ops = extra_reindex_ops(deletion_mapping(5, [1, 3]), ["d"])
         srcs = [s for s, _ in ops]
         self.assertFalse(any("000001" in s or "000003" in s for s in srcs))
+
+
+class TestEpisodeUid(unittest.TestCase):
+    def test_format_is_sortable_and_millisecond_unique(self):
+        a = new_episode_uid(1_700_000_000.100)
+        b = new_episode_uid(1_700_000_000.900)
+        self.assertRegex(a, r"^\d{8}-\d{6}-\d{3}$")
+        self.assertNotEqual(a, b)
+        self.assertLess(a, b)  # lexical order == chronological order
+
+    def test_two_calls_in_the_same_second_differ(self):
+        self.assertNotEqual(
+            new_episode_uid(1_700_000_000.001), new_episode_uid(1_700_000_000.002)
+        )
+
+    def test_round_trip_through_the_identity_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_episode_uid(d, 7, "20260817-120000-001", task="pick the cube")
+            self.assertEqual(read_episode_uid(d, 7), "20260817-120000-001")
+
+    def test_missing_identity_file_reads_as_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(read_episode_uid(d, 3), "")
+
+    def test_identity_survives_renumbering(self):
+        # The whole point: after deleting ep0, the recording that was ep1 keeps
+        # its id even though its index became 0.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            write_episode_uid(root, 0, "uid-zero")
+            write_episode_uid(root, 1, "uid-one")
+            ops = dict(extra_reindex_ops(deletion_mapping(2, [0]), []))
+            src, dst = "extra/uid_000001.json", "extra/uid_000000.json"
+            self.assertEqual(ops[src], dst)
+            # Apply the rename the way delete_episodes_in_place does.
+            (root / src).replace(root / dst)
+            self.assertEqual(read_episode_uid(root, 0), "uid-one")
 
 
 class _FakeMeta:

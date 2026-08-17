@@ -32,6 +32,10 @@ P6  Stream set: enumerate what is recorded — colour views, aligned depth
     (stored losslessly outside the video pipeline because it is not
     three-channel colour), proprioception, measured end-effector pose, and both
     joint and end-effector targets. Units and layout match across streams.
+P6b Episode identity: each episode carries a wall-clock identifier, because its
+    position renumbers when any earlier episode is removed and so cannot name it;
+    the identifier survives renumbering, keeping session logs and review
+    decisions attached to the right recording.
 P7  Phase flag and gating: a per-frame flag marks teleoperation-driven frames
     so non-teleoperation frames (homing) can be masked. Episode-level gating is
     GRADED, not absolute: a stream loss holds the episode and resumes it when the

@@ -36,6 +36,11 @@ operator can review or drop an episode whose gap is too large to train on.
 Any automatic end (abandon, disabled arms, shutdown, thread error) plays the
 stop cue, because an operator watching the arms rather than the terminal
 otherwise cannot tell that recording ended and would keep performing the task.
+
+Each saved episode also gets a timestamp id (``new_episode_uid``) recorded
+beside it. The episode index cannot serve as a name: deleting one episode
+renumbers every later one, so the same index refers to a different recording
+afterwards. The id is fixed when recording starts and never moves.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ import numpy as np
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording import features as feat
+from common.recording.dataset_edit import new_episode_uid, write_episode_uid
 from common.recording.drift import DriftLog
 
 
@@ -136,6 +142,9 @@ class EpisodeRecorder:
         self._pause_started: float | None = None
         self._pause_count = 0
         self._paused_total_s = 0.0
+        # Stable identity for the episode currently being recorded (see
+        # ``new_episode_uid``). Set when recording starts, written out on save.
+        self._episode_uid = ""
         # Temporal-alignment telemetry + action-fallback tally.
         self._drift = DriftLog()
         self._fallback_frames = 0
@@ -293,11 +302,15 @@ class EpisodeRecorder:
         self._pause_started = None
         self._pause_count = 0
         self._paused_total_s = 0.0
+        self._episode_uid = new_episode_uid()
         with self._lock:
             self._state = RecorderState.RECORDING
         if self.audio_cue is not None:
             self.audio_cue.play("start")
-        print(f"🔴 recording episode {self._episode_index} (task: {self.task!r})")
+        print(
+            f"🔴 recording episode {self._episode_index} "
+            f"[{self._episode_uid}] (task: {self.task!r})"
+        )
 
     def _step_recording(self) -> None:
         # A requested stop-save wins over every discard trigger: if the operator
@@ -521,6 +534,12 @@ class EpisodeRecorder:
                 self._drift.write_parquet(self.root, self._episode_index)
             except Exception:
                 traceback.print_exc()
+            try:
+                write_episode_uid(
+                    self.root, self._episode_index, self._episode_uid, self.task
+                )
+            except Exception:
+                traceback.print_exc()
         self._print_stats(outcome="saved")
         self._episode_index += 1
         with self._lock:
@@ -632,8 +651,9 @@ class EpisodeRecorder:
             pause_msg = (
                 f", paused {self._pause_count}x for {self._paused_total_s:.1f} s"
             )
+        uid_msg = f" [{self._episode_uid}]" if self._episode_uid else ""
         print(
-            f"⏹️  episode {self._episode_index} {outcome}: "
+            f"⏹️  episode {self._episode_index}{uid_msg} {outcome}: "
             f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}{pause_msg}"
         )
         # A pause is a genuine hole: LeRobot timestamps frames from their index,

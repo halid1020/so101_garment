@@ -76,6 +76,15 @@ filtered operator input, and the gripper signals. Proprioception, command
 and target share one unit convention and one channel layout, so a reader
 never has to reconcile two coordinate conventions.
 
+Each episode also carries an identifier taken from the wall clock at which it
+began. Its position in the dataset cannot serve as its name, because removing
+one episode renumbers every later one, so the same position denotes a different
+recording afterwards, and any note an operator made against a number silently
+comes to mean something else. The identifier is fixed when recording starts and
+travels with the episode through renumbering, which lets a session log, a
+review decision or a defect report keep pointing at the recording it was
+written about.
+
 \paragraph{Phase flag and gating.} Each frame carries a flag stating
 whether teleoperation drove it. Homing moves and other non-teleoperation
 motion are thereby marked and can be excluded when a policy is trained, so
