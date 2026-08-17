@@ -20,12 +20,16 @@ from pathlib import Path
 _SOUNDS_DIR = Path(__file__).resolve().parent / "sounds"
 
 # Player command prefixes, best first. Each plays a file given as the final argv
-# element; all three handle the shipped 16-bit PCM WAV. The flags keep them
-# quiet and non-interactive.
+# element; all handle the shipped 16-bit PCM WAV. The flags keep them quiet and
+# non-interactive. Order matters: modern desktops run PipeWire/PulseAudio, where
+# raw ALSA (``aplay``) often plays to a dead default device and is silent, so the
+# server-aware players (``pw-play``, ``paplay``, ``ffplay``) come first and
+# ``aplay`` is only the last resort.
 _PLAYERS: tuple[tuple[str, list[str]], ...] = (
+    ("pw-play", []),
     ("paplay", []),
-    ("aplay", ["-q"]),
     ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"]),
+    ("aplay", ["-q"]),
 )
 
 
