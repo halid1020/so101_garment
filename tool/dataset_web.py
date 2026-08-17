@@ -39,6 +39,13 @@ from pathlib import Path
 
 from aiohttp import web  # type: ignore[import]
 
+# This tool only ever reads datasets from the local drive. Without this, a
+# dataset whose metadata is momentarily incomplete makes LeRobot fall back to a
+# Hub lookup on the bare dataset name and report an offline-mode or 401 failure,
+# which says nothing about the real problem. Set before any LeRobot import.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+
 from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
     compact_dataset,
