@@ -71,6 +71,7 @@ ASSIGNABLE_CAMERA_NAMES = [
     "right_arm_right_gripper",
     "wrist_camera_left",
     "wrist_camera_right",
+    "central",
 ]
 SENSOR_MAP_PATH = _root / "src/conf/sensor_map.yaml"
 _FONT = cv2.FONT_HERSHEY_SIMPLEX

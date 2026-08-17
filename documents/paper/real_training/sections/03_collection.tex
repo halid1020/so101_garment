@@ -45,11 +45,12 @@ session from the window rather than the terminal. \unjustified{} the half-frame 
 is a working rule of thumb, not a value validated against downstream policy
 performance.
 
-\paragraph{Recorded stream set.} The dataset records the colour views, the
-overhead depth image, the twelve-dimensional proprioceptive state (five
-joints and a gripper per arm), and the executed target
-(Section~\ref{sec:contract}). Depth is sixteen-bit and is stored losslessly
-outside the colour-video pipeline, because a depth image is not
+\paragraph{Recorded stream set.} The dataset records the colour views --- the
+overhead, wrist and fingertip cameras --- the twelve-dimensional
+proprioceptive state (five joints and a gripper per arm), the executed target
+(Section~\ref{sec:contract}), and, when a depth-capable overhead camera is
+fitted, its aligned depth image. That depth is sixteen-bit and is stored
+losslessly outside the colour-video pipeline, because a depth image is not
 three-channel colour and a colour-video encoder would corrupt it; the depth
 scale and camera intrinsics are stored alongside. The full-rate side log
 additionally holds the measured and target end-effector poses, the raw and

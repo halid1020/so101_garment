@@ -187,6 +187,12 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
         help="Disable the ~100 Hz full-rate sidecar parquet",
     )
     group.add_argument(
+        "--no-sound",
+        action="store_true",
+        help="Disable the audible record start/stop cue (overrides "
+        "audio.enabled in src/conf/recording.yaml)",
+    )
+    group.add_argument(
         "--no-streaming-encode",
         action="store_true",
         help="Encode each episode's videos in one blocking pass at save time "
@@ -527,6 +533,18 @@ def build_recording_stack(
             include_hw_frame_goal=sidecar_cfg["include_hw_frame_goal"],
         )
 
+    # Audible start/stop cue (optional 'audio' section; --no-sound disables).
+    audio_cfg = rec_cfg.get("audio") or {}
+    audio_cue = None
+    if audio_cfg.get("enabled", False) and not args.no_sound:
+        from common.recording.audio_cue import AudioCue
+
+        audio_cue = AudioCue(
+            enabled=True,
+            start_sound=audio_cfg.get("start_sound", ""),
+            stop_sound=audio_cfg.get("stop_sound", ""),
+        )
+
     return EpisodeRecorder(
         dataset=dataset,
         data_manager=data_manager,
@@ -539,6 +557,7 @@ def build_recording_stack(
         depth_streams=depth_streams,
         depth_writer=depth_writer,
         record_ee=record_ee,
+        audio_cue=audio_cue,
     )
 
 
@@ -741,6 +760,13 @@ def main():
         "ports/ids from src/conf/sensor_map.yaml via test_sensor_rates.py "
         "--assign)",
     )
+    parser.add_argument(
+        "--assign",
+        action="store_true",
+        help="Run the sensor-assignment GUI first (reassign follower/leader "
+        "arms and cameras to their names in src/conf/sensor_map.yaml), then "
+        "continue into teleop/collection with the fresh assignments",
+    )
     add_teleop_cli_args(
         parser, default_max_joint_vel=MAX_JOINT_VEL_HW_RAD_S, default_method="armplane"
     )
@@ -751,6 +777,30 @@ def main():
     print("=" * 60)
     print("DUAL-ARM SO101 TELEOPERATION (LeRobot Backend)")
     print("=" * 60)
+
+    # Optional: reassign robot + sensor streams to their names BEFORE any
+    # hardware is opened, so the connection below reads the fresh sensor_map.
+    if args.assign:
+        from tool.test_sensor_rates import (
+            SENSOR_MAP_PATH,
+            load_sensor_map,
+            run_assignment,
+            save_sensor_map,
+        )
+
+        current = (
+            load_sensor_map(SENSOR_MAP_PATH)
+            if SENSOR_MAP_PATH.exists()
+            else {
+                "cameras": {},
+                "arms": {},
+                "leaders": {},
+                "realsense": {},
+            }
+        )
+        updated = run_assignment(current)
+        save_sensor_map(SENSOR_MAP_PATH, updated)
+        print(f"✓ sensor assignments written to {SENSOR_MAP_PATH}")
 
     # 1. Shared state
     data_manager = DualDataManager()

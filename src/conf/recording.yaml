@@ -61,14 +61,26 @@ realsense:
 # /dev/videoN index for each stream on your rig (a -1 device is only valid for
 # a disabled stream). --enable-camera / --disable-camera override "enabled".
 cameras:
-  # Overhead / scene RGB camera.
+  # Overhead / scene RGB camera. DISABLED by default: the current rig does not
+  # record a scene view (re-enable here if one is wired).
   scene:
-    enabled: true        # capture this stream
+    enabled: false       # capture this stream
     device: 0            # PLACEHOLDER: /dev/video0 — set for your machine
     width: 640           # forced capture width (px); a warn-once resize applies
     height: 480          # forced capture height (px)
     fps: 30              # requested device frame rate (Hz)
     rotate180: false     # rotate the frame 180 deg (camera mounted upside down)
+  # Central overhead RGB camera — a plain UVC camera (the rig no longer uses a
+  # RealSense here, so this stream carries colour only, no depth). Keeps the
+  # feature key observation.images.central, and is assigned by-path from
+  # sensor_map.yaml (tool/test_sensor_rates.py --assign) like the wrist cameras.
+  central:
+    enabled: true
+    device: 6            # PLACEHOLDER fallback: set for your machine
+    width: 640
+    height: 480
+    fps: 30
+    rotate180: false
   # Left wrist RGB camera (follower_1 = LEFT arm). The device index here is a
   # fallback: once this stream is assigned in src/conf/sensor_map.yaml
   # (tool/test_sensor_rates.py --assign) the recorder resolves it to that
@@ -119,3 +131,14 @@ cameras:
     height: 480
     fps: 30
     rotate180: false
+
+# Audible record cue. OPTIONAL (older maps omit it). A short sound plays when an
+# episode starts recording and when it stops-saves, so the operator gets an
+# audible signal without watching the terminal. Sound names resolve against
+# src/common/recording/sounds/ when not absolute; playback is best-effort (falls
+# back to the terminal bell if no player is found) and never blocks the record
+# loop. --no-sound on the command line overrides "enabled".
+audio:
+  enabled: true          # play the start/stop cues
+  start_sound: start.wav # played when an episode starts recording
+  stop_sound: stop.wav   # played when an episode is stopped and saved

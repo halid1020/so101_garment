@@ -33,6 +33,11 @@ class TestAssignableCameraNames(unittest.TestCase):
         ):
             self.assertIn(name, ASSIGNABLE_CAMERA_NAMES)
 
+    def test_central_camera_is_assignable(self):
+        # The central overhead camera is now a plain UVC stream bound by-path in
+        # --assign, like the wrist cameras (no longer a serial-keyed RealSense).
+        self.assertIn("central", ASSIGNABLE_CAMERA_NAMES)
+
     def test_single_digit_selection_keys(self):
         # The GUI selects with number keys 1..N; keep it single-digit.
         self.assertLessEqual(len(ASSIGNABLE_CAMERA_NAMES), 9)
