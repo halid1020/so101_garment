@@ -223,6 +223,98 @@ def episode_lengths(meta: Any) -> "list[int]":
     return [int(meta.episodes[k]["length"]) for k in range(meta.total_episodes)]
 
 
+def commit_episode_metadata(dataset: Any) -> bool:
+    """Make the episode LeRobot just saved durable on disk. Returns whether it did.
+
+    LeRobot keeps a recorded episode in RAM longer than it looks. The metadata
+    side buffers ten episodes before writing anything and holds its parquet
+    writer open until the dataset is finalized at exit; the frame-data side keeps
+    its own writer open until one file reaches a size limit. So while a session
+    runs, ``meta/episodes/`` is empty or footerless and the newest
+    ``data/`` file is footerless too -- which is all that a "Parquet magic bytes
+    not found in footer" complaint means. A reader cannot list the episodes
+    (hence frame counts showing as unknown) and cannot open the dataset at all,
+    because reading concatenates every data file and one unfinished file fails
+    the lot. Worse, an interrupted collector -- a kill, a power cut, a crash past
+    the exit handler -- loses whatever never reached disk, and an episode whose
+    metadata or frames never landed is unusable for training even though its
+    video is sitting on the drive.
+
+    Each saved episode is therefore committed here, on both sides: close the
+    writers so the footers are written, then point the NEXT episode at a fresh
+    file. Advancing is required rather than tidy -- LeRobot reopens a writer at
+    the path derived from the last episode, which would truncate the file just
+    closed and take the earlier episodes with it. For the frame data that means
+    handing control back to LeRobot's own "start a new file" branch (the one that
+    runs when a dataset is resumed) by clearing its cached last episode and
+    seeding ``meta.episodes`` with the row just committed, so the new file's
+    indices and frame offsets are computed by LeRobot rather than by us. One
+    modest file per episode is exactly the layout resuming already produces, and
+    ``read_episode_lengths`` reads such a directory with per-file fault
+    isolation.
+
+    Returns ``False`` when the object does not expose the internals this relies
+    on (a different LeRobot version, or a stub in tests), so a caller can carry on
+    with exit-time finalization as the fallback rather than fail an episode.
+    """
+    meta: Any = getattr(dataset, "meta", None)
+    close_meta_writer = getattr(meta, "_close_writer", None)
+    latest = getattr(meta, "latest_episode", None)
+    if meta is None or close_meta_writer is None or not isinstance(latest, dict):
+        return False
+    if not {"meta/episodes/chunk_index", "meta/episodes/file_index"} <= set(latest):
+        return False
+    close_meta_writer()
+    committed = _last_committed_episode(getattr(meta, "root", None), latest)
+    # The row already written keeps the indices it was written with; only the
+    # in-memory "where the next one goes" pointer moves.
+    chunk_index = int(latest["meta/episodes/chunk_index"][0])
+    file_index = int(latest["meta/episodes/file_index"][0])
+    chunks_size = int(getattr(meta, "chunks_size", 0) or 1000)
+    if file_index >= chunks_size - 1:
+        chunk_index, file_index = chunk_index + 1, 0
+    else:
+        file_index += 1
+    latest["meta/episodes/chunk_index"] = [chunk_index]
+    latest["meta/episodes/file_index"] = [file_index]
+
+    # Frame data: only safe once the metadata row above is on disk, since that
+    # row is what LeRobot reads to place the next data file.
+    writer: Any = getattr(dataset, "writer", None)
+    close_data_writer = getattr(writer, "close_writer", None)
+    if close_data_writer is not None and committed is not None:
+        close_data_writer()
+        meta.episodes = [committed]
+        writer._latest_episode = None
+    return True
+
+
+def _last_committed_episode(
+    root: Any, latest: "dict[str, Any]"
+) -> "dict[str, Any] | None":
+    """The episode row just written, read back from its own parquet file.
+
+    LeRobot's "start a new data file" branch reads the previous episode's frame
+    offsets and file indices from ``meta.episodes[-1]``. Only the last row is
+    needed, and it lives alone in the file just closed, so this is a single small
+    read rather than the whole episode history. Returns ``None`` if the row
+    cannot be read, which keeps the caller from touching the data writer at all.
+    """
+    if root is None:
+        return None
+    rel = "meta/episodes/chunk-{:03d}/file-{:03d}.parquet".format(
+        int(latest["meta/episodes/chunk_index"][0]),
+        int(latest["meta/episodes/file_index"][0]),
+    )
+    try:
+        import pyarrow.parquet as pq
+
+        rows = pq.read_table(Path(root) / rel).to_pylist()
+    except Exception:
+        return None
+    return rows[-1] if rows else None
+
+
 def read_episode_lengths(root: Path) -> "tuple[dict[int, int], list[str]]":
     """``({episode_index: length}, [unreadable files])`` straight from the parquet.
 

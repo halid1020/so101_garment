@@ -55,7 +55,11 @@ import numpy as np
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.recording import features as feat
-from common.recording.dataset_edit import new_episode_uid, write_episode_uid
+from common.recording.dataset_edit import (
+    commit_episode_metadata,
+    new_episode_uid,
+    write_episode_uid,
+)
 from common.recording.drift import DriftLog
 
 
@@ -523,6 +527,14 @@ class EpisodeRecorder:
     def _save(self) -> None:
         try:
             self.dataset.save_episode()
+        except Exception:
+            traceback.print_exc()
+        try:
+            # Land this episode's metadata on disk now rather than at exit, so an
+            # interrupted session keeps every episode it announced as saved and a
+            # review tool can open the dataset mid-session. See
+            # common.recording.dataset_edit.commit_episode_metadata.
+            commit_episode_metadata(self.dataset)
         except Exception:
             traceback.print_exc()
         if self.sidecar is not None:

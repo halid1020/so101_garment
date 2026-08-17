@@ -16,6 +16,7 @@ from common.recording.dataset_edit import (
     SOFT_DELETE_REL,
     ReadOnlyDatasetError,
     clear_soft_deleted,
+    commit_episode_metadata,
     delete_episodes_in_place,
     deletion_mapping,
     episode_lengths,
@@ -118,6 +119,143 @@ class _FakeMeta:
     def __init__(self, lengths):
         self.total_episodes = len(lengths)
         self.episodes = [{"length": L} for L in lengths]
+
+
+class _FakeWriterMeta:
+    """Stands in for LeRobotDatasetMetadata's write path (no LeRobot import).
+
+    Mirrors only what commit_episode_metadata touches: a ``_close_writer`` that
+    ends the current parquet, and ``latest_episode`` carrying the chunk/file
+    indices that decide where the NEXT episode's row is written.
+    """
+
+    def __init__(self, chunk=0, file=0, chunks_size=1000, root=None):
+        self.chunks_size = chunks_size
+        self.root = root
+        self.episodes = None
+        self.latest_episode = {
+            "episode_index": [0],
+            "meta/episodes/chunk_index": [chunk],
+            "meta/episodes/file_index": [file],
+        }
+        self.closes = 0
+
+    def _close_writer(self):
+        self.closes += 1
+
+    def target(self):
+        """Where the next flush would write, the way LeRobot derives it."""
+        return (
+            self.latest_episode["meta/episodes/chunk_index"][0],
+            self.latest_episode["meta/episodes/file_index"][0],
+        )
+
+
+class _FakeDataWriter:
+    """Stands in for DatasetWriter: the frame-data parquet side."""
+
+    def __init__(self):
+        self.closes = 0
+        self._latest_episode = {"data/file_index": 0}
+
+    def close_writer(self):
+        self.closes += 1
+
+
+class _FakeDataset:
+    def __init__(self, meta, writer=None):
+        self.meta = meta
+        self.writer = writer
+
+
+class TestCommitEpisodeMetadata(unittest.TestCase):
+    def test_closes_the_writer_so_the_footer_is_written(self):
+        meta = _FakeWriterMeta()
+        self.assertTrue(commit_episode_metadata(_FakeDataset(meta)))
+        self.assertEqual(meta.closes, 1)
+
+    def test_next_episode_gets_a_fresh_file(self):
+        # The regression this guards: without the bump, LeRobot reopens a writer
+        # at the path just closed and truncates it, losing the earlier episodes.
+        meta = _FakeWriterMeta(chunk=0, file=0)
+        before = meta.target()
+        commit_episode_metadata(_FakeDataset(meta))
+        self.assertNotEqual(meta.target(), before)
+        self.assertEqual(meta.target(), (0, 1))
+
+    def test_every_episode_lands_in_its_own_file(self):
+        meta = _FakeWriterMeta()
+        seen = {meta.target()}
+        for _ in range(5):
+            commit_episode_metadata(_FakeDataset(meta))
+            seen.add(meta.target())
+        self.assertEqual(len(seen), 6)  # no path is ever reused
+
+    def test_file_index_rolls_over_into_the_next_chunk(self):
+        meta = _FakeWriterMeta(chunk=0, file=9, chunks_size=10)
+        commit_episode_metadata(_FakeDataset(meta))
+        self.assertEqual(meta.target(), (1, 0))
+
+    def test_unknown_metadata_object_is_reported_not_raised(self):
+        # A different LeRobot version must degrade to exit-time finalization
+        # instead of failing the episode that was just recorded.
+        class _Bare:
+            pass
+
+        self.assertFalse(commit_episode_metadata(_Bare()))
+        self.assertFalse(commit_episode_metadata(_FakeDataset(_Bare())))
+
+    def test_first_episode_before_any_write_is_skipped(self):
+        meta = _FakeWriterMeta()
+        meta.latest_episode = None
+        self.assertFalse(commit_episode_metadata(_FakeDataset(meta)))
+        self.assertEqual(meta.closes, 0)
+
+
+class TestCommitEpisodeFrameData(unittest.TestCase):
+    """The frame-data half: the file that actually holds the recorded frames."""
+
+    def _dataset(self, d, chunk=0, file=0):
+        # The committed row has to be readable back from its own parquet: it is
+        # what LeRobot consults to place the next data file.
+        _write_episode_meta(
+            d,
+            f"meta/episodes/chunk-{chunk:03d}/file-{file:03d}.parquet",
+            [0],
+            [6],
+        )
+        meta = _FakeWriterMeta(chunk=chunk, file=file, root=Path(d))
+        return _FakeDataset(meta, _FakeDataWriter()), meta
+
+    def test_data_writer_is_closed_and_handed_back_to_lerobot(self):
+        with tempfile.TemporaryDirectory() as d:
+            ds, meta = self._dataset(d)
+            self.assertTrue(commit_episode_metadata(ds))
+            self.assertEqual(ds.writer.closes, 1)
+            # None makes LeRobot take its own "start a new file" branch, which
+            # derives the next file's indices and frame offsets from the row we
+            # just committed rather than from anything we compute here.
+            self.assertIsNone(ds.writer._latest_episode)
+            self.assertEqual(meta.episodes[-1]["episode_index"], 0)
+
+    def test_unreadable_committed_row_leaves_the_data_writer_alone(self):
+        # Without the row on disk, LeRobot's new-file branch would restart at
+        # file 000 and overwrite recorded frames. Better to leave the writer as
+        # it is and let exit-time finalization close it.
+        with tempfile.TemporaryDirectory() as d:
+            meta = _FakeWriterMeta(root=Path(d))  # no parquet written
+            ds = _FakeDataset(meta, _FakeDataWriter())
+            self.assertTrue(commit_episode_metadata(ds))
+            self.assertEqual(ds.writer.closes, 0)
+            self.assertIsNotNone(ds.writer._latest_episode)
+            self.assertIsNone(meta.episodes)
+
+    def test_read_only_dataset_without_a_writer_still_commits_metadata(self):
+        with tempfile.TemporaryDirectory() as d:
+            ds, meta = self._dataset(d)
+            ds.writer = None
+            self.assertTrue(commit_episode_metadata(ds))
+            self.assertEqual(meta.closes, 1)
 
 
 class TestEpisodeLengths(unittest.TestCase):

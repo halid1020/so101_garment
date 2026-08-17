@@ -85,6 +85,19 @@ travels with the episode through renumbering, which lets a session log, a
 review decision or a defect report keep pointing at the recording it was
 written about.
 
+An episode is also committed to storage the moment it is accepted, rather than
+at the end of the session. This is not housekeeping: a dataset library that
+accumulates episode records in memory and writes them in batches leaves the
+session unreadable for as long as it runs, and loses every record still held in
+memory if the session ends abnormally~--- and a recording whose record never
+reached storage cannot be trained on, however complete its frames and video are
+on the drive. A session lasting hours, on a rig where a camera can leave the bus
+without warning, is precisely the case where that loss is likely and expensive.
+Committing at episode granularity bounds any interruption to the recording in
+flight, and has the further benefit that a session can be reviewed while it is
+still being collected, so an operator discovers a framing or lighting mistake
+during the sitting rather than after it.
+
 \paragraph{Phase flag and gating.} Each frame carries a flag stating
 whether teleoperation drove it. Homing moves and other non-teleoperation
 motion are thereby marked and can be excluded when a policy is trained, so

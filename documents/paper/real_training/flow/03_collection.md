@@ -42,6 +42,14 @@ P7  Phase flag and gating: a per-frame flag marks teleoperation-driven frames
     stream returns, abandoning it only if the stream stays away; a session fault
     still discards outright. Justify by the cost asymmetry (a blink vs a whole
     demonstration).
+P6c Durability at episode granularity: each episode is committed to storage as
+    it is accepted, rather than at the end of the session. Argue from the failure
+    mode, not from tidiness: a dataset library that batches episode records in
+    memory leaves a session unreadable while it runs and loses every unwritten
+    record if the session is interrupted, and a recording whose record never
+    landed is unusable for training even though its frames and video are on the
+    drive. Committing per episode also makes a session reviewable while it is
+    still being collected.
 P7b Honesty about the recovery: a held episode contains a real gap that the
     index-derived timestamps do not show, so every hold is counted and reported
     with the episode for review, and any end the operator did not ask for sounds
