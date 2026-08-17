@@ -58,6 +58,12 @@ _REALSENSE: dict = {
     "lock_auto_exposure": True,
 }
 
+_AUDIO: dict = {
+    "enabled": True,
+    "start_sound": "start.wav",
+    "stop_sound": "stop.wav",
+}
+
 
 def _write_yaml(data: dict, directory: str) -> Path:
     path = Path(directory) / "recording.yaml"
@@ -173,6 +179,41 @@ class TestRecordingConfig(unittest.TestCase):
                 cfg["cameras"][name]["enabled"],
                 f"{name} must default to disabled (hardware not attached)",
             )
+
+    def test_checked_in_yaml_scene_off_central_on(self) -> None:
+        # Current rig: no scene camera; the central overhead camera is a plain
+        # UVC RGB stream recorded by default.
+        cfg = load_recording_config()
+        self.assertFalse(cfg["cameras"]["scene"]["enabled"])
+        self.assertIn("central", cfg["cameras"])
+        self.assertTrue(cfg["cameras"]["central"]["enabled"])
+
+    def test_audio_optional_absent_ok(self) -> None:
+        # A map WITHOUT an audio section stays valid (backward compatible).
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(_VALID, d)))
+        self.assertNotIn("audio", cfg)
+
+    def test_audio_present_loads(self) -> None:
+        good = copy.deepcopy(_VALID)
+        good["audio"] = copy.deepcopy(_AUDIO)
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(good, d)))
+        self.assertEqual(cfg["audio"]["start_sound"], "start.wav")
+        self.assertEqual(cfg["audio"]["stop_sound"], "stop.wav")
+
+    def test_audio_unknown_key_raises(self) -> None:
+        bad = copy.deepcopy(_VALID)
+        bad["audio"] = copy.deepcopy(_AUDIO)
+        bad["audio"]["volume"] = 0.5
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "volume"):
+                load_recording_config(str(_write_yaml(bad, d)))
+
+    def test_checked_in_yaml_has_audio(self) -> None:
+        cfg = load_recording_config()
+        self.assertIn("audio", cfg)
+        self.assertTrue(cfg["audio"]["enabled"])
 
 
 if __name__ == "__main__":

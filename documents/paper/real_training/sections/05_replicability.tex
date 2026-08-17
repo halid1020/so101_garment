@@ -12,10 +12,10 @@ build therefore cannot drift apart. The validation object used for simple
 pick-and-place checks is a printed cube of stated side length, sized so the
 capped gripper can grasp it.
 
-\paragraph{Camera calibration.} The overhead depth camera's intrinsic
-parameters and its depth scale are read from the device and stored with
-every dataset, so the depth images are metrically interpretable after the
-fact. The exterior cameras are on fixed mounts, and their poses relative to
+\paragraph{Camera calibration.} When a depth-capable overhead camera is
+fitted, its intrinsic parameters and depth scale are read from the device and
+stored with every dataset, so the depth images are metrically interpretable
+after the fact. The exterior cameras are on fixed mounts, and their poses relative to
 the rig are measured and recorded. A camera that shifts between collection
 and deployment breaks a policy silently, so a fixed and recorded pose is
 part of the platform, not an afterthought.

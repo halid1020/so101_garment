@@ -143,6 +143,9 @@ _REALSENSE_SCHEMA: frozenset[str] = frozenset(
         "lock_auto_exposure",
     }
 )
+# Optional audible record-cue section. Absent in older maps (validated only when
+# present, so existing recording.yaml files stay valid).
+_AUDIO_SCHEMA: frozenset[str] = frozenset({"enabled", "start_sound", "stop_sound"})
 
 
 def load_ik_config(config_path: str) -> dict:
@@ -238,9 +241,10 @@ def load_recording_config(path: str | None = None) -> dict:
     # Required top-level sections plus an OPTIONAL ``realsense`` one: older maps
     # (no central RGB-D camera) omit it and must still load.
     required_top = frozenset(_RECORDING_SCHEMA) | {"cameras"}
+    optional_top = {"realsense", "audio"}
     keys = set(data)
     missing = required_top - keys
-    unknown = keys - required_top - {"realsense"}
+    unknown = keys - required_top - optional_top
     if missing:
         raise ValueError(
             f"{cfg_path}: top-level is missing required key(s): {sorted(missing)}"
@@ -251,6 +255,8 @@ def load_recording_config(path: str | None = None) -> dict:
         _validate_keys(cfg_path, section, data[section], expected)
     if "realsense" in data:
         _validate_keys(cfg_path, "realsense", data["realsense"], _REALSENSE_SCHEMA)
+    if "audio" in data:
+        _validate_keys(cfg_path, "audio", data["audio"], _AUDIO_SCHEMA)
 
     cameras = data["cameras"]
     if not isinstance(cameras, dict):

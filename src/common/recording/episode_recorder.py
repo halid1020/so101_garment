@@ -58,6 +58,7 @@ class EpisodeRecorder:
         depth_streams: list[str] | None = None,
         depth_writer: Any | None = None,
         record_ee: bool = False,
+        audio_cue: Any | None = None,
     ) -> None:
         self.dataset = dataset
         self.data_manager = data_manager
@@ -72,6 +73,9 @@ class EpisodeRecorder:
         # video encoder by ``depth_writer`` (a DepthWriter), keyed by frame idx.
         self.depth_streams = list(depth_streams) if depth_streams is not None else []
         self.depth_writer = depth_writer
+        # Optional audible start/stop cue (AudioCue); None = silent. Best-effort:
+        # every call is non-blocking and swallows its own errors.
+        self.audio_cue = audio_cue
         # EE-space features (measured pose + projected+constrained target) in
         # each arm's own base frame. Only in quest/IK mode, where EE exists.
         self.record_ee = record_ee
@@ -244,6 +248,8 @@ class EpisodeRecorder:
         self._fallback_frames = 0
         with self._lock:
             self._state = RecorderState.RECORDING
+        if self.audio_cue is not None:
+            self.audio_cue.play("start")
         print(f"🔴 recording episode {self._episode_index} (task: {self.task!r})")
 
     def _step_recording(self) -> None:
@@ -256,6 +262,8 @@ class EpisodeRecorder:
         if stop:
             with self._lock:
                 self._state = RecorderState.SAVING
+            if self.audio_cue is not None:
+                self.audio_cue.play("stop")
             self._save()
             return
 

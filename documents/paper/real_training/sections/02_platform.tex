@@ -20,11 +20,12 @@ identical to the followers, drives them directly in joint space. The choice
 of interface changes how the operator moves, not what the recorder stores.
 
 \paragraph{Sensing.} Each gripper carries two visual-tactile fingertip
-cameras in addition to the wrist camera, and a depth camera overlooks the
-workspace from above. The colour images and the overhead aligned-depth
-image are the exterior views a policy sees; the fingertip views add local
-contact information. All views are recorded through one pipeline so that no
-stream is privileged over another.
+cameras in addition to the wrist camera, and a colour camera overlooks the
+workspace from above; a depth-capable camera may take that overhead position
+instead, adding an aligned-depth image. The colour images, together with
+that optional overhead depth, are the exterior views a policy sees; the
+fingertip views add local contact information. All views are recorded
+through one pipeline so that no stream is privileged over another.
 
 \paragraph{Host and buses.} Every device reaches a single laptop. The
 cameras and arms share two powered universal-serial-bus hubs, one per side,
@@ -39,12 +40,13 @@ rig starts from a fixed, known state: every arm calibrated and bound to a
 stable port alias, the wrist joints limited so the fingertip cables cannot
 be twisted, the arms at their defined home pose, and every camera opened at
 its configured resolution. Each colour camera is likewise bound to a stable
-per-socket alias rather than an enumeration index, and the overhead depth
-camera is pinned by its own serial, so replugging a hub can never silently
-swap one view for another between collection and deployment; the same bound
-identities drive both the live monitor and the recorder, and the monitor
-shows every stream before a session begins, including the overhead camera's
-colour and its aligned depth rendered side by side. The same monitor also
+per-socket alias rather than an enumeration index, the overhead colour
+camera included (a depth-capable overhead camera is pinned by its own serial
+instead), so replugging a hub can never silently swap one view for another
+between collection and deployment; the same bound identities drive both the
+live monitor and the recorder, and the monitor shows every stream before a
+session begins, including the overhead view, with its aligned depth rendered
+alongside when a depth camera is fitted. The same monitor also
 replays a recorded episode from the stored frames, so a session can be
 reviewed exactly as it was seen during collection, and that review can be
 exported as a video. A
