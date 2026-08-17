@@ -179,6 +179,41 @@ def episode_lengths(meta: Any) -> "list[int]":
     return [int(meta.episodes[k]["length"]) for k in range(meta.total_episodes)]
 
 
+def read_episode_lengths(root: Path) -> "tuple[dict[int, int], list[str]]":
+    """``({episode_index: length}, [unreadable files])`` straight from the parquet.
+
+    Building a ``LeRobotDatasetMetadata`` just to list episodes is expensive (it
+    loads the episode metadata through HuggingFace ``datasets``: measured at
+    ~4.9 s for 58 episodes, against ~0.3 s here) and it is all-or-nothing -- one
+    truncated parquet raises and no episode can be listed at all. Reading the
+    columns directly is both quicker and per-file fault tolerant, which is what a
+    review tool needs: a half-written file from an interrupted session should cost
+    the episodes in THAT file, not the whole session.
+
+    Returns the lengths it could read and the files it could not, so the caller
+    can tell the operator which part of the dataset is damaged.
+    """
+    root = Path(root)
+    lengths: dict[int, int] = {}
+    bad: list[str] = []
+    meta_dir = root / "meta" / "episodes"
+    if not meta_dir.is_dir():
+        return lengths, bad
+    import pyarrow.parquet as pq  # local: keeps the import off pure-helper users
+
+    for path in sorted(meta_dir.rglob("*.parquet")):
+        try:
+            table = pq.read_table(path, columns=["episode_index", "length"])
+            data = table.to_pydict()
+            for index, length in zip(data["episode_index"], data["length"]):
+                lengths[int(index)] = int(length)
+        except Exception:
+            # Any failure to read is the same outcome for the caller: these
+            # episodes' lengths are unknown. Keep going with the rest.
+            bad.append(str(path.relative_to(root)))
+    return lengths, bad
+
+
 def delete_episodes_in_place(
     root: Path, repo_id: str, indices: "list[int]", depth_names: "list[str]"
 ) -> int:

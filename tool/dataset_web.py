@@ -42,8 +42,9 @@ from aiohttp import web  # type: ignore[import]
 from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
     compact_dataset,
-    episode_lengths,
+    read_episode_lengths,
     read_soft_deleted,
+    saved_episode_total,
     surviving_indices,
     write_soft_deleted,
 )
@@ -91,18 +92,23 @@ def episodes_of(root: Path, name: str) -> dict:
 
     Marked episodes are hidden but NOT renumbered: they still occupy their
     on-disk index until compaction, and the video route needs that index.
-    """
-    from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
+    Reads the episode metadata directly (see ``read_episode_lengths``) so that a
+    damaged dataset still lists: an episode whose length could not be read is
+    listed with an unknown length rather than taking the whole pane down.
+    """
     path = dataset_root(root, name)
-    meta = LeRobotDatasetMetadata(name, root=path)
-    lengths = episode_lengths(meta)
-    marked = [i for i in read_soft_deleted(path) if 0 <= i < len(lengths)]
-    visible = surviving_indices(len(lengths), marked)
+    total = saved_episode_total(path)
+    lengths, bad = read_episode_lengths(path)
+    if not total:
+        total = (max(lengths) + 1) if lengths else 0
+    marked = [i for i in read_soft_deleted(path) if 0 <= i < total]
+    visible = surviving_indices(total, marked)
     return {
-        "episodes": [{"index": k, "length": lengths[k]} for k in visible],
+        "episodes": [{"index": k, "length": lengths.get(k)} for k in visible],
         "pending": len(marked),
-        "total": len(lengths),
+        "total": total,
+        "damaged": bad,
     }
 
 
@@ -153,6 +159,48 @@ def render_episode_mp4(
     return out_path
 
 
+# ── Background pre-rendering ──────────────────────────────────────────────────
+#
+# Rendering an episode's composited view takes seconds, and it used to happen on
+# the first click. The reviewer's next click is highly predictable, though: it is
+# one of the episodes just listed. So the videos are built ahead of time, newest
+# first (the end of a session is what an operator reviews), on a SEPARATE
+# single-thread executor. Separate matters: sharing the request executor would
+# let a queue of renders block listing and deleting.
+
+
+def _prerender_one(cache_dir: Path, root: Path, name: str, episode: int) -> None:
+    """Render one episode into the cache, ignoring failures (it is a prefetch)."""
+    try:
+        out = _cache_path(cache_dir, root, name, episode)
+        if out.is_file():
+            return
+        render_episode_mp4(root, name, episode, out, None)
+    except Exception:
+        # A prefetch must never take the server down or spam the log; the
+        # interactive request will surface any real problem.
+        pass
+
+
+def _queue_prerender(app: web.Application, name: str, episodes: "list[int]") -> None:
+    """Schedule cache warming for ``episodes``, replacing any earlier queue."""
+    if not app["prerender"]:
+        return
+    for task in app["prerender_tasks"]:
+        task.cancel()
+    app["prerender_tasks"] = []
+    loop = asyncio.get_running_loop()
+
+    async def run() -> None:
+        for episode in reversed(episodes):  # newest first: the likeliest click
+            await loop.run_in_executor(
+                app["prerender_executor"],
+                partial(_prerender_one, app["cache_dir"], app["root"], name, episode),
+            )
+
+    app["prerender_tasks"] = [loop.create_task(run())]
+
+
 # ── HTTP handlers ─────────────────────────────────────────────────────────────
 
 
@@ -175,6 +223,9 @@ async def handle_episodes(request: web.Request) -> web.Response:
     app = request.app
     name = request.match_info["name"]
     data = await _in_executor(app, episodes_of, app["root"], name)
+    # Selecting a dataset is the moment we learn which videos the operator is
+    # about to click, so start building them now instead of at the first click.
+    _queue_prerender(app, name, [e["index"] for e in data["episodes"]])
     return web.json_response(data)
 
 
@@ -254,14 +305,38 @@ async def handle_compact(request: web.Request) -> web.Response:
     return web.json_response({"episodes": new_total, "pending": 0})
 
 
+def _preinit_tqdm_lock() -> None:
+    """Create tqdm's class lock up front, to stop concurrent loads racing on it.
+
+    LeRobot's dataset loading reaches HuggingFace ``datasets``, whose
+    ``thread_map`` wraps work in tqdm's ``ensure_lock``. That helper deletes
+    ``tqdm._lock`` again if it was absent when it started, so two loads running
+    together in a thread pool both find it absent, both try to delete it, and the
+    second raises ``AttributeError: type object 'tqdm' has no attribute '_lock'``
+    -- which surfaced as a 500 on an otherwise fine dataset. Creating the lock
+    once means it is never absent, so it is never deleted.
+    """
+    try:
+        from tqdm import tqdm
+
+        tqdm.set_lock(tqdm.get_lock())
+    except Exception:
+        pass
+
+
 def build_app(args: argparse.Namespace) -> web.Application:
     from concurrent.futures import ThreadPoolExecutor
 
+    _preinit_tqdm_lock()
     app = web.Application(client_max_size=1024)
     app["root"] = Path(args.dir).expanduser()
     app["allow_delete"] = bool(args.allow_delete)
     app["fps"] = args.fps
     app["executor"] = ThreadPoolExecutor(max_workers=2)
+    # Cache warming runs on its own single thread so it can never delay a click.
+    app["prerender"] = not getattr(args, "no_prerender", False)
+    app["prerender_executor"] = ThreadPoolExecutor(max_workers=1)
+    app["prerender_tasks"] = []
     cache = os.environ.get("SO101_OUTPUT_DIR", "outputs")
     app["cache_dir"] = Path(cache).expanduser() / "dataset_web_cache"
     app.add_routes(
@@ -293,6 +368,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--fps", type=int, default=None, help="Playback fps override (default dataset)"
+    )
+    parser.add_argument(
+        "--no-prerender",
+        action="store_true",
+        help="Do not build episode videos in the background (they are then "
+        "rendered on the first click, as before)",
     )
     args = parser.parse_args()
 
@@ -336,6 +417,7 @@ _INDEX_HTML = """<!doctype html>
   video { width:100%; max-height:calc(100vh - 90px); background:#000; border-radius:8px; }
   .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
   .pending { background:#f59e0b22; font-size:12px; }
+  .damaged { background:#dc262622; font-size:12px; }
   .busy { opacity:.6; pointer-events:none; }
 </style></head>
 <body>
@@ -345,6 +427,9 @@ _INDEX_HTML = """<!doctype html>
     <div class="bar">
       <label><input type="checkbox" id="all"> all</label>
       <button id="del-sel" class="danger" disabled>Delete selected</button>
+    </div>
+    <div class="bar damaged" id="damaged-bar" hidden>
+      <span class="grow" id="damaged-text"></span>
     </div>
     <div class="bar pending" id="pending-bar" hidden>
       <span class="grow" id="pending-text"></span>
@@ -388,6 +473,14 @@ async function selectDataset(name, li) {
   $('#viewer').innerHTML = '<p class="muted">Select a recording.</p>';
 }
 
+function showDamaged(files) {
+  const bar = $('#damaged-bar');
+  bar.hidden = !(files && files.length);
+  if (!bar.hidden) $('#damaged-text').textContent =
+    `${files.length} unreadable metadata file(s) — some episode lengths are `
+    + `unknown ("?f"). The episodes themselves may still play. (${files.join(', ')})`;
+}
+
 function showPending(n) {
   $('#pending-bar').hidden = !n;
   if (n) $('#pending-text').textContent =
@@ -398,14 +491,16 @@ async function loadEpisodes() {
   const data = await j(`/api/datasets/${curDataset}/episodes`);
   const eps = data.episodes;
   showPending(data.pending);
+  showDamaged(data.damaged);
   const ul = $('#ep-list'); ul.innerHTML = '';
   for (const e of eps) {
     const li = document.createElement('li');
     li.dataset.idx = e.index;
+    const len = (e.length === null || e.length === undefined) ? '?' : e.length;
     li.innerHTML =
       `<input type="checkbox" class="pick" onclick="event.stopPropagation()">
        <span class="grow">episode ${e.index}</span>
-       <span class="muted">${e.length}f</span>` +
+       <span class="muted">${len}f</span>` +
       (allowDelete ? `<span class="del" title="delete">🗑</span>` : '');
     li.onclick = () => selectEpisode(e.index, li);
     if (allowDelete) li.querySelector('.del').onclick = (ev) => {

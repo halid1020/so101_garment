@@ -20,6 +20,7 @@ from common.recording.dataset_edit import (
     deletion_mapping,
     episode_lengths,
     extra_reindex_ops,
+    read_episode_lengths,
     read_soft_deleted,
     surviving_indices,
     write_soft_deleted,
@@ -159,6 +160,56 @@ class TestSoftDeleteMarker(unittest.TestCase):
             write_soft_deleted(d, [1, 2])
             self.assertEqual(write_soft_deleted(d, []), [])
             self.assertEqual(read_soft_deleted(d), [])
+
+
+def _write_episode_meta(root: Path, rel: str, indices, lengths) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = Path(root) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.table({"episode_index": indices, "length": lengths})
+    pq.write_table(table, path)
+
+
+class TestReadEpisodeLengths(unittest.TestCase):
+    def test_reads_lengths_across_several_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0, 1], [10, 20]
+            )
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-001.parquet", [2], [30]
+            )
+            lengths, bad = read_episode_lengths(d)
+            self.assertEqual(lengths, {0: 10, 1: 20, 2: 30})
+            self.assertEqual(bad, [])
+
+    def test_one_corrupt_file_costs_only_its_own_episodes(self):
+        # The whole point: an interrupted write must not make the dataset
+        # unlistable, which is what going through HuggingFace datasets did.
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0], [10]
+            )
+            bad_path = Path(d) / "meta/episodes/chunk-000/file-003.parquet"
+            bad_path.write_text("Parquet magic bytes not found in footer")
+            lengths, bad = read_episode_lengths(d)
+            self.assertEqual(lengths, {0: 10})
+            self.assertEqual(bad, ["meta/episodes/chunk-000/file-003.parquet"])
+
+    def test_missing_meta_directory_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(read_episode_lengths(d), ({}, []))
+
+    def test_agrees_with_the_lerobot_metadata_helper(self):
+        # Same numbers as episode_lengths(meta) would give, in list form.
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0, 1, 2], [5, 6, 7]
+            )
+            lengths, _ = read_episode_lengths(d)
+            self.assertEqual([lengths[i] for i in range(3)], [5, 6, 7])
 
 
 if __name__ == "__main__":
