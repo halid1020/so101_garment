@@ -256,6 +256,52 @@ s/step projection for pi0.5 near step 50 so you can trim
 `$SO101_OUTPUT_DIR/vla_sim_long/<run>/results.md`; analyse them with
 `notebooks/long_vla_analysis.ipynb`.
 
+### Real-VLA: train on a collected dataset (e.g. cube-pnp)
+
+Once you have teleoperated a real dataset on the rig (the 12-D dual-arm
+action + the recorded cameras — see the teleoperation quick start above),
+train the same LeRobot policies on it. There is no collect phase and no
+in-loop success metric here: a real policy's skill is measured **on the
+robot** with `tool/run_policy_real.py`, not on the training machine. The
+examples below use the `cube-pnp` dataset on the Seagate mount
+(`/mnt/seagate/so101/cube-pnp`); point `--dataset-root` at your own dataset
+directory (its basename becomes the repo id).
+
+**Smoke first** (local, minutes — validates the train → checkpoint → load
+wiring before you spend GPU hours). Auto-selects CPU on a small GPU:
+
+```bash
+bash test/system/smoke_vla_real.sh --dataset-root /mnt/seagate/so101/cube-pnp
+```
+
+A green run means the checkpoint trains and reloads through the on-robot
+runner's load path. Success rate is **not** meaningful here (a handful of
+steps) — it only proves the plumbing.
+
+**The long run** (big GPU / HPC) trains ACT (80k steps) and Diffusion
+(100k steps, cameras downsized for the encoder) on the dataset, is
+**resumable** (a finished checkpoint is reused, a partial train dir is
+cleared), and writes a `results.md`:
+
+```bash
+tmux new -s vla_real          # the full run is long — detach-safe
+bash test/system/long_vla_real.sh --dataset-root /mnt/seagate/so101/cube-pnp
+# one policy only, or a shorter run:
+bash test/system/long_vla_real.sh --dataset-root /mnt/seagate/so101/cube-pnp \
+    --only diffusion --diff-steps 40000
+```
+
+Results land in `$SO101_OUTPUT_DIR/vla_real_long/<run>/results.md` (each
+policy's checkpoint path + final training loss). To run it under Slurm on
+KCL CREATE, use the real-data cell in
+[`hpc/README.md`](hpc/README.md) (`hpc/create_real_vla.sbatch`).
+
+**Evaluate on the robot.** Copy a checkpoint back to the rig and run
+`python tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — the
+long run does no cluster-side evaluation on purpose. pi0.5 on real data is
+a deliberate follow-up (it needs the licence-gated base pre-staged + LoRA;
+see [`hpc/README.md`](hpc/README.md)).
+
 ### The real run: pi0.5 on LIBERO (needs a big GPU)
 
 pi0.5 is a ~4B-parameter VLA. **Full-parameter finetuning needs a
