@@ -3,11 +3,18 @@
 Serves a small single-page app on ``127.0.0.1:<port>`` with three panes: the
 DATASET list (every dataset under ``--dir`` with at least one saved episode),
 the RECORDING list for the selected dataset (with checkboxes for batch delete
-and a per-row delete), and the sensor-view VIDEO of the selected recording. The
-video is the SAME composited layout the operator watched while collecting
-(rendered by ``tool/replay_recording.build_frame``) written to an mp4 and shown
-in an HTML5 ``<video controls>`` element, so the browser's own draggable scrub
-bar seeks through the episode.
+and a per-row delete), and the sensor VIEW of the selected recording.
+
+The view plays the recorded camera files themselves, side by side and on one
+clock, with the episode's joint values drawn beside them. Nothing is decoded or
+encoded to answer a click: the recorded videos already hold the frames a
+reviewer wants, the browser can decode them, and each episode is a timestamp
+window inside a shared file. So opening a recording costs a range request rather
+than a render. The composited layout the operator watched while collecting is
+still built on demand (``render_episode_mp4``) for the cases direct playback
+cannot cover -- a dataset recording depth, which is stored as per-frame images
+rather than a playable stream, or a browser without AV1 -- and for downloading
+an episode as a single file.
 
 Deletion is OFF unless ``--allow-delete`` is passed (a delete request returns 403
 otherwise), and it happens in two steps, because really removing one episode from
@@ -346,6 +353,116 @@ async def handle_video(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(out)
 
 
+def episode_playback(root: Path, name: str, episode: int) -> dict:
+    """Everything the browser needs to play one episode without a render.
+
+    The recorded videos are already the frames a reviewer wants to see, and the
+    browser can decode them itself, so the fastest possible answer is to hand
+    over where they are rather than to build a new video out of them. Each entry
+    names the stream, the file to fetch, and the window inside that file this
+    episode occupies -- several episodes share one video file, so the window is
+    what turns a shared file into one recording. The joint columns come along as
+    numbers for the page to draw beside the video, rounded to the precision the
+    live view displayed them at.
+    """
+    from common.recording.dataset_read import (
+        camera_label,
+        episode_window,
+        read_episode_joints,
+        read_episode_row,
+        video_keys,
+    )
+
+    path = dataset_root(root, name)
+    row = read_episode_row(path, episode)
+    if row is None:
+        raise web.HTTPConflict(
+            text=(
+                f"episode {episode} of '{name}' has no readable metadata yet — it "
+                "is still being recorded, or the session that recorded it was "
+                "interrupted before this episode was committed"
+            )
+        )
+    streams = []
+    for key in video_keys(path):
+        start, end = episode_window(row, key)
+        streams.append(
+            {
+                "key": key,
+                "label": camera_label(key),
+                "url": f"/api/datasets/{name}/episodes/{episode}/video/{key}",
+                "from": start,
+                "to": end,
+            }
+        )
+    state, action = read_episode_joints(path, row)
+    depth_name, _ = _load_realsense(path)
+    return {
+        "episode": episode,
+        "fps": _dataset_fps(path),
+        "streams": streams,
+        # Depth is stored as per-frame images rather than a playable stream, so a
+        # dataset carrying it cannot be shown this way and falls back to the
+        # server-composited view.
+        "has_depth": depth_name is not None,
+        "state": [[round(v, 1) for v in frame] for frame in state.tolist()],
+        "action": [[round(v, 1) for v in frame] for frame in action.tolist()],
+    }
+
+
+def episode_video_file(root: Path, name: str, episode: int, key: str) -> Path:
+    """The recorded video file holding ``episode``'s frames for one camera."""
+    from common.recording.dataset_read import (
+        episode_video_path,
+        read_episode_row,
+        video_keys,
+    )
+
+    path = dataset_root(root, name)
+    if key not in video_keys(path):
+        raise web.HTTPNotFound(text=f"'{name}' has no camera stream '{key}'")
+    row = read_episode_row(path, episode)
+    if row is None:
+        raise web.HTTPConflict(
+            text=f"episode {episode} of '{name}' is not readable yet"
+        )
+    video = episode_video_path(path, row, key)
+    if not video.is_file():
+        raise web.HTTPNotFound(text=f"{video.name} is missing from the dataset")
+    return video
+
+
+async def handle_playback(request: web.Request) -> web.Response:
+    app = request.app
+    data = await _in_executor(
+        app,
+        episode_playback,
+        app["root"],
+        request.match_info["name"],
+        int(request.match_info["episode"]),
+    )
+    return web.json_response(data)
+
+
+async def handle_stream(request: web.Request) -> web.StreamResponse:
+    """Serve a recorded video file as it is. No decode, no encode, no cache.
+
+    ``FileResponse`` answers range requests, and the recorder writes these files
+    with their index at the front, so the browser can seek straight to the
+    episode's window instead of pulling the whole file first.
+    """
+    app = request.app
+    video = await _in_executor(
+        app,
+        episode_video_file,
+        app["root"],
+        request.match_info["name"],
+        int(request.match_info["episode"]),
+        request.match_info["key"],
+    )
+    return web.FileResponse(video)
+
+
 def _mark_deleted(root: Path, name: str, indices: "list[int]") -> dict:
     """Add ``indices`` to the dataset's delete marker. Cheap: one small write."""
     path = dataset_root(root, name)
@@ -447,6 +564,12 @@ def build_app(args: argparse.Namespace) -> web.Application:
             web.get("/api/datasets", handle_datasets),
             web.get("/api/datasets/{name}/episodes", handle_episodes),
             web.get("/api/datasets/{name}/episodes/{episode}.mp4", handle_video),
+            web.get(
+                "/api/datasets/{name}/episodes/{episode}/playback", handle_playback
+            ),
+            web.get(
+                "/api/datasets/{name}/episodes/{episode}/video/{key}", handle_stream
+            ),
             web.post("/api/datasets/{name}/delete", handle_delete),
             web.post("/api/datasets/{name}/restore", handle_restore),
             web.post("/api/datasets/{name}/compact", handle_compact),
@@ -517,6 +640,17 @@ _INDEX_HTML = """<!doctype html>
   button:disabled { opacity:.4; cursor:default; }
   button.danger { color:#dc2626; border-color:#dc262688; }
   video { width:100%; max-height:calc(100vh - 90px); background:#000; border-radius:8px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+           gap:8px; }
+  .tile { margin:0; } .tile video { max-height:38vh; }
+  .tile figcaption { font-size:11px; opacity:.6; padding:2px 0; }
+  .viewbar { border:0; padding:8px 0; }
+  #joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
+            font-size:12px; }
+  #joints th, #joints td { padding:2px 10px; text-align:right;
+                           border-bottom:1px solid var(--bd); }
+  #joints th:first-child { text-align:left; opacity:.6; font-weight:400; }
+  #scrub { accent-color:var(--sel); }
   .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
   .pending { background:#f59e0b22; font-size:12px; }
   .damaged { background:#dc262622; font-size:12px; }
@@ -622,13 +756,133 @@ function updateSelCount() {
   $('#del-sel').disabled = !allowDelete || picked().length === 0;
 }
 
+// Playing an episode does not need a rendered video: the recorded camera files
+// are already the frames to show, so they are played where they lie and the
+// joint columns are drawn beside them from the same numbers the live view
+// displayed. That makes the first click as fast as the browser can start a
+// video, instead of as slow as compositing one. The recorded mp4 is still
+// rendered on demand for a dataset this cannot cover (depth is stored as images,
+// not as a playable stream) and for downloading an episode.
+const JOINTS = ['shoulder_pan','shoulder_lift','elbow_flex','wrist_flex','wrist_roll','gripper'];
+let sync = null;  // the running viewer, so a new selection can stop the old one
+
 function selectEpisode(idx, li) {
   curEpisode = idx;
   document.querySelectorAll('#ep-list li').forEach(x => x.classList.remove('sel'));
   if (li) li.classList.add('sel');
+  if (sync) { sync.stop(); sync = null; }
+  $('#viewer').innerHTML = '<p class="muted">opening…</p>';
+  openEpisode(curDataset, idx);
+}
+
+function renderedFallback(name, idx, why) {
   $('#viewer').innerHTML =
-    `<video controls autoplay muted src="/api/datasets/${curDataset}/episodes/${idx}.mp4"></video>
-     <p class="muted">episode ${idx} — drag the scrub bar to seek. First load renders the mp4.</p>`;
+    `<video controls autoplay muted src="/api/datasets/${name}/episodes/${idx}.mp4"></video>
+     <p class="muted">episode ${idx} — ${why} Showing the composited view, which is
+     rendered on first play.</p>`;
+}
+
+async function openEpisode(name, idx) {
+  let info;
+  try {
+    info = await j(`/api/datasets/${name}/episodes/${idx}/playback`);
+  } catch (e) {
+    $('#viewer').innerHTML = `<p class="muted">${e.message}</p>`;
+    return;
+  }
+  if (name !== curDataset || idx !== curEpisode) return;  // a newer click won
+  if (info.has_depth || !info.streams.length) {
+    renderedFallback(name, idx, 'this dataset records a depth stream.');
+    return;
+  }
+  const probe = document.createElement('video');
+  if (!probe.canPlayType('video/mp4; codecs="av01.0.05M.08"')) {
+    renderedFallback(name, idx, 'this browser cannot decode AV1.');
+    return;
+  }
+  const tiles = info.streams.map((s, i) =>
+    `<figure class="tile"><video id="v${i}" muted preload="metadata" src="${s.url}"></video>
+     <figcaption>${s.label}</figcaption></figure>`).join('');
+  $('#viewer').innerHTML = `
+    <div class="tiles">${tiles}</div>
+    <div class="bar viewbar">
+      <button id="play">▶︎ play</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0" class="grow">
+      <span class="muted" id="clock">0.00 s</span>
+      <a id="dl" class="muted" href="/api/datasets/${name}/episodes/${idx}.mp4"
+         download>download mp4</a>
+    </div>
+    <table id="joints"></table>
+    <p class="muted">episode ${idx} — ${info.streams.length} streams playing from the
+    recorded files, joint values beside them.</p>`;
+  sync = startSync(info);
+}
+
+function jointRows(info, frame) {
+  const cell = (v) => `<td>${v === undefined ? '--' : v.toFixed(1)}</td>`;
+  const state = info.state[frame] || [], action = info.action[frame] || [];
+  let html = '<tr><th></th><th colspan="2">left</th><th colspan="2">right</th></tr>' +
+             '<tr><th></th><th>state</th><th>cmd</th><th>state</th><th>cmd</th></tr>';
+  JOINTS.forEach((jn, k) => {
+    html += `<tr><th>${jn}</th>${cell(state[k])}${cell(action[k])}` +
+            `${cell(state[k + 6])}${cell(action[k + 6])}</tr>`;
+  });
+  return html;
+}
+
+// One stream is the clock; the others are told where to be. Each is seeked to
+// its own window inside its own file, because the streams are cut at their own
+// frame boundaries and so do not share a zero.
+function startSync(info) {
+  const videos = info.streams.map((s, i) => document.querySelector('#v' + i));
+  const span = Math.max(info.streams[0].to - info.streams[0].from, 1e-6);
+  const master = videos[0], base = info.streams[0].from;
+  let stopped = false, playing = false;
+  const at = () => Math.min(Math.max(master.currentTime - base, 0), span);
+
+  const seek = (t) => info.streams.forEach((s, i) => {
+    const want = s.from + Math.min(t, s.to - s.from);
+    if (Math.abs(videos[i].currentTime - want) > 0.04) videos[i].currentTime = want;
+  });
+  const paint = () => {
+    if (stopped) return;
+    const t = at();
+    document.querySelector('#clock').textContent = t.toFixed(2) + ' s';
+    document.querySelector('#scrub').value = Math.round((t / span) * 1000);
+    document.querySelector('#joints').innerHTML =
+      jointRows(info, Math.min(Math.round(t * info.fps), info.state.length - 1));
+    // Drift correction: playback rates differ slightly between streams, so the
+    // followers are nudged back whenever they fall more than a frame behind.
+    if (playing) {
+      info.streams.forEach((s, i) => {
+        if (i === 0) return;
+        const want = s.from + Math.min(t, s.to - s.from);
+        if (Math.abs(videos[i].currentTime - want) > 0.04) videos[i].currentTime = want;
+      });
+    }
+    requestAnimationFrame(paint);
+  };
+  const play = () => {
+    playing = true;
+    document.querySelector('#play').textContent = '❚❚ pause';
+    videos.forEach(v => v.play().catch(() => {}));
+  };
+  const pause = () => {
+    playing = false;
+    document.querySelector('#play').textContent = '▶︎ play';
+    videos.forEach(v => v.pause());
+  };
+  document.querySelector('#play').onclick = () => (playing ? pause() : play());
+  document.querySelector('#scrub').oninput = (e) => seek((e.target.value / 1000) * span);
+  master.ontimeupdate = () => { if (master.currentTime >= info.streams[0].to) pause(); };
+  // Start where the episode starts, not where its file does.
+  let ready = 0;
+  videos.forEach((v, i) => v.addEventListener('loadedmetadata', () => {
+    v.currentTime = info.streams[i].from;
+    if (++ready === videos.length) play();
+  }, { once: true }));
+  requestAnimationFrame(paint);
+  return { stop: () => { stopped = true; videos.forEach(v => v.pause()); } };
 }
 
 // Marking is cheap, so the rows go immediately and the request follows. No
