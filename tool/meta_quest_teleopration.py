@@ -930,8 +930,15 @@ def main():
 
         Leader mode has no separate ready pose — the rest pose IS the ready
         pose — so both arms interpolate to rest_pos there instead of ready_pos.
+        Its wrist_roll, however, is the untwisted storage value; leader-follow
+        holds the wrist at the camera-on-top orientation (ready_pos wrist_roll,
+        the joint-space counterpart of HANDLE_ROLL_OFFSET_DEG). Command that same
+        wrist_roll while homing, otherwise pressing A rolls the wrist ~90° to the
+        storage value and it snaps back the instant leader tracking resumes.
         """
         home = rest_pos if use_leader else ready_pos
+        if use_leader:
+            home = {**home, "wrist_roll": ready_pos["wrist_roll"]}
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
         data_manager.set_teleop_state(False)
         with left_bus_lock, right_bus_lock:
