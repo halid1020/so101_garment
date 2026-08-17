@@ -28,8 +28,12 @@ import numpy as np
 
 from common.data_manager_dual import DualDataManager
 
-# How often (seconds) to retry opening a device that failed or was lost.
-_REOPEN_INTERVAL_S = 2.0
+# How long to wait between FAILED attempts to reopen a lost device. A device that
+# drops off the USB bus is usually back within a few hundred milliseconds, and
+# every millisecond spent waiting is a millisecond of the episode that is not
+# being recorded, so the first attempt is immediate and this only paces the
+# retries after that.
+_REOPEN_INTERVAL_S = 0.5
 
 # Minimum time one capture iteration may take. A blocking V4L2 read paces the
 # loop by itself; this only stops a device that returns frames instantly from
@@ -39,6 +43,28 @@ _BUSY_SPIN_S = 0.001
 # V4L2 buffers per stream. The smallest value that still sustains the device's
 # full frame rate (1 halves it — see _configure).
 _CAPTURE_BUFFERS = 2
+
+
+def hardware_hint(name: str, disconnects: int) -> str:
+    """What to tell the operator about a stream that kept dropping off. Pure.
+
+    A camera that stops delivering and has to be reopened has left the USB bus;
+    the driver reports no such device. Software can only notice and recover, so
+    the useful thing to say is where to look: a loose connector, a port sharing
+    its controller, or a hub without enough power. One drop in a session is worth
+    a note, several are worth acting on before the next one.
+    """
+    times = "once" if disconnects == 1 else f"{disconnects} times"
+    urgency = (
+        "worth a look before the next session"
+        if disconnects == 1
+        else "check this before collecting more"
+    )
+    return (
+        f"⚠️  camera '{name}' dropped off the USB bus {times} this session — "
+        f"that is a physical fault, not a software one: {urgency} "
+        "(reseat its connector, try a port on another controller, or power its hub)"
+    )
 
 
 class CameraCapture:
@@ -61,6 +87,11 @@ class CameraCapture:
         self.fps = fps
         self.rotate180 = rotate180
         self.fourcc = fourcc
+
+        # How many times this device stopped delivering and had to be reopened.
+        # A stream that does this repeatedly is reporting a physical fault, which
+        # no amount of retrying fixes, so the count is worth telling the operator.
+        self.disconnects = 0
 
         self._cap: cv2.VideoCapture | None = None
         self._thread: threading.Thread | None = None
@@ -122,6 +153,8 @@ class CameraCapture:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+        if self.disconnects:
+            print(hardware_hint(self.name, self.disconnects))
 
     # ── Freshness ────────────────────────────────────────────────────────────
 
@@ -168,13 +201,19 @@ class CameraCapture:
                 # actually read rather than when the processed frame is published.
                 t_capture = time.monotonic()
                 if not ret or frame is None:
+                    self.disconnects += 1
                     print(
-                        f"⚠️  camera '{self.name}' read failed; "
-                        "will retry-reopen every 2 s"
+                        f"⚠️  camera '{self.name}' read failed "
+                        f"({self.disconnects} so far); reopening"
                     )
                     self._cap.release()
                     self._cap = None
-                    last_reopen = time.time()
+                    # Zero, not now: the first attempt has to happen on the very
+                    # next iteration. Waiting a full interval before even trying
+                    # once made the recorded gap as long as the backoff, which is
+                    # the wrong way round -- the backoff exists to stop a dead
+                    # device from being hammered, not to delay a live one.
+                    last_reopen = 0.0
                     continue
 
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
