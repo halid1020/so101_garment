@@ -930,15 +930,19 @@ def main():
 
         Leader mode has no separate ready pose — the rest pose IS the ready
         pose — so both arms interpolate to rest_pos there instead of ready_pos.
-        Its wrist_roll, however, is the untwisted storage value; leader-follow
-        holds the wrist at the camera-on-top orientation (ready_pos wrist_roll,
-        the joint-space counterpart of HANDLE_ROLL_OFFSET_DEG). Command that same
-        wrist_roll while homing, otherwise pressing A rolls the wrist ~90° to the
-        storage value and it snaps back the instant leader tracking resumes.
+        Its wrist_roll is dropped, though: ``move_to_joint_pose`` writes the pose
+        straight to the motors, so rest_pos/ready_pos are MOTOR-space degrees,
+        whereas leader-follow commands in URDF space (urdf = hw + 90 for
+        wrist_roll). A neutrally-held leader parks the motor near hw −90, so
+        homing to rest_pos's wrist_roll (motor ≈ 0) would roll the wrist ~90°
+        and it would snap back the instant tracking resumes (ready_pos's 90 made
+        it ~180°). Omitting wrist_roll from the home pose leaves the motor
+        un-commanded — it holds its present position — and leader-follow then
+        continues it, so pressing A/B causes no wrist roll.
         """
         home = rest_pos if use_leader else ready_pos
         if use_leader:
-            home = {**home, "wrist_roll": ready_pos["wrist_roll"]}
+            home = {k: v for k, v in home.items() if k != "wrist_roll"}
         data_manager.set_robot_activity_state(RobotActivityState.HOMING)
         data_manager.set_teleop_state(False)
         with left_bus_lock, right_bus_lock:
