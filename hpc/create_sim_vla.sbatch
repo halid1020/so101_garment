@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # ---- paths (EDIT) ----------------------------------------------------
-REPO_ROOT="/user/k2694428/so101_garment"         # where you cloned this repo on CREATE
+REPO_ROOT="/users/k2694428/so101_garment"         # where you cloned this repo on CREATE
 SCRATCH="/scratch/users/k2694428"                          # big, node-visible scratch, e.g. /scratch/users/<k-number>
 
 # ---- modules (EDIT / verify) -----------------------------------------
