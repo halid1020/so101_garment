@@ -5,18 +5,37 @@ A single background thread paces at the dataset fps and is the SOLE caller of
 never touch the writer — they only post ``request_start_episode`` /
 ``request_stop_save`` flags, which the loop consumes.
 
-States: IDLE -> RECORDING -> (SAVING | DISCARDING) -> IDLE.
+States: IDLE -> RECORDING -> (SAVING | DISCARDING) -> IDLE, with
+RECORDING <-> PAUSED while a camera stream is missing.
 
 Discard triggers while RECORDING:
 * shutdown requested (``DualDataManager.is_shutdown_requested``) -> park;
 * a thread error inside the loop -> park;
 * robot activity became DISABLED -> NO park (a torque-off already happened and
   re-torquing unattended arms is riskier);
-* an enabled camera frame staler than ``camera_stale_s`` -> NO park (a data
+* a camera stream absent for longer than ``camera_dead_s`` -> NO park (a data
   problem, not a safety problem).
 ``park_arms`` (injected) is therefore invoked ONLY for the shutdown/thread-error
-triggers. A frame staler than the tolerance but present is reused with a
-throttled warning; only beyond the tolerance does the episode discard.
+triggers.
+
+Camera staleness is graded, because a USB camera that drops off the bus is
+usually back within a couple of seconds and throwing away a long, otherwise
+good episode for a momentary glitch costs the operator far more than the gap
+does. A frame staler than one tick but within ``camera_stale_s`` is reused with
+a throttled warning. Beyond ``camera_stale_s`` the recorder PAUSES: it stops
+adding frames and holds the episode, then resumes it the moment every stream is
+fresh again. Only if the stream stays away for ``camera_dead_s`` is the episode
+abandoned.
+
+A pause leaves a real hole in the episode, and it is deliberately NOT hidden:
+LeRobot derives each frame's timestamp from its index, so the saved episode
+would otherwise claim one tick between the frames either side of a multi-second
+gap. Every pause is counted and totalled, and the episode summary says so, so an
+operator can review or drop an episode whose gap is too large to train on.
+
+Any automatic end (abandon, disabled arms, shutdown, thread error) plays the
+stop cue, because an operator watching the arms rather than the terminal
+otherwise cannot tell that recording ended and would keep performing the task.
 """
 
 from __future__ import annotations
@@ -37,8 +56,13 @@ from common.recording.drift import DriftLog
 class RecorderState(Enum):
     IDLE = "IDLE"
     RECORDING = "RECORDING"
+    PAUSED = "PAUSED"
     SAVING = "SAVING"
     DISCARDING = "DISCARDING"
+
+
+# States in which an episode is open and would be lost by an abrupt exit.
+_IN_FLIGHT = (RecorderState.RECORDING, RecorderState.PAUSED)
 
 
 class EpisodeRecorder:
@@ -55,6 +79,7 @@ class EpisodeRecorder:
         sidecar: Any | None = None,
         park_arms: Callable[[], None] | None = None,
         camera_stale_s: float = 0.5,
+        camera_dead_s: float = 5.0,
         depth_streams: list[str] | None = None,
         depth_writer: Any | None = None,
         record_ee: bool = False,
@@ -69,6 +94,10 @@ class EpisodeRecorder:
         self.sidecar = sidecar
         self.park_arms = park_arms
         self.camera_stale_s = camera_stale_s
+        # How long a stream may stay absent before the episode is abandoned. Must
+        # comfortably exceed the camera reopen interval, or a recoverable dropout
+        # is given up on before the retry that would have fixed it.
+        self.camera_dead_s = camera_dead_s
         # Optional aligned 16-bit depth streams (RealSense), written outside the
         # video encoder by ``depth_writer`` (a DepthWriter), keyed by frame idx.
         self.depth_streams = list(depth_streams) if depth_streams is not None else []
@@ -101,6 +130,12 @@ class EpisodeRecorder:
         self._frame_count = 0
         self._last_reuse_warn = 0.0
         self._last_overrun_warn = 0.0
+        # Pause bookkeeping. ``_pause_started`` is the monotonic instant the
+        # current pause began (None while recording normally); the count and
+        # total describe the whole episode and are reported when it ends.
+        self._pause_started: float | None = None
+        self._pause_count = 0
+        self._paused_total_s = 0.0
         # Temporal-alignment telemetry + action-fallback tally.
         self._drift = DriftLog()
         self._fallback_frames = 0
@@ -136,9 +171,14 @@ class EpisodeRecorder:
             return True
 
     def request_stop_save(self) -> bool:
-        """Ask the loop to stop and save. Rejected unless currently RECORDING."""
+        """Ask the loop to stop and save. Rejected unless recording or paused.
+
+        PAUSED counts: the operator pressed stop on an episode they consider
+        finished, and a stream being briefly absent is no reason to refuse to
+        keep the frames already captured.
+        """
         with self._lock:
-            if self._state != RecorderState.RECORDING:
+            if self._state not in (RecorderState.RECORDING, RecorderState.PAUSED):
                 print(f"⚠️  cannot stop episode: recorder is {self._state.value}")
                 return False
             self._pending_stop = True
@@ -214,11 +254,13 @@ class EpisodeRecorder:
             print("❌ record loop crashed; discarding in-flight episode")
             traceback.print_exc()
             self.data_manager.request_shutdown()
-            if self.get_state() == RecorderState.RECORDING:
+            if self.get_state() in _IN_FLIGHT:
+                self._close_pause()
                 self._discard(reason="thread_error", park=True)
         finally:
             # External shutdown while an episode is in flight -> discard + park.
-            if self.get_state() == RecorderState.RECORDING:
+            if self.get_state() in _IN_FLIGHT:
+                self._close_pause()
                 self._discard(reason="shutdown", park=self._external_shutdown)
 
     def _step(self) -> None:
@@ -227,6 +269,8 @@ class EpisodeRecorder:
             self._step_idle()
         elif state == RecorderState.RECORDING:
             self._step_recording()
+        elif state == RecorderState.PAUSED:
+            self._step_paused()
         # SAVING / DISCARDING are handled inline where they are entered.
 
     def _step_idle(self) -> None:
@@ -246,6 +290,9 @@ class EpisodeRecorder:
         self._frame_count = 0
         self._drift.reset()
         self._fallback_frames = 0
+        self._pause_started = None
+        self._pause_count = 0
+        self._paused_total_s = 0.0
         with self._lock:
             self._state = RecorderState.RECORDING
         if self.audio_cue is not None:
@@ -277,10 +324,78 @@ class EpisodeRecorder:
             return
         stale = self._stale_camera()
         if stale is not None:
-            self._discard(reason=f"camera_stale:{stale}", park=False)
+            self._enter_pause(stale)
             return
 
         self._record_frame()
+
+    def _step_paused(self) -> None:
+        """Hold the episode while a camera is away; resume it, or give up.
+
+        Mirrors the priority order of ``_step_recording``: an explicit stop-save
+        wins, then the safety/shutdown triggers, then recovery.
+        """
+        with self._lock:
+            stop = self._pending_stop
+            self._pending_stop = False
+        if stop:
+            self._close_pause()
+            with self._lock:
+                self._state = RecorderState.SAVING
+            if self.audio_cue is not None:
+                self.audio_cue.play("stop")
+            self._save()
+            return
+
+        if self.data_manager.is_shutdown_requested():
+            self._close_pause()
+            self._discard(reason="shutdown", park=True)
+            self._stop.set()
+            return
+        if self.data_manager.get_robot_activity_state() == RobotActivityState.DISABLED:
+            self._close_pause()
+            self._discard(reason="disabled", park=False)
+            return
+
+        # Resume on the SAME freshness gate that lets an episode start, so a
+        # stream must really be delivering again, not merely twitching.
+        if self._all_cameras_fresh():
+            waited = self._close_pause()
+            with self._lock:
+                self._state = RecorderState.RECORDING
+            print(
+                f"▶️  resumed episode {self._episode_index} after {waited * 1e3:.0f} ms "
+                f"({self._frame_count} frames so far)"
+            )
+            return
+
+        started = self._pause_started
+        if started is not None and time.monotonic() - started > self.camera_dead_s:
+            missing = self._missing_camera() or "unknown"
+            self._close_pause()
+            self._discard(reason=f"camera_dead:{missing}", park=False)
+
+    # ── Pause / resume ───────────────────────────────────────────────────────
+
+    def _enter_pause(self, camera: str) -> None:
+        """Hold the episode because ``camera`` has gone missing."""
+        self._pause_started = time.monotonic()
+        self._pause_count += 1
+        with self._lock:
+            self._state = RecorderState.PAUSED
+        print(
+            f"⏸️  paused episode {self._episode_index}: camera '{camera}' is not "
+            f"fresh — holding up to {self.camera_dead_s:.0f} s for it to return"
+        )
+
+    def _close_pause(self) -> float:
+        """End the current pause, adding it to the episode total. Returns its length."""
+        if self._pause_started is None:
+            return 0.0
+        waited = time.monotonic() - self._pause_started
+        self._paused_total_s += waited
+        self._pause_started = None
+        return waited
 
     # ── Frame building ───────────────────────────────────────────────────────
 
@@ -414,6 +529,12 @@ class EpisodeRecorder:
     def _discard(self, reason: str, park: bool) -> None:
         with self._lock:
             self._state = RecorderState.DISCARDING
+        # Every discard is an END the operator did not ask for. Without a cue an
+        # operator watching the arms keeps performing a task that is no longer
+        # being recorded, and reads the next press of the record button as a stop
+        # when it is really a start.
+        if self.audio_cue is not None:
+            self.audio_cue.play("stop")
         try:
             self.dataset.clear_episode_buffer()
         except Exception:
@@ -440,6 +561,19 @@ class EpisodeRecorder:
             if age is None or age > self.camera_stale_s:
                 return False
         return True
+
+    def _missing_camera(self) -> str | None:
+        """First camera stale beyond tolerance, else None. Never prints.
+
+        Used while PAUSED, where the reuse warning of ``_stale_camera`` would be
+        both wrong (nothing is being reused) and repetitive.
+        """
+        now = time.monotonic()
+        for name in self.camera_names:
+            age = self.data_manager.get_rgb_image_age(name, now)
+            if age is None or age > self.camera_stale_s:
+                return name
+        return None
 
     def _stale_camera(self) -> str | None:
         """Return the first camera stale beyond tolerance, else None.
@@ -493,10 +627,25 @@ class EpisodeRecorder:
         depth_msg = ""
         if self.depth_writer is not None and self.depth_writer.dropped:
             depth_msg = f", depth-drops {self.depth_writer.dropped}"
+        pause_msg = ""
+        if self._pause_count:
+            pause_msg = (
+                f", paused {self._pause_count}x for {self._paused_total_s:.1f} s"
+            )
         print(
             f"⏹️  episode {self._episode_index} {outcome}: "
-            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}"
+            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}{pause_msg}"
         )
+        # A pause is a genuine hole: LeRobot timestamps frames from their index,
+        # so the saved episode shows one tick across a gap that really lasted
+        # seconds. Say so plainly rather than let a discontinuity reach training.
+        if outcome == "saved" and self._pause_count:
+            print(
+                f"  ⚠️  this episode has {self._pause_count} recording gap(s) "
+                f"totalling {self._paused_total_s:.1f} s, which the frame "
+                f"timestamps do NOT show — review it before training and delete "
+                f"it if the motion jumps."
+            )
         if len(self._drift):
             print("  ⏱️  stream drift from tick reference:")
             print(self._drift.format_summary())

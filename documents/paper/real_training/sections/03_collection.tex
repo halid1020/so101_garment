@@ -80,10 +80,25 @@ never has to reconcile two coordinate conventions.
 whether teleoperation drove it. Homing moves and other non-teleoperation
 motion are thereby marked and can be excluded when a policy is trained, so
 the policy does not learn to freeze from frames where the recorded intent
-fell back to the measured state (Section~\ref{sec:contract}). Gating is
-strict at the episode level: if an enabled stream goes stale or the session
-faults, the episode is discarded rather than saved with a gap, so only
-clean episodes reach the dataset.
+fell back to the measured state (Section~\ref{sec:contract}). Gating then acts
+at the episode level, and it is graded rather than absolute. A consumer bus
+camera occasionally disappears for a second or two and returns by itself, and
+discarding a long, otherwise good demonstration for such a blink costs an
+operator far more than the missing second does. The recorder therefore holds a
+stream loss: it stops adding frames, waits, and resumes the same episode once
+every stream delivers again, abandoning the episode only if the stream stays
+away. A session fault still discards outright.
+
+We do not let that recovery hide a defect. A held episode really does contain a
+gap, and because frame timestamps follow the frame index, the saved episode
+would otherwise present one frame period across a hole that lasted seconds. The
+recorder counts every hold and reports the total with the episode, so an
+operator can inspect the episode and remove it if the motion jumps across the
+join. Any end the operator did not ask for also sounds an audible cue, because
+an operator attending to the arms cannot see the terminal, and would otherwise
+continue demonstrating into a recording that had already stopped.
+\unjustified{} the waiting period is set from the observed camera
+reopen interval, not from any measurement of how large a gap a policy tolerates.
 
 \paragraph{Session consistency.} A dataset is usually gathered over several
 sittings, so its stream configuration must not drift between them. When a

@@ -33,5 +33,13 @@ P6  Stream set: enumerate what is recorded — colour views, aligned depth
     three-channel colour), proprioception, measured end-effector pose, and both
     joint and end-effector targets. Units and layout match across streams.
 P7  Phase flag and gating: a per-frame flag marks teleoperation-driven frames
-    so non-teleoperation frames (homing) can be masked; episodes that lose a
-    stream or fault are discarded, so only clean episodes enter the dataset.
+    so non-teleoperation frames (homing) can be masked. Episode-level gating is
+    GRADED, not absolute: a stream loss holds the episode and resumes it when the
+    stream returns, abandoning it only if the stream stays away; a session fault
+    still discards outright. Justify by the cost asymmetry (a blink vs a whole
+    demonstration).
+P7b Honesty about the recovery: a held episode contains a real gap that the
+    index-derived timestamps do not show, so every hold is counted and reported
+    with the episode for review, and any end the operator did not ask for sounds
+    a cue (an operator watches the arms, not the terminal). Flag the waiting
+    period as unjustified.
