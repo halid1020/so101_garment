@@ -8,6 +8,7 @@ from pathlib import Path
 from common.recording.collection_settings import (
     is_resumable_dataset,
     read_existing_streams,
+    resume_uvc_cameras,
     selection_to_teleop_flags,
     uvc_cameras,
 )
@@ -92,6 +93,40 @@ class TestUvcCameras(unittest.TestCase):
     def test_none_rgb_keeps_all(self):
         cams = {"scene", "central"}
         self.assertEqual(uvc_cameras(cams, None), {"scene", "central"})
+
+
+class TestResumeUvcCameras(unittest.TestCase):
+    def test_no_depth_keeps_central_uvc_despite_config_name(self):
+        # A no-depth dataset with a 'central' UVC camera must NOT drop it just
+        # because recording.yaml names the (disabled) RealSense RGB 'central'.
+        settings = {
+            "cameras": {"central", "wrist_camera_left", "wrist_camera_right"},
+            "depth": False,
+            "depth_rgb_name": None,
+        }
+        self.assertEqual(
+            resume_uvc_cameras(settings, "central"),
+            {"central", "wrist_camera_left", "wrist_camera_right"},
+        )
+
+    def test_depth_dataset_excludes_its_rgb(self):
+        # A depth dataset splits out its own RealSense RGB name.
+        settings = {
+            "cameras": {"central", "wrist_camera_left"},
+            "depth": True,
+            "depth_rgb_name": "central",
+        }
+        self.assertEqual(resume_uvc_cameras(settings, "central"), {"wrist_camera_left"})
+
+    def test_depth_dataset_falls_back_to_config_rgb_name(self):
+        # Older depth dataset whose realsense.json omitted rgb_name: fall back
+        # to the config name only because depth is present.
+        settings = {
+            "cameras": {"central", "wrist_camera_left"},
+            "depth": True,
+            "depth_rgb_name": None,
+        }
+        self.assertEqual(resume_uvc_cameras(settings, "central"), {"wrist_camera_left"})
 
 
 class TestSelectionToTeleopFlags(unittest.TestCase):
