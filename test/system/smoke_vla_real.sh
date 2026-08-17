@@ -27,6 +27,7 @@ cd "$REPO_ROOT"
 
 # ---- defaults (tiny on purpose) --------------------------------------
 POLICY="diffusion"         # the plumbing policy (matches the sim smoke)
+POLICY_SET=0               # 1 once the user passes --policy (pins their choice)
 STEPS=20                   # a handful of optimiser steps (CPU-friendly)
 BATCH=2                    # small: fits CPU RAM
 DEVICE=""                  # empty => auto-pick (<8 GB VRAM -> CPU)
@@ -41,7 +42,7 @@ while [ $# -gt 0 ]; do
         --dir) DIR="$2"; shift 2;;
         --name) NAME="$2"; shift 2;;
         --repo-id) REPO_ID="$2"; shift 2;;
-        --policy) POLICY="$2"; shift 2;;
+        --policy) POLICY="$2"; POLICY_SET=1; shift 2;;
         --steps) STEPS="$2"; shift 2;;
         --batch) BATCH="$2"; shift 2;;
         --device) DEVICE="$2"; shift 2;;
@@ -94,6 +95,15 @@ PY
     echo "ℹ️  Auto-selected device: $DEVICE (override with --device)."
 fi
 
+# The default diffusion policy is ~293M params: it OOMs a typical CPU box (and
+# any <8 GB GPU). On CPU, fall back to the much lighter ~52M 'act' policy so the
+# no-arg smoke still passes on a laptop; the user's explicit --policy always wins.
+if [ "$DEVICE" = "cpu" ] && [ "$POLICY_SET" = "0" ] && [ "$POLICY" = "diffusion" ]; then
+    POLICY="act"
+    echo "ℹ️  CPU device: using the lighter 'act' policy (the 293M diffusion policy"
+    echo "    OOMs most CPU machines). Override with --policy diffusion."
+fi
+
 cat <<BANNER
 
 ======================================================================
@@ -133,7 +143,11 @@ echo "  ✓ deps present; dataset at $DATASET_ROOT"
 OUT="$RUN_DIR/train/${POLICY}"
 phase "Phase 1 — train $POLICY on $REPO_ID ($STEPS steps)"
 extra=()
-[ "$POLICY" = "diffusion" ] && extra+=(--policy.pretrained_backbone_weights=null)
+# Both diffusion and act carry a torchvision ResNet image backbone that otherwise
+# pulls ImageNet weights from a flaky CDN; skip it — irrelevant to a plumbing check.
+case "$POLICY" in
+    diffusion | act) extra+=(--policy.pretrained_backbone_weights=null) ;;
+esac
 lerobot-train \
     --policy.type="$POLICY" \
     --dataset.repo_id="$REPO_ID" \

@@ -268,13 +268,16 @@ examples below use the `cube-pnp` dataset on the Seagate mount
 directory (its basename becomes the repo id).
 
 **Smoke first** (local, minutes — validates the train → checkpoint → load
-wiring before you spend GPU hours). Auto-selects CPU on a small GPU:
+wiring before you spend GPU hours):
 
 ```bash
 bash test/system/smoke_vla_real.sh --dataset-root /mnt/seagate/so101/cube-pnp
 ```
 
-A green run means the checkpoint trains and reloads through the on-robot
+It auto-selects the device (CPU when no GPU has ≥ 8 GB VRAM) and, on CPU,
+the lighter ~52M **ACT** policy — the default 293M diffusion policy OOMs a
+typical laptop. Force either with `--policy diffusion|act` / `--device`. A
+green run means the checkpoint trains and reloads through the on-robot
 runner's load path. Success rate is **not** meaningful here (a handful of
 steps) — it only proves the plumbing.
 
