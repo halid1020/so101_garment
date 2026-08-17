@@ -74,6 +74,18 @@ catch-up. The leader jaw drives the same capped gripper command as the
 trigger, so demonstrations collected through either interface share one
 format and one control convention.
 
+That velocity limit must be expressed against elapsed time rather than against
+the control period. The distinction sounds pedantic and is not: a limit applied
+once per iteration silently becomes a limit per iteration, so whenever the
+control loop is delayed --- and it is delayed exactly when it matters, while the
+same host is capturing and compressing several camera streams --- the followers
+are held to a fraction of the intended speed. The operator sees the followers
+trail the leaders, worst during recording, which is the one situation where the
+demonstration is being kept. Deriving each step from the measured interval keeps
+the limit a true angular velocity at any loop rate, and capping how much elapsed
+time a single step may claim stops a long delay from being spent as one
+discontinuous jump.
+
 \paragraph{Pluggable IK methods.}
 The IK layer is a narrow interface: anchor to the measured joints,
 accept per-frame end-effector pose targets, solve, and expose the

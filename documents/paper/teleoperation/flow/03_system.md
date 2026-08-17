@@ -21,6 +21,15 @@ P3  Software pipeline: reader thread, filtering, IK thread, per-arm
     through a CAPPED jaw opening (closed at full press, a bounded
     fraction of the range when released — fine garment pinching does
     not need the full splay); no code paths                -> IK layer
+P3b Leader-arm interface: passive replicas, joint-to-joint tracking with no IK
+    and no clutch, keyboard buttons, same capped jaw command so either input
+    yields one demonstration format. Then WHY the per-joint velocity limit must
+    be measured against elapsed time, not the control period: applied per
+    iteration it becomes a per-iteration allowance, so a loop delayed by the
+    host's own camera capture and video compression holds the followers to a
+    fraction of the intended speed and the operator sees them trail — worst
+    while recording. Capping the elapsed time one step may claim keeps a long
+    delay from becoming a jump.                            -> IK layer
 P4  Pluggable IK methods: narrow interface + adapter + rate limiter,
     described functionally (no class names); the native upstream
     Telegrip stack as an independent comparison path (no file paths)

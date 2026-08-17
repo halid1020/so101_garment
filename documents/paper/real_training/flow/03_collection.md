@@ -20,10 +20,30 @@ P5  Drift budget: for every stream and frame the collector records the residual
     shows it during collection; unsynchronised cameras cannot be re-phased in
     software, so the honest deliverable is a measured drift, not a claim of
     perfect sync. State the target budget relative to the frame period.
+P5b Capture budget (why the bus, not just the clock, sets the drift): several
+    colour streams share the host's USB controllers, and an uncompressed format
+    does not fit — the cameras then negotiate a fraction of their requested rate,
+    so the newest frame is already half an inter-arrival gap old and the residual
+    of P5 is dominated by the capture rate rather than by clock skew. State the
+    remedy (compressed transport, a queue short enough to bound staleness but
+    deep enough not to starve the driver) and give the measured before/after.
+    Hands over to the stream set.
 P6  Stream set: enumerate what is recorded — colour views, aligned depth
     (stored losslessly outside the video pipeline because it is not
     three-channel colour), proprioception, measured end-effector pose, and both
     joint and end-effector targets. Units and layout match across streams.
+P6b Episode identity: each episode carries a wall-clock identifier, because its
+    position renumbers when any earlier episode is removed and so cannot name it;
+    the identifier survives renumbering, keeping session logs and review
+    decisions attached to the right recording.
 P7  Phase flag and gating: a per-frame flag marks teleoperation-driven frames
-    so non-teleoperation frames (homing) can be masked; episodes that lose a
-    stream or fault are discarded, so only clean episodes enter the dataset.
+    so non-teleoperation frames (homing) can be masked. Episode-level gating is
+    GRADED, not absolute: a stream loss holds the episode and resumes it when the
+    stream returns, abandoning it only if the stream stays away; a session fault
+    still discards outright. Justify by the cost asymmetry (a blink vs a whole
+    demonstration).
+P7b Honesty about the recovery: a held episode contains a real gap that the
+    index-derived timestamps do not show, so every hold is counted and reported
+    with the episode for review, and any end the operator did not ask for sounds
+    a cue (an operator watches the arms, not the terminal). Flag the waiting
+    period as unjustified.

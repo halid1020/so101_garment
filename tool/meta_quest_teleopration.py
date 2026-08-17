@@ -423,6 +423,7 @@ def build_recording_stack(
             height=cfg["height"],
             fps=cfg["fps"],
             rotate180=cfg["rotate180"],
+            fourcc=cfg["fourcc"],
         )
         if not cam.open():
             for opened in captures:
@@ -1064,7 +1065,9 @@ def main():
                 print("🏁 Moving to ready, then starting the episode...")
                 _move_to_ready()
             recorder.request_start_episode()
-        elif state == RecorderState.RECORDING:
+        elif state in (RecorderState.RECORDING, RecorderState.PAUSED):
+            # PAUSED still holds an open episode (a camera is briefly away), so
+            # stop means stop: keep the frames captured up to here.
             if use_leader:
                 print("💾 Stopping and saving the episode...")
             else:
@@ -1195,7 +1198,9 @@ def main():
                     episodes_done=_rec.get_episode_count(),
                     episodes_goal=_goal,
                     current_frames=_rec.get_current_frame_count(),
-                    recording=(st == RecorderState.RECORDING),
+                    # PAUSED keeps the badge lit: the episode is still open, and
+                    # the label itself tells the operator a stream is missing.
+                    recording=st in (RecorderState.RECORDING, RecorderState.PAUSED),
                 )
 
             view_status_provider = _collection_status

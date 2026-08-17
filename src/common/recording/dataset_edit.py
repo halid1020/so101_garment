@@ -15,6 +15,7 @@ review tool and any other curation entry point so the re-indexing lives once.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import time
@@ -45,16 +46,59 @@ def deletion_mapping(total: int, to_delete: "list[int]") -> "dict[int, int]":
     return {old: new for new, old in enumerate(kept)}
 
 
+def episode_uid_rel(index: int) -> str:
+    """Path (relative to the dataset root) of one episode's identity file. Pure."""
+    return f"extra/uid_{index:06d}.json"
+
+
+def new_episode_uid(when: float | None = None) -> str:
+    """A unique, sortable id for a recording, from the wall clock it started at.
+
+    ``YYYYmmdd-HHMMSS-mmm``. The episode index cannot serve as identity because
+    deleting an episode renumbers every later one, so the same index names a
+    different recording afterwards; this id never moves. Millisecond precision
+    keeps it unique even if two episodes start within the same second.
+    """
+    stamp = time.time() if when is None else when
+    millis = int((stamp % 1.0) * 1000.0)
+    return f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(stamp))}-{millis:03d}"
+
+
+def write_episode_uid(root: Path, index: int, uid: str, task: str = "") -> Path:
+    """Record ``uid`` as episode ``index``'s identity. Returns the file written."""
+    path = Path(root) / episode_uid_rel(index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "episode_uid": uid,
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "task": task,
+    }
+    tmp = path.with_suffix(".json.partial")
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, path)
+    return path
+
+
+def read_episode_uid(root: Path, index: int) -> str:
+    """Episode ``index``'s recorded id, or "" when it has none. Never raises."""
+    try:
+        with open(Path(root) / episode_uid_rel(index), "r") as f:
+            return str(json.load(f).get("episode_uid", ""))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+
+
 def extra_reindex_ops(
     mapping: "dict[int, int]", depth_names: "list[str]"
 ) -> "list[tuple[str, str]]":
     """``(src_rel, dst_rel)`` moves that re-index our ``extra/`` side files.
 
     For every kept episode ``old -> new`` this maps the per-episode drift and
-    sidecar parquet and each depth stream's per-episode directory from its old
-    six-digit index to its new one. Paths are relative to the dataset root so a
-    caller joins them with the source and destination roots; missing sources are
-    skipped by the caller. Pure.
+    sidecar parquet, its identity file, and each depth stream's per-episode
+    directory from its old six-digit index to its new one. Paths are relative to
+    the dataset root so a caller joins them with the source and destination
+    roots; missing sources are skipped by the caller. Pure.
     """
     ops: list[tuple[str, str]] = []
     for old, new in sorted(mapping.items()):
@@ -62,6 +106,7 @@ def extra_reindex_ops(
         ops.append(
             (f"extra/episode_{old:06d}.parquet", f"extra/episode_{new:06d}.parquet")
         )
+        ops.append((episode_uid_rel(old), episode_uid_rel(new)))
         for dname in depth_names:
             ops.append(
                 (

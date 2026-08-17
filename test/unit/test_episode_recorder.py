@@ -527,15 +527,66 @@ class TestEeWiring(unittest.TestCase):
             pusher.stop()
 
 
-class TestCameraStalenessDiscard(RecorderTestBase):
+class SpyAudioCue:
+    """Records which cues were asked for, so the operator-facing signal is testable."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def play(self, event: str) -> None:
+        self.events.append(event)
+
+
+class TestCameraStalenessPause(RecorderTestBase):
     def setUp(self) -> None:
         super().setUp()
-        # Tighten the staleness tolerance so the test does not wait 0.5 s.
+        # Tighten the tolerances so the test does not wait whole seconds.
         self.recorder.camera_stale_s = 0.06
+        self.recorder.camera_dead_s = 0.4
+        self.cue = SpyAudioCue()
+        self.recorder.audio_cue = self.cue
 
-    def test_stale_camera_discards_without_park(self) -> None:
+    def _unplug(self) -> None:
+        """Stop the synthetic frame feed, as a camera dropping off the bus would."""
+        self.pusher.stop()
+
+    def _replug(self) -> None:
+        self.pusher = FramePusher(self.dm, _CAMERAS)
+        self.pusher.start()
+
+    def test_stale_camera_pauses_instead_of_discarding(self) -> None:
         self._record_some_frames()
-        self.pusher.stop()  # camera "unplugged": frames stop arriving
+        self._unplug()
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.PAUSED)
+        )
+        # The episode is HELD, not thrown away.
+        self.assertEqual(self.dataset.clear_calls, 0)
+        self.assertEqual(self.dataset.save_calls, 0)
+        self.assertEqual(self.park_calls, 0)
+
+    def test_paused_episode_resumes_when_the_camera_returns(self) -> None:
+        self._record_some_frames()
+        self._unplug()
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.PAUSED)
+        )
+        frames_at_pause = len(self.dataset.frames)
+        self._replug()
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.RECORDING)
+        )
+        # Same episode, still growing: nothing was discarded or saved in between.
+        self.assertTrue(_wait_for(lambda: len(self.dataset.frames) > frames_at_pause))
+        self.assertEqual(self.dataset.clear_calls, 0)
+        self.assertEqual(self.dataset.save_calls, 0)
+        # The recovery is reported so the gap cannot reach training unnoticed.
+        self.assertEqual(self.recorder._pause_count, 1)
+        self.assertGreater(self.recorder._paused_total_s, 0.0)
+
+    def test_paused_episode_abandoned_after_dead_timeout_without_park(self) -> None:
+        self._record_some_frames()
+        self._unplug()
         self.assertTrue(_wait_for(lambda: self.dataset.clear_calls == 1))
         self.assertTrue(
             _wait_for(lambda: self.recorder.get_state() == RecorderState.IDLE)
@@ -546,6 +597,25 @@ class TestCameraStalenessDiscard(RecorderTestBase):
         self.recorder.request_start_episode()
         time.sleep(0.1)
         self.assertEqual(self.recorder.get_state(), RecorderState.IDLE)
+
+    def test_automatic_end_plays_the_stop_cue(self) -> None:
+        # An operator watching the arms must hear that recording ended by itself.
+        self._record_some_frames()
+        self.assertEqual(self.cue.events, ["start"])
+        self._unplug()
+        self.assertTrue(_wait_for(lambda: self.dataset.clear_calls == 1))
+        self.assertEqual(self.cue.events, ["start", "stop"])
+
+    def test_stop_save_while_paused_keeps_the_episode(self) -> None:
+        self._record_some_frames()
+        self._unplug()
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.PAUSED)
+        )
+        self.assertTrue(self.recorder.request_stop_save())
+        self.assertTrue(_wait_for(lambda: self.dataset.save_calls == 1))
+        self.assertEqual(self.dataset.clear_calls, 0)
+        self.assertEqual(self.cue.events, ["start", "stop"])
 
 
 if __name__ == "__main__":

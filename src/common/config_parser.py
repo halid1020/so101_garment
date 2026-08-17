@@ -128,6 +128,14 @@ _RECORDING_SCHEMA: dict[str, frozenset[str]] = {
 _CAMERA_SCHEMA: frozenset[str] = frozenset(
     {"enabled", "device", "width", "height", "fps", "rotate180"}
 )
+# Default capture pixel format. MJPG (compressed on the wire) is required, not a
+# preference: several 640x480@30 streams in an uncompressed format (YUYV needs
+# ~18 MB/s EACH) exceed what the shared USB controllers deliver, which starves
+# the wrist cameras to ~10-15 fps and eventually drops the device mid-episode.
+_DEFAULT_CAMERA_FOURCC = "MJPG"
+# Optional per-camera keys, defaulted after validation so call sites can index
+# them unconditionally while older recording.yaml files stay valid.
+_CAMERA_DEFAULTS: dict[str, object] = {"fourcc": _DEFAULT_CAMERA_FOURCC}
 # Optional central RGB-D (RealSense) section. Absent in older maps (validated
 # only when present, so existing recording.yaml files stay valid).
 _REALSENSE_SCHEMA: frozenset[str] = frozenset(
@@ -179,14 +187,22 @@ def _load_yaml_strict(path: Path) -> dict:
 
 
 def _validate_keys(
-    path: Path, where: str, present: object, expected: frozenset[str]
+    path: Path,
+    where: str,
+    present: object,
+    expected: frozenset[str],
+    optional: frozenset[str] = frozenset(),
 ) -> None:
-    """Raise if ``present`` (a mapping) is not exactly keyed by ``expected``."""
+    """Raise if ``present`` (a mapping) is not exactly keyed by ``expected``.
+
+    Keys in ``optional`` are accepted but not required, so a config file written
+    before an optional key existed stays valid.
+    """
     if not isinstance(present, dict):
         raise ValueError(f"{path}: section '{where}' must be a mapping")
     keys = set(present)
     missing = expected - keys
-    unknown = keys - expected
+    unknown = keys - expected - optional
     if missing:
         raise ValueError(
             f"{path}: {where} is missing required key(s): {sorted(missing)}"
@@ -263,6 +279,11 @@ def load_recording_config(path: str | None = None) -> dict:
         raise ValueError(f"{cfg_path}: section 'cameras' must be a mapping")
     if not cameras:
         raise ValueError(f"{cfg_path}: section 'cameras' must not be empty")
+    optional_cam = frozenset(_CAMERA_DEFAULTS)
     for cam_name, cam_cfg in cameras.items():
-        _validate_keys(cfg_path, f"cameras.{cam_name}", cam_cfg, _CAMERA_SCHEMA)
+        _validate_keys(
+            cfg_path, f"cameras.{cam_name}", cam_cfg, _CAMERA_SCHEMA, optional_cam
+        )
+        for key, default in _CAMERA_DEFAULTS.items():
+            cam_cfg.setdefault(key, default)
     return data
