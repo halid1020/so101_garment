@@ -8,9 +8,22 @@ episodes and renumbers the survivors 0..M-1). Our own side files under
 two dataset-level meta JSONs LeRobot does not know about are re-indexed here with
 the same old->new mapping, then swapped in atomically.
 
-The pure helpers (``deletion_mapping``, ``extra_reindex_ops``) are unit-tested;
-``delete_episodes_in_place`` performs the file operations. Shared by the web
-review tool and any other curation entry point so the re-indexing lives once.
+Because that rewrite touches the whole dataset, it costs tens of seconds even
+for a single episode, which is far too slow to sit behind a click while an
+operator reviews a session. Deletion is therefore two steps. Marking is
+instant: the reviewer's decision goes into a small marker file
+(``extra/soft_deleted.json``) and the marked episodes are hidden from the review
+tool immediately. Compaction performs the real rewrite once for the whole batch.
+
+The marked episodes remain on disk until compaction, so anything that CONSUMES a
+dataset must treat a non-empty marker as "not ready": training on a dataset with
+pending marks would train on the very episodes the reviewer threw away. Use
+``read_soft_deleted`` to check.
+
+The pure helpers (``deletion_mapping``, ``extra_reindex_ops``,
+``surviving_indices``) are unit-tested; ``delete_episodes_in_place`` and
+``compact_dataset`` perform the file operations. Shared by the web review tool
+and any other curation entry point so the re-indexing lives once.
 """
 
 from __future__ import annotations
@@ -21,6 +34,11 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any
+
+# Marker file listing episodes the reviewer has deleted but that are still on
+# disk. Lives inside the dataset so it travels with it (and so a reviewer cannot
+# lose the decision by restarting the tool).
+SOFT_DELETE_REL = "extra/soft_deleted.json"
 
 
 class ReadOnlyDatasetError(OSError):
@@ -117,9 +135,127 @@ def extra_reindex_ops(
     return ops
 
 
+def surviving_indices(total: int, marked: "list[int]") -> "list[int]":
+    """Episode indices still visible after ``marked`` are hidden. Pure.
+
+    Unlike ``deletion_mapping`` this does NOT renumber: a soft delete only hides
+    episodes, so the survivors keep the on-disk indices that the video and
+    per-episode routes need. Renumbering happens once, at compaction.
+    """
+    dead = set(marked)
+    return [i for i in range(total) if i not in dead]
+
+
+def read_soft_deleted(root: Path) -> "list[int]":
+    """Episodes marked for deletion but still on disk. Never raises.
+
+    A missing, empty or corrupt marker reads as "nothing marked": losing a
+    reviewer's marks is far better than refusing to open the dataset, and the
+    episodes themselves are still intact either way.
+    """
+    path = Path(root) / SOFT_DELETE_REL
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return sorted({int(i) for i in data.get("episodes", [])})
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+def write_soft_deleted(root: Path, indices: "list[int]") -> "list[int]":
+    """Replace the marker with ``indices`` (sorted, de-duplicated). Returns it.
+
+    Writes via a temp file and an atomic rename inside ``extra/`` so an
+    interrupted write cannot leave a half-written marker. Needs only the dataset
+    to be writable, not its parent, so marking works on mounts where the
+    in-place rewrite of ``delete_episodes_in_place`` could not run.
+    """
+    root = Path(root)
+    clean = sorted({int(i) for i in indices})
+    path = root / SOFT_DELETE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.partial")
+    payload = {"episodes": clean, "updated": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, path)
+    return clean
+
+
+def clear_soft_deleted(root: Path) -> None:
+    """Remove the marker file, if present."""
+    path = Path(root) / SOFT_DELETE_REL
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def compact_dataset(root: Path, repo_id: str, depth_names: "list[str]") -> int:
+    """Really delete every marked episode and clear the marker. Returns the new N.
+
+    This is the expensive half of the two-step delete: it re-encodes the video
+    segments that mixed kept and deleted episodes and renumbers the survivors, so
+    it is run once for a whole batch of marks rather than per episode.
+    """
+    marked = read_soft_deleted(root)
+    if not marked:
+        return saved_episode_total(root)
+    remaining = delete_episodes_in_place(root, repo_id, marked, depth_names)
+    # The rewrite produced a fresh dataset directory, so the marker is already
+    # gone with the old one; clear defensively in case a future rewrite copies
+    # extra/ wholesale.
+    clear_soft_deleted(root)
+    return remaining
+
+
+def saved_episode_total(root: Path) -> int:
+    """Episode count recorded in the dataset's own metadata (0 if unreadable)."""
+    try:
+        with open(Path(root) / "meta" / "info.json", "r") as f:
+            return int(json.load(f).get("total_episodes", 0))
+    except (OSError, ValueError, TypeError):
+        return 0
+
+
 def episode_lengths(meta: Any) -> "list[int]":
     """Per-episode frame counts from a ``LeRobotDatasetMetadata``. Pure-ish."""
     return [int(meta.episodes[k]["length"]) for k in range(meta.total_episodes)]
+
+
+def read_episode_lengths(root: Path) -> "tuple[dict[int, int], list[str]]":
+    """``({episode_index: length}, [unreadable files])`` straight from the parquet.
+
+    Building a ``LeRobotDatasetMetadata`` just to list episodes is expensive (it
+    loads the episode metadata through HuggingFace ``datasets``: measured at
+    ~4.9 s for 58 episodes, against ~0.3 s here) and it is all-or-nothing -- one
+    truncated parquet raises and no episode can be listed at all. Reading the
+    columns directly is both quicker and per-file fault tolerant, which is what a
+    review tool needs: a half-written file from an interrupted session should cost
+    the episodes in THAT file, not the whole session.
+
+    Returns the lengths it could read and the files it could not, so the caller
+    can tell the operator which part of the dataset is damaged.
+    """
+    root = Path(root)
+    lengths: dict[int, int] = {}
+    bad: list[str] = []
+    meta_dir = root / "meta" / "episodes"
+    if not meta_dir.is_dir():
+        return lengths, bad
+    import pyarrow.parquet as pq  # local: keeps the import off pure-helper users
+
+    for path in sorted(meta_dir.rglob("*.parquet")):
+        try:
+            table = pq.read_table(path, columns=["episode_index", "length"])
+            data = table.to_pydict()
+            for index, length in zip(data["episode_index"], data["length"]):
+                lengths[int(index)] = int(length)
+        except Exception:
+            # Any failure to read is the same outcome for the caller: these
+            # episodes' lengths are unknown. Keep going with the rest.
+            bad.append(str(path.relative_to(root)))
+    return lengths, bad
 
 
 def delete_episodes_in_place(

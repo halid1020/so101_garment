@@ -75,6 +75,25 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 PY="$REPO_ROOT/venv/bin/python"
 
+# Episodes deleted in the review tool are only MARKED until that dataset is
+# compacted: they are still on disk, so training would still learn from takes the
+# operator threw away. Ask the marker itself rather than parsing it here.
+"$PY" - "$DATASET_ROOT" <<'PY' || exit 2
+import sys
+from common.recording.dataset_edit import read_soft_deleted
+
+marked = read_soft_deleted(sys.argv[1])
+if marked:
+    print(
+        f"❌ {sys.argv[1]} has {len(marked)} episode(s) marked for deletion that are\n"
+        f"   still on disk: {marked}\n"
+        "   Open tool/dataset_web.py --allow-delete and press 'Remove for good'\n"
+        "   (or Restore them) before training.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+PY
+
 OUT_ROOT="${SO101_OUTPUT_DIR:-$REPO_ROOT/outputs}"
 RUN_DIR="$OUT_ROOT/vla_real_long/$RUN_NAME"
 mkdir -p "$RUN_DIR/logs"

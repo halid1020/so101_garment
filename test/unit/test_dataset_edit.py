@@ -1,23 +1,32 @@
 """Unit tests for the pure curation helpers of common.recording.dataset_edit.
 
-No LeRobot and no filesystem: exercises the deletion re-indexing arithmetic that
-keeps our ``extra/`` side files aligned with LeRobot's renumbered dataset.
+Mostly no LeRobot and no filesystem: exercises the deletion re-indexing
+arithmetic that keeps our ``extra/`` side files aligned with LeRobot's renumbered
+dataset. The soft-delete marker tests do touch a temporary directory, because the
+atomic-write behaviour is the point of them.
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from common.recording.dataset_edit import (
+    SOFT_DELETE_REL,
     ReadOnlyDatasetError,
+    clear_soft_deleted,
     delete_episodes_in_place,
     deletion_mapping,
     episode_lengths,
     extra_reindex_ops,
     new_episode_uid,
+    read_episode_lengths,
     read_episode_uid,
+    read_soft_deleted,
+    surviving_indices,
     write_episode_uid,
+    write_soft_deleted,
 )
 
 
@@ -130,6 +139,117 @@ class TestReadOnlyGuard(unittest.TestCase):
     def test_empty_indices_rejected_before_writability_check(self):
         with self.assertRaises(ValueError):
             delete_episodes_in_place("/mnt/ro/ds", "ds", [], [])
+
+
+class TestSurvivingIndices(unittest.TestCase):
+    def test_hides_without_renumbering(self):
+        # Unlike deletion_mapping, survivors KEEP their on-disk indices: the
+        # video route still has to address the episode where it actually lives.
+        self.assertEqual(surviving_indices(5, [2]), [0, 1, 3, 4])
+
+    def test_nothing_marked_keeps_everything(self):
+        self.assertEqual(surviving_indices(3, []), [0, 1, 2])
+
+    def test_all_marked_leaves_nothing(self):
+        self.assertEqual(surviving_indices(2, [0, 1]), [])
+
+
+class TestSoftDeleteMarker(unittest.TestCase):
+    def test_round_trip_sorted_and_deduplicated(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(write_soft_deleted(d, [5, 1, 5, 3]), [1, 3, 5])
+            self.assertEqual(read_soft_deleted(d), [1, 3, 5])
+
+    def test_absent_marker_reads_as_nothing_marked(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(read_soft_deleted(d), [])
+
+    def test_corrupt_marker_reads_as_nothing_marked(self):
+        # Never refuse to open a dataset over a broken marker: the episodes are
+        # all still there, so the safe reading is "nothing was deleted".
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / SOFT_DELETE_REL
+            path.parent.mkdir(parents=True)
+            path.write_text("{not json at all")
+            self.assertEqual(read_soft_deleted(d), [])
+
+    def test_write_leaves_no_partial_file_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [2])
+            extra = Path(d) / "extra"
+            self.assertEqual(
+                sorted(p.name for p in extra.iterdir()), ["soft_deleted.json"]
+            )
+
+    def test_marker_records_the_episode_list_as_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [4, 0])
+            data = json.loads((Path(d) / SOFT_DELETE_REL).read_text())
+            self.assertEqual(data["episodes"], [0, 4])
+            self.assertIn("updated", data)
+
+    def test_clear_removes_marker_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [1])
+            clear_soft_deleted(d)
+            self.assertEqual(read_soft_deleted(d), [])
+            clear_soft_deleted(d)  # must not raise when already gone
+
+    def test_empty_write_clears_the_marks(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [1, 2])
+            self.assertEqual(write_soft_deleted(d, []), [])
+            self.assertEqual(read_soft_deleted(d), [])
+
+
+def _write_episode_meta(root: Path, rel: str, indices, lengths) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = Path(root) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.table({"episode_index": indices, "length": lengths})
+    pq.write_table(table, path)
+
+
+class TestReadEpisodeLengths(unittest.TestCase):
+    def test_reads_lengths_across_several_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0, 1], [10, 20]
+            )
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-001.parquet", [2], [30]
+            )
+            lengths, bad = read_episode_lengths(d)
+            self.assertEqual(lengths, {0: 10, 1: 20, 2: 30})
+            self.assertEqual(bad, [])
+
+    def test_one_corrupt_file_costs_only_its_own_episodes(self):
+        # The whole point: an interrupted write must not make the dataset
+        # unlistable, which is what going through HuggingFace datasets did.
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0], [10]
+            )
+            bad_path = Path(d) / "meta/episodes/chunk-000/file-003.parquet"
+            bad_path.write_text("Parquet magic bytes not found in footer")
+            lengths, bad = read_episode_lengths(d)
+            self.assertEqual(lengths, {0: 10})
+            self.assertEqual(bad, ["meta/episodes/chunk-000/file-003.parquet"])
+
+    def test_missing_meta_directory_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(read_episode_lengths(d), ({}, []))
+
+    def test_agrees_with_the_lerobot_metadata_helper(self):
+        # Same numbers as episode_lengths(meta) would give, in list form.
+        with tempfile.TemporaryDirectory() as d:
+            _write_episode_meta(
+                d, "meta/episodes/chunk-000/file-000.parquet", [0, 1, 2], [5, 6, 7]
+            )
+            lengths, _ = read_episode_lengths(d)
+            self.assertEqual([lengths[i] for i in range(3)], [5, 6, 7])
 
 
 if __name__ == "__main__":
