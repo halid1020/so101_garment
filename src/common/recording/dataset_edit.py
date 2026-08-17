@@ -22,6 +22,16 @@ from pathlib import Path
 from typing import Any
 
 
+class ReadOnlyDatasetError(OSError):
+    """Raised when a delete is attempted on a read-only filesystem.
+
+    Deletion rewrites the dataset in place (a sibling temp dir plus atomic
+    renames in the parent directory), so it needs write access to the dataset's
+    parent. On a read-only mount that is impossible; callers surface this as a
+    clean message instead of a mid-operation ``OSError``.
+    """
+
+
 def deletion_mapping(total: int, to_delete: "list[int]") -> "dict[int, int]":
     """``{old_index: new_index}`` for the episodes KEPT after a deletion.
 
@@ -79,13 +89,22 @@ def delete_episodes_in_place(
     partway never loses the source dataset. Accepts one or many indices so a
     batch delete is a single re-encode + re-index + swap.
     """
-    from lerobot.datasets.dataset_tools import delete_episodes
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
     root = Path(root)
     indices = sorted({int(i) for i in indices})
     if not indices:
         raise ValueError("no episodes given to delete")
+
+    # The rewrite creates a sibling temp dir and renames within the parent, so
+    # a read-only mount cannot be edited. Fail early with a clear message rather
+    # than partway through LeRobot's re-encode (and before loading the dataset).
+    if not os.access(root.parent, os.W_OK):
+        raise ReadOnlyDatasetError(
+            f"dataset is on a read-only filesystem ({root.parent}) — remount "
+            "read-write to delete episodes"
+        )
+
+    from lerobot.datasets.dataset_tools import delete_episodes
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     ds = LeRobotDataset(repo_id, root=root)
     total = ds.meta.total_episodes

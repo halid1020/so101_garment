@@ -32,7 +32,11 @@ from pathlib import Path
 
 from aiohttp import web  # type: ignore[import]
 
-from common.recording.dataset_edit import delete_episodes_in_place, episode_lengths
+from common.recording.dataset_edit import (
+    ReadOnlyDatasetError,
+    delete_episodes_in_place,
+    episode_lengths,
+)
 from tool.replay_recording import _load_realsense, load_depth_range, saved_episode_count
 
 _IMAGE_PREFIX = "observation.images."
@@ -94,7 +98,9 @@ def render_episode_mp4(
     if out_path.is_file():
         return out_path
     path = dataset_root(root, name)
-    ds = LeRobotDataset(name, root=path, episodes=[episode])
+    # pyav backend: recorded videos are AV1 and torchcodec's AV1 seeking
+    # mis-lands on frames (FrameTimestampError); pyav decodes them reliably.
+    ds = LeRobotDataset(name, root=path, episodes=[episode], video_backend="pyav")
     n = len(ds)
     if n == 0:
         raise web.HTTPNotFound(text=f"episode {episode} has no frames")
@@ -169,9 +175,12 @@ async def handle_delete(request: web.Request) -> web.Response:
     path = dataset_root(app["root"], name)
     depth_name, _ = await _in_executor(app, _load_realsense, path)
     depth_names = [depth_name] if depth_name else []
-    new_total = await _in_executor(
-        app, delete_episodes_in_place, path, name, indices, depth_names
-    )
+    try:
+        new_total = await _in_executor(
+            app, delete_episodes_in_place, path, name, indices, depth_names
+        )
+    except ReadOnlyDatasetError as exc:
+        raise web.HTTPConflict(text=str(exc))
     return web.json_response({"episodes": new_total})
 
 
