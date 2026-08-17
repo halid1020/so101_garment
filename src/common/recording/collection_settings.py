@@ -86,6 +86,23 @@ def uvc_cameras(cameras: "set[str]", depth_rgb_name: "str | None") -> "set[str]"
     return {c for c in cameras if c != depth_rgb_name}
 
 
+def resume_uvc_cameras(settings: dict, config_rgb_name: "str | None") -> "set[str]":
+    """UVC cameras to re-enable when resuming, excluding the depth RGB stream.
+
+    The RealSense RGB name is split out ONLY when the dataset actually carries
+    depth (``settings["depth"]``). Otherwise a plain UVC camera that happens to
+    share the configured RealSense ``rgb_name`` — e.g. a ``central`` UVC camera
+    when ``recording.yaml`` still names the (disabled) RealSense RGB ``central``
+    — must not be dropped from the resumed stream set. The dataset's own
+    ``depth_rgb_name`` wins; the config name is only a fallback for a depth
+    dataset whose ``realsense.json`` omitted it. Pure — unit-tested.
+    """
+    depth_rgb = settings["depth_rgb_name"] or (
+        config_rgb_name if settings["depth"] else None
+    )
+    return uvc_cameras(settings["cameras"], depth_rgb)
+
+
 def selection_to_teleop_flags(
     known_cameras: "set[str]",
     enabled_uvc: "set[str]",

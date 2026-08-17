@@ -156,11 +156,11 @@ def _resolve_new(args, known_cameras, default_enabled):
 
 def _resolve_resume(args, settings, rs_rgb_name):
     """(enabled_uvc, depth, record_ee, fps) recovered from an existing dataset."""
-    from common.recording.collection_settings import uvc_cameras
+    from common.recording.collection_settings import resume_uvc_cameras
 
-    enabled_uvc = uvc_cameras(
-        settings["cameras"], settings["depth_rgb_name"] or rs_rgb_name
-    )
+    # Only a depth dataset splits out the RealSense RGB name; a plain UVC camera
+    # sharing that name (e.g. a 'central' UVC camera) must survive the resume.
+    enabled_uvc = resume_uvc_cameras(settings, rs_rgb_name)
     depth, record_ee, fps = settings["depth"], settings["ee"], settings["fps"]
 
     # A resumed dataset follows its own settings; warn if the operator asked
