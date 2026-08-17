@@ -1,18 +1,28 @@
 """Unit tests for the pure curation helpers of common.recording.dataset_edit.
 
-No LeRobot and no filesystem: exercises the deletion re-indexing arithmetic that
-keeps our ``extra/`` side files aligned with LeRobot's renumbered dataset.
+Mostly no LeRobot and no filesystem: exercises the deletion re-indexing
+arithmetic that keeps our ``extra/`` side files aligned with LeRobot's renumbered
+dataset. The soft-delete marker tests do touch a temporary directory, because the
+atomic-write behaviour is the point of them.
 """
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from common.recording.dataset_edit import (
+    SOFT_DELETE_REL,
     ReadOnlyDatasetError,
+    clear_soft_deleted,
     delete_episodes_in_place,
     deletion_mapping,
     episode_lengths,
     extra_reindex_ops,
+    read_soft_deleted,
+    surviving_indices,
+    write_soft_deleted,
 )
 
 
@@ -88,6 +98,67 @@ class TestReadOnlyGuard(unittest.TestCase):
     def test_empty_indices_rejected_before_writability_check(self):
         with self.assertRaises(ValueError):
             delete_episodes_in_place("/mnt/ro/ds", "ds", [], [])
+
+
+class TestSurvivingIndices(unittest.TestCase):
+    def test_hides_without_renumbering(self):
+        # Unlike deletion_mapping, survivors KEEP their on-disk indices: the
+        # video route still has to address the episode where it actually lives.
+        self.assertEqual(surviving_indices(5, [2]), [0, 1, 3, 4])
+
+    def test_nothing_marked_keeps_everything(self):
+        self.assertEqual(surviving_indices(3, []), [0, 1, 2])
+
+    def test_all_marked_leaves_nothing(self):
+        self.assertEqual(surviving_indices(2, [0, 1]), [])
+
+
+class TestSoftDeleteMarker(unittest.TestCase):
+    def test_round_trip_sorted_and_deduplicated(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(write_soft_deleted(d, [5, 1, 5, 3]), [1, 3, 5])
+            self.assertEqual(read_soft_deleted(d), [1, 3, 5])
+
+    def test_absent_marker_reads_as_nothing_marked(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(read_soft_deleted(d), [])
+
+    def test_corrupt_marker_reads_as_nothing_marked(self):
+        # Never refuse to open a dataset over a broken marker: the episodes are
+        # all still there, so the safe reading is "nothing was deleted".
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / SOFT_DELETE_REL
+            path.parent.mkdir(parents=True)
+            path.write_text("{not json at all")
+            self.assertEqual(read_soft_deleted(d), [])
+
+    def test_write_leaves_no_partial_file_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [2])
+            extra = Path(d) / "extra"
+            self.assertEqual(
+                sorted(p.name for p in extra.iterdir()), ["soft_deleted.json"]
+            )
+
+    def test_marker_records_the_episode_list_as_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [4, 0])
+            data = json.loads((Path(d) / SOFT_DELETE_REL).read_text())
+            self.assertEqual(data["episodes"], [0, 4])
+            self.assertIn("updated", data)
+
+    def test_clear_removes_marker_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [1])
+            clear_soft_deleted(d)
+            self.assertEqual(read_soft_deleted(d), [])
+            clear_soft_deleted(d)  # must not raise when already gone
+
+    def test_empty_write_clears_the_marks(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_soft_deleted(d, [1, 2])
+            self.assertEqual(write_soft_deleted(d, []), [])
+            self.assertEqual(read_soft_deleted(d), [])
 
 
 if __name__ == "__main__":

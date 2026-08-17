@@ -9,10 +9,17 @@ video is the SAME composited layout the operator watched while collecting
 in an HTML5 ``<video controls>`` element, so the browser's own draggable scrub
 bar seeks through the episode.
 
-Deletion is destructive and OFF unless ``--allow-delete`` is passed (a delete
-request returns 403 otherwise). A confirmed delete renumbers the surviving
-episodes across the training features AND our side files, via
-``common.recording.dataset_edit.delete_episodes_in_place``.
+Deletion is OFF unless ``--allow-delete`` is passed (a delete request returns 403
+otherwise), and it happens in two steps, because really removing one episode from
+a v3.0 dataset re-encodes and renumbers the whole thing and takes far too long to
+sit behind a click. Deleting MARKS the episode: the row disappears at once and
+the decision is recorded in the dataset, reversibly. "Remove for good" then
+compacts: one rewrite for the whole batch, via
+``common.recording.dataset_edit.compact_dataset``.
+
+Until a dataset is compacted its marked episodes are still on disk, so anything
+that trains on the dataset would still see them. The pane says so, and the
+real-VLA training scripts refuse to start while marks are pending.
 
 Usage:
 
@@ -34,8 +41,11 @@ from aiohttp import web  # type: ignore[import]
 
 from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
-    delete_episodes_in_place,
+    compact_dataset,
     episode_lengths,
+    read_soft_deleted,
+    surviving_indices,
+    write_soft_deleted,
 )
 from tool.replay_recording import _load_realsense, load_depth_range, saved_episode_count
 
@@ -46,7 +56,11 @@ _IMAGE_PREFIX = "observation.images."
 
 
 def list_datasets(root: Path) -> "list[dict]":
-    """Every immediate sub-directory of ``root`` that is a non-empty dataset."""
+    """Every immediate sub-directory of ``root`` that is a non-empty dataset.
+
+    The count shown is what SURVIVES: episodes already marked for deletion are
+    excluded, so the list agrees with the recording pane beside it.
+    """
     out: list[dict] = []
     if not root.is_dir():
         return out
@@ -55,7 +69,10 @@ def list_datasets(root: Path) -> "list[dict]":
             continue
         n = saved_episode_count(child)
         if n > 0:
-            out.append({"name": child.name, "episodes": n})
+            pending = len([i for i in read_soft_deleted(child) if i < n])
+            out.append(
+                {"name": child.name, "episodes": n - pending, "pending": pending}
+            )
     return out
 
 
@@ -69,13 +86,24 @@ def dataset_root(root: Path, name: str) -> Path:
     return path
 
 
-def episodes_of(root: Path, name: str) -> "list[dict]":
+def episodes_of(root: Path, name: str) -> dict:
+    """The visible recordings plus how many are marked for deletion.
+
+    Marked episodes are hidden but NOT renumbered: they still occupy their
+    on-disk index until compaction, and the video route needs that index.
+    """
     from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
     path = dataset_root(root, name)
     meta = LeRobotDatasetMetadata(name, root=path)
     lengths = episode_lengths(meta)
-    return [{"index": k, "length": L} for k, L in enumerate(lengths)]
+    marked = [i for i in read_soft_deleted(path) if 0 <= i < len(lengths)]
+    visible = surviving_indices(len(lengths), marked)
+    return {
+        "episodes": [{"index": k, "length": lengths[k]} for k in visible],
+        "pending": len(marked),
+        "total": len(lengths),
+    }
 
 
 def _cache_path(cache_dir: Path, root: Path, name: str, episode: int) -> Path:
@@ -163,7 +191,22 @@ async def handle_video(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(out)
 
 
+def _mark_deleted(root: Path, name: str, indices: "list[int]") -> dict:
+    """Add ``indices`` to the dataset's delete marker. Cheap: one small write."""
+    path = dataset_root(root, name)
+    marked = sorted(set(read_soft_deleted(path)) | set(indices))
+    try:
+        write_soft_deleted(path, marked)
+    except OSError as exc:
+        raise ReadOnlyDatasetError(
+            f"cannot mark episodes in {path}: {exc}. Remount the drive "
+            "read-write to curate this dataset."
+        )
+    return {"pending": len(marked)}
+
+
 async def handle_delete(request: web.Request) -> web.Response:
+    """Mark episodes deleted. Returns immediately; the rewrite waits for compact."""
     app = request.app
     if not app["allow_delete"]:
         raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
@@ -172,16 +215,43 @@ async def handle_delete(request: web.Request) -> web.Response:
     indices = [int(i) for i in body.get("episodes", [])]
     if not indices:
         raise web.HTTPBadRequest(text="no episodes given")
+    try:
+        result = await _in_executor(app, _mark_deleted, app["root"], name, indices)
+    except ReadOnlyDatasetError as exc:
+        raise web.HTTPConflict(text=str(exc))
+    return web.json_response(result)
+
+
+async def handle_restore(request: web.Request) -> web.Response:
+    """Un-mark every episode marked for deletion (nothing has been removed yet)."""
+    app = request.app
+    if not app["allow_delete"]:
+        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
+    name = request.match_info["name"]
+    path = dataset_root(app["root"], name)
+    try:
+        await _in_executor(app, write_soft_deleted, path, [])
+    except OSError as exc:
+        raise web.HTTPConflict(text=str(exc))
+    return web.json_response({"pending": 0})
+
+
+async def handle_compact(request: web.Request) -> web.Response:
+    """Really remove the marked episodes. Slow: rewrites and renumbers the dataset."""
+    app = request.app
+    if not app["allow_delete"]:
+        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
+    name = request.match_info["name"]
     path = dataset_root(app["root"], name)
     depth_name, _ = await _in_executor(app, _load_realsense, path)
     depth_names = [depth_name] if depth_name else []
     try:
-        new_total = await _in_executor(
-            app, delete_episodes_in_place, path, name, indices, depth_names
-        )
+        new_total = await _in_executor(app, compact_dataset, path, name, depth_names)
     except ReadOnlyDatasetError as exc:
         raise web.HTTPConflict(text=str(exc))
-    return web.json_response({"episodes": new_total})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response({"episodes": new_total, "pending": 0})
 
 
 def build_app(args: argparse.Namespace) -> web.Application:
@@ -201,6 +271,8 @@ def build_app(args: argparse.Namespace) -> web.Application:
             web.get("/api/datasets/{name}/episodes", handle_episodes),
             web.get("/api/datasets/{name}/episodes/{episode}.mp4", handle_video),
             web.post("/api/datasets/{name}/delete", handle_delete),
+            web.post("/api/datasets/{name}/restore", handle_restore),
+            web.post("/api/datasets/{name}/compact", handle_compact),
         ]
     )
     return app
@@ -263,6 +335,8 @@ _INDEX_HTML = """<!doctype html>
   button.danger { color:#dc2626; border-color:#dc262688; }
   video { width:100%; max-height:calc(100vh - 90px); background:#000; border-radius:8px; }
   .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
+  .pending { background:#f59e0b22; font-size:12px; }
+  .busy { opacity:.6; pointer-events:none; }
 </style></head>
 <body>
   <div class="col" id="datasets"><h2>Datasets</h2><ul id="ds-list"></ul></div>
@@ -271,6 +345,11 @@ _INDEX_HTML = """<!doctype html>
     <div class="bar">
       <label><input type="checkbox" id="all"> all</label>
       <button id="del-sel" class="danger" disabled>Delete selected</button>
+    </div>
+    <div class="bar pending" id="pending-bar" hidden>
+      <span class="grow" id="pending-text"></span>
+      <button id="restore">Restore</button>
+      <button id="compact">Remove for good</button>
     </div>
     <ul id="ep-list"></ul>
   </div>
@@ -290,9 +369,11 @@ async function loadDatasets() {
   const ul = $('#ds-list'); ul.innerHTML = '';
   for (const d of list) {
     const li = document.createElement('li');
+    const mark = d.pending ? ` <span class="muted">(${d.pending}✗)</span>` : '';
     li.innerHTML = `<span class="grow">${d.name}</span>
-                    <span class="muted">${d.episodes}</span>`;
+                    <span class="muted">${d.episodes}</span>${mark}`;
     li.onclick = () => selectDataset(d.name, li);
+    if (d.name === curDataset) li.classList.add('sel');
     ul.appendChild(li);
   }
   if (!list.length) ul.innerHTML = '<li class="muted">no datasets found</li>';
@@ -307,8 +388,16 @@ async function selectDataset(name, li) {
   $('#viewer').innerHTML = '<p class="muted">Select a recording.</p>';
 }
 
+function showPending(n) {
+  $('#pending-bar').hidden = !n;
+  if (n) $('#pending-text').textContent =
+    `${n} marked for deletion — still on disk, so NOT yet excluded from training.`;
+}
+
 async function loadEpisodes() {
-  const eps = await j(`/api/datasets/${curDataset}/episodes`);
+  const data = await j(`/api/datasets/${curDataset}/episodes`);
+  const eps = data.episodes;
+  showPending(data.pending);
   const ul = $('#ep-list'); ul.innerHTML = '';
   for (const e of eps) {
     const li = document.createElement('li');
@@ -345,18 +434,58 @@ function selectEpisode(idx, li) {
      <p class="muted">episode ${idx} — drag the scrub bar to seek. First load renders the mp4.</p>`;
 }
 
+// Marking is cheap, so the rows go immediately and the request follows. No
+// confirm dialog: a mark is reversible with Restore until it is compacted.
 async function doDelete(indices) {
   if (!allowDelete) return;
-  if (!confirm(`Delete ${indices.length} episode(s) from ${curDataset}? `
-      + `Survivors are renumbered. This cannot be undone.`)) return;
+  const dead = new Set(indices);
+  for (const li of document.querySelectorAll('#ep-list li')) {
+    if (dead.has(+li.dataset.idx)) li.remove();
+  }
+  if (dead.has(curEpisode)) {
+    curEpisode = null;
+    $('#viewer').innerHTML = '<p class="muted">Deleted. Select a recording.</p>';
+  }
+  updateSelCount();
   try {
-    await j(`/api/datasets/${curDataset}/delete`, {
+    const r = await j(`/api/datasets/${curDataset}/delete`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({episodes: indices}),
     });
+    showPending(r.pending);
+    loadDatasets();
+  } catch (e) {
+    alert('delete failed: ' + e.message);
+    await loadEpisodes();  // the optimistic removal was wrong; resync
+  }
+}
+
+// Compaction is the slow half: it rewrites and renumbers the dataset, so it
+// blocks the pane and every visible index changes afterwards.
+async function doCompact() {
+  if (!confirm(`Permanently remove the marked episode(s) from ${curDataset}?\n\n`
+      + `This rewrites the dataset, renumbers the survivors and cannot be `
+      + `undone. It may take a while.`)) return;
+  const bar = $('#pending-bar');
+  bar.classList.add('busy');
+  $('#pending-text').textContent = 'Removing… rewriting the dataset, please wait.';
+  try {
+    await j(`/api/datasets/${curDataset}/compact`, {method: 'POST'});
+    curEpisode = null;
+    $('#viewer').innerHTML = '<p class="muted">Removed. Select a recording.</p>';
+  } catch (e) {
+    alert('compact failed: ' + e.message);
+  } finally {
+    bar.classList.remove('busy');
     await loadDatasets(); await loadEpisodes();
-    $('#viewer').innerHTML = '<p class="muted">Deleted. Select a recording.</p>';
-  } catch (e) { alert('delete failed: ' + e.message); }
+  }
+}
+
+async function doRestore() {
+  try {
+    await j(`/api/datasets/${curDataset}/restore`, {method: 'POST'});
+  } catch (e) { alert('restore failed: ' + e.message); }
+  await loadDatasets(); await loadEpisodes();
 }
 
 $('#all').onchange = (e) => {
@@ -364,6 +493,8 @@ $('#all').onchange = (e) => {
   updateSelCount();
 };
 $('#del-sel').onclick = () => doDelete(picked());
+$('#compact').onclick = doCompact;
+$('#restore').onclick = doRestore;
 
 // Probe whether deletion is enabled (a disabled server 403s the delete route).
 fetch('/api/datasets/__probe__/delete', {method: 'POST',
