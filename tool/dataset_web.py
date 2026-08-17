@@ -270,14 +270,20 @@ def _depth_panel(
     )
 
 
-# ── Background pre-rendering ──────────────────────────────────────────────────
+# ── Background pre-rendering (opt-in) ─────────────────────────────────────────
 #
-# Rendering an episode's composited view takes seconds, and it used to happen on
-# the first click. The reviewer's next click is highly predictable, though: it is
-# one of the episodes just listed. So the videos are built ahead of time, newest
-# first (the end of a session is what an operator reviews), on a SEPARATE
-# single-thread executor. Separate matters: sharing the request executor would
-# let a queue of renders block listing and deleting.
+# Warming the composited videos ahead of the click made sense while every click
+# needed one. It no longer does: the view plays the recorded files directly, so
+# the composited video is a fallback, and rendering a whole session of them costs
+# real CPU for something most reviews never open. Worse, a review often happens
+# while the next session is being collected on the same machine, where that CPU
+# is the encoder's and the cameras'. So this is off unless asked for, which is
+# worth doing when the composited view IS the primary one -- a dataset recording
+# depth, or a browser without AV1.
+#
+# When it does run, it runs newest first (the end of a session is what an operator
+# reviews) on a SEPARATE single-thread executor. Separate matters: sharing the
+# request executor would let a queue of renders block listing and deleting.
 
 
 def _prerender_one(cache_dir: Path, root: Path, name: str, episode: int) -> None:
@@ -553,7 +559,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     app["fps"] = args.fps
     app["executor"] = ThreadPoolExecutor(max_workers=2)
     # Cache warming runs on its own single thread so it can never delay a click.
-    app["prerender"] = not getattr(args, "no_prerender", False)
+    app["prerender"] = bool(getattr(args, "prerender", False))
     app["prerender_executor"] = ThreadPoolExecutor(max_workers=1)
     app["prerender_tasks"] = []
     cache = os.environ.get("SO101_OUTPUT_DIR", "outputs")
@@ -595,10 +601,12 @@ def main() -> None:
         "--fps", type=int, default=None, help="Playback fps override (default dataset)"
     )
     parser.add_argument(
-        "--no-prerender",
+        "--prerender",
         action="store_true",
-        help="Do not build episode videos in the background (they are then "
-        "rendered on the first click, as before)",
+        help="Build the composited episode videos in the background while "
+        "browsing. Only worth it when the composited view is the one you "
+        "actually watch (a dataset with depth, or a browser without AV1); "
+        "playback of the recorded streams needs no rendering at all",
     )
     args = parser.parse_args()
 
