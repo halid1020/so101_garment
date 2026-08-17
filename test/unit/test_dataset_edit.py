@@ -5,8 +5,11 @@ keeps our ``extra/`` side files aligned with LeRobot's renumbered dataset.
 """
 
 import unittest
+from unittest import mock
 
 from common.recording.dataset_edit import (
+    ReadOnlyDatasetError,
+    delete_episodes_in_place,
     deletion_mapping,
     episode_lengths,
     extra_reindex_ops,
@@ -72,6 +75,19 @@ class TestEpisodeLengths(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(episode_lengths(_FakeMeta([])), [])
+
+
+class TestReadOnlyGuard(unittest.TestCase):
+    def test_read_only_filesystem_raises_before_loading(self):
+        # A read-only mount cannot be edited; the guard must fail fast with the
+        # typed error, before any LeRobot import or dataset load.
+        with mock.patch("common.recording.dataset_edit.os.access", return_value=False):
+            with self.assertRaises(ReadOnlyDatasetError):
+                delete_episodes_in_place("/mnt/ro/ds", "ds", [0], [])
+
+    def test_empty_indices_rejected_before_writability_check(self):
+        with self.assertRaises(ValueError):
+            delete_episodes_in_place("/mnt/ro/ds", "ds", [], [])
 
 
 if __name__ == "__main__":

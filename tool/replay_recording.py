@@ -243,7 +243,12 @@ def main() -> None:
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id, root=root, episodes=[args.episode])
+    # pyav backend: the recorded videos are AV1, and torchcodec's AV1 seeking
+    # mis-lands on frames (raising FrameTimestampError); pyav bundles a modern
+    # AV1-capable FFmpeg and decodes them reliably (same choice as training).
+    ds = LeRobotDataset(
+        repo_id, root=root, episodes=[args.episode], video_backend="pyav"
+    )
     n = len(ds)
     if n == 0:
         raise SystemExit(f"❌ episode {args.episode} has no frames")
