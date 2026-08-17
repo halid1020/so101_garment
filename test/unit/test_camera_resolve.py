@@ -9,6 +9,7 @@ capture-gating helpers.
 import argparse
 import unittest
 
+from common.recording.cameras import hardware_hint
 from tool.meta_quest_teleopration import (
     build_realsense_capture,
     overlay_sensor_map_devices,
@@ -119,6 +120,27 @@ class TestBuildRealsenseCaptureGating(unittest.TestCase):
         self.assertIsNone(
             build_realsense_capture(rec_cfg, self._args(), sm, for_view=True)
         )
+
+
+class TestHardwareHint(unittest.TestCase):
+    """What a repeatedly dropping camera reports to the operator."""
+
+    def test_names_the_stream_and_the_count(self):
+        msg = hardware_hint("wrist_camera_left", 6)
+        self.assertIn("wrist_camera_left", msg)
+        self.assertIn("6 times", msg)
+
+    def test_a_single_drop_reads_as_a_note_not_an_alarm(self):
+        self.assertIn("once", hardware_hint("central", 1))
+        self.assertNotIn("1 times", hardware_hint("central", 1))
+
+    def test_says_it_is_physical_and_where_to_look(self):
+        # The operator's next action is with their hands, not the code, so the
+        # message has to say so rather than just report a retry.
+        msg = hardware_hint("wrist_camera_left", 3)
+        self.assertIn("physical", msg)
+        for where in ("connector", "controller", "hub"):
+            self.assertIn(where, msg)
 
 
 if __name__ == "__main__":
