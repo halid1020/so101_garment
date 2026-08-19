@@ -40,7 +40,26 @@ are at their home pose, that every camera and the depth device open at
 their configured resolution, that the dataset volume has headroom, and that
 the host-tuning items which reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
-that is quietly misconfigured. A single guided pass calibrates all four
+that is quietly misconfigured.
+
+The check further reports which peripheral-bus hub each sensor and the
+storage volume depend upon. This is not fussiness about cabling. A rig of
+this kind is assembled from peripheral devices acquired at different times
+and connected as sockets happen to be free, so unrelated components
+accumulate behind one shared hub without anyone deciding that they should;
+and a hub is a single point of failure for everything behind it, which
+reports itself as several unrelated device errors rather than as one cause.
+The two ways this can happen are not equally serious, and the check
+separates them. Sensors sharing a hub costs an interruption the recorder can
+already absorb, since a stream that disappears and returns only pauses the
+episode. Storage sharing a hub with the very sensors recording into it is
+different in kind: the same fault that stops the capture also removes the
+file the capture is being written to, so the episode cannot be finished and
+cannot be recovered. The operator is therefore given the grouping itself
+rather than a bare warning, because the remedy is to choose a different
+socket, and that requires knowing which devices presently share one.
+
+A single guided pass calibrates all four
 arms in turn, so bringing the rig to its calibrated state is one step
 rather than four, and each arm's calibration is bound to its side rather
 than to the order in which its bus happens to enumerate.
