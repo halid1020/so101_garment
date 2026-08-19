@@ -41,6 +41,7 @@ from common.camera_controls import (
     apply_controls,
     read_controls,
 )
+from common.sensor_view import quiet_qt_warnings
 
 _root = Path(__file__).resolve().parent.parent
 _RECORDING_YAML = _root / "src" / "conf" / "recording.yaml"
@@ -241,6 +242,7 @@ def _resolve_cameras(only: "list[str]") -> list:
 
 
 def main() -> int:
+    quiet_qt_warnings()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--camera",

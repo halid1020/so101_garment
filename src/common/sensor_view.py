@@ -25,15 +25,95 @@ shutdown; otherwise q/Esc closes the window and teleop keeps running.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 import cv2  # type: ignore[import]
 import numpy as np
 
 from common.data_manager_dual import DualDataManager
+
+# ── Qt environment ────────────────────────────────────────────────────────────
+#
+# The OpenCV wheel bundles its own Qt build and points it at directories the
+# wheel does not always contain, so a working setup still prints warnings that
+# mean nothing. Two of them, fixed here because both have to be settled after
+# ``cv2`` is imported and before the first window exists.
+
+# Where to look for real fonts when the wheel's own font directory is absent.
+_SYSTEM_FONT_DIRS = ("/usr/share/fonts", "/usr/local/share/fonts")
+
+
+def choose_font_dir(
+    configured: "str | None", candidates: "tuple[str, ...]" = _SYSTEM_FONT_DIRS
+) -> "str | None":
+    """The font directory Qt should use, or ``None`` to leave the choice alone.
+
+    ``cv2/config-3.py`` sets ``QT_QPA_FONTDIR`` unconditionally to a directory
+    inside the wheel, under a comment about avoiding a font warning -- but the
+    Linux wheel ships no such directory, so the assignment causes the very
+    warning it was meant to prevent, once per window. Exporting the variable from
+    a shell cannot help, because importing cv2 overwrites it.
+
+    Returns ``None`` when the configured directory does exist (nothing to fix) or
+    when no system font directory can be found (better to leave Qt's own
+    behaviour than to point it somewhere equally empty). Pure.
+    """
+    if configured and Path(configured).is_dir():
+        return None
+    for candidate in candidates:
+        if Path(candidate).is_dir():
+            return candidate
+    return None
+
+
+def wayland_plugin_available(plugin_path: "str | None") -> bool:
+    """Whether Qt has a Wayland platform plugin to load. Pure-ish (one listing).
+
+    The OpenCV wheel ships only ``libqxcb.so``, so on a Wayland session Qt has no
+    choice but to fall back to xcb through XWayland -- and then reports the
+    fallback, suggesting the Wayland plugin, which is not there to be used.
+    """
+    if not plugin_path:
+        return False
+    platforms = Path(plugin_path) / "platforms"
+    if not platforms.is_dir():
+        return False
+    return any(p.name.startswith("libqwayland") for p in platforms.iterdir())
+
+
+def quiet_qt_warnings() -> "dict[str, str]":
+    """Settle Qt's environment so a working window starts silently.
+
+    Returns what was changed, for tests and for anyone wondering why. Nothing is
+    forced: a session already configured for Qt -- a wheel that does ship fonts or
+    a Wayland plugin, or an explicitly chosen platform -- is left as it is.
+    """
+    changed: dict[str, str] = {}
+    font_dir = choose_font_dir(os.environ.get("QT_QPA_FONTDIR"))
+    if font_dir is not None:
+        os.environ["QT_QPA_FONTDIR"] = font_dir
+        changed["QT_QPA_FONTDIR"] = font_dir
+    # On a Wayland session with no Wayland plugin in the wheel, Qt falls back to
+    # xcb over XWayland and says so on every start. The advice it prints cannot
+    # be taken, since the plugin it names is not shipped. Choosing xcb explicitly
+    # is not enough to stop the message -- MEASURED: it still prints -- because
+    # what Qt is reporting is the mismatch with XDG_SESSION_TYPE rather than an
+    # ambiguous choice. Removing that variable for this process alone settles it,
+    # and only in the case where the fallback was forced anyway.
+    if os.environ.get("XDG_SESSION_TYPE") == "wayland" and not wayland_plugin_available(
+        os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
+    ):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+        os.environ.pop("XDG_SESSION_TYPE", None)
+        changed["QT_QPA_PLATFORM"] = os.environ["QT_QPA_PLATFORM"]
+        changed["XDG_SESSION_TYPE"] = "<removed: no Wayland plugin in this build>"
+    return changed
+
 
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 _JOINT_NAMES = [
@@ -422,6 +502,7 @@ def run_sensor_view_loop(
     for a ``CollectionStatus``) add the collection footer so the operator need
     not watch the terminal.
     """
+    quiet_qt_warnings()
     from tool.test_sensor_rates import _camera_short_label
 
     # Drop cameras hidden from the monitor (e.g. "scene"); still recorded.

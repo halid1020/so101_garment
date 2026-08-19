@@ -57,6 +57,10 @@ _MAX_CATCHUP_TICKS = 5.0
 _SLOW_TICK_FACTOR = 2.0
 _SLOW_RUN_S = 1.0
 _SLOW_WARN_PERIOD_S = 5.0
+# Attempts per leader read before the tick is given up. Two matches what the
+# follower threads ask of their own bus (dual_joint_state.py), so an ordinary
+# dropped status packet is absorbed identically on both sides.
+_READ_ATTEMPTS = 2
 
 _HW_TO_URDF = {
     "left": (
@@ -128,6 +132,34 @@ def velocity_step_deg(
     return math.degrees(max_joint_vel_rad_s) * budget_s
 
 
+def read_leader_action(
+    leader: Any, attempts: int = _READ_ATTEMPTS
+) -> "dict[str, float]":
+    """One leader's joint reading, retrying a dropped status packet.
+
+    A Feetech bus is half-duplex and occasionally loses a status packet; the
+    follower threads already ask their bus to retry twice, but the leader's read
+    goes through a library call that does not retry at all, so the same ordinary
+    glitch surfaced as a warning on the leader side and was invisible on the
+    follower side.
+
+    Retrying here rather than surrendering the tick is the point. A retry costs a
+    couple of milliseconds inside the control period; abandoning the tick costs
+    the whole period AND leaves the followers holding the previous target for
+    that long, which is exactly the lag the velocity limit exists to avoid.
+    Raises the last error once the attempts are used up, so a bus that is
+    genuinely gone still ends the session.
+    """
+    last: BaseException | None = None
+    for _ in range(max(attempts, 1)):
+        try:
+            return leader.get_action()
+        except ConnectionError as e:
+            last = e
+    assert last is not None  # the loop either returned or set last
+    raise last
+
+
 def leader_arm_thread(
     data_manager: DualDataManager,
     leaders: Mapping[str, Any],  # SOLeader teleoperators (get_action())
@@ -170,7 +202,7 @@ def leader_arm_thread(
                 urdf: dict[str, np.ndarray] = {}
                 trigger: dict[str, float] = {}
                 for side, leader in leaders.items():
-                    action = leader.get_action()
+                    action = read_leader_action(leader)
                     urdf[side] = leader_action_to_urdf(action, side)
                     trigger[side] = leader_gripper_to_trigger(action["gripper.pos"])
                     # Observability publish (no consumer in the write path).
