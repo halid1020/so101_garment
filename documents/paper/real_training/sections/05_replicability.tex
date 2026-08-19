@@ -40,7 +40,10 @@ are at their home pose, that every camera and the depth device open at
 their configured resolution, that the dataset volume has headroom, and that
 the host-tuning items which reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
-that is quietly misconfigured.
+that is quietly misconfigured. Where the volume is the item that fails, the
+review console of the following paragraphs is also where the operator
+reclaims the space, so a failed check is answered in the same place it is
+raised.
 
 The check further reports which peripheral-bus hub each sensor and the
 storage volume depend upon. This is not fussiness about cabling. A rig of
@@ -75,7 +78,7 @@ claims. \unjustified{} the check is open-loop and single-arm-workspace, so
 it measures follower tracking, not task success.
 
 \paragraph{Episode review and curation.} A recorded dataset is inspected in
-a browser-based review tool served on the collection host: it lists the
+a browser-based console served on the collection host: it lists the
 datasets, lists each dataset's recordings, and plays a selected recording as
 the same composited sensor view the operator watched while collecting, with a
 draggable scrub control to move through it. A flawed episode --- a mistimed
@@ -84,6 +87,23 @@ individually or in batches, and the dataset is rewritten with the remaining
 episodes renumbered consistently across the training features and the side
 files, so curation leaves a valid dataset rather than a gap. Reviewing and
 pruning before training keeps a collection honest without re-running the rig.
+
+\paragraph{Dataset curation.} Curation of whole datasets belongs in the same
+place, because the mistakes it repairs are made in the sessions that produced
+the recordings. The console therefore also names, renames, deletes and merges
+the datasets on the collection volume. Naming is not a cosmetic concern here: a
+collection started session by session from a shell accumulates near-duplicate
+names, and a reviewer who cannot tell two of them apart cannot decide which to
+train on, so every entry is listed with its frame rate, its recorded streams,
+its instruction, its episode count and its size on the volume. Merging writes a
+new dataset and leaves the sources as they are, so combining recordings is
+never itself destructive; it is refused, with the reason stated before any work
+begins, when the sources disagree on frame rate, robot type or recorded
+streams, or when any source still holds episodes marked for removal, whose
+indices would no longer denote the episodes the reviewer marked. Every
+operation that replaces a dataset moves the original aside and swaps the result
+into place only once it is complete, so an interruption leaves the collection
+as it was rather than partly rewritten.
 
 \paragraph{Motion review.} Playing an episode back shows whether a
 demonstration did the right thing. It does not show whether it did it

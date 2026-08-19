@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SO-101 rig console</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header id="topbar">
+    <span class="brand">SO-101 rig console</span>
+    <button class="tab sel" data-pane="datasets">Datasets</button>
+    <button class="tab" data-pane="collect">Collect</button>
+    <button class="tab" data-pane="sensors">Sensors</button>
+    <span class="grow"></span>
+    <span class="muted" id="rootdir"></span>
+  </header>
+  <main>
+    <section class="pane" id="pane-datasets">
+    <div class="col" id="datasets">
+      <h2>Datasets</h2>
+      <div class="bar wrap">
+        <button id="ds-new">New…</button>
+        <button id="ds-merge">Merge…</button>
+        <button id="ds-rename" disabled>Rename</button>
+        <button id="ds-remove" class="danger" disabled>Delete</button>
+      </div>
+      <ul id="ds-list"></ul>
+    </div>
+    <div class="col" id="episodes">
+      <h2 id="ep-title">Recordings</h2>
+      <div class="bar">
+        <label><input type="checkbox" id="all"> all</label>
+        <button id="del-sel" class="danger" disabled>Delete selected</button>
+      </div>
+      <div class="bar damaged" id="damaged-bar" hidden>
+        <span class="grow" id="damaged-text"></span>
+      </div>
+      <div class="bar pending" id="pending-bar" hidden>
+        <span class="grow" id="pending-text"></span>
+        <button id="restore">Restore</button>
+        <button id="compact">Remove for good</button>
+      </div>
+      <ul id="ep-list"></ul>
+    </div>
+    <div id="viewer"><p class="muted">Select a recording to play its sensor view.</p></div>
+    </section>
+    <section class="pane" id="pane-collect" hidden>
+      <div class="placeholder">
+        <h2>Collect</h2>
+        <p class="muted">Live view and session control arrive with the next
+        change set. Until then, start a session with
+        <code>tool/collect_dataset.py</code>.</p>
+      </div>
+    </section>
+    <section class="pane" id="pane-sensors" hidden>
+      <div class="placeholder">
+        <h2>Sensors</h2>
+        <p class="muted">Assigning devices to stream names arrives with a later
+        change set. Until then, use <code>tool/test_sensor_rates.py --assign</code>.</p>
+      </div>
+    </section>
+  </main>
+  <dialog id="dlg-new">
+    <h3>New dataset</h3>
+    <p class="muted">A dataset comes into being when the first episode is
+    recorded into it, so this checks the name and hands you the command that
+    starts the session. Starting it from here arrives with the Collect tab.</p>
+    <label>Name <input id="new-name" autocomplete="off" spellcheck="false"></label>
+    <label>Instruction <input id="new-task" autocomplete="off"
+      placeholder="fold the towel"></label>
+    <p class="err" id="new-err"></p>
+    <pre id="new-cmd" hidden></pre>
+    <menu class="bar">
+      <button data-close="dlg-new">Close</button>
+      <button id="new-go">Show the command</button>
+    </menu>
+  </dialog>
+
+  <dialog id="dlg-rename">
+    <h3>Rename dataset</h3>
+    <p class="muted">A dataset's name is its directory name and nothing inside
+    records it, so renaming changes nothing about the recordings.</p>
+    <label>New name <input id="rename-to" autocomplete="off" spellcheck="false"></label>
+    <p class="err" id="rename-err"></p>
+    <menu class="bar">
+      <button data-close="dlg-rename">Cancel</button>
+      <button id="rename-go">Rename</button>
+    </menu>
+  </dialog>
+
+  <dialog id="dlg-merge">
+    <h3>Merge datasets</h3>
+    <p class="muted">Writes a NEW dataset from the ones you tick, in the order
+    they are listed. The sources are left exactly as they are.</p>
+    <ul id="merge-list" class="picklist"></ul>
+    <label>New dataset <input id="merge-name" autocomplete="off"
+      spellcheck="false"></label>
+    <p class="err" id="merge-err"></p>
+    <p class="muted" id="merge-progress" hidden></p>
+    <menu class="bar">
+      <button data-close="dlg-merge">Close</button>
+      <button id="merge-go">Merge</button>
+    </menu>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/datasets.js"></script>
+  <script src="/static/lifecycle.js"></script>
+</body></html>

@@ -233,7 +233,7 @@ dataset, and it must have no episodes still **marked for deletion**. A marked
 episode is only flagged until the dataset is compacted — it is still on disk, so
 staging one would ship takes the operator threw away, and the training driver
 would refuse the dataset on arrival anyway. Clear them in
-`tool/dataset_web.py --allow-delete` first.
+`tool/rig_web.py --allow-delete` first.
 
 `<scratch>/hf_lerobot` is the `HF_LEROBOT_HOME` the job will use.
 

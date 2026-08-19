@@ -18,6 +18,7 @@ This repository provides an independent, industrial-grade pipeline for dexterous
 - [`documents/teleop_benchmark_results.md`](documents/teleop_benchmark_results.md) — teleop IK-method benchmark results (tracking, wrist, handover, out-of-envelope sweeps).
 - [`documents/user_study_protocol.md`](documents/user_study_protocol.md) — bimanual teleoperation user-study runbook.
 - [`documents/telegrip_native.md`](documents/telegrip_native.md) — driving the arms with the unmodified upstream Telegrip stack.
+- [`documents/rig_web.md`](documents/rig_web.md) — the browser console: reviewing recordings and managing datasets on the collection drive.
 - [`documents/paper/teleoperation/`](documents/paper/teleoperation/) — the living teleoperation paper (LaTeX). Build it with `make paper`.
 - [`documents/academic_writing_guideline.md`](documents/academic_writing_guideline.md) — writing rules for every paper/report in this repo (flow diagrams, British English, decision-justification convention).
 - [`src/platform/README.md`](src/platform/README.md) — printed-rig design, hardware shopping list, assembly.
@@ -163,6 +164,21 @@ simulation benchmark: try `pink_relaxed` first (best accuracy/smoothness
 balance), `scipy_ls` for the tightest tracking; keep a hand near the
 power switch the first time any new method crosses the edge of the
 workspace.
+
+## 🗂️ Rig console (browser)
+
+Review what was collected and manage the collection drive from one page:
+
+```bash
+python tool/rig_web.py --dir /mnt/seagate/so101                  # read-only
+python tool/rig_web.py --dir /mnt/seagate/so101 --allow-delete   # + deletion
+```
+
+Open <http://127.0.0.1:8000/>. Play any recording (every camera side by
+side on one clock, joints beside them), mark bad episodes and compact them
+away, and create, rename, merge or delete whole datasets. Loopback only —
+tunnel in with `ssh -L 8000:127.0.0.1:8000 <rig>` from another machine.
+See [`documents/rig_web.md`](documents/rig_web.md).
 
 ## 🧪 Teleop method benchmark (simulation)
 

@@ -1,0 +1,97 @@
+/* Rig console — layout and controls. The dataset pane's rules are the ones the
+   standalone dataset browser used, so its look is unchanged by the move. */
+
+/* ── App shell ─────────────────────────────────────────────────────────── */
+:root { color-scheme: light dark; --bd:#8883; --sel:#3b82f6; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.4 system-ui,sans-serif; display:flex;
+       flex-direction:column; height:100vh; }
+#topbar { display:flex; gap:10px; align-items:center; padding:6px 12px;
+          border-bottom:1px solid var(--bd); }
+#topbar .brand { font-weight:600; letter-spacing:.02em; }
+.tab.sel { border-color:var(--sel); color:var(--sel); }
+main { flex:1; display:flex; overflow:hidden; }
+.pane { flex:1; display:flex; overflow:hidden; }
+.pane[hidden] { display:none; }
+.placeholder { padding:24px; max-width:52ch; }
+
+/* ── Dataset pane ──────────────────────────────────────────────────────── */
+h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; opacity:.6;
+     margin:0; padding:10px 12px; border-bottom:1px solid var(--bd); }
+.col { display:flex; flex-direction:column; border-right:1px solid var(--bd);
+       overflow:hidden; }
+#datasets { width:220px; } #episodes { width:260px; }
+#viewer { flex:1; padding:12px; overflow:auto; }
+ul { list-style:none; margin:0; padding:0; overflow:auto; flex:1; }
+li { padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--bd);
+     display:flex; gap:8px; align-items:center; }
+li:hover { background:#8881; }
+li.sel { background:var(--sel); color:#fff; }
+.grow { flex:1; } .muted { opacity:.6; font-size:12px; }
+.bar { padding:8px 12px; border-bottom:1px solid var(--bd); display:flex;
+       gap:8px; align-items:center; }
+button { font:inherit; padding:4px 10px; border:1px solid var(--bd);
+         border-radius:6px; background:#8881; cursor:pointer; }
+button:disabled { opacity:.4; cursor:default; }
+button.danger { color:#dc2626; border-color:#dc262688; }
+video { width:100%; max-height:calc(100vh - 130px); background:#000; border-radius:8px; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+         gap:8px; }
+.tile { margin:0; } .tile video { max-height:38vh; }
+.tile figcaption { font-size:11px; opacity:.6; padding:2px 0; }
+.viewbar { border:0; padding:8px 0; }
+#joints, #ee { border-collapse:collapse; font-variant-numeric:tabular-nums;
+               font-size:12px; }
+#joints th, #joints td, #ee th, #ee td { padding:2px 10px; text-align:right;
+                                         border-bottom:1px solid var(--bd); }
+#joints th:first-child, #ee th:first-child { text-align:left; opacity:.6;
+                                             font-weight:400; }
+.tables { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+.rate { opacity:.75; }
+#motion summary { font-size:12px; opacity:.6; cursor:pointer; padding:8px 0; }
+.menu { border:0; padding:4px 0 10px; flex-wrap:wrap; }
+.chip { font-size:11px; padding:2px 8px; border-radius:999px; opacity:.45; }
+.chip.on { opacity:1; border-color:var(--sel); color:var(--sel); }
+.panels { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+          gap:10px 18px; }
+.panel h3 { font-size:12px; font-weight:600; margin:0 0 3px;
+            font-variant-numeric:tabular-nums; }
+.panel h3 span { font-weight:400; opacity:.6; }
+.pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.plot { margin:0; }
+.plot canvas { width:100%; height:64px; display:block; border-radius:4px;
+               border:1px solid var(--bd); }
+.track { position:relative; }
+.head { position:absolute; top:0; bottom:0; width:1px; background:var(--sel);
+        pointer-events:none; }
+.plot figcaption { font-size:11px; opacity:.6; padding:2px 0;
+                   font-variant-numeric:tabular-nums; }
+#scrub { accent-color:var(--sel); }
+.del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
+.pending { background:#f59e0b22; font-size:12px; }
+.damaged { background:#dc262622; font-size:12px; }
+.busy { opacity:.6; pointer-events:none; }
+.placeholder h2 { border:0; padding:10px 0 4px; }
+
+/* ── Dataset management (new / rename / merge / delete) ─────────────────── */
+#datasets { width:260px; }
+.bar.wrap { flex-wrap:wrap; }
+.dsname { display:block; }
+.dsline { display:block; }
+dialog { border:1px solid var(--bd); border-radius:10px; padding:16px 18px;
+         max-width:min(560px, 92vw); color:inherit; background:Canvas; }
+dialog::backdrop { background:#0006; }
+dialog h3 { margin:0 0 6px; font-size:14px; }
+dialog p { margin:0 0 10px; }
+dialog label { display:block; margin:8px 0; }
+dialog input[type=text], dialog input:not([type]) { font:inherit; width:100%;
+  padding:4px 8px; margin-top:3px; border:1px solid var(--bd); border-radius:6px;
+  background:transparent; color:inherit; }
+dialog menu { margin:14px 0 0; padding:0; border:0; justify-content:flex-end; }
+dialog pre { font-size:12px; white-space:pre-wrap; background:#8881;
+             padding:8px 10px; border-radius:6px; user-select:all; }
+.err { color:#dc2626; font-size:12px; white-space:pre-line; }
+.picklist { max-height:34vh; overflow:auto; border:1px solid var(--bd);
+            border-radius:6px; }
+.picklist li { cursor:default; }
+.picklist label { display:flex; gap:8px; align-items:center; width:100%; }

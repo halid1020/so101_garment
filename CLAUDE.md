@@ -83,7 +83,16 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   windows out and executes the action chunks that come back) /
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
-  `documents/remote_policy_inference.md`).
+  `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
+  console — see below).
+- `src/common/web/` — the rig console served by `tool/rig_web.py` on
+  loopback: `datasets_api.py` (browsing, playback and episode curation —
+  this is the former `tool/dataset_web.py`, moved unchanged),
+  `lifecycle.py` (whole-dataset create-name checks, rename, delete and
+  merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes,
+  with merge as a polled job), `util.py`, and the front-end under
+  `static/` (`index.html` + one script per tab, no build step). Runbook:
+  `documents/rig_web.md`. Destructive actions stay behind `--allow-delete`.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,
@@ -100,8 +109,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `test/__init__.py` is load-bearing (keeps the stdlib `test` package from
   shadowing it).
 - `documents/` — design docs & worklogs (teleop benchmark results, user
-  study protocol, telegrip-native, remote policy inference) plus the living
-  paper under `documents/paper/`.
+  study protocol, telegrip-native, remote policy inference, rig console)
+  plus the living paper under `documents/paper/`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
   `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).
