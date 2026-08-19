@@ -302,7 +302,11 @@ real-data cell in [`hpc/README.md`](hpc/README.md).
 
 **Evaluate on the robot.** Copy a checkpoint back to the rig and run
 `python tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — the
-long run does no cluster-side evaluation on purpose. pi0.5 on real data is
+long run does no cluster-side evaluation on purpose. If the rig's machine is
+too small to hold the policy, put the checkpoint on a GPU box instead, serve it
+with `tool/policy_server.py`, and pass `--server <url>` here: the rig keeps the
+cameras, the arms and the timing, and action chunks come back over the link
+(see [`documents/remote_policy_inference.md`](documents/remote_policy_inference.md)). pi0.5 on real data is
 a deliberate follow-up (it needs the licence-gated base pre-staged + LoRA;
 see [`hpc/README.md`](hpc/README.md)).
 
