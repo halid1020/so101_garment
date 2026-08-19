@@ -29,7 +29,11 @@ through one pipeline so that no stream is privileged over another.
 
 \paragraph{Host and buses.} Every device reaches a single laptop. The
 cameras and arms share two powered universal-serial-bus hubs, one per side,
-and the head-mounted controller uses a direct link. Shared-bus bandwidth is
+and the head-mounted controller uses a direct link. The volume the dataset is
+written to is a peripheral too, and on this rig it hangs off one of those same
+hubs --- an arrangement worth knowing about, since it makes the storage share the
+fate of the sensors (Sections~\ref{sec:replicability} and~\ref{sec:difficulties}).
+Shared-bus bandwidth is
 a genuine constraint when several compressed image streams run at once. We
 do not assume the bus copes; instead the recorder measures each stream's
 rate and dropped frames, so a saturated bus is visible rather than silent
