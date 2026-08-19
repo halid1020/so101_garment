@@ -769,11 +769,23 @@ _INDEX_HTML = """<!doctype html>
   .tables { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
   .rate { opacity:.75; }
   #motion summary { font-size:12px; opacity:.6; cursor:pointer; padding:8px 0; }
-  .plot canvas { width:100%; height:64px; display:block; }
+  .menu { border:0; padding:4px 0 10px; flex-wrap:wrap; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:999px; opacity:.45; }
+  .chip.on { opacity:1; border-color:var(--sel); color:var(--sel); }
+  .panels { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+            gap:10px 18px; }
+  .panel h3 { font-size:12px; font-weight:600; margin:0 0 3px;
+              font-variant-numeric:tabular-nums; }
+  .panel h3 span { font-weight:400; opacity:.6; }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .plot { margin:0; }
+  .plot canvas { width:100%; height:64px; display:block; border-radius:4px;
+                 border:1px solid var(--bd); }
   .track { position:relative; }
   .head { position:absolute; top:0; bottom:0; width:1px; background:var(--sel);
           pointer-events:none; }
-  .plot figcaption { font-variant-numeric:tabular-nums; }
+  .plot figcaption { font-size:11px; opacity:.6; padding:2px 0;
+                     font-variant-numeric:tabular-nums; }
   #scrub { accent-color:var(--sel); }
   .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
   .pending { background:#f59e0b22; font-size:12px; }
@@ -944,7 +956,8 @@ async function openEpisode(name, idx) {
     </details>
     <p class="muted">episode ${idx} — ${info.streams.length} streams playing from the
     recorded files, joint values beside them.</p>`;
-  motion.tiles.forEach((t, i) => drawTile(document.querySelector('#c' + i), t));
+  motion.draw();
+  wireMotionMenu(motion);
   sync = startSync(info);
 }
 
@@ -994,35 +1007,75 @@ function eeRows(info, frame) {
 // on requestAnimationFrame and carries the end-of-episode stop, and re-drawing
 // sixteen canvases inside it is how that loop starts missing frames.
 const PW = 480, PH = 64;
-const VEL_COLOUR = '#3b82f6', ACC_COLOUR = 'rgba(245,158,11,.6)';
 
-function motionTiles(info) {
-  const tiles = [];
+// A canvas is transparent. With nothing painted into it, it shows the page --
+// black in a dark browser -- and a translucent line on black is unreadable,
+// which is what these plots used to be. So each tile paints its own surface and
+// every line is drawn at full opacity, in a palette chosen for the theme in
+// force.
+function palette() {
+  const dark = window.matchMedia
+    && matchMedia('(prefers-color-scheme: dark)').matches;
+  return dark
+    ? {bg: '#151a21', zero: '#4b5563', vel: '#60a5fa', acc: '#fbbf24'}
+    : {bg: '#fbfcfe', zero: '#c3c9d4', vel: '#1d4ed8', acc: '#c2410c'};
+}
+
+// Signals are grouped into panels, one per joint plus the two end-effector
+// pairs, and each panel holds that signal for BOTH arms so they can be compared
+// directly. The comparison is only honest if the pair shares a scale: two plots
+// side by side on their own scales look alike however differently the arms
+// moved, so the panel takes the larger peak of the two and both sides are drawn
+// against it.
+function motionGroups(info) {
   const accUnit = (u) => u.replace('/s', '/s²');
-  ['left', 'right'].forEach((side, s) => JOINTS.forEach((jn, k) => {
-    const c = s * 6 + k;
-    tiles.push({
-      label: (s ? 'R ' : 'L ') + jn, signed: true,
-      vel: info.joint_vel.map(r => r[c]), acc: info.joint_acc.map(r => r[c]),
-      vPeak: info.peaks.joint_vel[c], aPeak: info.peaks.joint_acc[c],
-      vUnit: info.joint_units[c], aUnit: accUnit(info.joint_units[c]),
+  const groups = [];
+  JOINTS.forEach((jn, k) => {
+    groups.push({
+      key: jn, title: jn, signed: true,
+      vUnit: info.joint_units[k], aUnit: accUnit(info.joint_units[k]),
       vDp: 1, aDp: 0,
-    });
-  }));
-  if (info.ee) ['left', 'right'].forEach((side, s) => {
-    const p = info.peaks.ee[side], d = info.ee[side];
-    tiles.push({
-      label: (s ? 'R' : 'L') + ' EE linear', signed: false,
-      vel: d.v, acc: d.a, vPeak: p.v, aPeak: p.a,
-      vUnit: 'm/s', aUnit: 'm/s²', vDp: 3, aDp: 2,
-    });
-    tiles.push({
-      label: (s ? 'R' : 'L') + ' EE angular', signed: false,
-      vel: d.w, acc: d.alpha, vPeak: p.w, aPeak: p.alpha,
-      vUnit: '°/s', aUnit: '°/s²', vDp: 1, aDp: 0,
+      sides: [k, k + 6].map((c, s) => ({
+        side: s ? 'right' : 'left',
+        vel: info.joint_vel.map(r => r[c]), acc: info.joint_acc.map(r => r[c]),
+        vPeak: info.peaks.joint_vel[c], aPeak: info.peaks.joint_acc[c],
+      })),
     });
   });
-  return tiles;
+  if (info.ee) {
+    const pair = (key, title, vk, ak, vUnit, aUnit, vDp, aDp) => ({
+      key: key, title: title, signed: false,
+      vUnit: vUnit, aUnit: aUnit, vDp: vDp, aDp: aDp,
+      sides: ['left', 'right'].map(side => ({
+        side: side, vel: info.ee[side][vk], acc: info.ee[side][ak],
+        vPeak: info.peaks.ee[side][vk], aPeak: info.peaks.ee[side][ak],
+      })),
+    });
+    groups.push(pair('ee_linear', 'end effector · linear',
+                     'v', 'a', 'm/s', 'm/s²', 3, 2));
+    groups.push(pair('ee_angular', 'end effector · angular',
+                     'w', 'alpha', '°/s', '°/s²', 1, 0));
+  }
+  for (const g of groups) {
+    g.vPeak = Math.max(...g.sides.map(s => s.vPeak));
+    g.aPeak = Math.max(...g.sides.map(s => s.aPeak));
+  }
+  return groups;
+}
+
+// Which panels to show, remembered across episodes and across sessions: a
+// reviewer watching one wrist through a session should not have to re-choose it
+// at every recording.
+const MOTION_PREFS_KEY = 'so101.motion.prefs';
+let motionPrefs = {hidden: [], vel: true, acc: true};
+try {
+  Object.assign(motionPrefs,
+                JSON.parse(localStorage.getItem(MOTION_PREFS_KEY) || '{}'));
+} catch (e) { /* a browser refusing storage is not a reason to lose the view */ }
+const motionShown = (key) => !motionPrefs.hidden.includes(key);
+function saveMotionPrefs() {
+  try { localStorage.setItem(MOTION_PREFS_KEY, JSON.stringify(motionPrefs)); }
+  catch (e) { /* as above */ }
 }
 
 // Each pixel column is drawn as the min-to-max span of the samples that land in
@@ -1053,34 +1106,102 @@ function paintSeries(ctx, series, peak, signed, colour) {
   ctx.stroke();
 }
 
-function drawTile(canvas, tile) {
+function drawTile(canvas, group, side, p) {
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, PW, PH);
-  const base = tile.signed ? PH / 2 : PH - 1;
-  ctx.strokeStyle = '#8884';
+  ctx.fillStyle = p.bg;
+  ctx.fillRect(0, 0, PW, PH);
+  const base = group.signed ? PH / 2 : PH - 1;
+  ctx.strokeStyle = p.zero;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, base + 0.5);
   ctx.lineTo(PW, base + 0.5);
   ctx.stroke();
-  paintSeries(ctx, tile.acc, tile.aPeak, tile.signed, ACC_COLOUR);
-  paintSeries(ctx, tile.vel, tile.vPeak, tile.signed, VEL_COLOUR);
+  if (motionPrefs.acc) paintSeries(ctx, side.acc, group.aPeak, group.signed, p.acc);
+  if (motionPrefs.vel) paintSeries(ctx, side.vel, group.vPeak, group.signed, p.vel);
+}
+
+function drawMotion(groups) {
+  const p = palette();
+  for (const g of groups) {
+    for (const s of g.sides) {
+      const canvas = document.querySelector('#' + s.canvasId);
+      if (canvas) drawTile(canvas, g, s, p);
+    }
+  }
 }
 
 function motionPanel(info) {
-  if (!info.joint_vel) return {tiles: [], html: ''};
-  const tiles = motionTiles(info);
-  const bound = (t) => t.signed ? '±' : '≤';
-  const html = tiles.map((t, i) =>
-    `<figure class="tile plot">
-       <div class="track"><canvas id="c${i}" width="${PW}" height="${PH}"></canvas>
-       <div class="head" id="h${i}"></div></div>
-       <figcaption>${t.label} · <b style="color:${VEL_COLOUR}">v</b> ${bound(t)}${t.vPeak.toFixed(t.vDp)} ${t.vUnit}
-       · <b style="color:#f59e0b">a</b> ${bound(t)}${t.aPeak.toFixed(t.aDp)} ${t.aUnit}</figcaption>
-     </figure>`).join('');
+  if (!info.joint_vel) return {groups: [], html: '', draw: () => {}};
+  const groups = motionGroups(info);
+  const p = palette();
+  const bound = (g) => g.signed ? '±' : '≤';
+  const chips = groups.map(g =>
+    `<button class="chip${motionShown(g.key) ? ' on' : ''}"
+             data-sig="${g.key}">${g.title}</button>`).join('') +
+    '<span class="grow"></span>' +
+    `<button class="chip${motionPrefs.vel ? ' on' : ''}" data-series="vel"
+             style="color:${p.vel}">velocity</button>` +
+    `<button class="chip${motionPrefs.acc ? ' on' : ''}" data-series="acc"
+             style="color:${p.acc}">acceleration</button>`;
+  let n = 0;
+  const panels = groups.map(g => {
+    const plots = g.sides.map(s => {
+      s.canvasId = 'c' + (n++);
+      return `<figure class="plot">
+         <div class="track">
+           <canvas id="${s.canvasId}" width="${PW}" height="${PH}"></canvas>
+           <div class="head"></div>
+         </div>
+         <figcaption>${s.side} · v ${bound(g)}${s.vPeak.toFixed(g.vDp)}
+         · a ${bound(g)}${s.aPeak.toFixed(g.aDp)}</figcaption>
+       </figure>`;
+    }).join('');
+    return `<section class="panel" data-sig="${g.key}"${
+      motionShown(g.key) ? '' : ' hidden'}>
+       <h3>${g.title} <span>· v ${bound(g)}${g.vPeak.toFixed(g.vDp)} ${g.vUnit}
+       · a ${bound(g)}${g.aPeak.toFixed(g.aDp)} ${g.aUnit}</span></h3>
+       <div class="pair">${plots}</div>
+     </section>`;
+  }).join('');
   const note = info.ee ? '' :
-    `<p class="muted">end-effector motion unavailable: ${info.ee_error || 'no kinematic model'}</p>`;
-  return {tiles: tiles, html: `<div class="tiles">${html}</div>${note}`};
+    `<p class="muted">end-effector motion unavailable: ${
+      info.ee_error || 'no kinematic model'}</p>`;
+  return {
+    groups: groups,
+    draw: () => drawMotion(groups),
+    html: `<div class="bar menu" id="sigmenu">${chips}</div>
+           <div class="panels">${panels}</div>${note}`,
+  };
+}
+
+// Hiding a panel costs nothing but an attribute. Turning a series off means a
+// redraw, which happens HERE, on the click -- never in the frame loop, which
+// carries the end-of-episode stop and must stay cheap.
+function wireMotionMenu(motion) {
+  const menu = document.querySelector('#sigmenu');
+  if (!menu) return;
+  menu.onclick = (ev) => {
+    const chip = ev.target.closest('.chip');
+    if (!chip) return;
+    if (chip.dataset.sig) {
+      const key = chip.dataset.sig, hide = motionShown(key);
+      motionPrefs.hidden = motionPrefs.hidden.filter(k => k !== key);
+      if (hide) motionPrefs.hidden.push(key);
+      chip.classList.toggle('on', !hide);
+      const panel = document.querySelector(`.panel[data-sig="${key}"]`);
+      if (panel) panel.hidden = hide;
+    } else {
+      const key = chip.dataset.series;
+      motionPrefs[key] = !motionPrefs[key];
+      chip.classList.toggle('on', motionPrefs[key]);
+      motion.draw();
+    }
+    saveMotionPrefs();
+  };
+  if (window.matchMedia) {
+    matchMedia('(prefers-color-scheme: dark)').onchange = () => motion.draw();
+  }
 }
 
 // One stream is the clock; the others are told where to be. Each is seeked to

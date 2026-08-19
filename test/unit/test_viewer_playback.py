@@ -131,8 +131,38 @@ class TestMotionPlots(unittest.TestCase):
 
     def test_the_series_is_drawn_once_when_the_episode_opens(self):
         script = _script()
-        self.assertIn("motion.tiles.forEach", script)
-        self.assertIn("drawTile(document.querySelector", script)
+        self.assertIn("motion.draw();", script)
+        self.assertIn("function drawMotion(", script)
+
+    def test_turning_a_series_off_redraws_on_the_click(self):
+        # The menu can hide the acceleration trace, which needs a redraw. It has
+        # to happen in the click handler; putting it in the frame loop would
+        # reintroduce exactly what the tests above forbid.
+        script = _script()
+        menu = script[script.index("function wireMotionMenu(") :]
+        self.assertIn("motion.draw()", menu[: menu.index("\n}")])
+
+    def test_the_two_arms_in_a_panel_share_one_scale(self):
+        # Left and right sit side by side so they can be compared. Drawn on
+        # their own scales they would look alike however differently the arms
+        # moved, which is worse than not showing them together at all.
+        script = _script()
+        self.assertIn("g.vPeak = Math.max(...g.sides.map(s => s.vPeak));", script)
+        self.assertIn("g.aPeak = Math.max(...g.sides.map(s => s.aPeak));", script)
+
+    def test_every_tile_paints_its_own_surface(self):
+        # A canvas is transparent, so with nothing painted it shows the page --
+        # black in a dark browser, which is what made these unreadable. Every
+        # tile fills its own background before drawing, and no line is drawn
+        # translucent over it.
+        script = _script()
+        draw = script[script.index("function drawTile(") :]
+        draw = draw[: draw.index("\n}")]
+        self.assertIn("ctx.fillStyle = p.bg;", draw)
+        self.assertIn("ctx.fillRect(0, 0, PW, PH);", draw)
+        palette = script[script.index("function palette()") :]
+        palette = palette[: palette.index("\n}")]
+        self.assertNotIn("rgba", palette)
 
 
 if __name__ == "__main__":
