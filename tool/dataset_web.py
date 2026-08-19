@@ -68,6 +68,16 @@ from tool.replay_recording import _load_realsense, load_depth_range, saved_episo
 
 _IMAGE_PREFIX = "observation.images."
 
+# How much of an episode's tail the live viewer leaves unplayed. Episodes are
+# packed end to end in a shared video file, so the frames immediately after one
+# are the next recording's, and three decoders kept in step by seeking can stray
+# across that seam for a frame at a time -- which reads as the end of a recording
+# flickering against the start of the next one. Stopping a little short keeps
+# every displayed frame unambiguously inside the episode. This trims the VIEW
+# only: the rendered mp4 and the download stay complete, so nothing is lost from
+# the record itself, only from what autoplay runs through.
+_VIEW_END_MARGIN_S = 0.1
+
 
 # ── Dataset discovery + rendering (blocking; run in a thread executor) ─────────
 
@@ -406,8 +416,11 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
         # The INCLUSIVE window: "to" here is the last frame this episode owns,
         # deliberately one frame short of the metadata field of the same name,
         # whose end is exclusive and belongs to the next recording. Sending it
-        # this way keeps the frame-period arithmetic out of the browser.
+        # this way keeps the frame-period arithmetic out of the browser. The
+        # tail margin comes off here too, so the browser needs to know nothing
+        # about why (see _VIEW_END_MARGIN_S).
         start, end = playable_window(row, key, fps)
+        end = max(end - _VIEW_END_MARGIN_S, start)
         streams.append(
             {
                 "key": key,
@@ -893,9 +906,14 @@ function startSync(info) {
     }
     // Drift correction: playback rates differ slightly between streams, so the
     // followers are nudged back whenever they fall more than a frame behind.
+    // A follower that has reached its own end is PAUSED rather than nudged: the
+    // target is clamped to the end while the video keeps playing past it, so
+    // correcting it would drag it back every frame while it ran forward into
+    // the next recording in between -- seen as the boundary flickering.
     if (playing) {
       info.streams.forEach((s, i) => {
         if (i === 0) return;
+        if (videos[i].currentTime >= s.to) { videos[i].pause(); return; }
         const want = s.from + Math.min(t, s.to - s.from);
         if (Math.abs(videos[i].currentTime - want) > 0.04) videos[i].currentTime = want;
       });
