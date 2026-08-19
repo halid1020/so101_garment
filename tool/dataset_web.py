@@ -867,6 +867,12 @@ function startSync(info) {
     const want = s.from + Math.min(t, s.to - s.from);
     if (Math.abs(videos[i].currentTime - want) > 0.04) videos[i].currentTime = want;
   });
+  // Land exactly on each stream's last frame, ignoring the tolerance the drift
+  // correction uses: that tolerance is wider than a frame period, so it would
+  // decline to undo an overshoot of the very size we are here to undo.
+  const settle = () => info.streams.forEach((s, i) => {
+    videos[i].currentTime = s.to;
+  });
   const paint = () => {
     if (stopped) return;
     const t = at();
@@ -874,6 +880,17 @@ function startSync(info) {
     document.querySelector('#scrub').value = Math.round((t / span) * 1000);
     document.querySelector('#joints').innerHTML =
       jointRows(info, Math.min(Math.round(t * info.fps), info.state.length - 1));
+    // Stop on this episode's last frame. This has to be driven from the frame
+    // loop rather than from the video's own timeupdate event, which browsers
+    // throttle to about four times a second: a quarter of a second is seven
+    // frames at the dataset rate, so a check driven by it sails well past the
+    // end and into the next recording before it fires. Overshoot is then undone
+    // rather than merely stopped, so the frame left on screen is this
+    // episode's last and not whatever the decoder had reached.
+    if (playing && master.currentTime >= info.streams[0].to - 1e-3) {
+      pause();
+      settle();
+    }
     // Drift correction: playback rates differ slightly between streams, so the
     // followers are nudged back whenever they fall more than a frame behind.
     if (playing) {
@@ -897,7 +914,6 @@ function startSync(info) {
   };
   document.querySelector('#play').onclick = () => (playing ? pause() : play());
   document.querySelector('#scrub').oninput = (e) => seek((e.target.value / 1000) * span);
-  master.ontimeupdate = () => { if (master.currentTime >= info.streams[0].to) pause(); };
   // Start where the episode starts, not where its file does.
   let ready = 0;
   videos.forEach((v, i) => v.addEventListener('loadedmetadata', () => {
