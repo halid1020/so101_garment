@@ -113,6 +113,7 @@ cameras:
     height: 480
     fps: 30
     rotate180: false
+    exposure: 150
   # Left wrist RGB camera (follower_1 = LEFT arm). The device index here is a
   # fallback: once this stream is assigned in src/conf/sensor_map.yaml
   # (tool/test_sensor_rates.py --assign) the recorder resolves it to that
@@ -133,7 +134,7 @@ cameras:
     width: 640
     height: 480
     fps: 30
-    exposure: 150        # this wrist sits in more light than the left one
+    exposure: 180        # this wrist sits in more light than the left one
     rotate180: false
   # Tactile cameras 0..3 — HARDWARE NOT ATTACHED YET, disabled by default.
   # --tactile enables all four; set real device indices before enabling.
