@@ -86,6 +86,19 @@ the limit a true angular velocity at any loop rate, and capping how much elapsed
 time a single step may claim stops a long delay from being spent as one
 discontinuous jump.
 
+The same lag reaches the operator by a second route, from the bus rather than
+the clock. A serial bus to the arms drops a reply occasionally; this is ordinary
+and not worth preventing, so what matters is the controller's answer to it.
+Reading again within the same tick costs a fraction of the period and usually
+succeeds. Abandoning the tick, which is the obvious alternative, costs the whole
+period and leaves the followers holding the previous target for its duration ---
+the very quantity the velocity limit exists to bound, arriving by a different
+path. An asymmetry hid this from us for some time: the reads to the followers
+already asked the bus to retry and the read from the leaders did not, so
+identical behaviour on two identical buses was visible on one side only, and
+presented itself as a worse leader bus rather than as a difference in how the
+two reads were made.
+
 \paragraph{Pluggable IK methods.}
 The IK layer is a narrow interface: anchor to the measured joints,
 accept per-frame end-effector pose targets, solve, and expose the

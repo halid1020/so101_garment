@@ -29,7 +29,15 @@ P3b Leader-arm interface: passive replicas, joint-to-joint tracking with no IK
     host's own camera capture and video compression holds the followers to a
     fraction of the intended speed and the operator sees them trail — worst
     while recording. Capping the elapsed time one step may claim keeps a long
-    delay from becoming a jump.                            -> IK layer
+    delay from becoming a jump.
+P3c A second route to the same lag, from the bus rather than the clock: a serial
+    bus to the arms drops the occasional reply, which is ordinary, so what
+    matters is the controller's answer to it. Retrying inside the tick costs a
+    fraction of the period; abandoning the tick costs the whole of it and leaves
+    the followers on the previous target, which is the very quantity P3b bounds.
+    Note the asymmetry that hid this: the follower reads already retried and the
+    leader read did not, so identical bus behaviour was visible on one side only
+    and looked like a worse leader bus.                     -> IK layer
 P4  Pluggable IK methods: narrow interface + adapter + rate limiter,
     described functionally (no class names); the native upstream
     Telegrip stack as an independent comparison path (no file paths)

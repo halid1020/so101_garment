@@ -26,18 +26,66 @@ The resolution is to store depth losslessly as a per-frame image beside the
 dataset, keyed to the dataset frame index, with its scale and intrinsics
 recorded alongside.
 
-\paragraph{Shared-bus bandwidth.} Several compressed image streams on
-shared buses can starve one another and drop frames. The resolution is
-compressed capture, a per-stream rate and dropped-frame counter shown live,
-and episode-level discard when a stream is lost. \unjustified{} the exact
-number of simultaneous streams a given host and hub can sustain is
-machine-specific; we measure it per rig rather than derive it.
+\paragraph{Sharing a peripheral bus.} This heading covers three separate
+difficulties, and conflating them cost us a great deal of time, so we separate
+them here. The first is bandwidth contention, which is genuine: several
+uncompressed colour streams do not fit through shared controllers, and it is why
+we require a compressed transport (Section~\ref{sec:collection}).
 
-\paragraph{Appearance drift.} Automatic exposure and white balance make the
-same scene look different across episodes and between collection and
-deployment. The resolution is to lock exposure where the device allows and
-to record the chosen settings, so appearance is a controlled and documented
+The second is a stream running below the rate it was asked for, which we had
+attributed to the first and which we now know it was not. Measured alone and
+then again with every other stream running, our wrist cameras delivered the same
+rate; nothing was being starved of anything. A stream below its requested rate is
+therefore not evidence of contention, and reading it as such sent us looking at
+hubs and cables for a fault that lay in the camera's own exposure, which the next
+paragraph takes up. We record the correction because the earlier account of this
+platform made exactly this inference. \unjustified{} the number of simultaneous
+streams a given host and hub can sustain remains machine-specific; we measure it
+per rig rather than derive it.
+
+The third is the one that actually costs a session: a hub failing as a unit and
+taking every device behind it. Losing one stream is recoverable, because the
+recorder holds the episode and resumes it when the stream returns
+(Section~\ref{sec:collection}); losing a hub is not the same event repeated
+several times over. The same hub that carries cameras and arms may also carry the
+volume being written to, and then the fault does not interrupt the session --- it
+removes what the session is being written into, mid-episode. Three measures
+answer it, each described where it belongs: the readiness check reports which hub
+every sensor and the storage depend upon, so the arrangement is known before a
+session rather than discovered during one (Section~\ref{sec:replicability}); the
+failures are grouped by hub when reported, because several devices failing at
+once is one cause and not several, and blaming individual cables sends an
+operator to reseat connectors that were never loose; and each episode is
+committed as it is accepted, so a session interrupted this way keeps everything
+it had already recorded.
+
+\paragraph{Appearance drift, and the stronger reason beneath it.} Automatic
+exposure and white balance make the same scene look different across episodes and
+between collection and deployment, which is reason enough to fix them and to
+record the values chosen, so that appearance is a controlled and documented
 variable rather than a hidden one.
+
+The stronger reason is not about appearance at all. Exposure bounds frame rate,
+since no camera delivers frames faster than it exposes them, so an automatic
+exposure that lengthens in dim light costs capture rate silently and reports
+nothing (Section~\ref{sec:collection} quantifies the relation on our cameras).
+This is the mechanism the preceding paragraph was mis-attributing to the bus, and
+it is worth stating which way the evidence points: the appearance argument alone
+had not persuaded us to fix exposure, whereas losing a third of the capture rate
+did.
+
+\paragraph{Episode boundaries inside a shared video file.} Episodes are not
+stored one file each; several are packed end to end into one video, and an
+episode is identified by the window it occupies inside that file. The end of
+that window is exclusive --- one episode's end timestamp is exactly the next
+one's start --- so the frame sitting on it belongs to the following recording.
+A reader that treats the window as inclusive therefore ends every episode by
+showing a frame of the next, which is subtle to notice because it looks like a
+recording that merely ends abruptly. We record it because anyone implementing a
+reader for this format meets it, and because the correct handling is not simply
+to subtract one frame: independent decoders kept in step by seeking can stray
+across such a seam by a frame, so a viewer is better off stopping fractionally
+short of the end than trying to land exactly on it.
 
 \paragraph{Host timing jitter.} Background processes and power-saving
 governors cause the recorder's frame loop to overrun its budget. The
