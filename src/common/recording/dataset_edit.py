@@ -51,6 +51,42 @@ class ReadOnlyDatasetError(OSError):
     """
 
 
+def writability_problem(path: Path) -> str:
+    """Why ``path`` cannot be written to, in the operator's terms, or "".
+
+    "Cannot write here" has two quite different causes on this rig and they need
+    opposite remedies. A read-only mount is the drive's fault and is fixed by
+    remounting it. Files owned by another user are the MOUNT OPTIONS' fault: a
+    filesystem without real ownership, which is what an external NTFS drive is,
+    invents an owner from the uid the mount was given, so a drive mounted by root
+    without a uid option presents every file as root's and refuses the person
+    sitting at the machine. Telling them to remount read-write, as this used to,
+    is advice for a problem they do not have.
+    """
+    path = Path(path)
+    if not path.exists():
+        return f"{path} does not exist"
+    if os.access(path, os.W_OK):
+        return ""
+    if os.statvfs(path).f_flag & os.ST_RDONLY:
+        return (
+            f"{path} is on a read-only filesystem — remount it read-write to "
+            "curate this dataset"
+        )
+    try:
+        owner = path.stat().st_uid
+    except OSError:
+        return f"{path} is not writable"
+    if owner != os.getuid():
+        return (
+            f"{path} is owned by uid {owner}, not you (uid {os.getuid()}) — the "
+            "drive is mounted without your ownership. Remount it with your uid, "
+            f"e.g. sudo mount -o remount,uid={os.getuid()},gid={os.getgid()} "
+            f"<mountpoint>"
+        )
+    return f"{path} is not writable by you"
+
+
 def deletion_mapping(total: int, to_delete: "list[int]") -> "dict[int, int]":
     """``{old_index: new_index}`` for the episodes KEPT after a deletion.
 
@@ -370,11 +406,9 @@ def delete_episodes_in_place(
     # The rewrite creates a sibling temp dir and renames within the parent, so
     # a read-only mount cannot be edited. Fail early with a clear message rather
     # than partway through LeRobot's re-encode (and before loading the dataset).
-    if not os.access(root.parent, os.W_OK):
-        raise ReadOnlyDatasetError(
-            f"dataset is on a read-only filesystem ({root.parent}) — remount "
-            "read-write to delete episodes"
-        )
+    problem = writability_problem(root.parent)
+    if problem:
+        raise ReadOnlyDatasetError(f"cannot rewrite the dataset: {problem}")
 
     from lerobot.datasets.dataset_tools import delete_episodes
     from lerobot.datasets.lerobot_dataset import LeRobotDataset

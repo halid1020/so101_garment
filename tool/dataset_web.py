@@ -61,6 +61,7 @@ from common.recording.dataset_edit import (
     read_soft_deleted,
     saved_episode_total,
     surviving_indices,
+    writability_problem,
     write_soft_deleted,
 )
 from tool.replay_recording import _load_realsense, load_depth_range, saved_episode_count
@@ -477,8 +478,7 @@ def _mark_deleted(root: Path, name: str, indices: "list[int]") -> dict:
         write_soft_deleted(path, marked)
     except OSError as exc:
         raise ReadOnlyDatasetError(
-            f"cannot mark episodes in {path}: {exc}. Remount the drive "
-            "read-write to curate this dataset."
+            f"cannot mark episodes: {writability_problem(path) or exc}"
         )
     return {"pending": len(marked)}
 
