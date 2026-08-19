@@ -45,28 +45,6 @@ _BUSY_SPIN_S = 0.001
 _CAPTURE_BUFFERS = 2
 
 
-def hardware_hint(name: str, disconnects: int) -> str:
-    """What to tell the operator about a stream that kept dropping off. Pure.
-
-    A camera that stops delivering and has to be reopened has left the USB bus;
-    the driver reports no such device. Software can only notice and recover, so
-    the useful thing to say is where to look: a loose connector, a port sharing
-    its controller, or a hub without enough power. One drop in a session is worth
-    a note, several are worth acting on before the next one.
-    """
-    times = "once" if disconnects == 1 else f"{disconnects} times"
-    urgency = (
-        "worth a look before the next session"
-        if disconnects == 1
-        else "check this before collecting more"
-    )
-    return (
-        f"⚠️  camera '{name}' dropped off the USB bus {times} this session — "
-        f"that is a physical fault, not a software one: {urgency} "
-        "(reseat its connector, try a port on another controller, or power its hub)"
-    )
-
-
 class CameraCapture:
     """Capture thread for a single named UVC camera stream."""
 
@@ -89,8 +67,9 @@ class CameraCapture:
         self.fourcc = fourcc
 
         # How many times this device stopped delivering and had to be reopened.
-        # A stream that does this repeatedly is reporting a physical fault, which
-        # no amount of retrying fixes, so the count is worth telling the operator.
+        # Read at the end of the session by common.recording.fault_report, which
+        # weighs it against the other devices' counts: several failures on one hub
+        # mean the hub, one device's failures mean that device.
         self.disconnects = 0
 
         self._cap: cv2.VideoCapture | None = None
@@ -153,8 +132,6 @@ class CameraCapture:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
-        if self.disconnects:
-            print(hardware_hint(self.name, self.disconnects))
 
     # ── Freshness ────────────────────────────────────────────────────────────
 
