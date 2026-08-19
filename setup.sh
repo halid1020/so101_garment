@@ -74,6 +74,10 @@ export SO101_OUTPUT_DIR="${SO101_OUTPUT_DIR:-$PROJECT_ROOT/outputs}"
 # Quieter, more reproducible tokenizer/threading behavior for training.
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
+# The AV1 encoder prints a 20-line configuration banner per stream per episode.
+# 1 = errors only; raise it to 3 to see the banners again while debugging.
+export SVT_LOG="${SVT_LOG:-1}"
+
 # --- Real-rig access (harmless when no arms/headset are attached) ------
 # Serial ports for the SO-101 buses — two followers + two leaders
 # (resets on reboot/replug; ttyACM devices enumerate in an unstable
