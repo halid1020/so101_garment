@@ -18,6 +18,7 @@ from common.recording.dataset_read import (
     episode_data_path,
     episode_video_path,
     episode_window,
+    playable_window,
     read_episode_row,
     video_keys,
 )
@@ -60,6 +61,45 @@ class TestLayoutPaths(unittest.TestCase):
     def test_label_drops_the_feature_namespace(self):
         self.assertEqual(camera_label(_CAM), "central")
         self.assertEqual(camera_label("wrist_camera_left"), "wrist_camera_left")
+
+
+class TestPlayableWindow(unittest.TestCase):
+    """Where an episode's own frames stop, as opposed to where its window does."""
+
+    def test_the_last_frame_is_one_period_inside_the_recorded_end(self):
+        # The recorded end is exclusive; the frame sitting on it is the next
+        # recording's first, which is what a viewer stopping there displayed.
+        start, last = playable_window(_row(start=44.4667, end=58.7333), _CAM, 30)
+        self.assertAlmostEqual(start, 44.4667)
+        self.assertAlmostEqual(last, 58.7333 - 1 / 30)
+
+    def test_consecutive_episodes_no_longer_overlap(self):
+        # Their RAW windows touch exactly -- that is the whole trap.
+        first = _row(start=44.4667, end=58.7333)
+        second = _row(start=58.7333, end=77.2000)
+        self.assertEqual(
+            episode_window(first, _CAM)[1], episode_window(second, _CAM)[0]
+        )
+        self.assertLess(
+            playable_window(first, _CAM, 30)[1], playable_window(second, _CAM, 30)[0]
+        )
+
+    def test_the_span_covers_one_frame_fewer_than_the_raw_window(self):
+        row = _row(start=0.0, end=10.0)
+        raw = episode_window(row, _CAM)
+        play = playable_window(row, _CAM, 30)
+        self.assertAlmostEqual((raw[1] - raw[0]) - (play[1] - play[0]), 1 / 30)
+
+    def test_a_single_frame_episode_collapses_rather_than_inverting(self):
+        start, last = playable_window(_row(start=5.0, end=5.0 + 1 / 30), _CAM, 30)
+        self.assertEqual(start, last)
+
+    def test_a_zero_length_window_cannot_go_backwards(self):
+        start, last = playable_window(_row(start=5.0, end=5.0), _CAM, 30)
+        self.assertEqual((start, last), (5.0, 5.0))
+
+    def test_a_missing_rate_leaves_the_window_alone(self):
+        self.assertEqual(playable_window(_row(start=1.0, end=2.0), _CAM, 0)[1], 2.0)
 
 
 def _write_info(root, features):

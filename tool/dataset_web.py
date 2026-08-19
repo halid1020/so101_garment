@@ -185,14 +185,21 @@ def render_episode_mp4(
             )
         )
     keys = video_keys(path)
+    fps = _dataset_fps(path)
     state, action = read_episode_joints(path, row)
     # One sequential pass per camera, the three in parallel: decoding is the
     # dominant cost and the passes are independent.
     with ThreadPoolExecutor(max_workers=max(len(keys), 1)) as pool:
-        streams = list(pool.map(lambda k: decode_episode_frames(path, row, k), keys))
-    # One stream can hold a frame more than another (each camera's window is cut
-    # at its own frame boundary); the shortest is the length they all agree on.
-    n = min([len(state), len(action)] + [len(s) for s in streams])
+        streams = list(
+            pool.map(lambda k: decode_episode_frames(path, row, k, fps), keys)
+        )
+    # The episode's own declared length is the number of frames it has; the
+    # others are a floor under it in case a stream came up short. This used to
+    # rely on the joint columns being shorter than the decoded streams, which was
+    # true only because the decode was picking up one frame too many.
+    declared = int(row.get("length") or 0)
+    lengths = [len(state), len(action)] + [len(s) for s in streams]
+    n = min(lengths + ([declared] if declared else []))
     if n == 0:
         raise web.HTTPNotFound(text=f"episode {episode} has no frames")
 
@@ -368,13 +375,16 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
     over where they are rather than to build a new video out of them. Each entry
     names the stream, the file to fetch, and the window inside that file this
     episode occupies -- several episodes share one video file, so the window is
-    what turns a shared file into one recording. The joint columns come along as
-    numbers for the page to draw beside the video, rounded to the precision the
-    live view displayed them at.
+    what turns a shared file into one recording. That window is reported
+    INCLUSIVE of its last frame, unlike the metadata it comes from, whose end is
+    the next recording's first frame -- a player that stops on the recorded end
+    shows a frame belonging to the following episode. The joint columns come
+    along as numbers for the page to draw beside the video, rounded to the
+    precision the live view displayed them at.
     """
     from common.recording.dataset_read import (
         camera_label,
-        episode_window,
+        playable_window,
         read_episode_joints,
         read_episode_row,
         video_keys,
@@ -390,9 +400,14 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
                 "interrupted before this episode was committed"
             )
         )
+    fps = _dataset_fps(path)
     streams = []
     for key in video_keys(path):
-        start, end = episode_window(row, key)
+        # The INCLUSIVE window: "to" here is the last frame this episode owns,
+        # deliberately one frame short of the metadata field of the same name,
+        # whose end is exclusive and belongs to the next recording. Sending it
+        # this way keeps the frame-period arithmetic out of the browser.
+        start, end = playable_window(row, key, fps)
         streams.append(
             {
                 "key": key,
@@ -406,7 +421,7 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
     depth_name, _ = _load_realsense(path)
     return {
         "episode": episode,
-        "fps": _dataset_fps(path),
+        "fps": fps,
         "streams": streams,
         # Depth is stored as per-frame images rather than a playable stream, so a
         # dataset carrying it cannot be shown this way and falls back to the
