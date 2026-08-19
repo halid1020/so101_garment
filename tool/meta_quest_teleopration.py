@@ -64,6 +64,7 @@ sys.path.insert(0, str(_root / "src"))
 import yaml
 from meta_quest_teleop.reader import MetaQuestReader
 
+from common.camera_controls import CONTROL_NAMES
 from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
@@ -425,6 +426,7 @@ def build_recording_stack(
             fps=cfg["fps"],
             rotate180=cfg["rotate180"],
             fourcc=cfg["fourcc"],
+            controls={k: cfg.get(k) for k in CONTROL_NAMES},
         )
         if not cam.open():
             for opened in captures:

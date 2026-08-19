@@ -85,6 +85,7 @@ def _start_cameras(data_manager):
     """
     from types import SimpleNamespace
 
+    from common.camera_controls import CONTROL_NAMES
     from common.config_parser import load_recording_config
     from common.recording.cameras import CameraCapture
     from tool.meta_quest_teleopration import (
@@ -113,6 +114,7 @@ def _start_cameras(data_manager):
             fps=cfg["fps"],
             rotate180=cfg["rotate180"],
             fourcc=cfg["fourcc"],
+            controls={k: cfg.get(k) for k in CONTROL_NAMES},
         )
         if not cam.open():
             for c in caps:

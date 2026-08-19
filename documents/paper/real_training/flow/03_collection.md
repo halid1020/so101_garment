@@ -27,7 +27,16 @@ P5b Capture budget (why the bus, not just the clock, sets the drift): several
     of P5 is dominated by the capture rate rather than by clock skew. State the
     remedy (compressed transport, a queue short enough to bound staleness but
     deep enough not to starve the driver) and give the measured before/after.
-    Hands over to the stream set.
+P5c Exposure as a rate control: a second, independent way the capture rate is
+    lost, and the one that survives fixing the transport. A camera cannot deliver
+    frames faster than it exposes them, so an automatic exposure that lengthens
+    in dim light drops the stream's rate without reporting anything. Argue that
+    this bites the wrist views specifically — they look at a close, shadowed
+    workspace — and that the dependence is on the LIGHTING, so the same rig
+    yields different rates at different times of day. Remedy: fix the exposure,
+    and note that the cost is small because the fixed value matches the
+    brightness automatic exposure reaches in good light. Give the measured
+    rate-versus-exposure relation. Hands over to the stream set.
 P6  Stream set: enumerate what is recorded — colour views, aligned depth
     (stored losslessly outside the video pipeline because it is not
     three-channel colour), proprioception, measured end-effector pose, and both

@@ -68,6 +68,31 @@ realsense:
 # the cameras then run well under their requested fps, lag tens of milliseconds
 # behind the rest of the frame, and can drop off the bus mid-episode.
 cameras:
+  # Optional per-camera keys (either may be omitted; the defaults apply):
+  #   fourcc:   capture pixel format, default MJPG. Compressed on the wire is
+  #             required, not preferred: several uncompressed 640x480@30 streams
+  #             exceed what the shared USB controllers deliver.
+  #   exposure: fixed exposure in the driver's units, or 0 (default) to leave the
+  #             camera's automatic exposure in charge. This is a FRAME-RATE knob:
+  #             a camera cannot deliver frames faster than it exposes them, so
+  #             automatic exposure lengthening in dim light silently drops the
+  #             stream's rate. Measured on the wrist cameras: 300 -> 27.4 fps,
+  #             400 -> 22.8, 500 -> 18.2 (500 is what automatic exposure chose in
+  #             the collection lighting).
+  #             TUNING: brightness is the only thing to trade below 300 -- every
+  #             value from 20 to 300 measured the same 27.4 fps, so darkening an
+  #             over-exposed stream costs no frame rate at all. Above 300 the
+  #             rate starts falling, so treat 300 as the ceiling and tune
+  #             downwards by eye. The two wrists differ because they are lit
+  #             differently, which is why this is per camera.
+  #   gain, brightness, contrast, saturation:
+  #             the same contract -- a number, or null (default) to leave the
+  #             camera's own setting alone. Gain brightens WITHOUT costing frame
+  #             rate, so reach for it before lengthening exposure.
+  #
+  # Tune all of these by eye with `venv/bin/python tool/tune_cameras.py`, which
+  # shows the streams live with their frame rate beside them and writes your
+  # values back into this file (comments and all) when you press s.
   # Overhead / scene RGB camera. DISABLED by default: the current rig does not
   # record a scene view (re-enable here if one is wired).
   scene:
@@ -99,6 +124,7 @@ cameras:
     height: 480
     fps: 30
     rotate180: false
+    exposure: 300        # fixed: automatic exposure pinned this stream to 18 fps
   # Right wrist RGB camera (follower_0 = RIGHT arm). By-path resolved from
   # sensor_map.yaml when assigned (see wrist_camera_left).
   wrist_camera_right:
@@ -107,6 +133,7 @@ cameras:
     width: 640
     height: 480
     fps: 30
+    exposure: 150        # this wrist sits in more light than the left one
     rotate180: false
   # Tactile cameras 0..3 — HARDWARE NOT ATTACHED YET, disabled by default.
   # --tactile enables all four; set real device indices before enabling.
