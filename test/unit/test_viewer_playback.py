@@ -77,6 +77,28 @@ class TestEndOfEpisodeStop(unittest.TestCase):
             "which is every overshoot worth correcting",
         )
 
+    def test_a_follower_at_its_end_is_paused_not_dragged_back(self):
+        # The drift correction clamps its target to the stream's end while the
+        # video keeps playing past it, so correcting a follower there would drag
+        # it back every frame while it ran forward into the next recording in
+        # between. Pausing it removes that oscillation.
+        script = _script()
+        self.assertIn("videos[i].pause()", script)
+
+    def test_the_view_stops_short_of_the_next_recording(self):
+        # Episodes are packed end to end, so the frames after one belong to the
+        # next. A margin keeps every displayed frame unambiguously inside the
+        # episode even if the decoders stray; the rendered mp4 keeps them all.
+        from tool.dataset_web import _VIEW_END_MARGIN_S
+
+        self.assertGreater(_VIEW_END_MARGIN_S, 0.0)
+        self.assertLess(
+            _VIEW_END_MARGIN_S,
+            0.5,
+            "a large margin would hide the end of the task, which is the part a "
+            "reviewer is usually judging",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
