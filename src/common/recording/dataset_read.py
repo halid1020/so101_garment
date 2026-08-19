@@ -48,11 +48,38 @@ def episode_video_path(root: Path, row: "dict[str, Any]", video_key: str) -> Pat
 
 
 def episode_window(row: "dict[str, Any]", video_key: str) -> "tuple[float, float]":
-    """``(from, to)`` seconds this episode occupies inside its video file. Pure."""
+    """``(from, to)`` seconds this episode occupies inside its video file. Pure.
+
+    The end is EXCLUSIVE: an episode's ``to_timestamp`` is exactly the next
+    episode's ``from_timestamp``, so the frame sitting at ``to`` belongs to the
+    next recording, not this one. Reported as the file records it; anything
+    displaying frames wants ``playable_window`` instead.
+    """
     return (
         float(row[f"videos/{video_key}/from_timestamp"]),
         float(row[f"videos/{video_key}/to_timestamp"]),
     )
+
+
+def playable_window(
+    row: "dict[str, Any]", video_key: str, fps: float
+) -> "tuple[float, float]":
+    """``(first_frame, last_frame)`` times for this episode's own frames. Pure.
+
+    Several episodes share one video file, and the recorded window's end is
+    exclusive, so an episode's frames sit at ``from``, ``from + 1/fps``, ... ,
+    ``to - 1/fps`` and the frame AT ``to`` is the next recording's first. Playing
+    or seeking to the recorded end therefore shows a frame from the following
+    episode -- which is exactly what a viewer that treated ``to`` as inclusive
+    did. This returns the inclusive pair, so a player can stop on the last frame
+    the episode actually owns.
+
+    A single-frame episode collapses to a zero-length window rather than an
+    inverted one.
+    """
+    start, end = episode_window(row, video_key)
+    period = 1.0 / float(fps) if fps else 0.0
+    return start, max(end - period, start)
 
 
 def episode_data_path(root: Path, row: "dict[str, Any]") -> Path:
@@ -148,19 +175,33 @@ def read_episode_joints(root: Path, row: "dict[str, Any]") -> "tuple[Any, Any]":
 
 
 def decode_episode_frames(
-    root: Path, row: "dict[str, Any]", video_key: str, limit: "int | None" = None
+    root: Path,
+    row: "dict[str, Any]",
+    video_key: str,
+    fps: float,
+    limit: "int | None" = None,
 ) -> "list[Any]":
     """This episode's BGR frames for one camera, by a single sequential pass.
 
     Seeks once to the start of the episode's window and decodes forward to its
-    end. Frames before the window are skipped rather than sought past, because a
-    seek lands on the preceding keyframe by definition and the frames between are
-    decoded anyway. ``limit`` stops early, which the caller uses to keep the
-    cameras aligned when one stream delivered a frame more than another.
+    last frame. Frames before the window are skipped rather than sought past,
+    because a seek lands on the preceding keyframe by definition and the frames
+    between are decoded anyway.
+
+    Stopping is bounded two ways, because the window's end is exclusive and
+    landing one frame past it yields the NEXT episode's opening frame: by the
+    frame count the episode declares, which is authoritative, and by a time half
+    a frame period inside the exclusive end, so float noise cannot admit that
+    frame either. ``limit`` stops earlier still, which the caller uses to keep
+    the cameras aligned when one stream delivered a frame more than another.
     """
     import av  # type: ignore[import]
 
-    start, end = episode_window(row, video_key)
+    start, last = playable_window(row, video_key, fps)
+    cutoff = last + (0.5 / float(fps) if fps else 0.0)
+    wanted = int(row.get("length") or 0) or None
+    if limit is not None:
+        wanted = limit if wanted is None else min(wanted, limit)
     frames: list[Any] = []
     container = av.open(str(episode_video_path(root, row, video_key)))
     try:
@@ -170,10 +211,10 @@ def decode_episode_frames(
         for frame in container.decode(stream):
             if frame.time < start - 0.001:
                 continue
-            if frame.time > end + 0.001:
+            if frame.time > cutoff:
                 break
             frames.append(frame.to_ndarray(format="bgr24"))
-            if limit is not None and len(frames) >= limit:
+            if wanted is not None and len(frames) >= wanted:
                 break
     finally:
         container.close()
