@@ -295,9 +295,10 @@ bash test/system/long_vla_real.sh --dataset-root /mnt/seagate/so101/cube-pnp \
 ```
 
 Results land in `$SO101_OUTPUT_DIR/vla_real_long/<run>/results.md` (each
-policy's checkpoint path + final training loss). To run it under Slurm on
-KCL CREATE, use the real-data cell in
-[`hpc/README.md`](hpc/README.md) (`hpc/create_real_vla.sbatch`).
+policy's checkpoint path + final training loss). To train several datasets
+under Slurm on KCL CREATE, list them in `hpc/runs.tsv` and submit with
+`bash hpc/submit_real.sh` — one array task per (dataset, policy) — see the
+real-data cell in [`hpc/README.md`](hpc/README.md).
 
 **Evaluate on the robot.** Copy a checkpoint back to the rig and run
 `python tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — the

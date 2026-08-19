@@ -15,9 +15,18 @@
 #   bash test/system/long_vla_real.sh --dir /media/hdd/so101 --name towel_fold
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only diffusion
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --act-steps 40000
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --only act --steps 40000
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --extra "--policy.optimizer_lr=5e-5"
+#
+# --steps/--batch/--save-freq apply to whichever policy --only selects, so one
+# cluster row per (dataset, policy) needs one column each; --extra is handed to
+# lerobot-train verbatim, so a flag this script does not name is still reachable.
 #
 # The script resumes: a finished checkpoint is reused, a partial train dir is
-# cleared. Run it under Slurm (hpc/create_real_vla.sbatch) or tmux/nohup.
+# cleared. Several invocations may share one --run-name (that is how the cluster
+# array trains both policies of a dataset into one run directory), so each writes
+# its own results_<policy>.md and rebuilds results.md from what is on disk.
+# Run it under Slurm (hpc/create_real_vla.sbatch) or tmux/nohup.
 # =====================================================================
 set -euo pipefail
 
@@ -32,6 +41,8 @@ RUN_NAME="vla_real_long_$(date +%Y%m%d_%H%M%S)"
 ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
 DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
+STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
+EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
 while [ $# -gt 0 ]; do
@@ -46,8 +57,12 @@ while [ $# -gt 0 ]; do
         --act-steps) ACT_STEPS="$2"; shift 2;;
         --diff-steps) DIFF_STEPS="$2"; shift 2;;
         --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
+        --steps) STEPS="$2"; shift 2;;
+        --batch) BATCH="$2"; shift 2;;
+        --save-freq) SAVE_FREQ="$2"; shift 2;;
+        --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0;;
         *) echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
@@ -128,24 +143,38 @@ train_cell() {
         echo "  ↷ reusing checkpoint $out"; return 0
     fi
     [ -d "$out" ] && rm -rf "$out"   # lerobot-train refuses an existing dir
+    local steps batch save
+    case "$policy" in
+        act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
+        diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
+        *) fail "unknown policy '$policy' (want act|diffusion)";;
+    esac
+    # A run may override the policy's sizing; --only selects the policy, so one
+    # value each is enough and the cluster manifest carries one column each.
+    [ -n "$STEPS" ] && steps="$STEPS"
+    [ -n "$BATCH" ] && batch="$BATCH"
+    [ -n "$SAVE_FREQ" ] && save="$SAVE_FREQ"
+    # A save interval longer than the run writes no checkpoint at all, which
+    # this script would then report as a failed train. Clamp instead.
+    [ "$save" -gt "$steps" ] && save="$steps"
+
     local args=(
         --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"
         --dataset.video_backend=pyav
         --output_dir="$out" --num_workers=4 --log_freq=100
         --env_eval_freq=0 --wandb.enable=false --policy.push_to_hub=false
         --policy.device="$DEVICE"
+        --policy.type="$policy" --steps="$steps"
+        --batch_size="$batch" --save_freq="$save"
     )
-    case "$policy" in
-        act) args+=(--policy.type=act --steps="$ACT_STEPS" \
-                    --batch_size="$ACT_BATCH" --save_freq="$ACT_SAVE");;
-        diffusion) args+=(--policy.type=diffusion --steps="$DIFF_STEPS" \
-                    --batch_size="$DIFF_BATCH" \
-                    --policy.pretrained_backbone_weights=null \
-                    --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]" \
-                    --save_freq="$DIFF_SAVE");;
-        *) fail "unknown policy '$policy' (want act|diffusion)";;
-    esac
-    echo; echo "### train $policy on $REPO_ID"
+    if [ "$policy" = "diffusion" ]; then
+        args+=(--policy.pretrained_backbone_weights=null
+               --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]")
+    fi
+    # Deliberately unquoted: --extra is a string of flags to be word-split.
+    # shellcheck disable=SC2206
+    [ -n "$EXTRA" ] && args+=($EXTRA)
+    echo; echo "### train $policy on $REPO_ID ($steps steps, batch $batch)"
     lerobot-train "${args[@]}" 2>&1 | tee "$RUN_DIR/logs/train_${policy}.log" \
         || fail "train ($policy)"
     [ -d "$out/checkpoints/last/pretrained_model" ] || fail "train ($policy): no checkpoint"
@@ -157,6 +186,36 @@ if [ "$SKIP_TRAIN" = "0" ]; then
 fi
 
 # ---- report ----------------------------------------------------------
+# Runs sharing a --run-name (the cluster array trains one policy per task into
+# one dataset's run directory) would clobber each other's rows if the summary
+# were written from $ONLY. Each run writes its own results_<policy>.md, and
+# results.md is rebuilt from the checkpoints ON DISK -- so it converges to the
+# complete table whichever task finishes last. Written via a temp file so a
+# reader never catches it half-written.
+final_loss() {  # policy -> last logged training loss, or empty
+    # `\bloss:` so a metric whose name merely ENDS in loss is not mistaken for
+    # it, and `|| true` because a run too short to log one is not a failure --
+    # under `set -o pipefail` a grep that matches nothing would end the script
+    # here, after the training it is reporting on has already succeeded.
+    { grep -oE '\bloss:[0-9.]+' "$RUN_DIR/logs/train_${1}.log" 2>/dev/null \
+        | tail -1 | cut -d: -f2; } || true
+}
+
+for policy in ${ONLY//,/ }; do
+    ckpt="$RUN_DIR/train/${policy}/checkpoints/last/pretrained_model"
+    [ -d "$ckpt" ] || continue
+    {
+        echo "# Real-VLA long training — $REPO_ID / $policy"
+        echo
+        echo "- dataset: \`$DATASET_ROOT\`"
+        echo "- device: $DEVICE"
+        echo "- checkpoint: \`$ckpt\`"
+        loss="$(final_loss "$policy")"
+        echo "- final train loss: ${loss:-n/a}"
+    } > "$RUN_DIR/results_${policy}.md.tmp"
+    mv "$RUN_DIR/results_${policy}.md.tmp" "$RUN_DIR/results_${policy}.md"
+done
+
 REPORT="$RUN_DIR/results.md"
 {
     echo "# Real-VLA long training — $REPO_ID"
@@ -166,18 +225,19 @@ REPORT="$RUN_DIR/results.md"
     echo
     echo "| policy | checkpoint | final train loss |"
     echo "|--------|------------|------------------|"
-    for policy in act diffusion; do
-        have "$policy" || continue
-        ckpt="$RUN_DIR/train/${policy}/checkpoints/last/pretrained_model"
-        loss="$(grep -oE 'loss:[0-9.]+' "$RUN_DIR/logs/train_${policy}.log" 2>/dev/null \
-                | tail -1 | cut -d: -f2)"
+    for d in "$RUN_DIR"/train/*/; do
+        [ -d "$d" ] || continue
+        policy="$(basename "$d")"
+        ckpt="${d}checkpoints/last/pretrained_model"
+        loss="$(final_loss "$policy")"
         [ -d "$ckpt" ] && echo "| $policy | \`$ckpt\` | ${loss:-n/a} |" \
-                       || echo "| $policy | (not trained) | - |"
+                       || echo "| $policy | (training unfinished) | - |"
     done
     echo
     echo "On-robot evaluation is not run here. Copy a checkpoint back to the rig"
     echo "and run \`tool/run_policy_real.py --checkpoint <ckpt> --task ...\`."
-} > "$REPORT"
+} > "$REPORT.tmp"
+mv "$REPORT.tmp" "$REPORT"
 
 echo
 echo "✅ REAL-VLA LONG RUN COMPLETE — see $REPORT"

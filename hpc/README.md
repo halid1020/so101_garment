@@ -1,18 +1,27 @@
-# Running the sim-VLA pipeline on KCL CREATE (Slurm)
+# Running VLA training on KCL CREATE (Slurm)
 
-This directory provisions and submits the **minimal working sim-VLA cell**
-— task `single`, mode `simple`, policies `act` + `diffusion` — on the
-[KCL CREATE](https://docs.er.kcl.ac.uk/) cluster. It reproduces the recipe
-that reaches 100 % eval success on the local box (diffusion 5/5, ~9 mm
-placement), training from a pre-staged dataset (`train → validate → eval`)
-and skipping the slow teleop-oracle collection.
+This directory provisions and submits two training cells on the
+[KCL CREATE](https://docs.er.kcl.ac.uk/) cluster, sharing one environment:
 
-Two files do the work:
+- the **sim-VLA cell** — task `single`, mode `simple`, policies `act` +
+  `diffusion` — which reproduces the recipe that reaches 100 % eval success
+  on the local box (diffusion 5/5, ~9 mm placement), training from a
+  pre-staged dataset (`train → validate → eval`) and skipping the slow
+  teleop-oracle collection;
+- the **real-data cell**, which trains policies on datasets collected on the
+  physical rig. It takes a list of datasets rather than one, and needs no
+  edit to any tracked file to change what is trained.
+
+The files:
 
 | File | Where it runs | What it does |
 |------|---------------|--------------|
-| `provision_create.sh` | CREATE **login** node, once | Builds the venv + LeRobot (pinned) + requirements; warms the vision-backbone cache. Sim-only subset of `../install.sh`. |
+| `provision_create.sh` | CREATE **login** node, once | Builds the venv + LeRobot (pinned) + requirements; warms the vision-backbone cache. Sim-only subset of `../install.sh`. Serves both cells. |
 | `create_sim_vla.sbatch` | CREATE **compute** node, via `sbatch` | Sets scratch paths + `MUJOCO_GL=egl`, checks EGL + dataset, runs `test/system/long_vla_sim.sh`. |
+| `stage_datasets.sh` | the **collection box** | Checks and rsyncs collected datasets to the cluster's scratch. |
+| `runs.tsv` | — | The real-data run matrix: one row per (dataset, policy) run. |
+| `submit_real.sh` | CREATE **login** node | Reads the matrix, checks staging, submits it as Slurm job arrays. |
+| `create_real_vla.sbatch` | CREATE **compute** node, via `sbatch` | One array task = one row: runs `test/system/long_vla_real.sh` for that dataset and policy. |
 
 ## Why a CREATE-specific path (not just `install.sh` + the driver)
 
@@ -174,7 +183,7 @@ rsync -avP \
   ./create_<jobid>
 ```
 
-### 9. Troubleshooting
+### 9. Troubleshooting (sim cell)
 
 - **EGL probe fails** (`EGLError` / no render) on a multi-GPU node — MuJoCo
   is likely on a GPU other than the one Slurm gave you: uncomment
@@ -188,48 +197,108 @@ rsync -avP \
   node — they are offline.
 - **Hit the wall-time** — resubmit with the **same** `--run-name` (edit the
   sbatch to hard-code it instead of `create_${SLURM_JOB_ID}`); the driver
-  reuses finished checkpoints, val results and eval results.
+  reuses finished checkpoints, val results and eval results. The real cell
+  needs none of this: its run name is the dataset, so resubmitting resumes.
 - **`staged dataset missing`** — the path in step 5 must equal
   `HF_LEROBOT_HOME` (`<scratch>/hf_lerobot`) with the dataset under
   `local/so101_sim_single_simple`.
 
-## Real-data cell (`create_real_vla.sbatch`)
+## Real-data cell (`runs.tsv` + `submit_real.sh`)
 
-Training a policy on a dataset **collected on the physical rig** reuses the
-same environment (`provision_create.sh` is unchanged) but a different job.
-There is no simulation here, so the job has no MuJoCo probe; and there is no
-in-loop evaluation, because a real policy is evaluated **on the robot** with
+Training policies on datasets **collected on the physical rig** reuses the same
+environment (`provision_create.sh` is unchanged) but a different job. There is
+no simulation here, so the job has no MuJoCo probe; and there is no in-loop
+evaluation, because a real policy is evaluated **on the robot** with
 `tool/run_policy_real.py` back at the rig, not on the cluster.
 
-1. **Provision** — as above (`bash hpc/provision_create.sh`, once). The sim
-   and real cells share the venv.
-2. **Stage the real dataset** — *from the collection box*, push the dataset
-   directory to your CREATE scratch under `HF_LEROBOT_HOME/local`:
-   ```bash
-   rsync -avP /media/<you>/<drive>/so101/<dataset> \
-     <user>@<create-login-host>:<scratch>/hf_lerobot/local/
-   ```
-3. **Fill the placeholders in `hpc/create_real_vla.sbatch`** — the same
-   `REPO_ROOT` / `SCRATCH` / partition / account as the sim cell, plus
-   `DATASET_NAME="<dataset>"` (the staged directory's name).
-4. **Submit** — `sbatch hpc/create_real_vla.sbatch`, monitor with
-   `squeue --me` and `tail -f real_vla-<jobid>.out`. It trains ACT then
-   Diffusion on the staged dataset (resumable with the same `--run-name`) and
-   writes `results.md` + the checkpoints under
-   `<scratch>/so101_outputs/vla_real_long/create_<jobid>/`.
-5. **Evaluate** — copy a checkpoint back to the rig and run
-   `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` (start with
-   `--dry-run`).
+The unit of work is one **(dataset, policy)** pair. They are listed in
+`hpc/runs.tsv`, and each becomes one Slurm array task. Nothing tracked has to be
+edited to change which datasets are trained — edit the matrix, or filter it on
+the command line.
+
+### 1. Provision — *login node, once*
+
+`bash hpc/provision_create.sh`, as for the sim cell. Both cells share the venv.
+
+### 2. Stage the datasets — *collection box (NOT CREATE)*
+
+```bash
+bash hpc/stage_datasets.sh --dir /mnt/seagate/so101 \
+  --dest <user>@<create-login-host>:<scratch>/hf_lerobot/local \
+  cube-pnp cube-dual-pnp-new fold-short
+```
+
+Every dataset is checked before anything is transferred: it must be a real
+dataset, and it must have no episodes still **marked for deletion**. A marked
+episode is only flagged until the dataset is compacted — it is still on disk, so
+staging one would ship takes the operator threw away, and the training driver
+would refuse the dataset on arrival anyway. Clear them in
+`tool/dataset_web.py --allow-delete` first.
+
+`<scratch>/hf_lerobot` is the `HF_LEROBOT_HOME` the job will use.
+
+### 3. Edit the run matrix — `hpc/runs.tsv`
+
+One row per run: `dataset policy steps batch hours extra`. `-` means "the
+driver's default for this policy"; `extra` is the last column and is handed to
+`lerobot-train` verbatim, so a flag the driver does not name is still reachable.
+Rows sharing an `hours` value are submitted as one array with that wall time, so
+a short cell does not queue behind a long reservation.
+
+### 4. Submit — *login node → GPU nodes*
+
+```bash
+bash hpc/submit_real.sh --dry-run        # see exactly what would be submitted
+bash hpc/submit_real.sh                  # everything in the matrix
+bash hpc/submit_real.sh --datasets cube-pnp --only act
+bash hpc/submit_real.sh --partition <gpu-partition> --account <account> --concurrency 2
+```
+
+The wrapper discovers your scratch (`/scratch/users/$USER` unless `--scratch`
+or `$SO101_SCRATCH` says otherwise), refuses to submit a dataset that is not
+staged — printing the `stage_datasets.sh` line that would fix it — and
+**snapshots the rows it submits** under
+`<scratch>/so101_outputs/submissions/<stamp>/`, together with an `index_*.md`
+mapping each array id to its dataset and policy. The array reads the snapshot,
+so editing `runs.tsv` afterwards cannot shift the indices of a queued array.
+
+Monitor with `squeue --me`; logs land in the submit directory as
+`real_vla-<arrayjobid>_<taskid>.out`, and the `index_*.md` says which task is
+which run.
+
+### 5. Collect results — *login node, then anywhere*
+
+```
+<scratch>/so101_outputs/vla_real_long/<dataset>/
+    train/{act,diffusion}/checkpoints/last/pretrained_model
+    results_<policy>.md     # one per finished run
+    results.md              # the dataset's summary table
+    logs/
+```
+
+Both policies of one dataset share that directory, because the run name is the
+**dataset**, not the job id. That is also what makes a resubmission cheap: a job
+that hit its wall time is simply submitted again, and every finished checkpoint
+is reused instead of retrained.
+
+### 6. Evaluate — *at the rig*
+
+Copy a checkpoint back and run
+`tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
+`--dry-run`.
 
 **pi0.5 is a deliberate follow-up.** Unlike ACT/Diffusion it finetunes a
 licence-gated base (`lerobot/pi05_base`), which must be pre-staged to the
 offline node, and it needs LoRA (`--peft.r=16`) to fit a 24 GB GPU (see
-CLAUDE.md). Add it to `long_vla_real.sh` once the base is staged.
+CLAUDE.md). Teach `long_vla_real.sh` the policy once the base is staged; the
+matrix already carries the policy as a column.
 
 ## Scaling out later
 
-- More cells: drop `--only`/`--tasks`/`--modes` (or widen them) to run the
-  full matrix — but full mode collects ~1000 demos, which needs the oracle
-  gate + collection phases (remove `--skip-collect`) and much more time.
-- Parallelism: submit one job per policy (a Slurm array), each with its
-  own `--only`, instead of training them sequentially in one job.
+- More sim cells: drop `--only`/`--tasks`/`--modes` (or widen them) to run
+  the full matrix — but full mode collects ~1000 demos, which needs the
+  oracle gate + collection phases (remove `--skip-collect`) and much more
+  time.
+- More real cells: add rows to `runs.tsv`. Parallelism is already the
+  default there — one array task per (dataset, policy) — and
+  `--concurrency` caps how many run at once if the queue needs it.
