@@ -7,6 +7,7 @@ atomic-write behaviour is the point of them.
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,7 @@ from common.recording.dataset_edit import (
     read_episode_uid,
     read_soft_deleted,
     surviving_indices,
+    writability_problem,
     write_episode_uid,
     write_soft_deleted,
 )
@@ -388,6 +390,47 @@ class TestReadEpisodeLengths(unittest.TestCase):
             )
             lengths, _ = read_episode_lengths(d)
             self.assertEqual([lengths[i] for i in range(3)], [5, 6, 7])
+
+
+class TestWritabilityProblem(unittest.TestCase):
+    """Which of the two "cannot write here" causes the operator is told about."""
+
+    def test_a_writable_directory_has_no_problem(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(writability_problem(Path(d)), "")
+
+    def test_a_missing_directory_says_so(self):
+        self.assertIn("does not exist", writability_problem(Path("/nonexistent-xyz")))
+
+    def test_another_users_files_point_at_the_mount_options(self):
+        # An external NTFS drive has no real ownership; the mount invents it from
+        # the uid it was given, so a drive mounted by root refuses the person at
+        # the keyboard. Telling them to remount READ-WRITE would be useless
+        # advice for a filesystem that is already read-write.
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch(
+                "common.recording.dataset_edit.os.access", return_value=False
+            ), mock.patch(
+                "common.recording.dataset_edit.os.statvfs"
+            ) as statvfs, mock.patch(
+                "common.recording.dataset_edit.os.getuid", return_value=1000
+            ):
+                statvfs.return_value = mock.Mock(f_flag=0)
+                with mock.patch.object(Path, "stat") as stat:
+                    stat.return_value = mock.Mock(st_uid=0)
+                    msg = writability_problem(Path(d))
+        self.assertIn("owned by uid 0", msg)
+        self.assertIn("remount", msg.lower())
+        self.assertNotIn("read-only filesystem", msg)
+
+    def test_a_read_only_mount_says_read_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch(
+                "common.recording.dataset_edit.os.access", return_value=False
+            ), mock.patch("common.recording.dataset_edit.os.statvfs") as statvfs:
+                statvfs.return_value = mock.Mock(f_flag=os.ST_RDONLY)
+                msg = writability_problem(Path(d))
+        self.assertIn("read-only filesystem", msg)
 
 
 if __name__ == "__main__":
