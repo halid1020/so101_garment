@@ -54,9 +54,11 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-import cv2  # type: ignore[import]  # noqa: E402
+import cv2  # type: ignore[import]
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
+
+from common.sensor_view import quiet_qt_warnings  # noqa: E402
 
 # Stream names offered by the --assign GUI, each bound to a stable
 # /dev/v4l/by-path node in sensor_map.yaml. The four tactile gripper cameras
@@ -872,6 +874,7 @@ def run_phase(label: str, probes: list[SensorProbe], duration: float) -> None:
 
 
 def main() -> None:
+    quiet_qt_warnings()
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

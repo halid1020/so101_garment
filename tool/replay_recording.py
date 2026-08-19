@@ -41,6 +41,7 @@ from common.sensor_view import (
     colourise_depth,
     compose_sensor_view_frame,
     depth_range_from_frame,
+    quiet_qt_warnings,
 )
 
 _IMAGE_PREFIX = "observation.images."
@@ -195,6 +196,7 @@ def build_frame(
 
 
 def main() -> None:
+    quiet_qt_warnings()
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
