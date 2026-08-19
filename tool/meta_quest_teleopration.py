@@ -75,6 +75,7 @@ from common.configs import (
     TRANSLATION_SCALE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.device_faults import bus_gone
 from common.keyboard_buttons import KeyboardButtons
 from common.recording import (
     CameraCapture,
@@ -899,13 +900,30 @@ def main():
                 dual_arm.move_to_joint_pose(rest_pos, rest_pos, 2.0)
                 dual_arm.bus_0.disable_torque()
                 dual_arm.bus_1.disable_torque()
-        except Exception:
+        except Exception as e:
+            if bus_gone(e) or data_manager.is_bus_lost():
+                # Nothing can be commanded over a bus that is not there, and the
+                # retry below would fail the same way. What the operator needs is
+                # the consequence, not the stack: the arms are still holding.
+                print(
+                    "⚠️  the arms' serial bus went away — they could not be "
+                    "parked and their torque is still ON. Power-cycle them (or "
+                    "re-run test/send_middle_and_rest.py once the bus is back)."
+                )
+                data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
+                return
             traceback.print_exc()
             try:
                 with left_bus_lock, right_bus_lock:
                     dual_arm.disable_torque()
-            except Exception:
-                traceback.print_exc()
+            except Exception as e2:
+                if bus_gone(e2) or data_manager.is_bus_lost():
+                    print(
+                        "⚠️  the arms' serial bus went away — torque could not "
+                        "be disabled; power-cycle the arms."
+                    )
+                else:
+                    traceback.print_exc()
         data_manager.set_robot_activity_state(RobotActivityState.DISABLED)
         print("✓ 🅿️  Both arms parked and disabled (torque off)")
 
@@ -1260,12 +1278,21 @@ def main():
             for leader in leaders.values():
                 try:
                     leader.disconnect()
-                except Exception:
-                    traceback.print_exc()
+                except Exception as e:
+                    if bus_gone(e) or data_manager.is_bus_lost():
+                        print("   leader bus already gone; nothing to close")
+                    else:
+                        traceback.print_exc()
         for cam in owned_view_captures:
             cam.stop()
-        with left_bus_lock, right_bus_lock:
-            dual_arm.disable_torque()
+        if data_manager.is_bus_lost():
+            print(
+                "⚠️  a motor bus went away during this session — torque could "
+                "not be disabled on it; power-cycle the arms."
+            )
+        else:
+            with left_bus_lock, right_bus_lock:
+                dual_arm.disable_torque()
         print("👋 Done.")
         # Hard-exit to skip interpreter finalisation. pyrealsense2 keeps an
         # internal C++ context thread that pipeline.stop() does not fully join;

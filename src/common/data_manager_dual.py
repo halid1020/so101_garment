@@ -163,6 +163,12 @@ class DualDataManager:
         self._leader_mapped_state = LeaderMappedStateDual()
         self._last_sent_command = LastSentCommandState()
         self._shutdown_event = threading.Event()
+        # Set when a motor bus stops existing (the USB serial adapter left the
+        # bus), as opposed to returning a protocol error. Teardown consults this
+        # instead of guessing from an exception message: once the bus is gone the
+        # port handle itself misbehaves, so the error the teardown path sees is a
+        # consequence ("port is in use") rather than the cause.
+        self._bus_lost_event = threading.Event()
         self._on_change_callback: Callable[
             [str, dict[str, Any], float], None
         ] | None = None
@@ -685,3 +691,11 @@ class DualDataManager:
 
     def is_shutdown_requested(self) -> bool:
         return self._shutdown_event.is_set()
+
+    def note_bus_lost(self) -> None:
+        """Record that a motor bus is no longer present on the system."""
+        self._bus_lost_event.set()
+
+    def is_bus_lost(self) -> bool:
+        """Whether a motor bus was seen to disappear during this session."""
+        return self._bus_lost_event.is_set()

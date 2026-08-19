@@ -40,6 +40,7 @@ from common.configs import (
     RIGHT_ARM_HW_TO_URDF_SIGNS,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.device_faults import bus_gone
 
 _BODY_JOINTS = [
     "shoulder_pan",
@@ -248,8 +249,12 @@ def leader_arm_thread(
                 time.sleep(sleep_time)
 
     except Exception as e:
-        print(f"❌ Leader-arm thread error: {e}")
-        traceback.print_exc()
+        if bus_gone(e):
+            print("❌ a leader arm's serial bus disappeared — ending the session")
+            data_manager.note_bus_lost()
+        else:
+            print(f"❌ Leader-arm thread error: {e}")
+            traceback.print_exc()
         data_manager.request_shutdown()
     finally:
         print("🕹️  Leader-arm thread stopped")

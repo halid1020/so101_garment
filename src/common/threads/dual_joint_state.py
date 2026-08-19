@@ -21,6 +21,7 @@ from common.configs import (
     RIGHT_ARM_HW_TO_URDF_SIGNS,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.device_faults import bus_gone
 
 _BODY_DOF = 5  # SO101 has 5 actuated body joints per arm
 _BODY_JOINTS = [
@@ -178,8 +179,14 @@ def dual_joint_state_thread(
                 time.sleep(sleep_time)
 
     except Exception as e:
-        print(f"❌ Dual joint state thread error ({arm_side}): {e}")
-        traceback.print_exc()
+        if bus_gone(e):
+            # The adapter is not there any more. One line says all there is to
+            # say; the stack would only describe how we found out.
+            print(f"❌ the {arm_side} arm's serial bus disappeared — ending the session")
+            data_manager.note_bus_lost()
+        else:
+            print(f"❌ Dual joint state thread error ({arm_side}): {e}")
+            traceback.print_exc()
         data_manager.request_shutdown()
     finally:
         print(f"🔧 Dual joint state thread stopped ({arm_side})")

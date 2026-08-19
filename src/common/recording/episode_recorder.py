@@ -58,9 +58,12 @@ from common.recording import features as feat
 from common.recording.dataset_edit import (
     commit_episode_metadata,
     new_episode_uid,
+    read_episode_lengths,
     write_episode_uid,
 )
 from common.recording.drift import DriftLog
+from common.recording.fault_report import session_fault_report
+from common.recording.usb_topology import device_location, directory_location
 
 
 class RecorderState(Enum):
@@ -153,6 +156,10 @@ class EpisodeRecorder:
         self._drift = DriftLog()
         self._fallback_frames = 0
         self.root = getattr(dataset, "root", None)
+        # Set when the storage the dataset is being written to stops answering.
+        # Once that happens nothing further can be saved, so the session ends
+        # rather than reporting the same I/O error once per write attempt.
+        self._storage_lost = False
 
         # Episode index tracking (kept in sync with the dataset, works on
         # resume where num_episodes > 0).
@@ -242,10 +249,33 @@ class EpisodeRecorder:
             cam.stop()
         if self.depth_writer is not None:
             self.depth_writer.stop()
+        if self._storage_lost:
+            # Finalizing writes to the drive that has gone, so it would only
+            # raise again. Every episode already saved was committed as it was
+            # saved, so say how many survived rather than leaving it in doubt.
+            self._report_surviving_episodes()
+        else:
+            try:
+                self.dataset.finalize()
+            except Exception as e:
+                if not self._note_storage_fault(e):
+                    traceback.print_exc()
+        self._report_device_faults()
+
+    def _report_surviving_episodes(self) -> None:
+        """State how many episodes are safely on disk after a storage failure."""
+        if self.root is None:
+            return
         try:
-            self.dataset.finalize()
+            lengths, unreadable = read_episode_lengths(self.root)
         except Exception:
-            traceback.print_exc()
+            print("   could not read the dataset back to count what survived")
+            return
+        print(
+            f"   {len(lengths)} episode(s) were committed to disk before the "
+            "failure and are intact"
+            + (f"; {len(unreadable)} file(s) unreadable" if unreadable else "")
+        )
 
     # ── Record loop ──────────────────────────────────────────────────────────
 
@@ -527,8 +557,9 @@ class EpisodeRecorder:
     def _save(self) -> None:
         try:
             self.dataset.save_episode()
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            if not self._note_storage_fault(e):
+                traceback.print_exc()
         try:
             # Land this episode's metadata on disk now rather than at exit, so an
             # interrupted session keeps every episode it announced as saved and a
@@ -557,6 +588,40 @@ class EpisodeRecorder:
         with self._lock:
             self._state = RecorderState.IDLE
 
+    def _note_storage_fault(self, exc: BaseException) -> bool:
+        """Record whether ``exc`` means the storage itself has gone. Returns it.
+
+        A vanished drive is not a per-call error to retry past: every later write
+        raises the same thing, so a traceback per attempt buries the one fact that
+        matters. It is recognised by the errno the kernel reports for a device
+        that is no longer there, and it ends the session.
+        """
+        errno = getattr(exc, "errno", None)
+        if errno not in (5, 19, 116):  # EIO, ENODEV, ESTALE
+            return False
+        if not self._storage_lost:
+            self._storage_lost = True
+            print(
+                f"❌ the storage holding the dataset stopped responding "
+                f"({exc.__class__.__name__}: errno {errno}) — nothing more can "
+                "be recorded, ending the session"
+            )
+            self.data_manager.request_shutdown()
+        return True
+
+    def _report_device_faults(self) -> None:
+        """Explain this session's device failures once, with the right culprit."""
+        faults = {f"camera {cam.name}": cam.disconnects for cam in self.cameras}
+        locations = {
+            f"camera {cam.name}": device_location(cam.device) for cam in self.cameras
+        }
+        if self.root is not None:
+            label = f"dataset drive {self.root}"
+            faults[label] = 1 if self._storage_lost else 0
+            locations[label] = directory_location(self.root)
+        for line in session_fault_report(faults, locations):
+            print(line)
+
     def _discard(self, reason: str, park: bool) -> None:
         with self._lock:
             self._state = RecorderState.DISCARDING
@@ -568,8 +633,9 @@ class EpisodeRecorder:
             self.audio_cue.play("stop")
         try:
             self.dataset.clear_episode_buffer()
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            if not self._note_storage_fault(e):
+                traceback.print_exc()
         if self.sidecar is not None:
             self.sidecar.abort_episode()
         if self.depth_writer is not None:
