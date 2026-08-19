@@ -285,7 +285,9 @@ is reused instead of retrained.
 
 Copy a checkpoint back and run
 `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
-`--dry-run`.
+`--dry-run`. A checkpoint too large for the rig's own machine can be served from
+a GPU box instead (`tool/policy_server.py` + `--server <url>`); see
+[`../documents/remote_policy_inference.md`](../documents/remote_policy_inference.md).
 
 **pi0.5 is a deliberate follow-up.** Unlike ACT/Diffusion it finetunes a
 licence-gated base (`lerobot/pi05_base`), which must be pre-staged to the

@@ -57,3 +57,22 @@ and reloads the resulting checkpoint, confirming the real recordings feed the
 learner and that the checkpoint is ready for on-robot inference before any
 long training run is committed. \unjustified{} the check validates wiring, not
 learned skill.
+
+\paragraph{Where the forward pass runs.} The contract fixes what a policy emits
+and how that quantity reaches the motors; it does not fix which machine computes
+it. The distinction matters in practice, because the computer that drives the
+platform is chosen for its sensors and its buses rather than for its
+accelerator, and the larger policy families do not sit comfortably on it. We
+therefore let a separate machine serve the forward pass while the platform keeps
+the cameras, the arms, the control rate and every safety decision. The split
+costs little, because these policies plan a whole chunk of actions from a single
+observation: the link carries one observation per chunk rather than one per
+control step, and the following chunk is requested while the current one is
+still being executed, so the transfer overlaps motion instead of delaying it.
+The conversion from predicted action to motor command is unchanged and still
+runs on the platform, which is what leaves the contract intact. Because the arms
+hold torque throughout, a chunk that fails to arrive is treated as a fault
+rather than as a delay: the controller holds the last commanded target, warns
+the operator, and then releases the arms. \unjustified{} the tolerable holding
+period follows from the control rate and the chunk length, not from any
+measurement of how a policy's behaviour degrades across an interruption.

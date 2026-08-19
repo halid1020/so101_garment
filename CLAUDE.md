@@ -78,7 +78,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   twin; only verified successes are saved) / `eval_sim_policy.py` (policy
   rollouts in the same env — see `documents/long_vla_sim_guide.md`), plus
   policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
-  `send_middle_and_rest.py`).
+  `send_middle_and_rest.py`), and the on-robot policy pair
+  `run_policy_real.py` (cameras + buses + safety; `--server` sends observation
+  windows out and executes the action chunks that come back) /
+  `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
+  wire format in `src/common/policy_wire.py`, runbook in
+  `documents/remote_policy_inference.md`).
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,
@@ -95,8 +100,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `test/__init__.py` is load-bearing (keeps the stdlib `test` package from
   shadowing it).
 - `documents/` — design docs & worklogs (teleop benchmark results, user
-  study protocol, telegrip-native) plus the living paper under
-  `documents/paper/`.
+  study protocol, telegrip-native, remote policy inference) plus the living
+  paper under `documents/paper/`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
   `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).
