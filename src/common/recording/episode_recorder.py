@@ -45,6 +45,7 @@ afterwards. The id is fixed when recording starts and never moves.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import traceback
@@ -64,6 +65,13 @@ from common.recording.dataset_edit import (
 from common.recording.drift import DriftLog
 from common.recording.fault_report import session_fault_report
 from common.recording.usb_topology import device_location, directory_location
+
+# The AV1 encoder prints a twenty-line configuration banner every time it starts,
+# which is once per camera per episode: sixty lines an episode, saying the same
+# thing each time and burying the warnings that do not. SVT_LOG=1 keeps its
+# errors and drops the rest. Set here, before any encoder is constructed, so it
+# applies however the collection tool was launched.
+os.environ.setdefault("SVT_LOG", "1")
 
 
 class RecorderState(Enum):
@@ -142,6 +150,11 @@ class EpisodeRecorder:
         self._tick_durations: list[float] = []
         self._frame_count = 0
         self._last_reuse_warn = 0.0
+        # Frames the recorder had to reuse because no camera had a fresher one,
+        # and the worst age among them. Reported per episode rather than per
+        # occurrence (see _stale_camera).
+        self._reuse_frames = 0
+        self._worst_reuse_s = 0.0
         self._last_overrun_warn = 0.0
         # Pause bookkeeping. ``_pause_started`` is the monotonic instant the
         # current pause began (None while recording normally); the count and
@@ -333,6 +346,8 @@ class EpisodeRecorder:
         self._frame_count = 0
         self._drift.reset()
         self._fallback_frames = 0
+        self._reuse_frames = 0
+        self._worst_reuse_s = 0.0
         self._pause_started = None
         self._pause_count = 0
         self._paused_total_s = 0.0
@@ -687,11 +702,23 @@ class EpisodeRecorder:
                 return name
             if age > reuse_threshold:
                 worst_reuse = max(worst_reuse, age)
-        if worst_reuse > 0.0 and now - self._last_reuse_warn > 1.0:
+        if worst_reuse > 0.0:
+            self._reuse_frames += 1
+            self._worst_reuse_s = max(self._worst_reuse_s, worst_reuse)
+        # A reused frame is routine when a camera runs slower than the dataset
+        # rate: it happens on most ticks, says the same thing every time, and
+        # printing it buries the messages that are not routine. The episode
+        # summary carries the count, and the drift table the distribution. Only a
+        # stream approaching the point of pausing the episode is worth
+        # interrupting for.
+        if (
+            worst_reuse > 0.5 * self.camera_stale_s
+            and now - self._last_reuse_warn > 1.0
+        ):
             self._last_reuse_warn = now
             print(
-                f"⚠️  reusing stale camera frame ({worst_reuse * 1e3:.0f} ms old; "
-                f"tolerance {self.camera_stale_s * 1e3:.0f} ms)"
+                f"⚠️  camera frame {worst_reuse * 1e3:.0f} ms old, close to the "
+                f"{self.camera_stale_s * 1e3:.0f} ms limit that pauses the episode"
             )
         return None
 
@@ -729,10 +756,18 @@ class EpisodeRecorder:
             pause_msg = (
                 f", paused {self._pause_count}x for {self._paused_total_s:.1f} s"
             )
+        reuse_msg = ""
+        if self._reuse_frames:
+            pct = 100.0 * self._reuse_frames / max(self._frame_count, 1)
+            reuse_msg = (
+                f", reused {self._reuse_frames} frames ({pct:.0f}%, worst "
+                f"{self._worst_reuse_s * 1e3:.0f} ms)"
+            )
         uid_msg = f" [{self._episode_uid}]" if self._episode_uid else ""
         print(
             f"⏹️  episode {self._episode_index}{uid_msg} {outcome}: "
-            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}{pause_msg}"
+            f"{self._frame_count} frames, {tick_msg}{fallback_msg}{depth_msg}"
+            f"{reuse_msg}{pause_msg}"
         )
         # A pause is a genuine hole: LeRobot timestamps frames from their index,
         # so the saved episode shows one tick across a gap that really lasted
