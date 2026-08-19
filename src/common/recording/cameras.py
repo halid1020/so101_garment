@@ -26,6 +26,7 @@ import traceback
 import cv2  # type: ignore[import]
 import numpy as np
 
+from common.camera_controls import apply_controls
 from common.data_manager_dual import DualDataManager
 
 # How long to wait between FAILED attempts to reopen a lost device. A device that
@@ -57,6 +58,7 @@ class CameraCapture:
         fps: int,
         rotate180: bool,
         fourcc: str = "",
+        controls: "dict[str, float | None] | None" = None,
     ) -> None:
         self.name = name
         self.device = device
@@ -65,6 +67,9 @@ class CameraCapture:
         self.fps = fps
         self.rotate180 = rotate180
         self.fourcc = fourcc
+        # Per-camera image controls; None values are left to the camera. See
+        # common.camera_controls -- exposure among them caps frame rate.
+        self.controls = dict(controls or {})
 
         # How many times this device stopped delivering and had to be reopened.
         # Read at the end of the session by common.recording.fault_report, which
@@ -95,6 +100,10 @@ class CameraCapture:
         # halves to ~15 fps), while 2 and above all sustain the device's full
         # rate. Do not "optimise" this to 1.
         cap.set(cv2.CAP_PROP_BUFFERSIZE, _CAPTURE_BUFFERS)
+        # Image controls last, since some cameras reset them when the format or
+        # size changes. Exposure among them caps the frame rate, so this is not
+        # only about how the picture looks -- see camera_controls.
+        apply_controls(cap, self.controls)
 
     def open(self) -> bool:
         """Attempt to open the device once. Returns whether it opened.

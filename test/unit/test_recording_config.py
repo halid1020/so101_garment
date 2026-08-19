@@ -21,6 +21,7 @@ from pathlib import Path
 
 import yaml
 
+from common.camera_controls import CONTROL_NAMES
 from common.config_parser import load_recording_config
 
 _VALID: dict = {
@@ -235,6 +236,37 @@ class TestRecordingConfig(unittest.TestCase):
         cfg = load_recording_config()
         for name, cam in cfg["cameras"].items():
             self.assertTrue(cam["fourcc"], f"camera {name} has no fourcc")
+
+    def test_camera_exposure_defaults_to_automatic(self) -> None:
+        # Absent means "leave the camera's own automatic exposure alone", so an
+        # older recording.yaml keeps behaving exactly as it did.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(_VALID, d)))
+        self.assertIsNone(cfg["cameras"]["scene"]["exposure"])
+
+    def test_camera_exposure_override_honoured(self) -> None:
+        good = copy.deepcopy(_VALID)
+        good["cameras"]["scene"]["exposure"] = 300
+        with tempfile.TemporaryDirectory() as d:
+            cfg = load_recording_config(str(_write_yaml(good, d)))
+        self.assertEqual(cfg["cameras"]["scene"]["exposure"], 300)
+
+    def test_every_checked_in_camera_resolves_every_control(self) -> None:
+        # The record path indexes these unconditionally, so each must be present
+        # even when it is None (leave the camera's own setting alone).
+        cfg = load_recording_config()
+        for name, cam in cfg["cameras"].items():
+            for control in CONTROL_NAMES:
+                self.assertIn(control, cam, f"camera {name} has no {control}")
+
+    def test_the_wrist_cameras_ship_with_exposure_pinned(self) -> None:
+        # Automatic exposure is a frame-rate hazard on these two specifically:
+        # a wrist camera looks at a close, shadowed workspace, so it lengthens
+        # exposure past the frame period and the stream drops to 18 fps or less.
+        # Measured: pinned at 300 they hold 27.4 fps regardless of the lighting.
+        cfg = load_recording_config()
+        for name in ("wrist_camera_left", "wrist_camera_right"):
+            self.assertGreater(cfg["cameras"][name]["exposure"], 0, name)
 
 
 if __name__ == "__main__":

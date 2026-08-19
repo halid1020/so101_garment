@@ -63,6 +63,26 @@ queue looks attractive for freshness but halves the achieved rate, because the
 driver has nowhere to place the next frame while the reader holds the only
 buffer; two buffers sustain the full rate.
 
+Fixing the transport does not exhaust the problem, because a camera's exposure
+governs its rate as directly as the bus does: no camera can deliver frames
+faster than it exposes them, so an exposure that grows past the frame period
+forces the sensor to a slower one. Left automatic, exposure grows exactly when
+the scene is dim, and the wrist views are the dim ones by construction --- they
+look down at a close workspace that the arm itself shadows. The rate then
+depends on the room rather than on the configuration, which is the property that
+makes it hard to notice: the same rig measured in daylight and in the evening
+gives different answers, and neither reports a fault. On our cameras the
+relation is steep. Held to an exposure short enough to fit inside the frame
+period, the wrist streams sustain their full rate; one step longer costs a fifth
+of it; and the value automatic exposure selected under collection lighting gave
+two thirds of the frame period to exposure alone, leaving the stream at little
+over half its rate --- which was precisely the rate those streams had been
+recording at. We therefore fix the exposure of the streams whose scene is
+predictably dark. The cost is slight, because a fixed value chosen to fit the
+frame period reaches the same image brightness that automatic exposure settles
+on in good light; what is bought is a capture rate that is a property of the
+configuration rather than of the hour of the day.
+
 \paragraph{Recorded stream set.} The dataset records the colour views --- the
 overhead, wrist and fingertip cameras --- the twelve-dimensional
 proprioceptive state (five joints and a gripper per arm), the executed target

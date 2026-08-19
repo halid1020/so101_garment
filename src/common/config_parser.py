@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml  # type: ignore[import]
 
+from common.camera_controls import CONTROL_NAMES
+
 # Directory holding the teleop parameter YAMLs (this file lives in src/common).
 _IK_CONF_DIR = Path(__file__).resolve().parent.parent / "ik_conf"
 _DEFAULT_SHARED_PATH = _IK_CONF_DIR / "teleop_shared.yaml"
@@ -133,9 +135,20 @@ _CAMERA_SCHEMA: frozenset[str] = frozenset(
 # ~18 MB/s EACH) exceed what the shared USB controllers deliver, which starves
 # the wrist cameras to ~10-15 fps and eventually drops the device mid-episode.
 _DEFAULT_CAMERA_FOURCC = "MJPG"
-# Optional per-camera keys, defaulted after validation so call sites can index
-# them unconditionally while older recording.yaml files stay valid.
-_CAMERA_DEFAULTS: dict[str, object] = {"fourcc": _DEFAULT_CAMERA_FOURCC}
+# Optional per-camera image controls (common.camera_controls). Each
+# defaults to None: leave the camera's own setting alone, so an existing
+# recording.yaml behaves exactly as it did. None rather than 0 because 0 is a
+# legitimate value for most of them.
+#
+# Exposure is the one that is not merely cosmetic: it caps frame rate, since no
+# camera delivers frames faster than it exposes them. MEASURED on the wrist
+# cameras -- every exposure up to 300 sustains 27.4 fps, 400 gives 22.8, and 500
+# (what automatic exposure chose under collection lighting) gives 18.2, which is
+# the rate those streams had been recording at. Below 300, brightness is free.
+_CAMERA_DEFAULTS: dict[str, object] = {
+    "fourcc": _DEFAULT_CAMERA_FOURCC,
+    **{name: None for name in CONTROL_NAMES},
+}
 # Optional central RGB-D (RealSense) section. Absent in older maps (validated
 # only when present, so existing recording.yaml files stay valid).
 _REALSENSE_SCHEMA: frozenset[str] = frozenset(

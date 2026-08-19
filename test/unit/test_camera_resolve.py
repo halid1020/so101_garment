@@ -9,6 +9,9 @@ capture-gating helpers.
 import argparse
 import unittest
 
+import cv2  # type: ignore[import]
+
+from common.recording.cameras import CameraCapture
 from tool.meta_quest_teleopration import (
     build_realsense_capture,
     overlay_sensor_map_devices,
@@ -119,6 +122,50 @@ class TestBuildRealsenseCaptureGating(unittest.TestCase):
         self.assertIsNone(
             build_realsense_capture(rec_cfg, self._args(), sm, for_view=True)
         )
+
+
+class TestCameraExposureConfiguration(unittest.TestCase):
+    """The capture object must apply a pinned exposure, and only when asked."""
+
+    class _FakeCap:
+        def __init__(self):
+            self.props = {}
+
+        def set(self, prop, value):
+            self.props[prop] = value
+            return True
+
+    def _configured(self, exposure):
+        cam = CameraCapture(
+            "c",
+            0,
+            640,
+            480,
+            30,
+            False,
+            fourcc="MJPG",
+            controls={"exposure": exposure} if exposure else {},
+        )
+        cap = self._FakeCap()
+        cam._configure(cap)
+        return cap.props
+
+    def test_a_pinned_exposure_switches_the_camera_out_of_automatic(self):
+        # Setting the value alone does nothing while the camera is still
+        # choosing its own; both have to be sent, in this order.
+        props = self._configured(300)
+        self.assertEqual(props[cv2.CAP_PROP_AUTO_EXPOSURE], 1)
+        self.assertEqual(props[cv2.CAP_PROP_EXPOSURE], 300)
+
+    def test_zero_leaves_automatic_exposure_alone(self):
+        props = self._configured(0)
+        self.assertNotIn(cv2.CAP_PROP_AUTO_EXPOSURE, props)
+        self.assertNotIn(cv2.CAP_PROP_EXPOSURE, props)
+
+    def test_the_format_and_size_are_still_applied(self):
+        props = self._configured(300)
+        self.assertEqual(props[cv2.CAP_PROP_FRAME_WIDTH], 640)
+        self.assertIn(cv2.CAP_PROP_FOURCC, props)
 
 
 if __name__ == "__main__":
