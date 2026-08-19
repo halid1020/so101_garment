@@ -84,3 +84,37 @@ individually or in batches, and the dataset is rewritten with the remaining
 episodes renumbered consistently across the training features and the side
 files, so curation leaves a valid dataset rather than a gap. Reviewing and
 pruning before training keeps a collection honest without re-running the rig.
+
+\paragraph{Motion review.} Playing an episode back shows whether a
+demonstration did the right thing. It does not show whether it did it
+\emph{smoothly}, and a jerky demonstration is a defect a policy imitates.
+Smoothness is a property of derivatives, and the dataset stores none: it stores
+joint positions at a fixed rate. The review tool therefore differentiates them,
+reporting each joint's velocity and acceleration and each arm's linear and
+angular end-effector rates, both as the value under the playhead and as a plot
+of the whole episode, so that a reviewer sees a single-frame snap instead of
+having to catch it by eye.
+
+Two things make that more than decoration. The first is that the derivative is
+legible at the rate we record, which we measured rather than assumed. Our joint
+encoders resolve about a tenth of a degree, which at the dataset rate leaves an
+acceleration noise floor near \SI{20}{\degree\per\second\squared} beneath motion
+that reaches some \SI{400}{\degree\per\second\squared} --- roughly an order of
+magnitude of headroom. Plain central differences therefore suffice, and we apply
+no smoothing at all: we tried a standard polynomial smoother across every
+practical window and it enlarged the residual on stationary frames rather than
+reducing it, because a fit spanning more samples draws in neighbouring motion.
+The transients such a filter attenuates are precisely what this view exists to
+show.
+
+The second is that the end-effector motion is derived rather than read. The
+Cartesian channels are recorded only in the pose-tracking teleoperation mode, so
+every episode driven from the leader arms stores joints alone. The review tool
+reconstructs the tool-frame trajectory through the platform's own kinematic
+model, expressed in each arm's base frame, which is the convention the recorded
+Cartesian channels follow where they exist, so a derived pose and a recorded one
+denote the same quantity. Cartesian smoothness can therefore be judged on
+recordings that never stored a Cartesian stream. \unjustified{} the noise floor
+is measured against our encoders at our frame rate, and the acceleration at
+which a reviewer ought to reject an episode rests on judgement, not on any
+measurement of what a policy tolerates.

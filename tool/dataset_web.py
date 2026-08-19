@@ -390,7 +390,8 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
     the next recording's first frame -- a player that stops on the recorded end
     shows a frame belonging to the following episode. The joint columns come
     along as numbers for the page to draw beside the video, rounded to the
-    precision the live view displayed them at.
+    precision the live view displayed them at, together with the motion
+    derivatives (see ``motion_payload``) the dataset does not store.
     """
     from common.recording.dataset_read import (
         camera_label,
@@ -436,6 +437,11 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
         "episode": episode,
         "fps": fps,
         "streams": streams,
+        # Velocity and acceleration are not recorded: the dataset stores joint
+        # positions, and whether a demonstration was smooth is a property of
+        # their derivatives. They are computed here, once, alongside the
+        # end-effector motion the recording has no stream for at all.
+        **motion_payload(state, fps),
         # Depth is stored as per-frame images rather than a playable stream, so a
         # dataset carrying it cannot be shown this way and falls back to the
         # server-composited view.
@@ -443,6 +449,79 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
         "state": [[round(v, 1) for v in frame] for frame in state.tolist()],
         "action": [[round(v, 1) for v in frame] for frame in action.tolist()],
     }
+
+
+def _round_rows(array, digits: int) -> "list[list[float]]":
+    """``(N, C)`` array → nested lists, rounded, with no non-finite values.
+
+    Rounding is what keeps the payload small; the finiteness pass is what keeps
+    it *valid*, because Python's JSON encoder writes a bare ``NaN`` that the
+    browser's parser rejects — one bad sample would otherwise take down the
+    whole view rather than one number.
+    """
+    import numpy as np
+
+    clean = np.nan_to_num(
+        np.asarray(array, dtype=float), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    return [[round(v, digits) for v in row] for row in clean.tolist()]
+
+
+def _round_series(array, digits: int) -> "list[float]":
+    """One ``(N,)`` series, rounded and finite (see ``_round_rows``)."""
+    import numpy as np
+
+    return [row[0] for row in _round_rows(np.asarray(array).reshape(-1, 1), digits)]
+
+
+def motion_payload(state, fps: float) -> dict:
+    """Joint and end-effector rates for one episode, in the units it displays.
+
+    The peaks travel with the series because the page scales each plot to its
+    own signal: a wrist joint and a shoulder joint do not share a range, and one
+    shared axis would flatten every wrist plot into a line.
+    """
+    from common.recording.episode_motion import JOINT_UNITS, episode_motion
+
+    motion = episode_motion(state, fps)
+    payload: dict = {
+        "joint_vel": _round_rows(motion["joint_vel"], 2),
+        "joint_acc": _round_rows(motion["joint_acc"], 0),
+        "joint_units": list(JOINT_UNITS),
+        "ee": None,
+        "ee_error": motion["ee_error"],
+    }
+    peaks: dict = {
+        "joint_vel": [round(v, 2) for v in _peaks(motion["joint_vel"])],
+        "joint_acc": [round(v) for v in _peaks(motion["joint_acc"])],
+        "ee": None,
+    }
+    if motion["ee"] is not None:
+        digits = {"v": 3, "a": 2, "w": 1, "alpha": 0}
+        payload["ee"] = {
+            side: {k: _round_series(series[k], d) for k, d in digits.items()}
+            for side, series in motion["ee"].items()
+        }
+        peaks["ee"] = {
+            side: {
+                k: round(float(max(series[k], default=0.0)), digits[k]) for k in digits
+            }
+            for side, series in payload["ee"].items()
+        }
+    payload["peaks"] = peaks
+    return payload
+
+
+def _peaks(array) -> "list[float]":
+    """Largest absolute value of each column, or zeros for an empty episode."""
+    import numpy as np
+
+    clean = np.nan_to_num(
+        np.asarray(array, dtype=float), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    if clean.size == 0:
+        return [0.0] * clean.shape[1]
+    return [float(v) for v in np.abs(clean).max(axis=0)]
 
 
 def episode_video_file(root: Path, name: str, episode: int, key: str) -> Path:
@@ -681,11 +760,20 @@ _INDEX_HTML = """<!doctype html>
   .tile { margin:0; } .tile video { max-height:38vh; }
   .tile figcaption { font-size:11px; opacity:.6; padding:2px 0; }
   .viewbar { border:0; padding:8px 0; }
-  #joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
-            font-size:12px; }
-  #joints th, #joints td { padding:2px 10px; text-align:right;
-                           border-bottom:1px solid var(--bd); }
-  #joints th:first-child { text-align:left; opacity:.6; font-weight:400; }
+  #joints, #ee { border-collapse:collapse; font-variant-numeric:tabular-nums;
+                 font-size:12px; }
+  #joints th, #joints td, #ee th, #ee td { padding:2px 10px; text-align:right;
+                                           border-bottom:1px solid var(--bd); }
+  #joints th:first-child, #ee th:first-child { text-align:left; opacity:.6;
+                                               font-weight:400; }
+  .tables { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+  .rate { opacity:.75; }
+  #motion summary { font-size:12px; opacity:.6; cursor:pointer; padding:8px 0; }
+  .plot canvas { width:100%; height:64px; display:block; }
+  .track { position:relative; }
+  .head { position:absolute; top:0; bottom:0; width:1px; background:var(--sel);
+          pointer-events:none; }
+  .plot figcaption { font-variant-numeric:tabular-nums; }
   #scrub { accent-color:var(--sel); }
   .del { margin-left:auto; opacity:.5; } .del:hover { opacity:1; }
   .pending { background:#f59e0b22; font-size:12px; }
@@ -839,6 +927,7 @@ async function openEpisode(name, idx) {
   const tiles = info.streams.map((s, i) =>
     `<figure class="tile"><video id="v${i}" muted preload="metadata" src="${s.url}"></video>
      <figcaption>${s.label}</figcaption></figure>`).join('');
+  const motion = motionPanel(info);
   $('#viewer').innerHTML = `
     <div class="tiles">${tiles}</div>
     <div class="bar viewbar">
@@ -848,22 +937,150 @@ async function openEpisode(name, idx) {
       <a id="dl" class="muted" href="/api/datasets/${name}/episodes/${idx}.mp4"
          download>download mp4</a>
     </div>
-    <table id="joints"></table>
+    <div class="tables"><table id="joints"></table><table id="ee"></table></div>
+    <details id="motion" open>
+      <summary>motion over the whole episode — velocity and acceleration</summary>
+      ${motion.html}
+    </details>
     <p class="muted">episode ${idx} — ${info.streams.length} streams playing from the
     recorded files, joint values beside them.</p>`;
+  motion.tiles.forEach((t, i) => drawTile(document.querySelector('#c' + i), t));
   sync = startSync(info);
 }
 
 function jointRows(info, frame) {
-  const cell = (v) => `<td>${v === undefined ? '--' : v.toFixed(1)}</td>`;
+  const cell = (v, dp) => `<td>${v === undefined ? '--' : v.toFixed(dp)}</td>`;
+  const rate = (v, dp) =>
+    `<td class="rate">${v === undefined ? '--' : v.toFixed(dp)}</td>`;
   const state = info.state[frame] || [], action = info.action[frame] || [];
-  let html = '<tr><th></th><th colspan="2">left</th><th colspan="2">right</th></tr>' +
-             '<tr><th></th><th>state</th><th>cmd</th><th>state</th><th>cmd</th></tr>';
+  const vel = (info.joint_vel || [])[frame] || [];
+  const acc = (info.joint_acc || [])[frame] || [];
+  let html = '<tr><th></th><th colspan="4">left</th><th colspan="4">right</th></tr>' +
+             '<tr><th></th><th>state</th><th>cmd</th><th>vel</th><th>acc</th>' +
+             '<th>state</th><th>cmd</th><th>vel</th><th>acc</th></tr>';
   JOINTS.forEach((jn, k) => {
-    html += `<tr><th>${jn}</th>${cell(state[k])}${cell(action[k])}` +
-            `${cell(state[k + 6])}${cell(action[k + 6])}</tr>`;
+    html += `<tr><th>${jn}</th>` +
+      [k, k + 6].map(c =>
+        cell(state[c], 1) + cell(action[c], 1) + rate(vel[c], 1) + rate(acc[c], 0)
+      ).join('') + '</tr>';
   });
   return html;
+}
+
+// The end effector has no recorded stream on any episode collected from the
+// leader arms, so these are computed from the joints through the robot's own
+// kinematic model; the server says so by sending ee_error instead.
+function eeRows(info, frame) {
+  if (!info.ee) {
+    return `<tr><th>end effector</th><td class="muted">unavailable</td></tr>`;
+  }
+  const rows = [['|v|', 'v', 'm/s', 3], ['|a|', 'a', 'm/s²', 2],
+                ['|ω|', 'w', '°/s', 1], ['|α|', 'alpha', '°/s²', 0]];
+  let html = '<tr><th>end effector</th><th>left</th><th>right</th><th></th></tr>';
+  for (const [label, key, unit, dp] of rows) {
+    const cells = ['left', 'right'].map(side => {
+      const v = info.ee[side][key][frame];
+      return `<td>${v === undefined ? '--' : v.toFixed(dp)}</td>`;
+    }).join('');
+    html += `<tr><th>${label}</th>${cells}<td class="muted">${unit}</td></tr>`;
+  }
+  return html;
+}
+
+// ── Motion plots ──────────────────────────────────────────────────────────────
+//
+// One tile per signal, drawn ONCE when the episode opens. The playhead is a
+// positioned element the frame loop slides, not a stroke: paint() already runs
+// on requestAnimationFrame and carries the end-of-episode stop, and re-drawing
+// sixteen canvases inside it is how that loop starts missing frames.
+const PW = 480, PH = 64;
+const VEL_COLOUR = '#3b82f6', ACC_COLOUR = 'rgba(245,158,11,.6)';
+
+function motionTiles(info) {
+  const tiles = [];
+  const accUnit = (u) => u.replace('/s', '/s²');
+  ['left', 'right'].forEach((side, s) => JOINTS.forEach((jn, k) => {
+    const c = s * 6 + k;
+    tiles.push({
+      label: (s ? 'R ' : 'L ') + jn, signed: true,
+      vel: info.joint_vel.map(r => r[c]), acc: info.joint_acc.map(r => r[c]),
+      vPeak: info.peaks.joint_vel[c], aPeak: info.peaks.joint_acc[c],
+      vUnit: info.joint_units[c], aUnit: accUnit(info.joint_units[c]),
+      vDp: 1, aDp: 0,
+    });
+  }));
+  if (info.ee) ['left', 'right'].forEach((side, s) => {
+    const p = info.peaks.ee[side], d = info.ee[side];
+    tiles.push({
+      label: (s ? 'R' : 'L') + ' EE linear', signed: false,
+      vel: d.v, acc: d.a, vPeak: p.v, aPeak: p.a,
+      vUnit: 'm/s', aUnit: 'm/s²', vDp: 3, aDp: 2,
+    });
+    tiles.push({
+      label: (s ? 'R' : 'L') + ' EE angular', signed: false,
+      vel: d.w, acc: d.alpha, vPeak: p.w, aPeak: p.alpha,
+      vUnit: '°/s', aUnit: '°/s²', vDp: 1, aDp: 0,
+    });
+  });
+  return tiles;
+}
+
+// Each pixel column is drawn as the min-to-max span of the samples that land in
+// it. A jerk is one or two frames wide, and an episode has more frames than the
+// tile has pixels, so sampling every nth value would drop exactly the spikes
+// this view exists to show.
+function paintSeries(ctx, series, peak, signed, colour) {
+  const n = series.length;
+  if (!n || !peak) return;
+  const base = signed ? PH / 2 : PH - 1, span = signed ? PH / 2 - 1 : PH - 2;
+  const y = (v) => base - (v / peak) * span;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x < PW; x++) {
+    const a = Math.floor(x * n / PW);
+    const b = Math.min(Math.max(Math.floor((x + 1) * n / PW), a + 1), n);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = a; i < b; i++) {
+      const v = series[i];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (lo === Infinity) continue;
+    ctx.moveTo(x + 0.5, y(hi));
+    ctx.lineTo(x + 0.5, Math.max(y(lo), y(hi) + 0.6));
+  }
+  ctx.stroke();
+}
+
+function drawTile(canvas, tile) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, PW, PH);
+  const base = tile.signed ? PH / 2 : PH - 1;
+  ctx.strokeStyle = '#8884';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, base + 0.5);
+  ctx.lineTo(PW, base + 0.5);
+  ctx.stroke();
+  paintSeries(ctx, tile.acc, tile.aPeak, tile.signed, ACC_COLOUR);
+  paintSeries(ctx, tile.vel, tile.vPeak, tile.signed, VEL_COLOUR);
+}
+
+function motionPanel(info) {
+  if (!info.joint_vel) return {tiles: [], html: ''};
+  const tiles = motionTiles(info);
+  const bound = (t) => t.signed ? '±' : '≤';
+  const html = tiles.map((t, i) =>
+    `<figure class="tile plot">
+       <div class="track"><canvas id="c${i}" width="${PW}" height="${PH}"></canvas>
+       <div class="head" id="h${i}"></div></div>
+       <figcaption>${t.label} · <b style="color:${VEL_COLOUR}">v</b> ${bound(t)}${t.vPeak.toFixed(t.vDp)} ${t.vUnit}
+       · <b style="color:#f59e0b">a</b> ${bound(t)}${t.aPeak.toFixed(t.aDp)} ${t.aUnit}</figcaption>
+     </figure>`).join('');
+  const note = info.ee ? '' :
+    `<p class="muted">end-effector motion unavailable: ${info.ee_error || 'no kinematic model'}</p>`;
+  return {tiles: tiles, html: `<div class="tiles">${html}</div>${note}`};
 }
 
 // One stream is the clock; the others are told where to be. Each is seeked to
@@ -873,6 +1090,8 @@ function startSync(info) {
   const videos = info.streams.map((s, i) => document.querySelector('#v' + i));
   const span = Math.max(info.streams[0].to - info.streams[0].from, 1e-6);
   const master = videos[0], base = info.streams[0].from;
+  const heads = [...document.querySelectorAll('.head')];
+  const frames = info.state.length;
   let stopped = false, playing = false;
   const at = () => Math.min(Math.max(master.currentTime - base, 0), span);
 
@@ -891,8 +1110,12 @@ function startSync(info) {
     const t = at();
     document.querySelector('#clock').textContent = t.toFixed(2) + ' s';
     document.querySelector('#scrub').value = Math.round((t / span) * 1000);
-    document.querySelector('#joints').innerHTML =
-      jointRows(info, Math.min(Math.round(t * info.fps), info.state.length - 1));
+    const frame = Math.min(Math.round(t * info.fps), frames - 1);
+    document.querySelector('#joints').innerHTML = jointRows(info, frame);
+    document.querySelector('#ee').innerHTML = eeRows(info, frame);
+    // The plots are already drawn; only the marker moves. See motionPanel.
+    const pct = frames > 1 ? (frame / (frames - 1)) * 100 : 0;
+    for (const head of heads) head.style.left = pct + '%';
     // Stop on this episode's last frame. This has to be driven from the frame
     // loop rather than from the video's own timeupdate event, which browsers
     // throttle to about four times a second: a quarter of a second is seven

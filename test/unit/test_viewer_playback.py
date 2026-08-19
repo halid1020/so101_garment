@@ -100,5 +100,40 @@ class TestEndOfEpisodeStop(unittest.TestCase):
         )
 
 
+class TestMotionPlots(unittest.TestCase):
+    """The motion plots must not be redrawn by the frame loop.
+
+    ``paint()`` runs on every animation frame and carries the end-of-episode
+    stop that the tests above exist to protect. Re-stroking sixteen canvases
+    inside it is how that loop starts missing frames -- and a missed frame at
+    the boundary is the regression this file was written for. So the series is
+    painted once when the episode opens and the playhead is a positioned
+    element the loop slides.
+    """
+
+    def _paint_body(self) -> str:
+        script = _script()
+        start = script.index("const paint = () => {")
+        end = script.index("requestAnimationFrame(paint);", start)
+        return script[start:end]
+
+    def test_the_frame_loop_does_not_redraw_the_series(self):
+        body = self._paint_body()
+        for call in ("drawTile(", "paintSeries(", "getContext("):
+            self.assertNotIn(
+                call,
+                body,
+                f"{call} inside the frame loop redraws the plots every frame",
+            )
+
+    def test_the_frame_loop_moves_the_playhead(self):
+        self.assertIn("head.style.left", self._paint_body())
+
+    def test_the_series_is_drawn_once_when_the_episode_opens(self):
+        script = _script()
+        self.assertIn("motion.tiles.forEach", script)
+        self.assertIn("drawTile(document.querySelector", script)
+
+
 if __name__ == "__main__":
     unittest.main()
