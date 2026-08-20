@@ -101,6 +101,9 @@ class TestConsoleSession(AioHTTPTestCase):
         )
         app["session"].teleop = script
         app["session"].python = sys.executable
+        # Never the machine's real assignment file, even though the routes
+        # under test are refused before they would reach it.
+        app["sensor_map_path"] = self.root / "sensor_map.yaml"
         return app
 
     async def tearDownAsync(self):
@@ -170,6 +173,32 @@ class TestConsoleSession(AioHTTPTestCase):
             await __import__("asyncio").sleep(0.05)
         self.assertFalse(body["running"])
         self.assertIn("recorder quitting", "\n".join(body["tail"]))
+
+    async def test_reassigning_devices_is_refused_while_a_session_runs(self):
+        start = await self.client.post(
+            "/api/session/start", json={"name": "towel-fold", "task": "fold it"}
+        )
+        self.assertEqual(start.status, 200, await start.text())
+        await self._wait_for_monitor()
+        # The session holds every camera and both arm buses; probing one now
+        # would either fail or disturb a recording.
+        for url, payload in (
+            ("/api/sensors/camera/preview", {"device": "/dev/video0"}),
+            (
+                "/api/sensors/camera/assign",
+                {"device": "/dev/video0", "name": "central"},
+            ),
+            ("/api/sensors/arm/probe", {"port": "/dev/ttyACM0"}),
+            (
+                "/api/sensors/arm/assign",
+                {"port": "/dev/ttyACM0", "role": "follower", "side": "right"},
+            ),
+        ):
+            resp = await self.client.post(url, json=payload)
+            self.assertEqual(resp.status, 409, url)
+        resp = await self.client.get("/api/sensors?scan=1")
+        self.assertEqual(resp.status, 409)
+        self.assertFalse((self.root / "sensor_map.yaml").exists())
 
     async def test_a_dataset_that_exists_but_holds_nothing_is_refused(self):
         (self.root / "stillborn" / "meta").mkdir(parents=True)

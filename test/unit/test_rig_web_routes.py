@@ -267,5 +267,96 @@ class TestCollectTab(ConsoleTestCase):
         self.assertIn("name", body["cameras"][0])
 
 
+class TestSensorsTab(ConsoleTestCase):
+    """Assignment writes a real per-machine file, so these point it at a copy."""
+
+    async def get_application(self):
+        app = await super().get_application()
+        app["sensor_map_path"] = self.root / "sensor_map.yaml"
+        # Device discovery opens every capture node on the machine; the tab's
+        # own scan button is the only thing that should ever do that, so the
+        # tests hand it a fixed set instead.
+        app["sensor_candidates"] = {
+            "cameras": ["/dev/video0", "/dev/video2"],
+            "serial": ["/dev/ttyACM0"],
+            "realsense": [{"serial": "0123", "name": "D435"}],
+        }
+        return app
+
+    async def test_an_unassigned_rig_lists_every_name_and_the_devices(self):
+        body = await (await self.client.get("/api/sensors")).json()
+        self.assertIn("wrist_camera_left", body["names"])
+        self.assertEqual(body["candidates"]["cameras"], ["/dev/video0", "/dev/video2"])
+        self.assertTrue(all(c["device"] is None for c in body["overview"]["cameras"]))
+
+    async def test_assigning_a_camera_persists_and_shows_up(self):
+        resp = await self.post(
+            "/api/sensors/camera/assign",
+            {"device": "/dev/video2", "name": "wrist_camera_left"},
+        )
+        self.assertEqual(resp.status, 200)
+        body = await (await self.client.get("/api/sensors")).json()
+        row = next(
+            c for c in body["overview"]["cameras"] if c["name"] == "wrist_camera_left"
+        )
+        self.assertEqual(row["device"], "/dev/video2")
+        self.assertTrue(row["present"])
+        self.assertTrue((self.root / "sensor_map.yaml").is_file())
+
+    async def test_assigning_an_unknown_name_is_refused(self):
+        resp = await self.post(
+            "/api/sensors/camera/assign", {"device": "/dev/video2", "name": "nope"}
+        )
+        self.assertEqual(resp.status, 400)
+
+    async def test_assigning_an_arm_side_persists(self):
+        resp = await self.post(
+            "/api/sensors/arm/assign",
+            {"port": "/dev/ttyACM0", "role": "follower", "side": "right"},
+        )
+        self.assertEqual(resp.status, 200)
+        body = await (await self.client.get("/api/sensors")).json()
+        row = next(
+            a
+            for a in body["overview"]["arms"]
+            if a["role"] == "follower" and a["side"] == "right"
+        )
+        self.assertEqual(row["device"], "/dev/ttyACM0")
+
+    async def test_an_unknown_role_is_refused(self):
+        resp = await self.post(
+            "/api/sensors/arm/assign",
+            {"port": "/dev/ttyACM0", "role": "gripper", "side": "right"},
+        )
+        self.assertEqual(resp.status, 400)
+
+    async def test_clearing_an_assignment(self):
+        await self.post(
+            "/api/sensors/camera/assign", {"device": "/dev/video2", "name": "central"}
+        )
+        resp = await self.post(
+            "/api/sensors/clear", {"kind": "camera", "key": "central"}
+        )
+        self.assertEqual(resp.status, 200)
+        body = await (await self.client.get("/api/sensors")).json()
+        row = next(c for c in body["overview"]["cameras"] if c["name"] == "central")
+        self.assertIsNone(row["device"])
+
+    async def test_the_depth_camera_is_assigned_by_serial(self):
+        resp = await self.post("/api/sensors/realsense/assign", {"serial": "0123"})
+        self.assertEqual(resp.status, 200)
+        body = await (await self.client.get("/api/sensors")).json()
+        self.assertTrue(body["overview"]["realsense"]["present"])
+
+    async def test_ticks_without_an_open_port_say_so(self):
+        body = await (await self.client.get("/api/sensors/arm/ticks")).json()
+        self.assertEqual(body["joints"], [])
+        self.assertIn("no port", body["error"])
+
+    async def test_a_request_without_a_device_is_refused(self):
+        resp = await self.post("/api/sensors/camera/assign", {"name": "central"})
+        self.assertEqual(resp.status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

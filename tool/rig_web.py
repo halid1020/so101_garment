@@ -41,6 +41,7 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
 from common.web.datasets_api import add_dataset_routes
 from common.web.lifecycle_api import add_lifecycle_routes
+from common.web.sensors_api import add_sensor_routes
 from common.web.session import PreviewCameras, SessionSupervisor
 from common.web.session_api import add_session_routes
 from common.web.util import preinit_tqdm_lock
@@ -65,6 +66,7 @@ async def _close_session(app: web.Application) -> None:
     page. It is stopped from the Collect tab, or with its own quit key.
     """
     app["preview"].stop()
+    app["sensors_probe"].close()
     await app["http"].close()
 
 
@@ -112,6 +114,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     add_dataset_routes(app)
     add_lifecycle_routes(app)
     add_session_routes(app)
+    add_sensor_routes(app)
     return app
 
 

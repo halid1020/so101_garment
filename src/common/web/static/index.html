@@ -107,10 +107,48 @@
       </div>
     </section>
     <section class="pane" id="pane-sensors" hidden>
-      <div class="placeholder">
-        <h2>Sensors</h2>
-        <p class="muted">Assigning devices to stream names arrives with a later
-        change set. Until then, use <code>tool/test_sensor_rates.py --assign</code>.</p>
+      <div class="col" id="assignments">
+        <h2>Assignments</h2>
+        <div class="bar">
+          <button id="s-scan">Scan devices</button>
+          <span class="grow muted" id="s-note"></span>
+        </div>
+        <div class="pad" id="s-map"></div>
+      </div>
+      <div id="s-work">
+        <div class="bar">
+          <span class="grow muted" id="s-work-title">Pick a device to identify</span>
+          <button id="s-release" hidden>Release</button>
+        </div>
+        <div class="pad">
+          <h3 class="sub">Cameras</h3>
+          <p class="muted">Show a candidate, press a gel or wave in front of it
+          to see which one it is, then give it a name.</p>
+          <div id="s-cams" class="chips"></div>
+          <div id="s-cam-view" hidden>
+            <figure class="tile"><img id="s-cam-img"><figcaption id="s-cam-cap"></figcaption></figure>
+            <div class="bar wrap" id="s-cam-names"></div>
+          </div>
+
+          <h3 class="sub">Arms</h3>
+          <p class="muted">Open a port, wiggle ONE arm by hand, and watch which
+          joints move. Torque stays off — nothing is commanded.</p>
+          <div id="s-ports" class="chips"></div>
+          <div id="s-ticks" hidden>
+            <table class="checks" id="s-ticks-table"></table>
+            <div class="bar wrap">
+              <button data-role="follower" data-side="right">Follower right</button>
+              <button data-role="follower" data-side="left">Follower left</button>
+              <button data-role="leader" data-side="right">Leader right</button>
+              <button data-role="leader" data-side="left">Leader left</button>
+              <button id="s-rebase">Re-zero</button>
+            </div>
+          </div>
+
+          <h3 class="sub">Depth camera</h3>
+          <div id="s-rs" class="chips"></div>
+          <p class="err" id="s-err"></p>
+        </div>
       </div>
     </section>
   </main>
@@ -161,4 +199,5 @@
   <script src="/static/datasets.js"></script>
   <script src="/static/lifecycle.js"></script>
   <script src="/static/collect.js"></script>
+  <script src="/static/sensors.js"></script>
 </body></html>

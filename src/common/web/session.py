@@ -333,17 +333,31 @@ class PreviewCameras:
     def running(self) -> bool:
         return bool(self.captures)
 
-    def start(self) -> "list[str]":
+    def start(self, specs: "list[tuple[str, str]] | None" = None) -> "list[str]":
+        """Open the given ``(name, device)`` cameras, or the assigned ones.
+
+        The Sensors tab passes one unassigned device to identify it; the
+        Collect tab passes nothing and gets the assigned set. Either way these
+        are the console's own captures, and they are released before a session
+        starts.
+        """
         if self.running():
-            return [c.name for c in self.captures]
+            if specs is not None and sorted(specs) != sorted(
+                (c.name, str(c.device)) for c in self.captures
+            ):
+                self.stop()
+            else:
+                return [c.name for c in self.captures]
         from common.data_manager_dual import DualDataManager
         from common.recording.cameras import CameraCapture
         from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
-        sensor_map = (
-            load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
-        )
-        specs = sorted((sensor_map.get("cameras") or {}).items())
+        asked = specs is not None
+        if specs is None:
+            sensor_map = (
+                load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
+            )
+            specs = sorted((sensor_map.get("cameras") or {}).items())
         if not specs:
             raise RuntimeError(
                 "no cameras are assigned yet — assign them on the Sensors tab "
@@ -369,7 +383,13 @@ class PreviewCameras:
             self.captures.append(cam)
         if not self.captures:
             self.data_manager = None
-            raise RuntimeError("no assigned camera could be opened")
+            if asked:
+                devices = ", ".join(str(d) for _n, d in specs)
+                raise RuntimeError(f"{devices} could not be opened")
+            raise RuntimeError(
+                "no assigned camera could be opened — they may be unplugged, or "
+                "in a different socket than when they were assigned"
+            )
         return [c.name for c in self.captures]
 
     def stop(self) -> None:
