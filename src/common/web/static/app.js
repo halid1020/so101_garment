@@ -8,6 +8,7 @@ function showPane(name) {
     t.classList.toggle('sel', t.dataset.pane === name);
   });
   location.hash = name;
+  if (window.onPaneShown) window.onPaneShown(name);
 }
 
 document.querySelectorAll('.tab').forEach(t => {

@@ -44,11 +44,66 @@
     <div id="viewer"><p class="muted">Select a recording to play its sensor view.</p></div>
     </section>
     <section class="pane" id="pane-collect" hidden>
-      <div class="placeholder">
-        <h2>Collect</h2>
-        <p class="muted">Live view and session control arrive with the next
-        change set. Until then, start a session with
-        <code>tool/collect_dataset.py</code>.</p>
+      <div class="col" id="session">
+        <h2>Session</h2>
+        <div class="bar"><span class="grow" id="session-state">no session</span></div>
+
+        <div id="session-form" class="pad">
+          <label>Dataset
+            <input id="c-name" list="c-names" autocomplete="off" spellcheck="false">
+          </label>
+          <datalist id="c-names"></datalist>
+          <label>Instruction
+            <input id="c-task" autocomplete="off" placeholder="fold the towel">
+          </label>
+          <fieldset id="c-streams"><legend>Camera streams</legend></fieldset>
+          <label class="row"><input type="checkbox" id="c-depth">
+            central RGB-D (RealSense)</label>
+          <label class="row"><input type="checkbox" id="c-ee" checked>
+            end-effector features</label>
+          <label class="row">Teleoperation
+            <select id="c-input">
+              <option value="quest">Quest headset</option>
+              <option value="leader">leader arms</option>
+            </select>
+          </label>
+          <label class="row">Episode goal
+            <input id="c-goal" type="number" min="0" step="1" value="0">
+          </label>
+          <label class="row"><input type="checkbox" id="c-view">
+            also open the desktop window</label>
+          <p class="muted" id="c-plan"></p>
+          <p class="err" id="c-err"></p>
+          <div class="bar">
+            <button id="c-check">Check</button>
+            <button id="c-start">Start session</button>
+          </div>
+        </div>
+
+        <div id="session-live" class="pad" hidden>
+          <p id="c-running" class="muted"></p>
+          <div class="bar">
+            <button id="c-episode">Start episode</button>
+            <button id="c-stop" class="danger">Stop session</button>
+          </div>
+          <p class="muted">Starting an episode drives BOTH ARMS to the ready
+          pose first. Enable, park and home stay on the headset and the session
+          keyboard — stand clear of the rig before pressing this.</p>
+        </div>
+
+        <details id="preflight">
+          <summary>Rig readiness</summary>
+          <div id="preflight-body" class="pad muted">not checked yet</div>
+        </details>
+        <pre id="session-log" class="log"></pre>
+      </div>
+
+      <div id="live">
+        <div class="bar">
+          <span class="grow muted" id="live-source">no live view</span>
+          <button id="c-preview">Start preview</button>
+        </div>
+        <div class="tiles" id="live-tiles"></div>
       </div>
     </section>
     <section class="pane" id="pane-sensors" hidden>
@@ -105,4 +160,5 @@
   <script src="/static/app.js"></script>
   <script src="/static/datasets.js"></script>
   <script src="/static/lifecycle.js"></script>
+  <script src="/static/collect.js"></script>
 </body></html>

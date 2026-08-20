@@ -40,10 +40,12 @@ are at their home pose, that every camera and the depth device open at
 their configured resolution, that the dataset volume has headroom, and that
 the host-tuning items which reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
-that is quietly misconfigured. Where the volume is the item that fails, the
-review console of the following paragraphs is also where the operator
-reclaims the space, so a failed check is answered in the same place it is
-raised.
+that is quietly misconfigured. The check is also read from the console of the
+following paragraphs, immediately above the form that starts a session, so it
+is consulted where the session begins rather than in a separate step that can
+be skipped; and where the volume is the item that fails, that console is also
+where the operator reclaims the space, so a failed check is answered in the
+same place it is raised.
 
 The check further reports which peripheral-bus hub each sensor and the
 storage volume depend upon. This is not fussiness about cabling. A rig of
@@ -104,6 +106,31 @@ indices would no longer denote the episodes the reviewer marked. Every
 operation that replaces a dataset moves the original aside and swaps the result
 into place only once it is complete, so an interruption leaves the collection
 as it was rather than partly rewritten.
+
+\paragraph{Operating a session from the console.} Collection itself is driven
+from the same page. One process must own the rig, because a camera opens once
+and the arm buses are held under lock, so the console does not take the devices:
+it starts the recorder as a session of its own and asks it for what the operator
+needs to see. The session serves its frames and its state back over the
+machine's loopback interface, and the console forwards them, so the live view
+costs a single image compression per viewer and never touches the loop that
+writes the dataset. Two consequences matter for replicability. A rig needs no
+display of its own: the operator watches the streams, the recorder state, the
+episode count against its target and any stream that has gone stale from
+whatever machine they are sitting at. And the session outlives the page, so
+closing or reloading the console cannot cost a recording.
+
+What may be pressed remotely is deliberately narrow. Starting and ending an
+episode, and ending the session, are decisions about the recording and are
+available. Enabling, parking and homing the arms move them, and move them
+before anyone has necessarily looked at the rig, so they remain on the headset
+and on the keyboard beside it; the browser only reports whether the arms are
+enabled, and refuses to start an episode until they are. Ending a session is a
+request the recorder honours between frames, which is what parks the arms,
+finishes an episode in progress and closes the dataset; the console escalates
+only if that request is ignored, and never to a signal that would abandon an
+open episode. \unjustified{} the division of controls is a judgement about
+where an operator's eyes are, not a measured safety result.
 
 \paragraph{Motion review.} Playing an episode back shows whether a
 demonstration did the right thing. It does not show whether it did it

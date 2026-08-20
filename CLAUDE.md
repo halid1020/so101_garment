@@ -63,8 +63,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   episodes (quest mode only; `--no-record-ee` opts out), with the
   action-definition constants in `<root>/meta/action_space.json`; the
   `--sensor-view` monitor shows live per-stream drift + drop counts;
-  config in `src/conf/recording.yaml`, device indices are per-machine
-  placeholders).
+  `monitor_server.py` serves the same frames + recorder status over
+  loopback for the rig console when the recorder is given
+  `--monitor-port` (off by default; its control surface is an allow-list
+  of the episode and quit keys — anything that moves an arm stays on the
+  headset/keyboard); config in `src/conf/recording.yaml`, device indices
+  are per-machine placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
@@ -90,8 +94,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   this is the former `tool/dataset_web.py`, moved unchanged),
   `lifecycle.py` (whole-dataset create-name checks, rename, delete and
   merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes,
-  with merge as a polled job), `util.py`, and the front-end under
-  `static/` (`index.html` + one script per tab, no build step). Runbook:
+  with merge as a polled job), `session.py` (supervises ONE collection
+  session as a subprocess — the same stream resolvers as the CLI, the
+  teleop command, the quit→SIGINT→SIGTERM stop ladder, and the console's
+  own idle camera preview) + `session_api.py` (Collect routes; live frames
+  and the two allowed keys are PROXIED to the session's monitor, never
+  taken from a device), `util.py`, and the front-end under `static/`
+  (`index.html` + one script per tab, no build step). Runbook:
   `documents/rig_web.md`. Destructive actions stay behind `--allow-delete`.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
@@ -103,7 +112,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `src/platform/`).
 - `src/platform/` — OpenSCAD rig design (`config.scad`, `board.scad`, …).
 - `test/` — tiered: `test/unit/` (fast, pure-python/pinocchio, no MuJoCo),
-  `test/integration/` (MuJoCo scenes), `test/system/`
+  `test/integration/` (MuJoCo scenes, plus the console↔session two-process
+  check `test_console_session.py`), `test/system/`
   (`smoke_test_pipeline.sh`, train→eval plumbing check;
   `smoke_vla_sim.sh`, sim-VLA collect→train→eval plumbing check).
   `test/__init__.py` is load-bearing (keeps the stdlib `test` package from

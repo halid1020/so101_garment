@@ -174,11 +174,15 @@ python tool/rig_web.py --dir /mnt/seagate/so101                  # read-only
 python tool/rig_web.py --dir /mnt/seagate/so101 --allow-delete   # + deletion
 ```
 
-Open <http://127.0.0.1:8000/>. Play any recording (every camera side by
-side on one clock, joints beside them), mark bad episodes and compact them
-away, and create, rename, merge or delete whole datasets. Loopback only —
-tunnel in with `ssh -L 8000:127.0.0.1:8000 <rig>` from another machine.
-See [`documents/rig_web.md`](documents/rig_web.md).
+Open <http://127.0.0.1:8000/>. **Datasets**: play any recording (every
+camera side by side on one clock, joints beside them), mark bad episodes
+and compact them away, and create, rename, merge or delete whole datasets.
+**Collect**: the preflight table, a live camera view, and one collection
+session — start it against a new or resumed dataset, record episodes with
+the browser button, and stop it. Arm enable/park/home stay on the headset
+and the session keyboard. Loopback only — tunnel in with `ssh -L
+8000:127.0.0.1:8000 <rig>` from another machine. See
+[`documents/rig_web.md`](documents/rig_web.md).
 
 ## 🧪 Teleop method benchmark (simulation)
 

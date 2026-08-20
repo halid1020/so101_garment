@@ -18,12 +18,6 @@ from pathlib import Path
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-# The console stores its state under plain string keys, as this application has
-# since it was the standalone dataset browser. aiohttp only recommends its typed
-# keys; the advice would be one refactor of every handler, and it is not what
-# these tests are about.
-warnings.filterwarnings("ignore", category=web.NotAppKeyWarning)
-
 from tool.rig_web import build_app
 
 _FEATURES = {
@@ -52,6 +46,11 @@ class ConsoleTestCase(AioHTTPTestCase):
     allow_delete = False
 
     async def get_application(self):
+        # The console stores its state under plain string keys, as it has since
+        # it was the standalone dataset browser; aiohttp only recommends its
+        # typed keys. Filtered here rather than at import because the test
+        # runner resets the warning filters around each run.
+        warnings.filterwarnings("ignore", category=web.NotAppKeyWarning)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         write_dataset(self.root, "cube-pnp", episodes=3)
@@ -64,6 +63,7 @@ class ConsoleTestCase(AioHTTPTestCase):
                 allow_delete=self.allow_delete,
                 fps=None,
                 prerender=False,
+                monitor_port=8799,
             )
         )
 
@@ -202,6 +202,69 @@ class TestMergeChecks(ConsoleTestCase):
     async def test_an_unknown_job_is_a_404(self):
         resp = await self.client.get("/api/datasets/jobs/deadbeef")
         self.assertEqual(resp.status, 404)
+
+
+class TestCollectTab(ConsoleTestCase):
+    """With no session running, the Collect routes must say so, not fail."""
+
+    async def test_the_session_route_reports_an_idle_console(self):
+        body = await (await self.client.get("/api/session")).json()
+        self.assertFalse(body["running"])
+        self.assertIsNone(body["monitor"])
+        self.assertEqual(body["preview"], [])
+
+    async def test_the_live_tiles_are_empty_without_a_session_or_preview(self):
+        body = await (await self.client.get("/api/live/streams")).json()
+        self.assertEqual(body["source"], "preview")
+        self.assertEqual(body["streams"], [])
+
+    async def test_a_live_stream_without_a_source_is_refused(self):
+        resp = await self.client.get("/api/live/central.mjpg")
+        self.assertEqual(resp.status, 409)
+
+    async def test_pressing_the_episode_key_without_a_session_is_refused(self):
+        resp = await self.post("/api/session/episode", {})
+        self.assertEqual(resp.status, 409)
+
+    async def test_stopping_without_a_session_is_refused(self):
+        resp = await self.post("/api/session/stop", {})
+        self.assertEqual(resp.status, 409)
+
+    async def test_a_plan_is_resolved_without_starting_anything(self):
+        body = await (
+            await self.post(
+                "/api/session/plan", {"name": "towel-fold", "task": "fold the towel"}
+            )
+        ).json()
+        self.assertFalse(body["resuming"])
+        self.assertEqual(body["refusals"], [])
+        self.assertIn("--enable-camera", body["flags"])
+
+    async def test_a_plan_for_an_existing_dataset_resumes_it(self):
+        body = await (
+            await self.post(
+                "/api/session/plan", {"name": "cube-pnp", "task": "pick the cube"}
+            )
+        ).json()
+        self.assertTrue(body["resuming"])
+        self.assertEqual(body["cameras"], ["central"])
+
+    async def test_a_plan_without_an_instruction_is_refused(self):
+        body = await (
+            await self.post("/api/session/plan", {"name": "towel-fold", "task": ""})
+        ).json()
+        self.assertTrue(any("instruction" in r for r in body["refusals"]))
+
+    async def test_starting_a_refused_session_is_a_400(self):
+        resp = await self.post(
+            "/api/session/start", {"name": "../escape", "task": "fold"}
+        )
+        self.assertEqual(resp.status, 400)
+
+    async def test_the_collection_form_offers_this_machines_cameras(self):
+        body = await (await self.client.get("/api/collect/config")).json()
+        self.assertTrue(body["cameras"])
+        self.assertIn("name", body["cameras"][0])
 
 
 if __name__ == "__main__":

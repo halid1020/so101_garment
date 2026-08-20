@@ -15,11 +15,10 @@ interface only, like every other tool here; from another machine, reach it
 through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <rig>`), exactly as
 `documents/remote_policy_inference.md` describes for the policy server.
 
-The page has three tabs. **Datasets** is described below. **Collect**
-(live view and session control) and **Sensors** (assigning devices to
-stream names) are placeholders for now; until they land, collect with
-`tool/collect_dataset.py` and assign with
-`tool/test_sensor_rates.py --assign`.
+The page has three tabs: **Datasets** (review and manage), **Collect**
+(readiness, live view, and one collection session), and **Sensors**
+(assigning devices to stream names), which is still a placeholder — until
+it lands, assign with `tool/test_sensor_rates.py --assign`.
 
 ## Reviewing recordings
 
@@ -45,6 +44,55 @@ Episode curation is in two steps and needs `--allow-delete`:
 2. **Remove for good** compacts: one rewrite of the whole dataset for the
    whole batch, renumbering the survivors and re-indexing the sidecar
    files with them.
+
+## Collecting
+
+The Collect tab starts and watches one collection session. The session is
+the unchanged teleoperation recorder, run as a separate process with
+exactly the flags `tool/collect_dataset.py` would have computed — the same
+resolver backs both, so a session started here and one started from a
+terminal cannot drift apart.
+
+**Before starting.** Open *Rig readiness* for the preflight table:
+calibrations, poses, cameras, the depth device, disk headroom, and the
+host-tuning items that reduce timing jitter. The device checks are skipped
+while a session or a preview holds them; the file checks always answer.
+With nothing running, **Start preview** opens the assigned cameras so you
+can see where they point. The preview is always released before a session
+launches — one process owns a camera.
+
+**Starting.** Fill in the dataset name, the instruction stored with every
+frame, and the streams. Typing the name of an existing dataset switches the
+form to *resume*: its recorded streams, depth, EE features and frame rate
+are shown ticked and locked, because a resumed dataset must not drift from
+how it began, and anything you asked for that disagrees is reported rather
+than silently ignored. **Check** resolves the request without running it.
+
+**While it runs.** The tiles are the session's own frames, proxied — no
+device is opened for them and the record loop is not touched, so the live
+view costs a JPEG encode per viewer. The status line carries the arm state,
+the recorder state, the episode count against its goal, the frame count of
+the episode in progress, and any stream that has gone stale. The
+recorder's output is tailed below the form.
+
+**Episode** presses the session's own A button: it starts an episode, and
+pressing it again stops and saves. It is disabled until the arms are
+enabled, and it is worth reading the warning beside it — starting an
+episode drives BOTH ARMS to the ready pose. Enable, park and home are
+deliberately absent from the browser: they move the arms with nobody
+necessarily looking at the rig, so they stay on the headset and the session
+keyboard.
+
+**Stop session** asks the session to quit, which is what parks the arms,
+finishes an in-flight episode and closes the dataset properly. Only if that
+is ignored does the console interrupt, and later terminate; it never kills,
+because a killed session abandons an open episode. Closing the console does
+NOT end a session — restarting a web page must not cost a recording.
+
+Live view during collection is the reason the recorder gained
+`--monitor-port`: it serves this small loopback monitor from inside the
+session (frames, status, and an allow-list of two keys). It is off by
+default, so nothing changes for an invocation that does not ask for it.
 
 ## Managing datasets
 
@@ -94,6 +142,7 @@ onto the merged episode indices.
 | `--allow-delete` | Enable episode and dataset deletion (destructive) |
 | `--fps` | Playback frame-rate override (default: the dataset's) |
 | `--prerender` | Build composited episode videos in the background while browsing |
+| `--monitor-port` | Loopback port a collection session serves its live view on (default 8766) |
 
 Only `--prerender` is worth explaining: it warms the cache for the
 composited view, which is the one worth watching only for a depth dataset

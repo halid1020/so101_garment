@@ -1,0 +1,236 @@
+// The Collect tab: rig readiness, the live view, and one collection session.
+// The console never opens a device while a session runs — every tile here is
+// either the session's own frames, proxied, or the console's idle preview.
+
+let sessionState = null;
+let liveStreams = [];
+let collectTimer = null;
+
+function collectVisible() {
+  return !document.querySelector('#pane-collect').hidden;
+}
+
+async function loadCollectConfig() {
+  const cfg = await j('/api/collect/config');
+  const box = $('#c-streams');
+  box.innerHTML = '<legend>Camera streams</legend>';
+  for (const cam of cfg.cameras) {
+    const id = 'cam-' + cam.name;
+    const label = document.createElement('label');
+    label.className = 'row';
+    label.innerHTML = `<input type="checkbox" id="${id}" value="${cam.name}"`
+      + `${cam.enabled ? ' checked' : ''}> ${cam.name}`;
+    box.appendChild(label);
+  }
+}
+
+function pickedStreams() {
+  return [...document.querySelectorAll('#c-streams input:checked')].map(c => c.value);
+}
+
+function sessionRequest() {
+  return {
+    name: $('#c-name').value.trim(),
+    task: $('#c-task').value.trim(),
+    streams: pickedStreams(),
+    depth: $('#c-depth').checked,
+    ee: $('#c-ee').checked,
+    input: $('#c-input').value,
+    goal: Number($('#c-goal').value) || 0,
+    sensor_view: $('#c-view').checked,
+  };
+}
+
+function describePlan(plan) {
+  const bits = [
+    plan.resuming ? 'resume' : 'new dataset',
+    `cameras ${plan.cameras.join('+') || 'none'}`,
+    `depth ${plan.depth ? 'on' : 'off'}`,
+    `ee ${plan.ee ? 'on' : 'off'}`,
+    `fps ${plan.fps || 'default'}`,
+  ];
+  return bits.join(' · ') + (plan.warnings.length ? '\n' + plan.warnings.join('\n') : '');
+}
+
+async function checkPlan() {
+  $('#c-err').textContent = ''; $('#c-plan').textContent = '';
+  let plan;
+  try {
+    plan = await j('/api/session/plan', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(sessionRequest()),
+    });
+  } catch (e) { $('#c-err').textContent = e.message; return null; }
+  $('#c-plan').textContent = describePlan(plan);
+  $('#c-err').textContent = plan.refusals.join('\n');
+  // A resumed dataset dictates its own streams; showing them ticked keeps the
+  // form honest about what will actually be recorded.
+  if (plan.resuming) {
+    document.querySelectorAll('#c-streams input').forEach(c => {
+      c.checked = plan.cameras.includes(c.value);
+      c.disabled = true;
+    });
+    $('#c-depth').checked = plan.depth; $('#c-ee').checked = plan.ee;
+  } else {
+    document.querySelectorAll('#c-streams input').forEach(c => { c.disabled = false; });
+  }
+  return plan;
+}
+
+$('#c-check').onclick = checkPlan;
+$('#c-name').onchange = checkPlan;
+
+$('#c-start').onclick = async () => {
+  const plan = await checkPlan();
+  if (!plan || plan.refusals.length) return;
+  $('#c-start').disabled = true;
+  try {
+    await j('/api/session/start', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(sessionRequest()),
+    });
+  } catch (e) { $('#c-err').textContent = e.message; }
+  $('#c-start').disabled = false;
+  await pollSession();
+};
+
+$('#c-episode').onclick = async () => {
+  try {
+    await j('/api/session/episode',
+            {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } catch (e) { alert('episode key failed: ' + e.message); }
+  await pollSession();
+};
+
+$('#c-stop').onclick = async () => {
+  if (!confirm('End the collection session?\n\nAn episode in progress is saved '
+      + 'and the arms are parked before it exits.')) return;
+  try {
+    await j('/api/session/stop',
+            {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } catch (e) { alert('stop failed: ' + e.message); }
+  await pollSession();
+};
+
+$('#c-preview').onclick = async () => {
+  const on = $('#c-preview').dataset.on === '1';
+  try {
+    await j(on ? '/api/preview/stop' : '/api/preview/start',
+            {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } catch (e) { alert(e.message); }
+  await refreshTiles();
+};
+
+// ── Live tiles ──────────────────────────────────────────────────────────────
+
+async function refreshTiles() {
+  let body;
+  try { body = await j('/api/live/streams'); }
+  catch (e) { return; }
+  const names = body.streams || [];
+  const preview = body.source === 'preview';
+  $('#c-preview').dataset.on = (preview && names.length) ? '1' : '0';
+  $('#c-preview').textContent = (preview && names.length)
+    ? 'Stop preview' : 'Start preview';
+  $('#c-preview').disabled = !preview;
+  $('#live-source').textContent = names.length
+    ? (preview ? 'preview (no session running)' : 'live from the session')
+    : 'no live view';
+  if (names.join() === liveStreams.join()) return;
+  liveStreams = names;
+  const tiles = $('#live-tiles'); tiles.innerHTML = '';
+  for (const name of names) {
+    const fig = document.createElement('figure');
+    fig.className = 'tile';
+    // The query parameter is a cache-buster: an <img> pointed at a multipart
+    // stream keeps the connection open, so a stale one must not be reused.
+    fig.innerHTML = `<img src="/api/live/${encodeURIComponent(name)}.mjpg?t=${Date.now()}">
+                     <figcaption>${name}</figcaption>`;
+    tiles.appendChild(fig);
+  }
+}
+
+// ── Session polling ─────────────────────────────────────────────────────────
+
+function describeStatus(s) {
+  if (!s.running) return 'no session';
+  const m = s.monitor;
+  if (!m) return `session running (pid ${s.pid}) — waiting for its live monitor`;
+  const rec = m.recorder;
+  const bits = [`arms ${m.arms}`];
+  if (rec) {
+    bits.push(rec.state);
+    bits.push(rec.episodes_goal
+      ? `episodes ${rec.episodes_done}/${rec.episodes_goal}`
+      : `episodes ${rec.episodes_done}`);
+    if (rec.recording) bits.push(`${rec.current_frames} frames`);
+  }
+  const stale = (m.streams || []).filter(x => x.age_s === null || x.age_s > 1.0);
+  if (stale.length) bits.push(`stale: ${stale.map(x => x.name).join(', ')}`);
+  return bits.join(' · ');
+}
+
+async function pollSession() {
+  let s;
+  try { s = await j('/api/session'); } catch (e) { return; }
+  sessionState = s;
+  $('#session-state').textContent = describeStatus(s);
+  $('#session-form').hidden = s.running;
+  $('#session-live').hidden = !s.running;
+  if (s.running) {
+    $('#c-running').textContent =
+      `${s.resuming ? 'resuming' : 'recording into'} '${s.name}' — ${s.task}\n`
+      + `cameras ${(s.cameras || []).join('+')} · depth ${s.depth ? 'on' : 'off'}`
+      + ` · ee ${s.ee ? 'on' : 'off'}`;
+    const m = s.monitor, rec = m && m.recorder;
+    const armed = !!m && m.arms === 'ENABLED';
+    $('#c-episode').disabled = !armed;
+    $('#c-episode').title = armed ? ''
+      : 'enable the arms first (button Y on the headset, or Y at the session)';
+    $('#c-episode').textContent = (rec && rec.recording)
+      ? 'Stop episode and save' : 'Start episode';
+    $('#c-stop').disabled = !!s.stopping;
+    $('#c-stop').textContent = s.stopping ? 'Stopping…' : 'Stop session';
+  }
+  $('#session-log').textContent = (s.tail || []).slice(-200).join('\n');
+  $('#session-log').scrollTop = $('#session-log').scrollHeight;
+  await refreshTiles();
+}
+
+async function loadPreflight() {
+  $('#preflight-body').textContent = 'checking…';
+  let body;
+  try { body = await j('/api/preflight'); }
+  catch (e) { $('#preflight-body').textContent = e.message; return; }
+  const rows = body.checks.map(c =>
+    `<tr class="lvl-${c.level}"><td>${c.level}</td><td>${c.name}</td>`
+    + `<td>${c.detail}</td></tr>`).join('');
+  $('#preflight-body').innerHTML =
+    (body.hardware ? '' : '<p class="muted">devices are in use — file checks only</p>')
+    + `<table class="checks">${rows}</table>`;
+}
+
+$('#preflight').ontoggle = () => { if ($('#preflight').open) loadPreflight(); };
+
+// Poll only while the tab is on screen: the live tiles are streams, and the
+// status is only interesting to someone looking at it.
+function collectTick() {
+  if (collectVisible()) pollSession();
+}
+
+window.addEventListener('load', () => {
+  loadCollectConfig().catch(e => { $('#c-err').textContent = e.message; });
+  collectTimer = setInterval(collectTick, 1500);
+  // app.js chooses the pane before this file is parsed, so a console opened
+  // straight on #collect has to be told once, here.
+  if (collectVisible()) window.onPaneShown('collect');
+});
+
+window.onPaneShown = (name) => {
+  if (name === 'collect') {
+    // The dataset names are the same list the Datasets tab shows.
+    const list = $('#c-names');
+    list.innerHTML = datasets.map(d => `<option value="${d.name}">`).join('');
+    pollSession();
+  }
+};
