@@ -19,9 +19,7 @@ function currentMeta() {
 function refreshButtons() {
   const has = !!selectedDataset;
   $('#ds-rename').disabled = !has;
-  $('#ds-remove').disabled = !(has && allowDelete);
-  $('#ds-remove').title = allowDelete ? ''
-    : 'restart the console with --allow-delete to delete datasets';
+  $('#ds-remove').disabled = !has;
 }
 
 window.onDatasetSelected = (name) => { selectedDataset = name; refreshButtons(); };
@@ -54,7 +52,7 @@ $('#new-go').onclick = async () => {
   if (!check.ok) { $('#new-err').textContent = check.problem; return; }
   if (!task) { $('#new-err').textContent = 'give the dataset an instruction'; return; }
   $('#new-err').textContent = '';
-  const root = $('#rootdir').textContent;
+  const root = $('#rootdir').dataset.path || '<collection directory>';
   $('#new-cmd').textContent =
     `venv/bin/python tool/collect_dataset.py \\\n`
     + `    --dir ${root} --name ${name} --task ${JSON.stringify(task)}`;
@@ -97,10 +95,13 @@ $('#ds-remove').onclick = async () => {
   const meta = currentMeta();
   if (!meta) return;
   const size = meta.bytes ? ` (${humanSize(meta.bytes)})` : '';
-  const what = meta.stillborn ? 'this empty dataset'
+  const what = meta.stillborn ? 'This empty dataset'
     : `${meta.episodes} recording(s)`;
-  if (!confirm(`Delete '${meta.name}'${size} for good?\n\n`
-      + `${what} will be removed from the drive. This cannot be undone.`)) return;
+  const ok = await confirmDialog({
+    title: `Delete '${meta.name}'${size}?`,
+    body: `${what} will be removed from the drive. This cannot be undone.`,
+  });
+  if (!ok) return;
   try {
     await j(`/api/datasets/${encodeURIComponent(meta.name)}/remove`,
             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
@@ -108,6 +109,7 @@ $('#ds-remove').onclick = async () => {
   selectedDataset = null;
   resetSelection(null);
   await loadDatasets();
+  pollJobs();  // freeing the bytes is a job; show it
 };
 
 // ── Merge ───────────────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ $('#ds-merge').onclick = () => {
     ul.appendChild(li);
   }
   $('#merge-err').textContent = '';
-  $('#merge-progress').hidden = true;
+  $('#merge-drop').checked = false;
   $('#merge-go').disabled = false;
   openDialog('dlg-merge');
   ul.querySelectorAll('input').forEach(c => { c.onchange = checkMerge; });
@@ -150,27 +152,26 @@ async function checkMerge() {
 $('#merge-go').onclick = async () => {
   const names = mergePicked();
   const name = $('#merge-name').value.trim();
-  let job;
+  const drop = $('#merge-drop').checked;
+  if (drop) {
+    const total = datasets.filter(d => names.includes(d.name))
+      .reduce((n, d) => n + (d.bytes || 0), 0);
+    const ok = await confirmDialog({
+      title: `Delete the sources after merging into '${name}'?`,
+      body: `${names.join(', ')} (${humanSize(total)}) will be removed once the `
+        + `merge has succeeded, and not before. This cannot be undone.`,
+      confirmLabel: 'Merge and delete',
+    });
+    if (!ok) return;
+  }
   try {
-    job = await j('/api/datasets/merge', {
+    await j('/api/datasets/merge', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({names, name}),
+      body: JSON.stringify({names, name, delete_sources: drop}),
     });
   } catch (e) { $('#merge-err').textContent = e.message; return; }
-  $('#merge-go').disabled = true;
-  $('#merge-progress').hidden = false;
-  pollMerge(job.id);
+  // The merge runs in the background from here; the dock is where it is
+  // watched, and it reloads the list when the job ends.
+  dlg('dlg-merge').close();
+  pollJobs();
 };
-
-async function pollMerge(id) {
-  // Merging re-encodes every episode of every source, so this runs for as long
-  // as it takes; the dialog stays open and says where it is.
-  let job;
-  try { job = await j(`/api/datasets/jobs/${id}`); }
-  catch (e) { $('#merge-err').textContent = e.message; return; }
-  $('#merge-progress').textContent = `${job.state}: ${job.message}`;
-  if (job.state === 'running') { setTimeout(() => pollMerge(id), 2000); return; }
-  $('#merge-go').disabled = false;
-  if (job.state === 'failed') { $('#merge-err').textContent = job.message; return; }
-  await loadDatasets();
-}

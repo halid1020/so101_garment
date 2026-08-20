@@ -1,4 +1,6 @@
-// The Sensors tab: which device is which, and what it is called.
+// The Signals tab: which device is which, and what it is called.
+// The routes and the file on disk keep the older 'sensor' name
+// (src/conf/sensor_map.yaml, and tool/test_sensor_rates.py writes the same map).
 // Everything here opens a device, so it is refused while a session runs.
 
 let sensors = null;
@@ -6,11 +8,11 @@ let probedPort = null;
 let previewDevice = null;
 let tickTimer = null;
 
-function sensorsVisible() {
-  return !document.querySelector('#pane-sensors').hidden;
+function signalsVisible() {
+  return !document.querySelector('#pane-signals').hidden;
 }
 
-async function loadSensors(scan) {
+async function loadSignals(scan) {
   try {
     sensors = await j('/api/sensors' + (scan ? '?scan=1' : ''));
   } catch (e) { $('#s-err').textContent = e.message; return; }
@@ -112,7 +114,7 @@ async function assignCamera(name) {
       body: JSON.stringify({device: previewDevice, name}),
     });
   } catch (e) { $('#s-err').textContent = e.message; return; }
-  await loadSensors(false);
+  await loadSignals(false);
 }
 
 // ── Arms ────────────────────────────────────────────────────────────────────
@@ -142,7 +144,7 @@ async function pollTicks(rebase) {
     + `<td>${r.value}</td><td>${r.delta >= 0 ? '+' : ''}${r.delta}</td></tr>`).join('')
     + (body.error ? `<tr><td colspan="3" class="muted">${body.error}</td></tr>` : '');
   clearTimeout(tickTimer);
-  if (sensorsVisible()) tickTimer = setTimeout(() => pollTicks(false), 300);
+  if (signalsVisible()) tickTimer = setTimeout(() => pollTicks(false), 300);
 }
 
 $('#s-rebase').onclick = () => pollTicks(true);
@@ -156,7 +158,7 @@ document.querySelectorAll('#s-ticks [data-role]').forEach(b => {
         body: JSON.stringify({port: probedPort, role: b.dataset.role, side: b.dataset.side}),
       });
     } catch (e) { $('#s-err').textContent = e.message; return; }
-    await loadSensors(false);
+    await loadSignals(false);
   };
 });
 
@@ -169,7 +171,7 @@ async function assignRealsense(serial) {
       body: JSON.stringify({serial}),
     });
   } catch (e) { $('#s-err').textContent = e.message; return; }
-  await loadSensors(false);
+  await loadSignals(false);
 }
 
 async function clearAssignment(kind, key) {
@@ -179,7 +181,7 @@ async function clearAssignment(kind, key) {
       body: JSON.stringify({kind, key}),
     });
   } catch (e) { $('#s-err').textContent = e.message; return; }
-  await loadSensors(false);
+  await loadSignals(false);
 }
 
 async function releaseDevices() {
@@ -201,17 +203,17 @@ async function releaseDevices() {
   $('#s-ticks').hidden = true;
   $('#s-release').hidden = true;
   $('#s-work-title').textContent = 'Pick a device to identify';
-  await loadSensors(false);
+  await loadSignals(false);
 }
 
 $('#s-release').onclick = releaseDevices;
-$('#s-scan').onclick = () => loadSensors(true);
+$('#s-scan').onclick = () => loadSignals(true);
 
 // Leaving the tab lets go of whatever it was holding: a camera or an arm bus
 // held open here is one a collection session cannot have.
 const _paneShown = window.onPaneShown;
 window.onPaneShown = (name) => {
   if (_paneShown) _paneShown(name);
-  if (name === 'sensors') loadSensors(false);
+  if (name === 'signals') loadSignals(false);
   else if (probedPort || previewDevice) releaseDevices();
 };

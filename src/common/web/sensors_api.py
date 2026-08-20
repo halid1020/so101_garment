@@ -1,4 +1,8 @@
-"""Routes for the Sensors tab: which device is which, and what it is called.
+"""Routes for the Signals tab: which device is which, and what it is called.
+
+The tab is called Signals in the browser; this module, its routes and the file
+it writes keep the older ``sensor`` name, which is what the recorder, the
+preflight tool and ``src/conf/sensor_map.yaml`` have always used.
 
 Every route here touches hardware -- it opens a capture node to show what a
 camera sees, or a serial port to watch an arm's raw ticks -- so all of them are
@@ -195,7 +199,7 @@ async def handle_clear(request: web.Request) -> web.Response:
 
 
 def add_sensor_routes(app: web.Application) -> None:
-    """Register the Sensors tab's routes and the state they need."""
+    """Register the Signals tab's routes and the state they need."""
     app["sensors_probe"] = ArmProbe()
     app["sensor_candidates"] = None
     app.setdefault("sensor_map_path", SENSOR_MAP_PATH)

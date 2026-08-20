@@ -15,8 +15,22 @@ document.querySelectorAll('.tab').forEach(t => {
   t.onclick = () => showPane(t.dataset.pane);
 });
 
-showPane((location.hash || '#datasets').slice(1));
+// '#sensors' is what the tab used to be called; keep an old link working.
+const _hash = (location.hash || '#datasets').slice(1);
+showPane(_hash === 'sensors' ? 'signals' : _hash);
 
-fetch('/api/console').then(r => r.json()).then(c => {
-  document.querySelector('#rootdir').textContent = c.root;
-}).catch(() => {});
+// One confirmation for the deletes that cannot be undone. Native confirm() is
+// blocking and a browser may suppress it after a few; this one is neither, and
+// it says the same things every time: what goes, how much of it, and that it
+// does not come back. Marking an episode is NOT confirmed -- Restore undoes it.
+function confirmDialog({title, body, confirmLabel = 'Delete'}) {
+  const d = document.querySelector('#dlg-confirm');
+  document.querySelector('#confirm-title').textContent = title;
+  document.querySelector('#confirm-body').textContent = body;
+  document.querySelector('#confirm-yes').textContent = confirmLabel;
+  return new Promise(resolve => {
+    d.returnValue = 'no';
+    d.onclose = () => resolve(d.returnValue === 'yes');
+    d.showModal();
+  });
+}

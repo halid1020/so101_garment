@@ -3,21 +3,29 @@
 Runs the real application over a temporary collection directory holding
 synthetic datasets -- a dataset the console can see is a ``meta/info.json``, so
 no recording, no hardware and no LeRobot dataset load is needed. What is checked
-here is the contract the browser depends on: what the listing carries, that the
-destructive routes are gated by ``--allow-delete``, and that a refused merge
-says why instead of starting one.
+here is the contract the browser depends on: what the listing carries, what the
+destructive and whole-drive routes do, and that a refused merge says why instead
+of starting one.
+
+The console's own state (its remembered directories, its render cache) is
+redirected into the temporary directory, so a test can never rewrite what the
+machine remembers.
 """
 
 import argparse
+import asyncio
 import json
+import os
 import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
+from common.web.lifecycle_api import MAX_JOBS, prune_jobs
 from tool.rig_web import build_app
 
 _FEATURES = {
@@ -43,7 +51,7 @@ def write_dataset(root: Path, name: str, episodes: int = 2, **over) -> Path:
 
 
 class ConsoleTestCase(AioHTTPTestCase):
-    allow_delete = False
+    dir_given = True
 
     async def get_application(self):
         # The console stores its state under plain string keys, as it has since
@@ -52,23 +60,32 @@ class ConsoleTestCase(AioHTTPTestCase):
         # runner resets the warning filters around each run.
         warnings.filterwarnings("ignore", category=web.NotAppKeyWarning)
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name) / "drive"
+        self.root.mkdir()
         write_dataset(self.root, "cube-pnp", episodes=3)
         write_dataset(self.root, "cube-pnp-2", episodes=2)
         write_dataset(self.root, "stillborn", episodes=0)
         (self.root / "cube-pnp.trash-20260819-110341").mkdir()
+        # Everything the console writes about itself goes here, not into the
+        # machine's real output directory.
+        self._outputs = os.environ.get("SO101_OUTPUT_DIR")
+        os.environ["SO101_OUTPUT_DIR"] = str(Path(self.tmp.name) / "outputs")
         return build_app(
             argparse.Namespace(
-                dir=str(self.root),
-                allow_delete=self.allow_delete,
+                dir=str(self.root) if self.dir_given else None,
                 fps=None,
                 prerender=False,
                 monitor_port=8799,
+                mount_dir=str(Path(self.tmp.name) / "mounts"),
             )
         )
 
     async def tearDownAsync(self):
         await super().tearDownAsync()
+        if self._outputs is None:
+            os.environ.pop("SO101_OUTPUT_DIR", None)
+        else:
+            os.environ["SO101_OUTPUT_DIR"] = self._outputs
         self.tmp.cleanup()
 
     async def post(self, url, payload):
@@ -81,10 +98,9 @@ class TestListing(ConsoleTestCase):
             resp = await self.client.get(url)
             self.assertEqual(resp.status, 200, url)
 
-    async def test_console_reports_the_drive_and_the_mode(self):
+    async def test_console_reports_the_drive(self):
         body = await (await self.client.get("/api/console")).json()
         self.assertEqual(body["root"], str(self.root))
-        self.assertFalse(body["allow_delete"])
 
     async def test_listing_carries_what_the_pane_shows(self):
         body = await (await self.client.get("/api/datasets")).json()
@@ -105,13 +121,8 @@ class TestListing(ConsoleTestCase):
         self.assertNotIn("cube-pnp.trash-20260819-110341", [d["name"] for d in body])
 
 
-class TestGating(ConsoleTestCase):
-    async def test_dataset_deletion_is_refused_without_allow_delete(self):
-        resp = await self.post("/api/datasets/cube-pnp/remove", {})
-        self.assertEqual(resp.status, 403)
-        self.assertTrue((self.root / "cube-pnp").is_dir())
-
-    async def test_renaming_does_not_need_allow_delete(self):
+class TestRenaming(ConsoleTestCase):
+    async def test_renaming_a_dataset(self):
         resp = await self.post("/api/datasets/cube-pnp/rename", {"new": "cube_pnp"})
         self.assertEqual(resp.status, 200)
         self.assertTrue((self.root / "cube_pnp").is_dir())
@@ -133,8 +144,6 @@ class TestGating(ConsoleTestCase):
 
 
 class TestDeleting(ConsoleTestCase):
-    allow_delete = True
-
     async def test_deleting_removes_the_dataset(self):
         resp = await self.post("/api/datasets/stillborn/remove", {})
         self.assertEqual(resp.status, 200)
@@ -356,6 +365,167 @@ class TestSensorsTab(ConsoleTestCase):
     async def test_a_request_without_a_device_is_refused(self):
         resp = await self.post("/api/sensors/camera/assign", {"name": "central"})
         self.assertEqual(resp.status, 400)
+
+
+class TestJobs(ConsoleTestCase):
+    """Slow whole-dataset work is a job, and the dock lists it."""
+
+    async def _settle(self, job_id):
+        for _ in range(100):
+            body = await (await self.client.get(f"/api/datasets/jobs/{job_id}")).json()
+            if body["state"] != "running":
+                return body
+            await asyncio.sleep(0.05)
+        raise AssertionError(f"job {job_id} never finished")
+
+    async def test_deleting_a_dataset_is_a_job(self):
+        body = await (await self.post("/api/datasets/stillborn/remove", {})).json()
+        job = await self._settle(body["job"])
+        self.assertEqual(job["kind"], "delete")
+        self.assertEqual(job["state"], "done")
+        listed = await (await self.client.get("/api/jobs")).json()
+        self.assertIn(body["job"], [j["id"] for j in listed])
+
+    async def test_a_merge_may_delete_its_sources_once_it_has_worked(self):
+        # The merge itself is LeRobot's; what is checked here is the console's
+        # promise about the sources -- they go only after the output exists.
+        def fake_merge(root, names, out_name, progress=None):
+            write_dataset(Path(root), out_name, episodes=5)
+            return Path(root) / out_name
+
+        with mock.patch("common.web.lifecycle_api.merge_datasets", fake_merge):
+            started = await (
+                await self.post(
+                    "/api/datasets/merge",
+                    {
+                        "names": ["cube-pnp", "cube-pnp-2"],
+                        "name": "cube-all",
+                        "delete_sources": True,
+                    },
+                )
+            ).json()
+            job = await self._settle(started["id"])
+        self.assertEqual(job["state"], "done", job["message"])
+        self.assertTrue((self.root / "cube-all").is_dir())
+        self.assertFalse((self.root / "cube-pnp").exists())
+        self.assertFalse((self.root / "cube-pnp-2").exists())
+
+    async def test_a_failed_merge_keeps_every_source(self):
+        def angry_merge(root, names, out_name, progress=None):
+            raise RuntimeError("no room on the drive")
+
+        with mock.patch("common.web.lifecycle_api.merge_datasets", angry_merge):
+            started = await (
+                await self.post(
+                    "/api/datasets/merge",
+                    {
+                        "names": ["cube-pnp", "cube-pnp-2"],
+                        "name": "cube-all",
+                        "delete_sources": True,
+                    },
+                )
+            ).json()
+            job = await self._settle(started["id"])
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("no room", job["message"])
+        self.assertTrue((self.root / "cube-pnp").is_dir())
+        self.assertTrue((self.root / "cube-pnp-2").is_dir())
+
+
+class TestJobPruning(unittest.TestCase):
+    def test_running_jobs_stay_and_old_finished_ones_go(self):
+        now = 10_000.0
+        jobs = {
+            "run": {"id": "run", "state": "running", "started": 0.0},
+            "old": {"id": "old", "state": "done", "started": 0.0, "finished": 1.0},
+            "new": {"id": "new", "state": "done", "started": now, "finished": now},
+        }
+        prune_jobs(jobs, now)
+        self.assertEqual(sorted(jobs), ["new", "run"])
+
+    def test_only_the_most_recent_finished_jobs_are_kept(self):
+        now = 100.0
+        jobs = {
+            str(i): {"id": str(i), "state": "done", "started": now, "finished": now + i}
+            for i in range(MAX_JOBS + 5)
+        }
+        prune_jobs(jobs, now)
+        self.assertEqual(len(jobs), MAX_JOBS)
+        self.assertNotIn("0", jobs)
+
+
+class TestChoosingTheDirectory(ConsoleTestCase):
+    async def test_the_current_directory_is_described(self):
+        body = await (await self.client.get("/api/roots")).json()
+        self.assertEqual(body["root"], str(self.root))
+        self.assertEqual(body["kind"], "local")
+        self.assertTrue(body["writable"])
+        self.assertIsNone(body["busy"])
+
+    async def test_browsing_flags_a_directory_that_holds_datasets(self):
+        body = await (
+            await self.client.get("/api/roots/browse?path=" + str(Path(self.tmp.name)))
+        ).json()
+        drive = next(e for e in body["entries"] if e["name"] == "drive")
+        self.assertTrue(drive["collection"])
+
+    async def test_browsing_somewhere_that_does_not_exist_is_a_400(self):
+        resp = await self.client.get("/api/roots/browse?path=/nowhere-at-all")
+        self.assertEqual(resp.status, 400)
+
+    async def test_switching_directory_changes_what_is_listed(self):
+        other = Path(self.tmp.name) / "second"
+        other.mkdir()
+        write_dataset(other, "towel-fold", episodes=1)
+        body = await (await self.post("/api/roots/use", {"path": str(other)})).json()
+        self.assertEqual(body["root"], str(other))
+        self.assertEqual(body["recent"][0]["path"], str(other))
+        listed = await (await self.client.get("/api/datasets")).json()
+        self.assertEqual([d["name"] for d in listed], ["towel-fold"])
+        # The session would record into the new directory too, not the old one.
+        self.assertEqual(str(self.app["session"].root), str(other))
+
+    async def test_switching_to_something_that_is_not_a_directory_is_a_400(self):
+        resp = await self.post("/api/roots/use", {"path": "/definitely/not/here"})
+        self.assertEqual(resp.status, 400)
+
+    async def test_switching_is_refused_while_a_job_runs(self):
+        self.app["jobs"]["busy"] = {
+            "id": "busy",
+            "kind": "merge",
+            "name": "cube-all",
+            "state": "running",
+            "started": 0.0,
+        }
+        resp = await self.post("/api/roots/use", {"path": str(self.root)})
+        self.assertEqual(resp.status, 409)
+        self.assertIn("cube-all", await resp.text())
+
+
+class TestWithoutADirectory(ConsoleTestCase):
+    """The console may be started with no drive at all; the page then asks."""
+
+    dir_given = False
+
+    async def test_the_console_reports_no_directory(self):
+        body = await (await self.client.get("/api/console")).json()
+        self.assertIsNone(body["root"])
+
+    async def test_the_dataset_routes_refuse_and_say_why(self):
+        resp = await self.client.get("/api/datasets")
+        self.assertEqual(resp.status, 409)
+        self.assertIn("collection directory", await resp.text())
+
+    async def test_the_page_the_dock_and_the_directory_routes_still_answer(self):
+        for url in ("/", "/api/jobs", "/api/roots", "/api/session"):
+            resp = await self.client.get(url)
+            self.assertEqual(resp.status, 200, url)
+
+    async def test_choosing_one_makes_the_datasets_appear(self):
+        resp = await self.post("/api/roots/use", {"path": str(self.root)})
+        self.assertEqual(resp.status, 200)
+        listed = await (await self.client.get("/api/datasets")).json()
+        self.assertIn("cube-pnp", [d["name"] for d in listed])
 
 
 if __name__ == "__main__":

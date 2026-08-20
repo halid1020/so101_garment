@@ -17,13 +17,12 @@ cannot cover -- a dataset recording depth, which is stored as per-frame images
 rather than a playable stream, or a browser without AV1 -- and for downloading
 an episode as a single file.
 
-Episode deletion is OFF unless the console was started with ``--allow-delete``
-(a delete request returns 403 otherwise), and it happens in two steps, because
-really removing one episode from a v3.0 dataset re-encodes and renumbers the
-whole thing and takes far too long to sit behind a click. Deleting MARKS the
-episode: the row disappears at once and the decision is recorded in the dataset,
-reversibly. "Remove for good" then compacts: one rewrite for the whole batch,
-via ``common.recording.dataset_edit.compact_dataset``.
+Episode deletion happens in two steps, because really removing one episode from
+a v3.0 dataset re-encodes and renumbers the whole thing and takes far too long
+to sit behind a click. Deleting MARKS the episode: the row disappears at once
+and the decision is recorded in the dataset, reversibly. "Remove for good" then
+compacts: one rewrite for the whole batch, via
+``common.recording.dataset_edit.compact_dataset``.
 
 Until a dataset is compacted its marked episodes are still on disk, so anything
 that trains on the dataset would still see them. The pane says so, and the
@@ -33,6 +32,7 @@ real-VLA training scripts refuse to start while marks are pending.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -152,10 +152,16 @@ def episodes_of(root: Path, name: str) -> dict:
 
 
 def _cache_path(cache_dir: Path, root: Path, name: str, episode: int) -> Path:
-    """mp4 cache path keyed by the dataset's info.json mtime (any edit busts it)."""
+    """mp4 cache path keyed by the dataset's info.json mtime (any edit busts it).
+
+    The collection directory can be changed while the console runs, so the drive
+    is part of the key too: two drives may each hold a ``cube-pnp``, and neither
+    may ever be shown the other's rendered episode.
+    """
     info = dataset_root(root, name) / "meta" / "info.json"
     stamp = int(info.stat().st_mtime) if info.is_file() else 0
-    return cache_dir / name / f"ep_{episode:06d}_{stamp}.mp4"
+    drive = hashlib.md5(str(Path(root).resolve()).encode()).hexdigest()[:8]
+    return cache_dir / drive / name / f"ep_{episode:06d}_{stamp}.mp4"
 
 
 def _dataset_fps(path: Path) -> int:
@@ -597,8 +603,6 @@ def _mark_deleted(root: Path, name: str, indices: "list[int]") -> dict:
 async def handle_delete(request: web.Request) -> web.Response:
     """Mark episodes deleted. Returns immediately; the rewrite waits for compact."""
     app = request.app
-    if not app["allow_delete"]:
-        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
     name = request.match_info["name"]
     body = await request.json()
     indices = [int(i) for i in body.get("episodes", [])]
@@ -614,8 +618,6 @@ async def handle_delete(request: web.Request) -> web.Response:
 async def handle_restore(request: web.Request) -> web.Response:
     """Un-mark every episode marked for deletion (nothing has been removed yet)."""
     app = request.app
-    if not app["allow_delete"]:
-        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
     name = request.match_info["name"]
     path = dataset_root(app["root"], name)
     try:
@@ -628,8 +630,6 @@ async def handle_restore(request: web.Request) -> web.Response:
 async def handle_compact(request: web.Request) -> web.Response:
     """Really remove the marked episodes. Slow: rewrites and renumbers the dataset."""
     app = request.app
-    if not app["allow_delete"]:
-        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
     name = request.match_info["name"]
     path = dataset_root(app["root"], name)
     depth_name, _ = await in_executor(app, _load_realsense, path)

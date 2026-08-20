@@ -98,14 +98,29 @@ collection started session by session from a shell accumulates near-duplicate
 names, and a reviewer who cannot tell two of them apart cannot decide which to
 train on, so every entry is listed with its frame rate, its recorded streams,
 its instruction, its episode count and its size on the volume. Merging writes a
-new dataset and leaves the sources as they are, so combining recordings is
-never itself destructive; it is refused, with the reason stated before any work
-begins, when the sources disagree on frame rate, robot type or recorded
-streams, or when any source still holds episodes marked for removal, whose
-indices would no longer denote the episodes the reviewer marked. Every
-operation that replaces a dataset moves the original aside and swaps the result
-into place only once it is complete, so an interruption leaves the collection
-as it was rather than partly rewritten.
+new dataset and keeps the sources, so combining recordings is never itself
+destructive; a reviewer who wants the sources discarded says so, and they are
+removed only once the merged dataset stands complete, never before. Merging is
+refused, with the reason stated before any work begins, when the sources
+disagree on frame rate, robot type or recorded streams, or when any source
+still holds episodes marked for removal, whose indices would no longer denote
+the episodes the reviewer marked. Every operation that replaces a dataset moves
+the original aside and swaps the result into place only once it is complete, so
+an interruption leaves the collection as it was rather than partly rewritten.
+Rewriting a dataset takes minutes rather than moments, so the console performs
+it in the background and reports its progress while the reviewer carries on;
+and because these removals cannot be undone, each one is confirmed before it
+starts, while marking an episode, which the reviewer can reverse, is not.
+
+\paragraph{Reviewing away from the rig.} Which volume holds the collection is
+itself something the reviewer chooses while the console runs, and that volume
+need not be attached to the machine running it: given the operator's existing
+access to another host, the console mounts the remote collection directory and
+then treats it exactly as a local one. Reading a recording costs only the span
+of video it covers, so review over a link is comfortable, whereas rewriting a
+dataset moves every byte across it twice and belongs on the host that holds the
+volume. A collection can therefore be reviewed and curated from a desk, while
+the operations that reshape it stay where the recordings live.
 
 \paragraph{Binding devices to names.} A rig of this kind is assembled from
 devices that are indistinguishable to software. The gripper and wrist cameras

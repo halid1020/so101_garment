@@ -88,7 +88,7 @@ if marked:
     print(
         f"❌ {sys.argv[1]} has {len(marked)} episode(s) marked for deletion that are\n"
         f"   still on disk: {marked}\n"
-        "   Open tool/rig_web.py --allow-delete and press 'Remove for good'\n"
+        "   Open tool/rig_web.py and press 'Remove for good'\n"
         "   (or Restore them) before training.",
         file=sys.stderr,
     )

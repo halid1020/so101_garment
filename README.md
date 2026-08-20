@@ -170,8 +170,7 @@ workspace.
 Review what was collected and manage the collection drive from one page:
 
 ```bash
-python tool/rig_web.py --dir /mnt/seagate/so101                  # read-only
-python tool/rig_web.py --dir /mnt/seagate/so101 --allow-delete   # + deletion
+python tool/rig_web.py --dir /mnt/seagate/so101   # or pick the drive in the page
 ```
 
 Open <http://127.0.0.1:8000/>. **Datasets**: play any recording (every
@@ -180,9 +179,10 @@ and compact them away, and create, rename, merge or delete whole datasets.
 **Collect**: the preflight table, a live camera view, and one collection
 session — start it against a new or resumed dataset, record episodes with
 the browser button, and stop it. Arm enable/park/home stay on the headset
-and the session keyboard. **Sensors**: bind cameras and arm buses to their
+and the session keyboard. **Signals**: bind cameras and arm buses to their
 stream names (the same job as `tool/test_sensor_rates.py --assign`, in the
-browser). Loopback only — tunnel in with `ssh -L
+browser). The collection directory is chosen in the page and may be one on
+another machine, mounted over SSH. Loopback only — tunnel in with `ssh -L
 8000:127.0.0.1:8000 <rig>` from another machine. See
 [`documents/rig_web.md`](documents/rig_web.md).
 

@@ -103,8 +103,13 @@ $('#c-episode').onclick = async () => {
 };
 
 $('#c-stop').onclick = async () => {
-  if (!confirm('End the collection session?\n\nAn episode in progress is saved '
-      + 'and the arms are parked before it exits.')) return;
+  const ok = await confirmDialog({
+    title: 'End the collection session?',
+    body: 'An episode in progress is saved and the arms are parked before it '
+      + 'exits.',
+    confirmLabel: 'Stop session',
+  });
+  if (!ok) return;
   try {
     await j('/api/session/stop',
             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});

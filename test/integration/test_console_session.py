@@ -12,6 +12,7 @@ Run:  PYTHONPATH=.:src python -m unittest test.integration.test_console_session
 
 import argparse
 import json
+import os
 import socket
 import sys
 import tempfile
@@ -90,13 +91,16 @@ class TestConsoleSession(AioHTTPTestCase):
         script.write_text(
             FAKE_RECORDER.format(repo=str(repo), src=str(repo / "src"), port=self.port)
         )
+        # The console's own state stays inside the temporary directory.
+        self._outputs = os.environ.get("SO101_OUTPUT_DIR")
+        os.environ["SO101_OUTPUT_DIR"] = str(self.root / "outputs")
         app = build_app(
             argparse.Namespace(
                 dir=str(self.root),
-                allow_delete=True,
                 fps=None,
                 prerender=False,
                 monitor_port=self.port,
+                mount_dir=str(self.root / "mounts"),
             )
         )
         app["session"].teleop = script
@@ -113,6 +117,10 @@ class TestConsoleSession(AioHTTPTestCase):
             proc.kill()
             proc.wait(timeout=5)
         await super().tearDownAsync()
+        if self._outputs is None:
+            os.environ.pop("SO101_OUTPUT_DIR", None)
+        else:
+            os.environ["SO101_OUTPUT_DIR"] = self._outputs
         self.tmp.cleanup()
 
     async def _wait_for_monitor(self, tries: int = 200) -> "dict":
@@ -199,6 +207,22 @@ class TestConsoleSession(AioHTTPTestCase):
         resp = await self.client.get("/api/sensors?scan=1")
         self.assertEqual(resp.status, 409)
         self.assertFalse((self.root / "sensor_map.yaml").exists())
+
+    async def test_the_collection_directory_cannot_change_under_a_session(self):
+        start = await self.client.post(
+            "/api/session/start", json={"name": "towel-fold", "task": "fold it"}
+        )
+        self.assertEqual(start.status, 200, await start.text())
+        await self._wait_for_monitor()
+        # The running recorder has a dataset open under this directory; moving
+        # the console elsewhere would leave it recording somewhere invisible.
+        elsewhere = self.root / "second"
+        elsewhere.mkdir()
+        resp = await self.client.post("/api/roots/use", json={"path": str(elsewhere)})
+        self.assertEqual(resp.status, 409)
+        self.assertIn("session is running", await resp.text())
+        body = await (await self.client.get("/api/roots")).json()
+        self.assertEqual(body["root"], str(self.root))
 
     async def test_a_dataset_that_exists_but_holds_nothing_is_refused(self):
         (self.root / "stillborn" / "meta").mkdir(parents=True)
