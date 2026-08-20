@@ -9,6 +9,8 @@ body { margin:0; font:14px/1.4 system-ui,sans-serif; display:flex;
 #topbar { display:flex; gap:10px; align-items:center; padding:6px 12px;
           border-bottom:1px solid var(--bd); }
 #topbar .brand { font-weight:600; letter-spacing:.02em; }
+#rootdir { font-size:12px; opacity:.75; max-width:46ch; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; }
 .tab.sel { border-color:var(--sel); color:var(--sel); }
 main { flex:1; display:flex; overflow:hidden; }
 .pane { flex:1; display:flex; overflow:hidden; }
@@ -81,6 +83,15 @@ video { width:100%; max-height:calc(100vh - 130px); background:#000; border-radi
 dialog { border:1px solid var(--bd); border-radius:10px; padding:16px 18px;
          max-width:min(560px, 92vw); color:inherit; background:Canvas; }
 dialog::backdrop { background:#0006; }
+dialog h4.sub { margin:16px 0 4px; font-size:12px; text-transform:uppercase;
+                letter-spacing:.05em; opacity:.6; }
+#root-list { max-height:30vh; }
+#root-list li.collection { font-weight:600; }
+#root-list li.collection::after { content:" · datasets"; font-size:11px;
+                                 opacity:.6; font-weight:400; }
+dialog .bar label { display:flex; gap:6px; align-items:center; margin:0; }
+dialog .bar input[type=number] { width:6em; }
+#confirm-body { white-space:pre-line; max-width:52ch; }
 dialog h3 { margin:0 0 6px; font-size:14px; }
 dialog p { margin:0 0 10px; }
 dialog label { display:block; margin:8px 0; }
@@ -126,7 +137,7 @@ tr.lvl-FAIL td:first-child { color:#dc2626; }
 tr.lvl-WARN td:first-child { color:#f59e0b; }
 tr.lvl-OK td:first-child { color:#16a34a; }
 
-/* ── Sensors pane ───────────────────────────────────────────────────────── */
+/* ── Signals pane ───────────────────────────────────────────────────────── */
 #assignments { width:400px; overflow-y:auto; }
 #s-work { flex:1; overflow:auto; }
 #s-work .bar { position:sticky; top:0; background:Canvas; z-index:1; }
@@ -142,3 +153,22 @@ button.link { border:0; background:none; padding:0 4px; opacity:.5;
               text-decoration:underline; }
 button.link:hover { opacity:1; }
 .ok { color:#16a34a; } .bad { color:#dc2626; }
+
+/* ── Job dock ───────────────────────────────────────────────────────────── */
+/* Fixed to the page, not to a pane: a merge outlives the tab it was started
+   from, so it has to stay visible from every one of them. */
+#jobdock { position:fixed; right:12px; bottom:12px; width:340px;
+           max-width:calc(100vw - 24px); background:Canvas; z-index:5;
+           border:1px solid var(--bd); border-radius:10px;
+           box-shadow:0 4px 16px #0004; overflow:hidden; }
+#jobdock[hidden] { display:none; }
+#jobdock-head { display:flex; gap:8px; align-items:center; width:100%;
+                border:0; border-radius:0; background:#8881; text-align:left;
+                padding:8px 10px; font-size:12px; }
+#jobdock-list { list-style:none; margin:0; padding:0; max-height:40vh;
+                overflow:auto; }
+#jobdock-list li { display:block; padding:8px 10px; cursor:default;
+                   font-size:12px; }
+#jobdock-list li:hover { background:none; }
+.jobmsg { display:block; opacity:.6; }
+.job-running { color:var(--sel); } .job-failed { color:#dc2626; }

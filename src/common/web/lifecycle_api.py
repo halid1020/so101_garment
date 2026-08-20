@@ -1,12 +1,12 @@
 """Routes for the whole-dataset operations: create, rename, delete, merge.
 
 The rules all live in ``common.web.lifecycle``; this layer only reads the
-request, decides what needs the operator's ``--allow-delete`` consent, and runs
-the slow parts off the event loop.
+request and runs the slow parts off the event loop.
 
-A merge is the one operation that outlives a request -- it re-encodes every
-episode of every source -- so it runs as a JOB: the POST returns an id, the
-pane polls it, and only one merge runs at a time.
+Two operations outlive their request: a merge, which re-encodes every episode
+of every source, and freeing the bytes of a deleted dataset. Both run as JOBS on
+one worker thread -- the POST returns an id and the browser's job dock watches
+them -- so the page stays usable while they run and nothing starts twice.
 """
 
 from __future__ import annotations
@@ -40,11 +40,6 @@ def _body_name(body: "dict[str, Any]", key: str) -> str:
     if not isinstance(value, str):
         raise web.HTTPBadRequest(text=f"missing {key}")
     return value.strip()
-
-
-def _require_writable(app: web.Application) -> None:
-    if not app["allow_delete"]:
-        raise web.HTTPForbidden(text="deletion disabled; restart with --allow-delete")
 
 
 async def handle_check_name(request: web.Request) -> web.Response:
@@ -89,10 +84,57 @@ async def handle_rename(request: web.Request) -> web.Response:
     return web.json_response({"name": path.name})
 
 
+# ── Jobs ─────────────────────────────────────────────────────────────────────
+
+# How much history the dock is given. A finished job is worth seeing for a
+# while (it says what the merge was called, or why it failed) but not forever.
+MAX_JOBS = 20
+JOB_TTL_S = 3600.0
+
+
+def prune_jobs(jobs: "dict[str, dict[str, Any]]", now: float) -> None:
+    """Forget finished jobs that are old or surplus. Running jobs always stay."""
+    finished = sorted(
+        (j for j in jobs.values() if j["state"] != "running"),
+        key=lambda j: j.get("finished") or j["started"],
+    )
+    for job in finished:
+        stale = now - (job.get("finished") or job["started"]) > JOB_TTL_S
+        if stale or len(jobs) > MAX_JOBS:
+            jobs.pop(job["id"], None)
+
+
+def _new_job(app: web.Application, kind: str, name: str, **extra: Any) -> dict:
+    job = {
+        "id": uuid.uuid4().hex[:8],
+        "kind": kind,
+        "state": "running",
+        "message": "starting",
+        "name": name,
+        "started": time.time(),
+        **extra,
+    }
+    app["jobs"][job["id"]] = job
+    prune_jobs(app["jobs"], job["started"])
+    return job
+
+
+def _finish(job: dict, state: str, message: str) -> None:
+    job["state"] = state
+    job["message"] = message
+    job["finished"] = time.time()
+
+
+async def handle_jobs(request: web.Request) -> web.Response:
+    """Every job the console remembers, newest first -- what the dock shows."""
+    jobs = request.app["jobs"]
+    prune_jobs(jobs, time.time())
+    return web.json_response(sorted(jobs.values(), key=lambda j: -j["started"]))
+
+
 async def handle_remove(request: web.Request) -> web.Response:
     """Delete a whole dataset: rename it into the trash now, free the bytes after."""
     app = request.app
-    _require_writable(app)
     name = request.match_info["name"]
     if is_working_dir(name):
         raise web.HTTPNotFound(text=f"no dataset {name!r}")
@@ -102,10 +144,16 @@ async def handle_remove(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text=str(exc))
     except (ReadOnlyDatasetError, OSError) as exc:
         raise web.HTTPConflict(text=str(exc))
-    # The dataset is already unreachable under its name; removing the files is
-    # slow and nothing waits for it.
-    asyncio.get_running_loop().run_in_executor(app["job_executor"], purge, trash)
-    return web.json_response({"deleted": name})
+    # The dataset is already unreachable under its name, so the operator is not
+    # kept waiting; removing a hundred gigabytes of video is a job.
+    job = _new_job(app, "delete", name, message=f"freeing {name}")
+
+    def run() -> None:
+        purge(trash)  # never raises: the dataset is already gone from the list
+        _finish(job, "done", f"deleted {name}")
+
+    asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
+    return web.json_response({"deleted": name, "job": job["id"]})
 
 
 def _merge_sources(root: Path, names: "list[str]") -> "list[dict[str, Any]]":
@@ -147,41 +195,49 @@ async def handle_merge(request: web.Request) -> web.Response:
     body = await request.json()
     names = [str(n) for n in body.get("names") or []]
     out_name = _body_name(body, "name")
+    drop_sources = bool(body.get("delete_sources"))
 
     running = [j for j in app["jobs"].values() if j["state"] == "running"]
     if running:
-        raise web.HTTPConflict(text=f"a merge is already running ({running[0]['id']})")
+        raise web.HTTPConflict(
+            text=f"{running[0]['kind']} already running ({running[0]['id']})"
+        )
 
     reasons = await in_executor(app, _merge_reasons, app["root"], names, out_name)
     if reasons:
         raise web.HTTPBadRequest(text="; ".join(reasons))
 
-    job = {
-        "id": uuid.uuid4().hex[:8],
-        "kind": "merge",
-        "state": "running",
-        "message": "starting",
-        "name": out_name,
-        "sources": names,
-        "started": time.time(),
-    }
-    app["jobs"][job["id"]] = job
+    job = _new_job(app, "merge", out_name, sources=names, delete_sources=drop_sources)
+    root = Path(app["root"])
 
     def run() -> None:
         try:
             merge_datasets(
-                Path(app["root"]),
+                root,
                 names,
                 out_name,
                 progress=lambda m: job.__setitem__("message", m),
             )
-            job["state"] = "done"
-            job["message"] = f"merged into {out_name}"
         except BaseException as exc:  # noqa: B036 - reported, not swallowed
-            job["state"] = "failed"
-            job["message"] = str(exc) or exc.__class__.__name__
-        finally:
-            job["finished"] = time.time()
+            _finish(job, "failed", str(exc) or exc.__class__.__name__)
+            return
+        # Only now, with the merged dataset in place, may the sources go: the
+        # copy the operator asked for exists, so this can never be the step
+        # that loses the recordings.
+        if drop_sources:
+            for name in names:
+                job["message"] = f"deleting source {name}"
+                try:
+                    purge(delete_dataset(root, name))
+                except BaseException as exc:  # noqa: B036 - reported, not swallowed
+                    _finish(
+                        job,
+                        "failed",
+                        f"merged into {out_name}, but {name} could not be "
+                        f"removed: {exc or exc.__class__.__name__}",
+                    )
+                    return
+        _finish(job, "done", f"merged into {out_name}")
 
     asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
     return web.json_response(job)
@@ -202,6 +258,7 @@ def add_lifecycle_routes(app: web.Application) -> None:
             web.post("/api/datasets/merge", handle_merge),
             web.post("/api/datasets/merge-check", handle_merge_check),
             web.get("/api/datasets/jobs/{id}", handle_job),
+            web.get("/api/jobs", handle_jobs),
             web.post("/api/datasets/{name}/rename", handle_rename),
             web.post("/api/datasets/{name}/remove", handle_remove),
         ]

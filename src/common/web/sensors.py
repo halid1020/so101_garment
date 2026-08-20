@@ -1,4 +1,4 @@
-"""Binding devices to stream names from the console (the Sensors tab).
+"""Binding devices to stream names from the console (the Signals tab).
 
 A rig of this kind is assembled from identical-looking USB devices: six
 gripper and wrist cameras that differ only by which socket they are in, and

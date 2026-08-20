@@ -93,8 +93,14 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   loopback: `datasets_api.py` (browsing, playback and episode curation —
   this is the former `tool/dataset_web.py`, moved unchanged),
   `lifecycle.py` (whole-dataset create-name checks, rename, delete and
-  merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes,
-  with merge as a polled job), `session.py` (supervises ONE collection
+  merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes;
+  merge and the freeing of a deleted dataset run as JOBS the page's dock
+  polls, and a merge may delete its sources once it has succeeded),
+  `roots.py` (which collection directory the console works on: name/target
+  rules, the sshfs command, `/proc/mounts` parsing, the remembered list —
+  pure, unit-tested) + `roots_api.py` (its routes, the `root_required`
+  middleware, and the refusal to switch under a running session or job),
+  `session.py` (supervises ONE collection
   session as a subprocess — the same stream resolvers as the CLI, the
   teleop command, the quit→SIGINT→SIGTERM stop ladder, and the console's
   own idle camera preview) + `session_api.py` (Collect routes; live frames
@@ -106,7 +112,10 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   the machine's real `sensor_map.yaml`), `util.py`, and the front-end
   under `static/`
   (`index.html` + one script per tab, no build step). Runbook:
-  `documents/rig_web.md`. Destructive actions stay behind `--allow-delete`.
+  `documents/rig_web.md`. Deletion is always available; every irreversible
+  one asks in the browser first, and marking an episode (reversible) does
+  not. The third tab is called **Signals** in the UI while the module,
+  routes and `sensor_map.yaml` keep the older `sensor` name.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,

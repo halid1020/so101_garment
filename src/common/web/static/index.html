@@ -9,9 +9,9 @@
     <span class="brand">SO-101 rig console</span>
     <button class="tab sel" data-pane="datasets">Datasets</button>
     <button class="tab" data-pane="collect">Collect</button>
-    <button class="tab" data-pane="sensors">Sensors</button>
+    <button class="tab" data-pane="signals">Signals</button>
     <span class="grow"></span>
-    <span class="muted" id="rootdir"></span>
+    <button id="rootdir" title="the collection directory — click to change it">…</button>
   </header>
   <main>
     <section class="pane" id="pane-datasets">
@@ -106,7 +106,7 @@
         <div class="tiles" id="live-tiles"></div>
       </div>
     </section>
-    <section class="pane" id="pane-sensors" hidden>
+    <section class="pane" id="pane-signals" hidden>
       <div class="col" id="assignments">
         <h2>Assignments</h2>
         <div class="bar">
@@ -152,6 +152,54 @@
       </div>
     </section>
   </main>
+  <dialog id="dlg-root">
+    <h3>Collection directory</h3>
+    <p class="muted">Everything the Datasets and Collect tabs show lives under
+    this directory. It cannot be changed while a session or a job is running.</p>
+    <div class="bar wrap" id="root-recent"></div>
+    <label>Directory <input id="root-path" autocomplete="off"
+      spellcheck="false"></label>
+    <div class="bar wrap">
+      <button id="root-up">Up</button>
+      <span class="grow muted" id="root-here"></span>
+      <button id="root-use">Open this directory</button>
+    </div>
+    <ul id="root-list" class="picklist"></ul>
+
+    <h4 class="sub">On another machine</h4>
+    <p class="muted">Mounted with sshfs over your own SSH access. Key or agent
+    only — no password is typed here, so the key must already be accepted
+    (<code>ssh-copy-id user@host</code>, and one <code>ssh user@host</code> to
+    learn its host key). Browsing and playback are comfortable over the network;
+    merging or compacting a remote dataset moves every byte across it twice, so
+    that work belongs on the machine holding the drive.</p>
+    <label>Remote directory <input id="root-target" autocomplete="off"
+      spellcheck="false" placeholder="user@host:/mnt/seagate/so101"></label>
+    <div class="bar wrap">
+      <label>Port <input id="root-port" type="number" min="1" step="1"
+        placeholder="22"></label>
+      <label>Key file <input id="root-key" autocomplete="off" spellcheck="false"
+        placeholder="~/.ssh/id_ed25519"></label>
+    </div>
+    <div id="root-mounts"></div>
+    <p class="err" id="root-err"></p>
+    <menu class="bar">
+      <button data-close="dlg-root">Close</button>
+      <button id="root-mount">Mount and open</button>
+    </menu>
+  </dialog>
+
+  <dialog id="dlg-confirm">
+    <h3 id="confirm-title">Are you sure?</h3>
+    <p id="confirm-body"></p>
+    <form method="dialog">
+      <menu class="bar">
+        <button value="no">Cancel</button>
+        <button value="yes" id="confirm-yes" class="danger">Delete</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="dlg-new">
     <h3>New dataset</h3>
     <p class="muted">A dataset comes into being when the first episode is
@@ -183,21 +231,34 @@
   <dialog id="dlg-merge">
     <h3>Merge datasets</h3>
     <p class="muted">Writes a NEW dataset from the ones you tick, in the order
-    they are listed. The sources are left exactly as they are.</p>
+    they are listed. The sources are kept unless you say otherwise below.</p>
     <ul id="merge-list" class="picklist"></ul>
     <label>New dataset <input id="merge-name" autocomplete="off"
       spellcheck="false"></label>
+    <label class="row"><input type="checkbox" id="merge-drop">
+      delete the sources once the merge has succeeded</label>
     <p class="err" id="merge-err"></p>
-    <p class="muted" id="merge-progress" hidden></p>
+    <p class="muted">Merging re-encodes every episode, so it runs in the
+    background — watch it in the corner of the page.</p>
     <menu class="bar">
       <button data-close="dlg-merge">Close</button>
       <button id="merge-go">Merge</button>
     </menu>
   </dialog>
 
+  <aside id="jobdock" hidden>
+    <button id="jobdock-head">
+      <span class="grow" id="jobdock-line"></span>
+      <span id="jobdock-caret">▴</span>
+    </button>
+    <ul id="jobdock-list" hidden></ul>
+  </aside>
+
   <script src="/static/app.js"></script>
   <script src="/static/datasets.js"></script>
   <script src="/static/lifecycle.js"></script>
+  <script src="/static/jobs.js"></script>
+  <script src="/static/roots.js"></script>
   <script src="/static/collect.js"></script>
-  <script src="/static/sensors.js"></script>
+  <script src="/static/signals.js"></script>
 </body></html>

@@ -7,7 +7,7 @@ did the reviewing half only.
 ```bash
 source setup.sh
 venv/bin/python tool/rig_web.py --dir /mnt/seagate/so101
-venv/bin/python tool/rig_web.py --dir /mnt/seagate/so101 --allow-delete
+venv/bin/python tool/rig_web.py                 # opens on the last drive used
 ```
 
 Then open <http://127.0.0.1:8000/>. The console binds the loopback
@@ -16,13 +16,47 @@ through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <rig>`), exactly as
 `documents/remote_policy_inference.md` describes for the policy server.
 
 The page has three tabs: **Datasets** (review and manage), **Collect**
-(readiness, live view, and one collection session), and **Sensors**
+(readiness, live view, and one collection session), and **Signals**
 (binding devices to stream names).
+
+## The collection directory
+
+The directory in the header is where every dataset the console shows lives,
+and clicking it changes that. It can be given with `--dir`, remembered from
+the last time (so the flag is optional), or picked in the page — the
+console opens on the picker when it has neither.
+
+The dialog browses this machine's directories, marks the ones that hold
+datasets, and keeps a short list of the last few used. Changing the
+directory is refused while a collection session or a job is running: both
+are working inside the current one.
+
+**A drive on another machine** is reached by mounting it. Give
+`user@host:/path` and the console mounts it with `sshfs`, then works on the
+mount like any local directory. Authentication is your key or agent only —
+no password is ever typed into the browser — so the remote machine must
+already accept your key, and its host key must already be known:
+
+```bash
+sudo apt install sshfs                 # once, on the machine running the console
+ssh-copy-id halid@thanos               # once, if the key is not there yet
+ssh halid@thanos                       # once, to accept the host key
+```
+
+Anything else fails with what to do about it rather than hanging on a
+prompt nobody can answer. Mounts the console made are released when it
+exits, and can be released from the dialog.
+
+Browsing and playback over the network are comfortable: playing a recording
+reads a byte range out of a video file. Merging or compacting a remote
+dataset is not — it moves every byte across the link twice — so that work
+belongs on the machine holding the drive: run the console there and reach
+it through the SSH tunnel above.
 
 ## Reviewing recordings
 
 Unchanged from the tool this grew out of. The left column lists the
-datasets under `--dir`, the middle one the recordings inside the selected
+datasets in the collection directory, the middle one the recordings inside the selected
 dataset, and the right pane plays that recording: every camera side by
 side on one clock, with the joint traces beside them.
 
@@ -33,7 +67,7 @@ still rendered on demand for the two cases direct playback cannot cover: a
 dataset that records depth (stored as images, not a playable stream), and
 a browser without AV1.
 
-Episode curation is in two steps and needs `--allow-delete`:
+Episode curation is in two steps:
 
 1. **Delete** marks episodes. They vanish from the list at once and the
    decision is written into the dataset, reversibly (**Restore** undoes
@@ -42,7 +76,12 @@ Episode curation is in two steps and needs `--allow-delete`:
    marks are pending, and the pane says so.
 2. **Remove for good** compacts: one rewrite of the whole dataset for the
    whole batch, renumbering the survivors and re-indexing the sidecar
-   files with them.
+   files with them. This one asks first, because it cannot be undone.
+
+Marking is deliberately not confirmed — it is the frequent action while
+reviewing, and *Restore* takes it back. Everything that cannot be taken
+back (compaction, deleting a dataset, deleting the sources of a merge) puts
+up a dialog naming what will go and how much of it.
 
 ## Collecting
 
@@ -108,14 +147,18 @@ name — `meta/info.json` holds no repo id — so a rename changes nothing
 about the recordings, and being a rename within one directory it cannot
 half-happen.
 
-**Delete** moves the dataset to a sibling `<name>.trash-<stamp>` and frees
-the bytes afterwards on a worker thread, so the click returns at once.
-This needs `--allow-delete` and cannot be undone. A dataset with no saved
-episodes at all — a session that quit before recording — is listed too,
-flagged as such, precisely so it can be deleted here rather than by hand.
+**Delete** asks first, then moves the dataset to a sibling
+`<name>.trash-<stamp>` — atomic, so the dataset is gone from the list at
+once — and frees the bytes afterwards as a job. It cannot be undone. A
+dataset with no saved episodes at all — a session that quit before
+recording — is listed too, flagged as such, precisely so it can be deleted
+here rather than by hand.
 
 **Merge…** writes a NEW dataset from two or more sources, in the order
-listed, and leaves the sources exactly as they are. It is refused, with
+listed. The sources are kept unless *delete the sources* is ticked, in
+which case they are removed once the merge has succeeded and not before —
+if anything goes wrong the merged dataset stays and every source is still
+there. It is refused, with
 the reason shown before anything starts, when the sources disagree on
 frame rate, robot type or the set of recorded streams; when the output
 name is taken or is one of the sources; when a source still has episodes
@@ -123,8 +166,11 @@ marked for deletion (their indices would be meaningless afterwards —
 compact or restore first); or when the drive has less free space than the
 sources add up to.
 
-A merge re-encodes every episode of every source, so it runs as a job: the
-dialog polls it and shows where it is, one merge at a time. It builds into
+A merge re-encodes every episode of every source, so it runs as a job and
+the dialog closes: the panel in the bottom corner of the page shows what is
+running and how far it has got, from whichever tab you are on, and reloads
+the list when it finishes. Freeing a deleted dataset's bytes appears there
+too. One job runs at a time. A merge builds into
 a sibling `<name>.tmp-<stamp>` and swaps it in at the end, so an
 interrupted merge leaves the collection directory as it was. LeRobot's
 aggregation rewrites `meta/` from scratch, so the console carries across
@@ -132,14 +178,15 @@ what it drops — `meta/action_space.json`, `meta/realsense.json`, and the
 per-episode files under `extra/` (sidecar, drift and identity), renumbered
 onto the merged episode indices.
 
-## Assigning sensors
+## Assigning signals
 
 The rig is built from identical-looking USB devices: gripper and wrist
 cameras that differ only by which socket they are in, and four SO-101 buses
-that enumerate in whatever order they were plugged. The Sensors tab is
+that enumerate in whatever order they were plugged. The Signals tab is
 where each one is identified physically and given its name. It does the
 same job as `tool/test_sensor_rates.py --assign`, writes the same
-per-machine file through the same loader and saver, and is refused while a
+per-machine file through the same loader and saver (which is why the file
+and the routes still say *sensor*), and is refused while a
 collection session is running — that session owns the cameras and the arm
 buses.
 
@@ -174,12 +221,12 @@ have.
 
 | Flag | Meaning |
 |---|---|
-| `--dir` | Collection directory holding the datasets (required) |
+| `--dir` | Collection directory holding the datasets (optional: the last one is remembered, and it can be changed in the page) |
 | `--port` | Loopback port (default 8000) |
-| `--allow-delete` | Enable episode and dataset deletion (destructive) |
 | `--fps` | Playback frame-rate override (default: the dataset's) |
 | `--prerender` | Build composited episode videos in the background while browsing |
 | `--monitor-port` | Loopback port a collection session serves its live view on (default 8766) |
+| `--mount-dir` | Where remote directories are mounted (default `$SO101_OUTPUT_DIR/rig_web_mounts`) |
 
 Only `--prerender` is worth explaining: it warms the cache for the
 composited view, which is the one worth watching only for a depth dataset

@@ -336,7 +336,7 @@ class PreviewCameras:
     def start(self, specs: "list[tuple[str, str]] | None" = None) -> "list[str]":
         """Open the given ``(name, device)`` cameras, or the assigned ones.
 
-        The Sensors tab passes one unassigned device to identify it; the
+        The Signals tab passes one unassigned device to identify it; the
         Collect tab passes nothing and gets the assigned set. Either way these
         are the console's own captures, and they are released before a session
         starts.
@@ -360,7 +360,7 @@ class PreviewCameras:
             specs = sorted((sensor_map.get("cameras") or {}).items())
         if not specs:
             raise RuntimeError(
-                "no cameras are assigned yet — assign them on the Sensors tab "
+                "no cameras are assigned yet — assign them on the Signals tab "
                 "(or with the sensor-assignment tool) first"
             )
         self.data_manager = DualDataManager()

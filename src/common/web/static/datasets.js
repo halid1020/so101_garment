@@ -1,5 +1,5 @@
 const $ = (s) => document.querySelector(s);
-let curDataset = null, curEpisode = null, allowDelete = false;
+let curDataset = null, curEpisode = null;
 let datasets = [];
 
 async function j(url, opts) {
@@ -102,10 +102,10 @@ async function loadEpisodes() {
     li.innerHTML =
       `<input type="checkbox" class="pick" onclick="event.stopPropagation()">
        <span class="grow">episode ${e.index}</span>
-       <span class="muted">${len}f</span>` +
-      (allowDelete ? `<span class="del" title="delete">🗑</span>` : '');
+       <span class="muted">${len}f</span>
+       <span class="del" title="delete">🗑</span>`;
     li.onclick = () => selectEpisode(e.index, li);
-    if (allowDelete) li.querySelector('.del').onclick = (ev) => {
+    li.querySelector('.del').onclick = (ev) => {
       ev.stopPropagation(); doDelete([e.index]);
     };
     li.querySelector('.pick').onchange = updateSelCount;
@@ -119,7 +119,7 @@ function picked() {
     .filter(c => c.checked).map(c => +c.closest('li').dataset.idx);
 }
 function updateSelCount() {
-  $('#del-sel').disabled = !allowDelete || picked().length === 0;
+  $('#del-sel').disabled = picked().length === 0;
 }
 
 // Playing an episode does not need a rendered video: the recorded camera files
@@ -519,7 +519,6 @@ function startSync(info) {
 // Marking is cheap, so the rows go immediately and the request follows. No
 // confirm dialog: a mark is reversible with Restore until it is compacted.
 async function doDelete(indices) {
-  if (!allowDelete) return;
   const dead = new Set(indices);
   for (const li of document.querySelectorAll('#ep-list li')) {
     if (dead.has(+li.dataset.idx)) li.remove();
@@ -545,9 +544,13 @@ async function doDelete(indices) {
 // Compaction is the slow half: it rewrites and renumbers the dataset, so it
 // blocks the pane and every visible index changes afterwards.
 async function doCompact() {
-  if (!confirm(`Permanently remove the marked episode(s) from ${curDataset}?\n\n`
-      + `This rewrites the dataset, renumbers the survivors and cannot be `
-      + `undone. It may take a while.`)) return;
+  const ok = await confirmDialog({
+    title: `Remove the marked episodes from ${curDataset}?`,
+    body: 'This rewrites the dataset, renumbers the survivors and cannot be '
+      + 'undone. It may take a while.',
+    confirmLabel: 'Remove for good',
+  });
+  if (!ok) return;
   const bar = $('#pending-bar');
   bar.classList.add('busy');
   $('#pending-text').textContent = 'Removing… rewriting the dataset, please wait.';
@@ -578,8 +581,5 @@ $('#del-sel').onclick = () => doDelete(picked());
 $('#compact').onclick = doCompact;
 $('#restore').onclick = doRestore;
 
-// Probe whether deletion is enabled (a disabled server 403s the delete route).
-fetch('/api/datasets/__probe__/delete', {method: 'POST',
-  headers: {'Content-Type': 'application/json'}, body: '{}'})
-  .then(r => { allowDelete = (r.status !== 403); loadDatasets(); })
-  .catch(() => loadDatasets());
+// The first load waits for roots.js: without a collection directory there is
+// nothing to list, and the page opens on the directory dialog instead.
