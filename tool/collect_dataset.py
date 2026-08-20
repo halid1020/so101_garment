@@ -141,49 +141,47 @@ def _parse_args() -> argparse.Namespace:
 
 def _resolve_new(args, known_cameras, default_enabled):
     """(enabled_uvc, depth, record_ee, fps) for a brand-new dataset."""
-    if args.stream:
-        unknown = sorted(set(args.stream) - known_cameras)
-        if unknown:
-            raise SystemExit(
-                f"❌ unknown --stream {unknown} (known: {sorted(known_cameras)})"
-            )
-        enabled_uvc = set(args.stream)
-    else:
-        enabled_uvc = set(default_enabled)
-    record_ee = args.input == "quest" and not args.no_ee
-    return enabled_uvc, args.central_depth, record_ee, args.dataset_fps
+    from common.recording.collection_settings import (
+        SelectionError,
+        resolve_new_selection,
+    )
+
+    try:
+        sel = resolve_new_selection(
+            known_cameras,
+            default_enabled,
+            args.stream,
+            args.central_depth,
+            args.input == "quest" and not args.no_ee,
+            args.dataset_fps,
+        )
+    except SelectionError as exc:
+        raise SystemExit(f"❌ {exc}")
+    return sel["cameras"], sel["depth"], sel["ee"], sel["fps"]
 
 
 def _resolve_resume(args, settings, rs_rgb_name):
     """(enabled_uvc, depth, record_ee, fps) recovered from an existing dataset."""
-    from common.recording.collection_settings import resume_uvc_cameras
+    from common.recording.collection_settings import (
+        SelectionError,
+        resolve_resume_selection,
+    )
 
-    # Only a depth dataset splits out the RealSense RGB name; a plain UVC camera
-    # sharing that name (e.g. a 'central' UVC camera) must survive the resume.
-    enabled_uvc = resume_uvc_cameras(settings, rs_rgb_name)
-    depth, record_ee, fps = settings["depth"], settings["ee"], settings["fps"]
-
-    # A resumed dataset follows its own settings; warn if the operator asked
-    # for something different so the ignored flags are not a silent surprise.
-    if args.stream and set(args.stream) != enabled_uvc:
-        print(
-            f"⚠️  --stream ignored on resume; following recorded {sorted(enabled_uvc)}"
+    try:
+        sel, warnings = resolve_resume_selection(
+            settings,
+            rs_rgb_name,
+            args.stream,
+            args.central_depth,
+            args.no_ee,
+            args.dataset_fps,
+            leader=args.input == "leader",
         )
-    if args.central_depth and not depth:
-        print("⚠️  --central-depth ignored on resume; dataset has no depth stream")
-    if args.no_ee and record_ee:
-        print("⚠️  --no-ee ignored on resume; dataset already has EE features")
-    if args.dataset_fps and args.dataset_fps != fps:
-        print(f"⚠️  --dataset-fps ignored on resume; dataset fps is {fps}")
-
-    # Leader mode cannot produce EE targets, so an EE dataset cannot be resumed
-    # with the leader — the frames would not match its features.
-    if record_ee and args.input == "leader":
-        raise SystemExit(
-            "❌ this dataset has EE features (collected in quest mode); resume it "
-            "with --input quest, not --input leader"
-        )
-    return enabled_uvc, depth, record_ee, fps
+    except SelectionError as exc:
+        raise SystemExit(f"❌ {exc}")
+    for warning in warnings:
+        print(f"⚠️  {warning}")
+    return sel["cameras"], sel["depth"], sel["ee"], sel["fps"]
 
 
 def main() -> None:

@@ -95,3 +95,33 @@ dialog pre { font-size:12px; white-space:pre-wrap; background:#8881;
             border-radius:6px; }
 .picklist li { cursor:default; }
 .picklist label { display:flex; gap:8px; align-items:center; width:100%; }
+
+/* ── Collect pane ───────────────────────────────────────────────────────── */
+#session { width:360px; overflow-y:auto; }
+#live { flex:1; padding:0 12px 12px; overflow:auto; display:flex;
+        flex-direction:column; }
+#live .bar { border:0; padding:8px 0; }
+#live-tiles img { width:100%; border-radius:8px; background:#000; display:block; }
+.pad { padding:10px 12px; }
+.pad label { display:block; margin:8px 0; }
+.pad label.row { display:flex; gap:8px; align-items:center; }
+.pad input:not([type=checkbox]), .pad select { font:inherit; padding:3px 8px;
+  border:1px solid var(--bd); border-radius:6px; background:transparent;
+  color:inherit; }
+.pad label:not(.row) input { width:100%; margin-top:3px; }
+fieldset { border:1px solid var(--bd); border-radius:8px; margin:10px 0;
+           padding:4px 10px 8px; }
+legend { font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+         opacity:.6; }
+#c-plan { white-space:pre-line; }
+#session-log { font-size:11px; max-height:26vh; overflow:auto; margin:0;
+               padding:8px 12px; border-top:1px solid var(--bd); opacity:.75;
+               white-space:pre-wrap; }
+#preflight summary { font-size:12px; opacity:.6; cursor:pointer;
+                     padding:8px 12px; border-top:1px solid var(--bd); }
+table.checks { border-collapse:collapse; font-size:12px; width:100%; }
+table.checks td { padding:2px 6px; vertical-align:top;
+                  border-bottom:1px solid var(--bd); }
+tr.lvl-FAIL td:first-child { color:#dc2626; }
+tr.lvl-WARN td:first-child { color:#f59e0b; }
+tr.lvl-OK td:first-child { color:#16a34a; }

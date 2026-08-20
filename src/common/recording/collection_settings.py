@@ -132,3 +132,92 @@ def selection_to_teleop_flags(
     if fps is not None:
         flags += ["--dataset-fps", str(int(fps))]
     return flags
+
+
+class SelectionError(ValueError):
+    """A stream selection that cannot be recorded, in the operator's terms.
+
+    Raised rather than exited so both front-ends can report it their own way:
+    the command line turns it into a message and a non-zero exit, the console
+    into a refusal the browser shows beside the form.
+    """
+
+
+def resolve_new_selection(
+    known_cameras: "set[str]",
+    default_enabled: "set[str]",
+    streams: "list[str] | None",
+    depth: bool,
+    record_ee: bool,
+    fps: "int | None",
+) -> dict:
+    """The stream selection for a brand-new dataset. Pure — unit-tested.
+
+    ``streams`` empty means "whatever the machine's recording config enables".
+    ``record_ee`` is what the caller asked for; the EE features exist only in
+    the pose-tracking (Quest) mode, so the caller passes ``False`` for leader
+    mode. Returns ``{cameras, depth, ee, fps}``.
+    """
+    if streams:
+        unknown = sorted(set(streams) - set(known_cameras))
+        if unknown:
+            raise SelectionError(
+                f"unknown camera stream {unknown} (known: {sorted(known_cameras)})"
+            )
+        cameras = set(streams)
+    else:
+        cameras = set(default_enabled)
+    return {"cameras": cameras, "depth": bool(depth), "ee": bool(record_ee), "fps": fps}
+
+
+def resolve_resume_selection(
+    settings: dict,
+    config_rgb_name: "str | None",
+    streams: "list[str] | None",
+    depth: bool,
+    no_ee: bool,
+    fps: "int | None",
+    leader: bool,
+) -> "tuple[dict, list[str]]":
+    """The stream selection recovered from an existing dataset, plus warnings.
+
+    A resumed dataset FOLLOWS its own recorded settings: same cameras, same
+    depth, same EE features, same frame rate. Anything the caller asked for
+    that disagrees is ignored and reported, so the ignored request is never a
+    silent surprise and a resumed dataset can never drift from how it began.
+    Pure — unit-tested.
+    """
+    cameras = resume_uvc_cameras(settings, config_rgb_name)
+    recorded_depth = bool(settings["depth"])
+    recorded_ee = bool(settings["ee"])
+    recorded_fps = settings["fps"]
+
+    warnings: list[str] = []
+    if streams and set(streams) != cameras:
+        warnings.append(
+            f"stream choice ignored on resume; following the recorded "
+            f"{sorted(cameras)}"
+        )
+    if depth and not recorded_depth:
+        warnings.append("depth ignored on resume; this dataset has no depth stream")
+    if no_ee and recorded_ee:
+        warnings.append("EE opt-out ignored on resume; this dataset has EE features")
+    if fps and fps != recorded_fps:
+        warnings.append(f"frame rate ignored on resume; this dataset is {recorded_fps}")
+
+    # Leader mode cannot produce EE targets, so an EE dataset cannot be resumed
+    # with the leader arms — the frames would not match its features.
+    if recorded_ee and leader:
+        raise SelectionError(
+            "this dataset has EE features (collected in the pose-tracking "
+            "mode); resume it in that mode, not with the leader arms"
+        )
+    return (
+        {
+            "cameras": cameras,
+            "depth": recorded_depth,
+            "ee": recorded_ee,
+            "fps": recorded_fps,
+        },
+        warnings,
+    )

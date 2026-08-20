@@ -29,6 +29,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import aiohttp  # type: ignore[import]
 from aiohttp import web  # type: ignore[import]
 
 # The console only ever reads datasets from the local drive. Without this, a
@@ -40,6 +41,8 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
 from common.web.datasets_api import add_dataset_routes
 from common.web.lifecycle_api import add_lifecycle_routes
+from common.web.session import PreviewCameras, SessionSupervisor
+from common.web.session_api import add_session_routes
 from common.web.util import preinit_tqdm_lock
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "static"
@@ -47,6 +50,22 @@ STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "s
 
 async def handle_index(request: web.Request) -> web.Response:
     return web.FileResponse(STATIC_DIR / "index.html")
+
+
+async def _open_client(app: web.Application) -> None:
+    """One client session for talking to a running collection session's monitor."""
+    app["http"] = aiohttp.ClientSession()
+
+
+async def _close_session(app: web.Application) -> None:
+    """Release the cameras the preview holds; leave a collection session alone.
+
+    A session is a separate process with the dataset open: closing the console
+    must not end it, or an operator would lose a recording by restarting a web
+    page. It is stopped from the Collect tab, or with its own quit key.
+    """
+    app["preview"].stop()
+    await app["http"].close()
 
 
 async def handle_console(request: web.Request) -> web.Response:
@@ -73,6 +92,14 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # start twice.
     app["job_executor"] = ThreadPoolExecutor(max_workers=1)
     app["jobs"] = {}
+    # The collection session (a subprocess) and the console's own idle camera
+    # preview. Only one of the two ever holds a device.
+    app["session"] = SessionSupervisor(
+        app["root"], monitor_port=getattr(args, "monitor_port", 8766)
+    )
+    app["preview"] = PreviewCameras()
+    app.on_startup.append(_open_client)
+    app.on_cleanup.append(_close_session)
     cache = os.environ.get("SO101_OUTPUT_DIR", "outputs")
     app["cache_dir"] = Path(cache).expanduser() / "rig_web_cache"
     app.add_routes(
@@ -84,6 +111,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     )
     add_dataset_routes(app)
     add_lifecycle_routes(app)
+    add_session_routes(app)
     return app
 
 
@@ -102,6 +130,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--fps", type=int, default=None, help="Playback fps override (default dataset)"
+    )
+    parser.add_argument(
+        "--monitor-port",
+        type=int,
+        default=8766,
+        help="Loopback port the collection session serves its live view on; "
+        "the console proxies it (change it only if the port is taken)",
     )
     parser.add_argument(
         "--prerender",

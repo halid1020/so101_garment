@@ -204,6 +204,16 @@ class DualDataManager:
                 time.monotonic() if t_capture is None else float(t_capture)
             )
 
+    def get_rgb_camera_names(self) -> list[str]:
+        """Every camera that has published a frame, sorted.
+
+        Lets a consumer follow whatever the session actually publishes (the
+        live monitor draws its tiles from this) instead of being told the
+        stream set twice.
+        """
+        with self._camera_state._lock:
+            return sorted(self._camera_state.rgb_images)
+
     def get_rgb_image_at(
         self, camera_name: str, t_ref: float
     ) -> tuple[np.ndarray, float] | None:
