@@ -99,7 +99,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   teleop command, the quit→SIGINT→SIGTERM stop ladder, and the console's
   own idle camera preview) + `session_api.py` (Collect routes; live frames
   and the two allowed keys are PROXIED to the session's monitor, never
-  taken from a device), `util.py`, and the front-end under `static/`
+  taken from a device), `sensors.py` (binding devices to stream names:
+  pure map operations + the wiggle-test arithmetic + an uncalibrated,
+  torque-off `ArmProbe`) + `sensors_api.py` (its routes; all refused while
+  a session runs, and the map path is injectable so a test never rewrites
+  the machine's real `sensor_map.yaml`), `util.py`, and the front-end
+  under `static/`
   (`index.html` + one script per tab, no build step). Runbook:
   `documents/rig_web.md`. Destructive actions stay behind `--allow-delete`.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,

@@ -17,8 +17,7 @@ through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <rig>`), exactly as
 
 The page has three tabs: **Datasets** (review and manage), **Collect**
 (readiness, live view, and one collection session), and **Sensors**
-(assigning devices to stream names), which is still a placeholder — until
-it lands, assign with `tool/test_sensor_rates.py --assign`.
+(binding devices to stream names).
 
 ## Reviewing recordings
 
@@ -132,6 +131,44 @@ aggregation rewrites `meta/` from scratch, so the console carries across
 what it drops — `meta/action_space.json`, `meta/realsense.json`, and the
 per-episode files under `extra/` (sidecar, drift and identity), renumbered
 onto the merged episode indices.
+
+## Assigning sensors
+
+The rig is built from identical-looking USB devices: gripper and wrist
+cameras that differ only by which socket they are in, and four SO-101 buses
+that enumerate in whatever order they were plugged. The Sensors tab is
+where each one is identified physically and given its name. It does the
+same job as `tool/test_sensor_rates.py --assign`, writes the same
+per-machine file through the same loader and saver, and is refused while a
+collection session is running — that session owns the cameras and the arm
+buses.
+
+The left column lists every assignable name beside the device it is bound
+to, and says whether that device is **here now**. An assignment that no
+longer resolves to a connected device is the failure worth catching early:
+a camera moved to another socket simply reads as an absent stream at
+collection time, which is a confusing way to find out.
+
+**Cameras.** *Scan devices* lists the capture nodes that actually deliver
+frames. Show one, press a gel or wave in front of it to see which camera it
+is, then press the name it should have. Binding a device to a name first
+clears it from whatever name it had before, so swapping two names is done
+by reassigning, not by hunting for the stale entry.
+
+**Arms.** Open a port and wiggle ONE arm by hand: the joints that move are
+shown live, so the port belonging to that arm is obvious. The bus is opened
+uncalibrated and with torque off — this reads raw ticks to tell ports
+apart, it never commands an arm. Then press the role: follower or leader,
+right or left. A physical port is one arm, so assigning it clears it from
+wherever it lived; followers and leaders are separate namespaces, so a
+follower-right and a leader-right can coexist.
+
+**Depth camera.** The RealSense has no stable device node, so it is bound
+by its serial: pick the connected device.
+
+*Release* lets go of whatever the tab is holding, and so does leaving the
+tab — a camera or a bus held open here is one a collection session cannot
+have.
 
 ## Options
 

@@ -107,6 +107,26 @@ operation that replaces a dataset moves the original aside and swaps the result
 into place only once it is complete, so an interruption leaves the collection
 as it was rather than partly rewritten.
 
+\paragraph{Binding devices to names.} A rig of this kind is assembled from
+devices that are indistinguishable to software. The gripper and wrist cameras
+are the same model bought together, and the arm buses present themselves in
+whatever order they were connected, so which physical device answers to which
+name is decided by the sockets they happen to occupy, and it changes whenever
+something is replugged. The platform therefore keeps an explicit map from each
+stream name to a socket-stable device alias, and identifies the devices for it
+physically: a camera is shown live until the operator presses its gel and sees
+which view changes, and an arm is recognised by wiggling it and watching which
+port's raw joint counts move. The bus is opened uncalibrated with its torque
+disabled for that test, so identification reads the arm and never drives it.
+
+Two properties of this map matter more than the procedure. It is per machine
+and never travels with the code, because it describes one rig's cabling.
+And it is checked rather than trusted: the console shows, for every name, whether
+the device it names is presently connected, since an assignment that has gone
+stale otherwise announces itself only as a stream missing from a recording,
+which is a poor place to discover it. Assignment is refused while a session is
+recording, because the session holds those very devices.
+
 \paragraph{Operating a session from the console.} Collection itself is driven
 from the same page. One process must own the rig, because a camera opens once
 and the arm buses are held under lock, so the console does not take the devices:
