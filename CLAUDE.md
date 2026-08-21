@@ -119,8 +119,17 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   a session runs, and the map path is injectable so a test never rewrites
   the machine's real `sensor_map.yaml`), `util.py`, and the front-end
   under `static/`
-  (`index.html` + one script per tab, no build step). Runbook:
-  `documents/rig_web.md`. Deletion is always available; every irreversible
+  (`index.html` + one script per tab, no build step). The same package also
+  holds the ROLLOUT view, which is a separate page served by
+  `tool/run_policy_real.py --web` and not a console tab: `policy_view.py`
+  (what the policy was shown / planned / did, and the hold·step·run·stop
+  throttle; reads a snapshot, owns no device) + `policy_twin.py` (the
+  returned chunk drawn as the twin — `qpos` + `mj_forward`, no physics) +
+  `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
+  (the throttle's pure state machine and the prefetch arithmetic, shared with
+  the control loop) and `common/policy_log.py` (the per-run log under
+  `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
+  `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
   one asks in the browser first, and marking an episode (reversible) does
   not. The third tab is called **Signals** in the UI while the module,
   routes and `sensor_map.yaml` keep the older `sensor` name.
