@@ -40,14 +40,61 @@ you — it reads the requirement from the server's handshake.
 The output is a 12-D action in the same units as the state, which reaches the
 motors through the identical conversion a replayed recording takes.
 
-## 1. Put the checkpoint on the GPU machine
+## What has been trained
 
-A finished cluster run holds it under `train/<policy>/checkpoints/last/`:
+The real-data cell on the cluster (`hpc/README.md`) has produced these:
+
+| dataset | policy | final train loss | task string |
+|---|---|---|---|
+| cube-pnp | act | 0.066 | pick the cube and place it on the plate |
+| cube-pnp | diffusion | 0.002 | pick the cube and place it on the plate |
+| cube-dual-pnp-new | act | 0.085 | pick the cube and place it on the plate |
+| cube-dual-pnp-new | diffusion | 0.003 | pick the cube and place it on the plate |
+| fold-short | act | 0.114 | flatten the short and fold it |
+| fold-short | diffusion | 0.004 | flatten the short and fold it |
+
+Training loss ranks nothing on the robot; it is here so that a checkpoint can be
+told apart from a run that never converged. ACT and diffusion ignore the task
+string, but pass the recorded one anyway — it is what the dataset froze, and a
+policy that does read it will need it.
+
+Two footnotes on cube-pnp. Its ACT weights come from an earlier submission,
+whose run directory is named after the job id rather than the dataset, so it
+appears under that name in a listing. The re-run under the dataset name was
+cancelled at its 24-hour wall time, 8k of 80k steps in, at about ten seconds per
+optimiser step — worth diagnosing before that cell is submitted again, since the
+same recipe trains diffusion to completion on the same dataset.
+
+## 1. Bring the checkpoint back from the cluster
+
+A finished cluster run holds its final weights under
+`train/<policy>/checkpoints/last/pretrained_model/`, beside tens of gigabytes of
+intermediate checkpoints and optimiser state that inference has no use for.
+`hpc/fetch_policies.sh` reads the run directory, works out which
+(dataset, policy) pairs actually finished, and copies only what a server loads —
+one directory per pair, named for both:
 
 ```bash
-rsync -avP <run>/train/act/checkpoints/last/pretrained_model/ \
-    <user>@<host>:~/project/so101_garment/outputs/policies/cube-pnp-act/
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> --list
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> \
+    --dest <gpu-host>:project/so101_garment/outputs/policies
 ```
+
+`--list` first. A run cancelled at its wall time still has checkpoints, just not
+a `last`, and it reads `unfinished` there instead of installing something that
+looks like a checkpoint and is not. `--datasets` and `--only` take a subset.
+
+The copy runs on the machine the weights are going to, pulling from the cluster
+over your forwarded SSH agent, so nothing lands on the rig's disk and no key is
+ever copied to the GPU box. A cluster that accepts logins only from inside its
+own network cannot be reached that way — the script checks before it moves
+anything, and `--bridge` then routes the bytes through the machine you are
+sitting at, in two hops. KCL CREATE, from outside its network, needs `--bridge`.
+
+Each checkpoint is then read back where it landed and reported: policy type,
+observation steps in, actions out, and the camera names it was trained on. Those
+names must be the rig's. If they are not, stop there — that is a
+training/collection mismatch, and no amount of networking will fix it.
 
 ACT is roughly 200 MB, diffusion about 1.1 GB.
 
@@ -67,6 +114,11 @@ The startup lines state what the checkpoint expects — policy type, observation
 steps in, actions out, and the camera names. If those camera names are not the
 rig's, stop here: the mismatch is a training/collection mismatch, not a network
 problem.
+
+Detached (`nohup`, `tmux`) it is the same command with `venv/bin/python -u`:
+redirected to a file, Python buffers its output, and the startup lines you want
+to read sit in that buffer for a long time. `GET /meta` answers the same
+questions over the tunnel once step 3 is up, whichever way it was started.
 
 ## 3. Open the tunnel — on the rig
 
