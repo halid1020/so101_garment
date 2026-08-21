@@ -120,10 +120,10 @@ what records an episode and what ends the session — and, for each, the
 surface it lives on. It changes with the input mode, and it is the same
 list the terminal prints when teleoperation starts
 (`src/common/recording/controls.py`), so the browser cannot describe a rig
-it is not driving. Everything that moves an arm is on the headset or the
-keyboard at the rig; only the two steps marked *this page* are also
-buttons here, and they are exactly the two keys the session's monitor
-accepts.
+it is not driving. A step marked *this page* is also a button here, and
+those steps are exactly the keys the session's monitor accepts — which
+depends on how the session is driven, for the reason in **Enable arms**
+below.
 
 **While it runs.** The tiles are the session's own frames, proxied — no
 device is opened for them and the record loop is not touched, so the live
@@ -140,9 +140,38 @@ gone stale. The recorder's output is tailed below the form.
 **Episode** presses the session's own A button: it starts an episode, and
 pressing it again stops and saves. It is disabled until the arms are
 enabled, and starting an episode drives BOTH ARMS to the ready pose, so
-stand clear first. Enable, park and home are deliberately absent from the
-browser: they move the arms with nobody necessarily looking at the rig, so
-they stay on the headset and the session keyboard.
+stand clear first.
+
+**The keys work here too.** Y, A and Q can be typed into the page instead of
+clicked, when a session is running and this tab is on screen; each does exactly
+what its button does, confirmations included, and a disabled button ignores its
+key as it ignores a click. Keys typed into a text box stay in the text box. Only
+the keys the session itself allows are taken, so a Quest session's page leaves
+Y alone exactly as its monitor would refuse it.
+
+The session the console starts is given **no terminal**: it would otherwise
+inherit the one the console was launched in, put it into raw mode underneath the
+shell sitting there, and then race that shell for every keystroke — which is
+what made the control keys look broken. Nothing types into the session any more;
+the page presses them.
+
+**Enable arms** appears only for a session driven by the **leader arms**,
+and it presses Y. The rule behind that is the same in both modes — a key
+that moves an arm belongs where the operator can see the arm — and it lands
+differently only because the modes put the operator in different places.
+With a headset on, every button is already to hand, so the browser gets
+none of them. With leader arms there is no headset: the keys are read from
+a terminal, and a session the console started reads them from the terminal
+the *console* was launched in, which is not where anyone is standing. So
+for those sessions the page is the only surface left, and it gets enable,
+episode and quit. Park and home stay physical in both modes.
+
+An episode the console cannot play because it *"is still being written"* is not
+a fault: its frames are on disk and the session has not committed its metadata
+row yet, which it does as the recording proceeds. The same episode described as
+having **no metadata row and no session running** is the other case — the
+session ended before committing it — and the count settles when the dataset is
+next opened for recording. One that never settles is what **Repair** is for.
 
 **Stop session** asks the session to quit, which is what parks the arms,
 finishes an in-flight episode and closes the dataset properly. Only if that

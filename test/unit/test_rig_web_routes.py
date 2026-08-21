@@ -248,6 +248,25 @@ class TestCollectTab(ConsoleTestCase):
         resp = await self.post("/api/session/episode", {})
         self.assertEqual(resp.status, 409)
 
+    async def test_an_episode_without_a_row_says_which_of_the_two_it_is(self):
+        # Waiting for a session to commit and cleaning up after one that never
+        # did need opposite reactions, and the console knows which it is: the
+        # only session that could still be writing is the one it started.
+        resp = await self.client.get("/api/datasets/cube-pnp/episodes/0/playback")
+        self.assertEqual(resp.status, 409)
+        idle = await resp.text()
+        self.assertIn("no session is running", idle)
+
+        with mock.patch.object(self.app["session"], "running", return_value=True):
+            resp = await self.client.get("/api/datasets/cube-pnp/episodes/0/playback")
+            busy = await resp.text()
+        self.assertEqual(resp.status, 409)
+        self.assertIn("still being written", busy)
+
+    async def test_pressing_any_key_without_a_session_is_refused(self):
+        resp = await self.post("/api/session/key", {"key": "y"})
+        self.assertEqual(resp.status, 409)
+
     async def test_stopping_without_a_session_is_refused(self):
         resp = await self.post("/api/session/stop", {})
         self.assertEqual(resp.status, 409)
@@ -302,9 +321,17 @@ class TestCollectTab(ConsoleTestCase):
         quest = body["controls"]["quest"]
         self.assertEqual(quest[0]["key"], "Y")
         self.assertEqual(quest[0]["where"], "headset")
-        self.assertEqual(body["controls"]["leader"][0]["where"], "session keyboard")
-        here = {s["key"] for s in quest if "this page" in s["where"]}
-        self.assertEqual(here, {"A", "Q"})
+        # Leader mode has no headset, and a session the console started has no
+        # keyboard either, so enabling is offered to the page there and only
+        # there.
+        leader = body["controls"]["leader"]
+        self.assertEqual(leader[0]["where"], "session keyboard or this page")
+        self.assertEqual(
+            {s["key"] for s in quest if "this page" in s["where"]}, {"A", "Q"}
+        )
+        self.assertEqual(
+            {s["key"] for s in leader if "this page" in s["where"]}, {"Y", "A", "Q"}
+        )
 
     async def test_the_collection_form_offers_this_machines_cameras(self):
         body = await (await self.client.get("/api/collect/config")).json()

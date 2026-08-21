@@ -46,6 +46,13 @@ BOUNDARY = "frame"
 # the session. Everything that moves an arm is deliberately absent.
 DEFAULT_ALLOWED_KEYS = frozenset({"a", "q"})
 
+# A leader session is driven from a KEYBOARD, not from a headset -- and when the
+# console starts it, that keyboard is the terminal the console itself was
+# launched in, which is not where the operator is standing. So enabling the arms
+# is added: without it a session started from the browser cannot be driven at
+# all. Home and park stay physical, on the terminal or the desktop window.
+LEADER_ALLOWED_KEYS = frozenset({"y", "a", "q"})
+
 
 def mjpeg_part(jpeg: bytes, boundary: str = BOUNDARY) -> bytes:
     """One ``multipart/x-mixed-replace`` part. Pure — unit-tested."""
@@ -58,6 +65,18 @@ def mjpeg_part(jpeg: bytes, boundary: str = BOUNDARY) -> bytes:
         + jpeg
         + b"\r\n"
     )
+
+
+def allowed_keys_for(input_mode: str) -> "frozenset[str]":
+    """Which control keys a watcher may press, given how the rig is driven. Pure.
+
+    The rule is the same in both modes -- a key that moves an arm belongs where
+    the operator can see the arm -- and it lands differently only because the
+    two modes put the operator in different places. With a headset on, every
+    button is already to hand. With leader arms, the alternative surface is a
+    keyboard the console-started session does not have.
+    """
+    return LEADER_ALLOWED_KEYS if input_mode == "leader" else DEFAULT_ALLOWED_KEYS
 
 
 def key_refusal(key: str, allowed: "Iterable[str]", known: "Iterable[str]") -> str:

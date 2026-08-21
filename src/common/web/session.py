@@ -265,6 +265,13 @@ class SessionSupervisor:
         self._stopping_since = None
         self._proc = subprocess.Popen(
             [self.python, *argv],
+            # NO stdin. Inherited, it would be the terminal the console itself
+            # was launched in -- and a leader session reads its control keys
+            # from stdin, so it would put that terminal into raw mode underneath
+            # the operator's shell and then race the shell for every keystroke.
+            # Neither reader gets a usable stream. The session is driven from
+            # the page instead, which is where the operator is looking.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=env,

@@ -30,7 +30,7 @@ FAKE_RECORDER = '''
 import sys, time
 import numpy as np
 sys.path[:0] = [{repo!r}, {src!r}]
-from common.recording.monitor_server import MonitorServer
+from common.recording.monitor_server import MonitorServer, allowed_keys_for
 
 class Stub:
     def __init__(self):
@@ -65,10 +65,22 @@ def on_a():
     Status.state_label = "RECORDING"
     Status.recording = True
 
+def on_y():
+    stub.pressed.append("y")
+    stub.state = "ENABLED"
+
+def on_x():
+    stub.pressed.append("x")
+
 monitor = MonitorServer(
     stub,
     status_provider=Status,
-    key_callbacks={{"a": on_a, "q": lambda: done.append(True)}},
+    key_callbacks={{
+        "y": on_y, "x": on_x, "a": on_a, "q": lambda: done.append(True)
+    }},
+    # Driven by leader arms: no headset, so enabling is one of the keys a
+    # watcher may press. Park stays physical either way.
+    allowed_keys=allowed_keys_for("leader"),
     port={port},
 )
 monitor.start()
@@ -154,7 +166,7 @@ class TestConsoleSession(AioHTTPTestCase):
         body = await self._wait_for_monitor()
         self.assertEqual(body["monitor"]["arms"], "DISABLED")
         self.assertEqual(body["monitor"]["recorder"]["state"], "IDLE")
-        self.assertEqual(body["monitor"]["allowed_keys"], ["a", "q"])
+        self.assertEqual(body["monitor"]["allowed_keys"], ["a", "q", "y"])
         # The proprioception the operator watches instead of standing at the
         # rig: both arms' measured joints beside the command last sent.
         joints = body["monitor"]["joints"]
@@ -175,7 +187,22 @@ class TestConsoleSession(AioHTTPTestCase):
         self.assertIn(b"--frame", chunk)
         resp.close()
 
-        # 4. The episode key reaches the recorder's own button handler.
+        # 4a. Enabling the arms: the key this mode allows reaches the session,
+        # and the one it does not comes back with the session's own reason
+        # rather than being quietly dropped or a broken-link error.
+        press = await self.client.post("/api/session/key", json={"key": "y"})
+        self.assertEqual(press.status, 200)
+        refused = await self.client.post("/api/session/key", json={"key": "x"})
+        self.assertEqual(refused.status, 403)
+        self.assertIn("moves the arms", await refused.text())
+        for _ in range(200):
+            body = await (await self.client.get("/api/session")).json()
+            if body["monitor"]["arms"] == "ENABLED":
+                break
+            await __import__("asyncio").sleep(0.05)
+        self.assertEqual(body["monitor"]["arms"], "ENABLED")
+
+        # 4b. The episode key reaches the recorder's own button handler.
         press = await self.client.post("/api/session/episode", json={})
         self.assertEqual(press.status, 200)
         for _ in range(200):

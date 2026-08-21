@@ -33,6 +33,11 @@ def control_steps(
     """
     leader = input_mode == "leader"
     surface = KEYBOARD if leader else HEADSET
+    # Enabling the arms moves them, so it lives where the operator can see them:
+    # the headset, which is already to hand. A leader session has no headset,
+    # and when the console started it the keyboard is the terminal the console
+    # was launched in -- so there the page is the surface, or there is none.
+    enable_where = f"{surface} or this page" if leader else surface
     episode = (
         "start recording an episode; press again to save it"
         if record
@@ -42,7 +47,7 @@ def control_steps(
         {
             "key": "Y",
             "what": "enable both arms: they move to the ready pose and hold it",
-            "where": surface,
+            "where": enable_where,
         }
     ]
     if leader:

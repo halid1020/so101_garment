@@ -18,6 +18,7 @@ from common.recording.controls import control_steps
 from common.recording.monitor_server import (
     BOUNDARY,
     MonitorServer,
+    allowed_keys_for,
     encode_jpeg,
     joint_snapshot,
     key_refusal,
@@ -114,6 +115,29 @@ class TestPureHelpers(unittest.TestCase):
         for key in ("y", "x", "b"):
             self.assertIn("stays on the headset", key_refusal(key, {"a", "q"}, known))
 
+    def test_the_allow_list_follows_how_the_session_is_driven(self):
+        # Quest: the headset has every arm-moving button already. Leader: the
+        # control surface is a keyboard, and a console-started session has none.
+        self.assertEqual(set(allowed_keys_for("quest")), {"a", "q"})
+        self.assertEqual(set(allowed_keys_for("leader")), {"y", "a", "q"})
+
+    def test_an_unrecognised_mode_gets_the_careful_answer(self):
+        self.assertEqual(set(allowed_keys_for("")), {"a", "q"})
+
+    def test_enabling_is_allowed_for_a_leader_session_and_not_a_quest_one(self):
+        known = {"y": 1, "x": 1, "a": 1, "b": 1, "q": 1}
+        self.assertEqual(key_refusal("y", allowed_keys_for("leader"), known), "")
+        self.assertIn(
+            "stays on the headset",
+            key_refusal("y", allowed_keys_for("quest"), known),
+        )
+
+    def test_park_and_home_are_refused_however_the_session_is_driven(self):
+        known = {"y": 1, "x": 1, "a": 1, "b": 1, "q": 1}
+        for mode in ("quest", "leader"):
+            for key in ("x", "b"):
+                self.assertNotEqual(key_refusal(key, allowed_keys_for(mode), known), "")
+
     def test_an_unknown_or_empty_key_is_refused(self):
         self.assertIn("no such", key_refusal("z", {"a", "q"}, {"a": 1}))
         self.assertIn("no key", key_refusal("", {"a", "q"}, {"a": 1}))
@@ -195,10 +219,27 @@ class TestControlSteps(unittest.TestCase):
     def test_leader_mode_names_the_keyboard_and_the_leader_arms(self):
         steps = control_steps("leader")
         where = {s["key"]: s["where"] for s in steps}
-        self.assertEqual(where["Y"], "session keyboard")
+        self.assertIn("session keyboard", where["Y"])
         self.assertIn("this page", where["A"])
         self.assertTrue(any("leader arms" in s["what"] for s in steps))
         self.assertFalse(any(s["where"] == "controllers" for s in steps))
+
+    def test_enabling_is_offered_to_the_page_only_where_there_is_no_headset(self):
+        # A leader session started from the console has no headset and no
+        # keyboard of its own, so the page is the only surface left for Y.
+        # A Quest session has the button under the operator's thumb.
+        self.assertIn(
+            "this page", {s["key"]: s["where"] for s in control_steps("leader")}["Y"]
+        )
+        self.assertNotIn(
+            "this page", {s["key"]: s["where"] for s in control_steps("quest")}["Y"]
+        )
+
+    def test_home_and_park_stay_physical_in_both_modes(self):
+        for mode in ("quest", "leader"):
+            where = {s["key"]: s["where"] for s in control_steps(mode)}
+            for key in ("B", "X"):
+                self.assertNotIn("this page", where[key], f"{key} in {mode}")
 
     def test_quest_mode_explains_the_grips_and_the_triggers(self):
         what = " ".join(s["what"] for s in control_steps("quest"))

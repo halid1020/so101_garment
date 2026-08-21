@@ -100,19 +100,57 @@ $('#c-start').onclick = async () => {
   await pollSession();
 };
 
-$('#c-episode').onclick = async () => {
+async function pressEpisode() {
   try {
     await j('/api/session/episode',
             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
   } catch (e) { alert('episode key failed: ' + e.message); }
   await pollSession();
-};
+}
 
-$('#c-stop').onclick = async () => {
+// Enabling the arms moves them, so it lives where the operator can see them --
+// the headset, in Quest mode. A leader session has no headset, and the session
+// the console started has no keyboard of its own either (it is given no stdin,
+// precisely so it cannot fight the console's terminal for one), so there the
+// page is the only surface. The session decides: a mode that does not allow the
+// key answers with its own refusal.
+async function enableArms() {
+  const ok = await confirmDialog({
+    title: 'Enable both arms?',
+    body: 'Torque goes on and both followers MOVE to the ready pose and hold '
+      + 'it. Stand clear of the arms before confirming.',
+    confirmLabel: 'Enable arms',
+  });
+  if (!ok) return;
+  try {
+    await j('/api/session/key', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: 'y'}),
+    });
+  } catch (e) { alert('enable failed: ' + e.message); }
+  await pollSession();
+}
+
+// What ending the session does depends on what it is doing, and a confirmation
+// that describes a session the operator can see they are not in is worse than
+// none: it teaches them to click through the next one.
+function stopBody(s) {
+  const rec = (s && s.monitor && s.monitor.recorder) || {};
+  const held = rec.episodes_done
+    ? `${rec.episodes_done} recording(s) are already saved. `
+    : '';
+  return rec.recording
+    ? `${held}The episode in progress (${rec.current_frames || 0} frames) is `
+      + 'saved first, then the arms are parked and the dataset closed.'
+    : `${held}No episode is in progress. The arms are parked and the dataset `
+      + 'closed.';
+}
+
+async function stopSession() {
   const ok = await confirmDialog({
     title: 'End the collection session?',
-    body: 'An episode in progress is saved and the arms are parked before it '
-      + 'exits.',
+    body: stopBody(sessionState),
     confirmLabel: 'Stop session',
   });
   if (!ok) return;
@@ -121,7 +159,36 @@ $('#c-stop').onclick = async () => {
             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
   } catch (e) { alert('stop failed: ' + e.message); }
   await pollSession();
-};
+}
+
+$('#c-episode').onclick = pressEpisode;
+$('#c-enable').onclick = enableArms;
+$('#c-stop').onclick = stopSession;
+
+// The same three, typed. An operator driving a leader session is at this page
+// with their hands on a keyboard, and the session no longer reads one of its
+// own -- so a key here does exactly what its button does, confirmations
+// included. Which keys count is the SESSION's answer, not ours: a Quest session
+// ignores Y here for the same reason its monitor refuses it.
+// Through the buttons rather than past them, so a key cannot do what a click
+// cannot: a disabled button (no episode before the arms are enabled) ignores
+// both alike, with no second copy of the rule to keep in step.
+const KEY_BUTTONS = {y: '#c-enable', a: '#c-episode', q: '#c-stop'};
+
+document.addEventListener('keydown', (e) => {
+  if (!sessionState || !sessionState.running) return;
+  if ($('#pane-collect').hidden) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  // Never take a keystroke away from something being typed into.
+  if (e.target.closest('input, select, textarea, [contenteditable]')) return;
+  const key = (e.key || '').toLowerCase();
+  const allowed = (sessionState.monitor || {}).allowed_keys || [];
+  if (!allowed.includes(key) || !KEY_BUTTONS[key]) return;
+  const button = $(KEY_BUTTONS[key]);
+  if (!button || button.hidden || button.disabled) return;
+  e.preventDefault();
+  button.click();
+});
 
 $('#c-arms').onclick = async () => {
   const on = $('#c-arms').dataset.on === '1';
@@ -271,9 +338,26 @@ async function pollSession() {
       + ` · ee ${s.ee ? 'on' : 'off'}`;
     const m = s.monitor, rec = m && m.recorder;
     const armed = !!m && m.arms === 'ENABLED';
+    const leading = s.input === 'leader';
+    $('#c-enable').hidden = !leading;
+    $('#c-enable').disabled = armed;
+    $('#c-enable').title = armed ? 'the arms are already enabled' : '';
+    $('#c-surface').textContent = leading
+      ? 'This session is driven by the leader arms; its control keys are read '
+        + 'from the terminal that started it, so the ones this page may press '
+        + 'are here. Stand clear before enabling.'
+      : 'Everything below that moves an arm stays on the headset or the '
+        + 'keyboard at the rig — stand clear before it does.';
     $('#c-episode').disabled = !armed;
     $('#c-episode').title = armed ? ''
-      : 'enable the arms first (button Y on the headset, or Y at the session)';
+      : (leading ? 'enable the arms first'
+                 : 'enable the arms first (button Y on the headset)');
+    // The keys are worth saying: an operator with hands on a keyboard should
+    // not have to discover that the page takes them.
+    const keys = (m && m.allowed_keys ? m.allowed_keys : [])
+      .filter(k => KEY_BUTTONS[k]).map(k => k.toUpperCase());
+    $('#c-keys').textContent = keys.length
+      ? `${keys.join(' · ')} work as keys on this page too` : '';
     $('#c-episode').textContent = (rec && rec.recording)
       ? 'Stop episode and save' : 'Start episode';
     $('#c-stop').disabled = !!s.stopping;

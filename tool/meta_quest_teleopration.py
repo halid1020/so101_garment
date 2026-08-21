@@ -51,6 +51,7 @@ import os
 import shutil
 import signal
 import sys
+import termios
 import threading
 import time
 import traceback
@@ -88,7 +89,7 @@ from common.recording import (
 )
 from common.recording.controls import control_steps
 from common.recording.depth import DepthWriter
-from common.recording.monitor_server import MonitorServer
+from common.recording.monitor_server import MonitorServer, allowed_keys_for
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
@@ -1237,6 +1238,11 @@ def main():
             captures=monitor_captures,
             status_provider=collection_status,
             key_callbacks=button_actions,
+            # What a watcher may press depends on where the operator is: with a
+            # headset on, every button is to hand and only the two that move
+            # nothing are remote. Leader arms leave the page as the only surface
+            # a console-started session has, so enabling is remote there too.
+            allowed_keys=allowed_keys_for("leader" if use_leader else "quest"),
             port=args.monitor_port,
         )
         monitor.start()
@@ -1256,11 +1262,23 @@ def main():
                 status_provider=view_status_provider,
             )
         elif use_leader:
-            # No window: read the control keys from the terminal.
+            # No window: read the control keys from the terminal, if there is
+            # one. Started by the rig console there is not -- stdin is whatever
+            # the console inherited -- and that is not a reason to end a session
+            # the console can drive itself; it is a reason to say where the
+            # keys have to come from instead.
             keyboard = KeyboardButtons()
             for key, cb in leader_keys.items():
                 keyboard.on(key, cb)
-            keyboard.start()
+            try:
+                keyboard.start()
+            except (termios.error, ValueError, OSError) as exc:
+                keyboard = None
+                print(
+                    f"⌨️  no terminal to read the control keys from ({exc}). "
+                    "Drive this session from the rig console instead: it can "
+                    "enable the arms, record an episode and end the session."
+                )
         while not data_manager.is_shutdown_requested():
             time.sleep(1.0)
     except KeyboardInterrupt:

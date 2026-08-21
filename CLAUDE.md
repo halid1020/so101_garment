@@ -66,8 +66,10 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `monitor_server.py` serves the same frames + recorder status + both
   arms' measured-vs-last-sent joints over loopback for the rig console
   when the recorder is given `--monitor-port` (off by default; its
-  control surface is an allow-list of the episode and quit keys —
-  anything that moves an arm stays on the headset/keyboard);
+  control surface is a per-mode allow-list — `allowed_keys_for`: the episode
+  and quit keys with a headset on, plus ENABLE for a leader session, whose
+  keys are otherwise read from a terminal the console-started session does
+  not have; park and home stay physical in both);
   `controls.py` is the ONE list of operator steps, printed by the teleop
   tool and shown by the console; config in `src/conf/recording.yaml`,
   device indices are per-machine placeholders).
