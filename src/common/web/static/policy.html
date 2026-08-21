@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SO-101 policy rollout</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/policy.css">
+</head>
+<body>
+  <header id="topbar">
+    <span class="brand">SO-101 rollout</span>
+    <span id="p-mode" class="mode">…</span>
+    <span id="p-clock" class="muted"></span>
+    <span class="grow"></span>
+    <button id="p-hold">Hold</button>
+    <button id="p-step">Step one chunk</button>
+    <button id="p-run">Run</button>
+    <button id="p-stop" class="danger">Stop</button>
+  </header>
+  <main id="p-main">
+    <p class="bar torque" id="p-torque">The arms are under torque. Hold stops
+      them where they are; Step runs exactly one plan; Stop ends the run and
+      releases torque.</p>
+    <p class="bar err" id="p-err" hidden></p>
+
+    <h2>What the policy was shown <span class="muted" id="p-shown-note"></span></h2>
+    <div class="tiles" id="p-shown"></div>
+
+    <h2>What it planned</h2>
+    <div class="pair">
+      <figure class="tile">
+        <img id="p-twin" alt="the plan, in the twin">
+        <figcaption>
+          <button id="p-twin-what" class="link">showing: the plan</button>
+        </figcaption>
+      </figure>
+      <figure class="plot">
+        <canvas id="p-chunk" width="560" height="220"></canvas>
+        <figcaption id="p-chunk-note" class="muted"></figcaption>
+      </figure>
+    </div>
+
+    <h2>What the arms did</h2>
+    <div class="panels">
+      <div class="panel">
+        <h3>Joints <span>measured · commanded · error, degrees</span></h3>
+        <table id="p-joints"></table>
+      </div>
+      <div class="panel">
+        <h3>Grippers <span>open fraction</span></h3>
+        <div id="p-grip" class="grips"></div>
+      </div>
+    </div>
+
+    <h2>Did the plan arrive in time</h2>
+    <table id="p-timing" class="checks"></table>
+
+    <h2>Live cameras</h2>
+    <div class="tiles" id="p-live"></div>
+  </main>
+  <script src="/static/policy.js"></script>
+</body></html>

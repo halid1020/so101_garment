@@ -1,0 +1,29 @@
+/* The rollout page. Everything structural comes from app.css; these are the
+   few things a live rollout needs and the console does not. */
+#p-main { padding:0 12px 24px; overflow:auto; }
+#p-main h2 { font-size:13px; font-weight:600; margin:18px 0 6px; }
+.muted { opacity:.6; font-weight:400; font-size:12px; }
+.mode { font-size:12px; padding:2px 10px; border-radius:999px;
+        border:1px solid var(--bd); font-variant-numeric:tabular-nums; }
+.mode.run { color:#16a34a; border-color:#16a34a88; }
+.mode.hold { color:#d97706; border-color:#d9770688; }
+.mode.step { color:#2563eb; border-color:#2563eb88; }
+.bar.torque { color:#d97706; font-size:12px; }
+#p-shown img, #p-live img, #p-twin { width:100%; border-radius:8px;
+                                     background:#000; display:block; }
+#p-chunk { width:100%; height:220px; border:1px solid var(--bd);
+           border-radius:4px; }
+#p-joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
+            font-size:12px; }
+#p-joints th, #p-joints td { padding:2px 10px; text-align:right;
+                             border-bottom:1px solid var(--bd); }
+#p-joints th:first-child, #p-joints td:first-child { text-align:left;
+                                                     opacity:.6; }
+#p-joints td.far { color:#dc2626; }
+.grips { display:flex; gap:24px; }
+.grip { font-variant-numeric:tabular-nums; }
+.grip b { display:block; font-size:22px; font-weight:600; }
+.grip .cmd { color:#2563eb; }
+.grip .gap { font-size:12px; opacity:.7; }
+button.link { border:0; background:none; padding:0; font-size:11px;
+              opacity:.7; text-decoration:underline; }
