@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from common.recording.dataset_check import ensure_loadable
 from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
     episode_uid_rel,
@@ -373,6 +374,10 @@ def merge_datasets(
     for source in roots:
         for fixed in repair_episode_metadata(source):
             say(f"repaired {source.name}/{fixed}")
+        # A source counting an episode nobody wrote takes the aggregation to the
+        # Hub for a version tag, which offline blames on the network. Refuse
+        # here, naming the source and the real fault.
+        ensure_loadable(source)
     say(f"merging {', '.join(names)} → {out_name}")
     try:
         aggregate_datasets(list(names), out_name, roots=roots, aggr_root=temp)

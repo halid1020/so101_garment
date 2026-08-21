@@ -9,7 +9,7 @@ let jobsFirstPoll = true;
 
 function jobLine(job) {
   const verb = {merge: 'merging', delete: 'deleting',
-                compact: 'rewriting'}[job.kind] || job.kind;
+                compact: 'rewriting', repair: 'repairing'}[job.kind] || job.kind;
   return `${verb} ${job.name} — ${job.message}`;
 }
 
@@ -64,7 +64,10 @@ window.onJobFinished = (job) => {
   loadDatasets();
   // A compaction renumbers the recordings of the dataset on screen, so the
   // episode list beside it is stale in a way reloading the datasets cannot fix.
-  if (job && job.kind === 'compact' && job.name === curDataset) loadEpisodes();
+  // A repair renumbers the recordings just as a compaction does.
+  if (job && ['compact', 'repair'].includes(job.kind) && job.name === curDataset) {
+    loadEpisodes();
+  }
 };
 
 // Started from here so a job that outlives the page (or a page opened while one

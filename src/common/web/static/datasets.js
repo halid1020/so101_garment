@@ -1,5 +1,5 @@
 const $ = (s) => document.querySelector(s);
-let curDataset = null, curEpisode = null;
+let curDataset = null, curEpisode = null, lastIntegrity = null;
 let datasets = [];
 
 async function j(url, opts) {
@@ -53,7 +53,7 @@ async function selectDataset(name, li, d) {
     // Created, then quit before recording: there is nothing to list, but the
     // directory is real and the operator most likely wants to delete it.
     $('#ep-list').innerHTML = '';
-    showPending(0); showDamaged([]);
+    showPending(0); lastIntegrity = null; showDamaged([], null);
     $('#viewer').innerHTML = '<p class="muted">This dataset holds no saved '
       + 'episodes — a session that stopped before recording. Resume it from the '
       + 'Collect tab, or delete it.</p>';
@@ -69,19 +69,52 @@ function resetSelection(name) {
   curDataset = name || null; curEpisode = null;
   $('#ep-title').textContent = name || 'Recordings';
   $('#ep-list').innerHTML = '';
-  showPending(0); showDamaged([]);
+  showPending(0); lastIntegrity = null; showDamaged([], null);
   $('#viewer').innerHTML =
     '<p class="muted">Select a recording to play its sensor view.</p>';
   if (name) loadEpisodes();
 }
 
-function showDamaged(files) {
+// Two quite different faults look the same in the list -- an episode with no
+// length ("?f") -- and they need opposite remedies. An unreadable metadata file
+// still has its recording behind it; an episode the dataset counted and never
+// wrote has nothing at all, and until it is dropped no rewrite of this dataset
+// can run.
+function showDamaged(files, integrity) {
   const bar = $('#damaged-bar');
-  bar.hidden = !(files && files.length);
-  if (!bar.hidden) $('#damaged-text').textContent =
+  const bad = files && files.length;
+  const gap = integrity && !integrity.ok;
+  bar.hidden = !(bad || gap);
+  $('#repair').hidden = !(integrity && integrity.repairable);
+  if (bar.hidden) return;
+  const parts = [];
+  if (bad) parts.push(
     `${files.length} unreadable metadata file(s) — some episode lengths are `
-    + `unknown ("?f"). The episodes themselves may still play. (${files.join(', ')})`;
+    + `unknown ("?f"). The episodes themselves may still play. (${files.join(', ')})`);
+  if (gap) parts.push(
+    integrity.summary
+    + (integrity.repairable
+        ? '. Repair drops the empty slot(s) and renumbers the rest.'
+        : '.'));
+  $('#damaged-text').textContent = parts.join(' · ');
 }
+
+$('#repair').onclick = async () => {
+  const integrity = lastIntegrity || {};
+  const n = (integrity.phantom || []).length;
+  const ok = await confirmDialog({
+    title: `Repair ${curDataset}?`,
+    body: `${curDataset} counts ${n} episode(s) that were never recorded `
+      + `(${(integrity.phantom || []).join(', ')}). Repairing forgets them and `
+      + `renumbers the recordings after them, so their numbers change — what is `
+      + `now recording 5 may become recording 4. Nothing recorded is lost. `
+      + `Until this is done, no episode of this dataset can be deleted or merged.`,
+    confirmLabel: 'Repair',
+  });
+  if (!ok) return;
+  await j(`/api/datasets/${curDataset}/repair`, {method: 'POST'});
+  pollJobs();
+};
 
 function showPending(n) {
   $('#pending-bar').hidden = !n;
@@ -93,7 +126,8 @@ async function loadEpisodes() {
   const data = await j(`/api/datasets/${curDataset}/episodes`);
   const eps = data.episodes;
   showPending(data.pending);
-  showDamaged(data.damaged);
+  lastIntegrity = data.integrity;
+  showDamaged(data.damaged, data.integrity);
   const ul = $('#ep-list'); ul.innerHTML = '';
   for (const e of eps) {
     const li = document.createElement('li');
