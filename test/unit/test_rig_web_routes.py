@@ -248,6 +248,21 @@ class TestCollectTab(ConsoleTestCase):
         resp = await self.post("/api/session/episode", {})
         self.assertEqual(resp.status, 409)
 
+    async def test_an_episode_without_a_row_says_which_of_the_two_it_is(self):
+        # Waiting for a session to commit and cleaning up after one that never
+        # did need opposite reactions, and the console knows which it is: the
+        # only session that could still be writing is the one it started.
+        resp = await self.client.get("/api/datasets/cube-pnp/episodes/0/playback")
+        self.assertEqual(resp.status, 409)
+        idle = await resp.text()
+        self.assertIn("no session is running", idle)
+
+        with mock.patch.object(self.app["session"], "running", return_value=True):
+            resp = await self.client.get("/api/datasets/cube-pnp/episodes/0/playback")
+            busy = await resp.text()
+        self.assertEqual(resp.status, 409)
+        self.assertIn("still being written", busy)
+
     async def test_pressing_any_key_without_a_session_is_refused(self):
         resp = await self.post("/api/session/key", {"key": "y"})
         self.assertEqual(resp.status, 409)

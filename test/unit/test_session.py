@@ -7,13 +7,17 @@ against a stand-in script rather than the real recorder, so starting, tailing
 and stopping are tested without opening a camera.
 """
 
+import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from common.recording.collection_settings import (
     SelectionError,
@@ -203,6 +207,43 @@ class TestPlanAndCommand(unittest.TestCase):
         plan = resolve_plan(self.root, "towel", "fold it", {}, _CONFIG)
         argv = teleop_argv(self.root, "towel", "fold it", plan, {}, 8766)
         self.assertIn("--resume", argv)
+
+
+class TestLaunch(unittest.TestCase):
+    """How the session is launched, which decides what it can read."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_the_session_is_given_no_stdin(self):
+        # Inherited, stdin would be the terminal the console itself was started
+        # in -- and a leader session reads its control keys from stdin, so it
+        # would put that terminal into raw mode underneath the operator's shell
+        # and then race the shell for every keystroke. It is driven from the
+        # page instead.
+        supervisor = SessionSupervisor(self.tmp, monitor_port=8766)
+        plan = resolve_plan(self.tmp, "towel", "fold it", {}, _CONFIG)
+        seen = {}
+
+        class FakeProc:
+            pid = 4242
+            stdout = io.StringIO("")
+
+            def poll(self):
+                return None
+
+        def fake_popen(argv, **kwargs):
+            seen.update(kwargs)
+            seen["argv"] = argv
+            return FakeProc()
+
+        with mock.patch("subprocess.Popen", fake_popen):
+            supervisor.start("towel", "fold it", plan, {})
+
+        self.assertEqual(seen["stdin"], subprocess.DEVNULL)
+        # And it still outlives the console that started it.
+        self.assertTrue(seen["start_new_session"])
 
 
 class TestStopLadder(unittest.TestCase):

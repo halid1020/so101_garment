@@ -200,8 +200,35 @@ def _dataset_fps(path: Path) -> int:
         return 30
 
 
+def uncommitted_episode(recording: bool, name: str, episode: int) -> str:
+    """Why this episode has no metadata row yet, in the operator's terms. Pure.
+
+    The two cases need opposite reactions -- wait, or clean up -- and the console
+    knows which it is, because the only session that could still be writing is
+    the one it started. Saying both is what makes the message sound like a fault
+    when it is usually a clock.
+    """
+    if recording:
+        return (
+            f"episode {episode} of '{name}' is still being written: its frames "
+            "are on disk but the session has not committed its metadata yet. It "
+            "appears here as soon as it does."
+        )
+    return (
+        f"episode {episode} of '{name}' has no metadata row, and no session is "
+        "running to write one -- the session that recorded it ended before "
+        "committing this episode. The count settles when the dataset is next "
+        "opened for recording; if it does not, Repair drops the empty slot."
+    )
+
+
 def render_episode_mp4(
-    root: Path, name: str, episode: int, out_path: Path, fps_override: "int | None"
+    root: Path,
+    name: str,
+    episode: int,
+    out_path: Path,
+    fps_override: "int | None",
+    recording: bool = False,
 ) -> Path:
     """Render one episode's composited sensor view to ``out_path`` (cached).
 
@@ -231,13 +258,7 @@ def render_episode_mp4(
     path = dataset_root(root, name)
     row = read_episode_row(path, episode)
     if row is None:
-        raise web.HTTPConflict(
-            text=(
-                f"episode {episode} of '{name}' has no readable metadata yet — it "
-                "is still being recorded, or the session that recorded it was "
-                "interrupted before this episode was committed"
-            )
-        )
+        raise web.HTTPConflict(text=uncommitted_episode(recording, name, episode))
     keys = video_keys(path)
     fps = _dataset_fps(path)
     state, action = read_episode_joints(path, row)
@@ -407,12 +428,21 @@ async def handle_video(request: web.Request) -> web.StreamResponse:
         app, _cache_path, app["cache_dir"], app["root"], name, episode
     )
     await in_executor(
-        app, render_episode_mp4, app["root"], name, episode, out, app["fps"]
+        app,
+        render_episode_mp4,
+        app["root"],
+        name,
+        episode,
+        out,
+        app["fps"],
+        app["session"].running(),
     )
     return web.FileResponse(out)
 
 
-def episode_playback(root: Path, name: str, episode: int) -> dict:
+def episode_playback(
+    root: Path, name: str, episode: int, recording: bool = False
+) -> dict:
     """Everything the browser needs to play one episode without a render.
 
     The recorded videos are already the frames a reviewer wants to see, and the
@@ -439,13 +469,7 @@ def episode_playback(root: Path, name: str, episode: int) -> dict:
     path = dataset_root(root, name)
     row = read_episode_row(path, episode)
     if row is None:
-        raise web.HTTPConflict(
-            text=(
-                f"episode {episode} of '{name}' has no readable metadata yet — it "
-                "is still being recorded, or the session that recorded it was "
-                "interrupted before this episode was committed"
-            )
-        )
+        raise web.HTTPConflict(text=uncommitted_episode(recording, name, episode))
     fps = _dataset_fps(path)
     streams = []
     for key in video_keys(path):
@@ -589,6 +613,7 @@ async def handle_playback(request: web.Request) -> web.Response:
         app["root"],
         request.match_info["name"],
         int(request.match_info["episode"]),
+        app["session"].running(),
     )
     return web.json_response(data)
 
