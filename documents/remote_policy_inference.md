@@ -129,6 +129,11 @@ ssh -N -L 8765:127.0.0.1:8765 <user>@<host>
 Leave it running in its own terminal. Traffic is then encrypted, no port is
 published, and no firewall change is needed at either site.
 
+Mind the port: the rig console gives a collection session's live monitor
+**8766** by default (`tool/rig_web.py --monitor-port`), so a policy server or a
+tunnel put there collides with a session that is recording. 8765 is free of
+that.
+
 ## 4. Run it — on the rig, dry first
 
 ```bash

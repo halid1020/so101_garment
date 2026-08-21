@@ -108,6 +108,29 @@ $('#c-episode').onclick = async () => {
   await pollSession();
 };
 
+// Enabling the arms moves them, so it lives where the operator can see them --
+// the headset, in Quest mode. A leader session has no headset, and when the
+// console started it there is no keyboard either, so there the page is the only
+// surface and this button is the way in. The session decides: a mode that does
+// not allow the key answers with its own refusal.
+$('#c-enable').onclick = async () => {
+  const ok = await confirmDialog({
+    title: 'Enable both arms?',
+    body: 'Torque goes on and both followers MOVE to the ready pose and hold '
+      + 'it. Stand clear of the arms before confirming.',
+    confirmLabel: 'Enable arms',
+  });
+  if (!ok) return;
+  try {
+    await j('/api/session/key', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: 'y'}),
+    });
+  } catch (e) { alert('enable failed: ' + e.message); }
+  await pollSession();
+};
+
 $('#c-stop').onclick = async () => {
   const ok = await confirmDialog({
     title: 'End the collection session?',
@@ -271,9 +294,20 @@ async function pollSession() {
       + ` · ee ${s.ee ? 'on' : 'off'}`;
     const m = s.monitor, rec = m && m.recorder;
     const armed = !!m && m.arms === 'ENABLED';
+    const leading = s.input === 'leader';
+    $('#c-enable').hidden = !leading;
+    $('#c-enable').disabled = armed;
+    $('#c-enable').title = armed ? 'the arms are already enabled' : '';
+    $('#c-surface').textContent = leading
+      ? 'This session is driven by the leader arms; its control keys are read '
+        + 'from the terminal that started it, so the ones this page may press '
+        + 'are here. Stand clear before enabling.'
+      : 'Everything below that moves an arm stays on the headset or the '
+        + 'keyboard at the rig — stand clear before it does.';
     $('#c-episode').disabled = !armed;
     $('#c-episode').title = armed ? ''
-      : 'enable the arms first (button Y on the headset, or Y at the session)';
+      : (leading ? 'enable the arms first'
+                 : 'enable the arms first (button Y on the headset)');
     $('#c-episode').textContent = (rec && rec.recording)
       ? 'Stop episode and save' : 'Start episode';
     $('#c-stop').disabled = !!s.stopping;

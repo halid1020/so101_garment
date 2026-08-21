@@ -248,6 +248,10 @@ class TestCollectTab(ConsoleTestCase):
         resp = await self.post("/api/session/episode", {})
         self.assertEqual(resp.status, 409)
 
+    async def test_pressing_any_key_without_a_session_is_refused(self):
+        resp = await self.post("/api/session/key", {"key": "y"})
+        self.assertEqual(resp.status, 409)
+
     async def test_stopping_without_a_session_is_refused(self):
         resp = await self.post("/api/session/stop", {})
         self.assertEqual(resp.status, 409)
@@ -302,9 +306,17 @@ class TestCollectTab(ConsoleTestCase):
         quest = body["controls"]["quest"]
         self.assertEqual(quest[0]["key"], "Y")
         self.assertEqual(quest[0]["where"], "headset")
-        self.assertEqual(body["controls"]["leader"][0]["where"], "session keyboard")
-        here = {s["key"] for s in quest if "this page" in s["where"]}
-        self.assertEqual(here, {"A", "Q"})
+        # Leader mode has no headset, and a session the console started has no
+        # keyboard either, so enabling is offered to the page there and only
+        # there.
+        leader = body["controls"]["leader"]
+        self.assertEqual(leader[0]["where"], "session keyboard or this page")
+        self.assertEqual(
+            {s["key"] for s in quest if "this page" in s["where"]}, {"A", "Q"}
+        )
+        self.assertEqual(
+            {s["key"] for s in leader if "this page" in s["where"]}, {"Y", "A", "Q"}
+        )
 
     async def test_the_collection_form_offers_this_machines_cameras(self):
         body = await (await self.client.get("/api/collect/config")).json()

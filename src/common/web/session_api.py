@@ -174,6 +174,13 @@ async def _press(app: web.Application, key: str) -> "dict[str, Any]":
             monitor_url(app, "/key"), json={"key": key}, timeout=timeout
         ) as resp:
             text = await resp.text()
+            if 400 <= resp.status < 500:
+                # The session refused the key (it is not one this mode allows).
+                # That is the operator's answer, not a broken link, so it keeps
+                # its own status and its own words.
+                raise web.HTTPForbidden(
+                    text=text or f"the session refused {key!r}"
+                ) from None
             if resp.status != 200:
                 raise web.HTTPBadGateway(text=text or f"monitor said {resp.status}")
             return {"pressed": key}
@@ -186,6 +193,20 @@ async def _press(app: web.Application, key: str) -> "dict[str, Any]":
 async def handle_session_episode(request: web.Request) -> web.Response:
     """Start or stop-and-save the current episode (the session's own A button)."""
     return web.json_response(await _press(request.app, "a"))
+
+
+async def handle_session_key(request: web.Request) -> web.Response:
+    """Press one of the session's control keys, if the session allows it.
+
+    The session -- not the console -- decides which keys a watcher may press,
+    because only it knows how it is being driven: with a headset on, every
+    button that moves an arm is already to hand and stays there; with leader
+    arms there is no second surface, so enabling is allowed from here. A key it
+    refuses comes back with the session's own reason rather than a second copy
+    of the rule kept here.
+    """
+    body = await request.json()
+    return web.json_response(await _press(request.app, str(body.get("key", ""))))
 
 
 async def handle_session_stop(request: web.Request) -> web.Response:
@@ -338,6 +359,7 @@ def add_session_routes(app: web.Application) -> None:
             web.post("/api/session/plan", handle_session_plan),
             web.post("/api/session/start", handle_session_start),
             web.post("/api/session/episode", handle_session_episode),
+            web.post("/api/session/key", handle_session_key),
             web.post("/api/session/stop", handle_session_stop),
             web.get("/api/live/streams", handle_live_streams),
             web.get("/api/live/{name}.mjpg", handle_live_stream),
