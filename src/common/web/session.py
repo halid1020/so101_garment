@@ -11,9 +11,10 @@ Nothing in this module imports aiohttp: what is worth testing is the resolution
 of a request into a command, the refusals that stop a session that cannot work,
 and the escalation ladder that ends one. The routes are in ``session_api``.
 
-While no session is running the console may open the assigned cameras itself,
-for a look before recording starts. That preview is explicit, and it is always
-released before a session is launched: two processes cannot hold one camera.
+While no session is running the console may open the assigned cameras and the
+follower buses itself, for a look before recording starts. Both previews are
+explicit, and both are always released before a session is launched: two
+processes cannot hold one camera, nor one serial port.
 """
 
 from __future__ import annotations
@@ -409,3 +410,150 @@ class PreviewCameras:
 
     def stream_names(self) -> "list[str]":
         return [c.name for c in self.captures]
+
+
+class PreviewArms:
+    """The follower arms read while nothing is recording, torque off.
+
+    The joint table on the Collect tab is fed by the session once one runs. With
+    no session there is nothing publishing joints at all, and an operator about
+    to record wants the same question answered first: are both arms on the bus
+    the map says, and does the console see them move? So the console reads them
+    itself -- calibrated, torque disabled, nothing commanded, the arms limp --
+    and reports in the same shape the session's monitor uses, with the command
+    half empty because nothing is commanding them.
+
+    Released before a session starts, like the camera preview: one process owns
+    a serial port.
+    """
+
+    RATE_HZ = 10.0
+
+    def __init__(self) -> None:
+        self._buses: dict[str, Any] = {}
+        self._state: dict[str, Any] = {}
+        self._read_at: dict[str, float] = {}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._threads: list[threading.Thread] = []
+
+    def running(self) -> bool:
+        return bool(self._buses)
+
+    def start(self, map_path: "Path | None" = None) -> "list[str]":
+        """Open both assigned follower buses. Returns the sides it got.
+
+        ``map_path`` is the assignment file to read (the console passes its own,
+        which a test points at a copy, so nothing here can open the machine's
+        real arms by accident).
+        """
+        if self.running():
+            return sorted(self._buses)
+        from common.follower_bus import connect_follower_bus
+        from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+        path = Path(map_path or SENSOR_MAP_PATH)
+        sensor_map = load_sensor_map(path) if path.exists() else {}
+        ports = sensor_map.get("arms") or {}
+        if not ports:
+            raise RuntimeError(
+                "no follower arms are assigned yet — assign them on the Signals "
+                "tab (or with the sensor-assignment tool) first"
+            )
+        failures = []
+        for side in ("left", "right"):
+            port = ports.get(side)
+            if not port:
+                failures.append(f"{side}: not assigned")
+                continue
+            try:
+                self._buses[side] = connect_follower_bus(side, str(port))
+            except Exception as exc:  # noqa: BLE001 — any failure is the same
+                failures.append(f"{side}: {exc}")
+        if not self._buses:
+            raise RuntimeError("; ".join(failures) or "no follower bus could be opened")
+        self._stop.clear()
+        for side in self._buses:
+            thread = threading.Thread(
+                target=self._read_loop,
+                args=(side,),
+                name=f"preview-arm-{side}",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+        return sorted(self._buses)
+
+    def _read_loop(self, side: str) -> None:
+        import numpy as np
+
+        from common.joint_frames import hw_to_urdf
+        from common.recording.features import BODY_JOINTS
+
+        period = 1.0 / self.RATE_HZ
+        bus = self._buses[side]
+        while not self._stop.is_set():
+            try:
+                positions = bus.sync_read("Present_Position", num_retry=2)
+            except Exception:  # noqa: BLE001 — a dropped packet is not a failure
+                time.sleep(period)
+                continue
+            urdf = hw_to_urdf(
+                side, np.array([positions[j] for j in BODY_JOINTS], dtype=np.float64)
+            )
+            with self._lock:
+                self._state[side] = (urdf, positions["gripper"] / 100.0)
+                self._read_at[side] = time.monotonic()
+            time.sleep(period)
+
+    def snapshot(self) -> "dict[str, Any] | None":
+        """The joint block the Collect tab draws, or ``None`` if nothing is open."""
+        from common.recording.monitor_server import joint_snapshot
+
+        if not self.running():
+            return None
+        now = time.monotonic()
+        with self._lock:
+            state = dict(self._state)
+            read_at = dict(self._read_at)
+        if not state:
+            return None  # opened, but no arm has answered yet
+        measured: list[float] = []
+        grippers: dict[str, Any] = {}
+        for side in ("left", "right"):
+            entry = state.get(side)
+            measured.extend([0.0] * 5 if entry is None else list(entry[0]))
+            grippers[side] = None if entry is None else entry[1]
+        joints = joint_snapshot(
+            measured,
+            grippers,
+            {side: (None, None, None) for side in ("left", "right")},
+            now,
+        )
+        # A side that is not open has no numbers, rather than the zeros that
+        # stood in for it while the other side was assembled.
+        for side in ("left", "right"):
+            if side not in state:
+                joints[side]["state"] = {k: None for k in joints[side]["state"]}
+        ages = [now - t for t in read_at.values()]
+        return {
+            "joints": joints,
+            "teleop_active": False,
+            "joint_drift_s": round(max(ages), 4) if ages else None,
+            "source": "preview",
+        }
+
+    def stop(self) -> None:
+        self._stop.set()
+        for thread in self._threads:
+            thread.join(timeout=1.0)
+        self._threads = []
+        for bus in self._buses.values():
+            try:
+                bus.disconnect()
+            except Exception:  # noqa: BLE001 — cleanup must not raise
+                pass
+        self._buses = {}
+        with self._lock:
+            self._state = {}
+            self._read_at = {}

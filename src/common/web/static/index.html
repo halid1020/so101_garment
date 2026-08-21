@@ -105,15 +105,19 @@
           <button id="c-preview">Start preview</button>
         </div>
         <div class="tiles" id="live-tiles"></div>
-        <div id="c-signals" hidden>
+        <div id="c-signals">
           <div class="bar">
             <span class="grow muted" id="c-teleop"></span>
             <span class="muted" id="c-drift"></span>
+            <button id="c-arms">Read the arms</button>
           </div>
           <table id="c-joints"></table>
           <p class="muted">Measured joints beside the command last written to
           the motors, in URDF degrees; the gripper is its open fraction. This is
-          the pair stored as the state and the action of every recorded frame.</p>
+          the pair stored as the state and the action of every recorded frame.
+          With no session running, <em>Read the arms</em> opens the follower
+          buses to fill the measured half — torque off, nothing commanded — and
+          lets go of them before a session starts.</p>
         </div>
       </div>
     </section>

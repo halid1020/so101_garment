@@ -28,24 +28,13 @@ import pyarrow.parquet as pq  # type: ignore[import]
 from common.configs import (
     DUAL_URDF_PATH,
     LEFT_ARM_BASE_FRAME_NAME,
-    LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
-    LEFT_ARM_HW_TO_URDF_SIGNS,
     RIGHT_ARM_BASE_FRAME_NAME,
-    RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG,
-    RIGHT_ARM_HW_TO_URDF_SIGNS,
 )
 from common.data_manager_dual import DualDataManager
+from common.joint_frames import urdf_to_hw
 from common.recording.features import BODY_JOINTS, SIDES
 
 _NAN = float("nan")
-_HW_OFFSETS = {
-    "left": np.array(LEFT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
-    "right": np.array(RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
-}
-_HW_SIGNS = {
-    "left": np.array(LEFT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
-    "right": np.array(RIGHT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
-}
 _BASE_FRAMES = {
     "left": LEFT_ARM_BASE_FRAME_NAME,
     "right": RIGHT_ARM_BASE_FRAME_NAME,
@@ -227,7 +216,7 @@ class SidecarSampler:
             for j, joint in enumerate(BODY_JOINTS):
                 row[f"cmd_q_{side}_{joint}"] = float(cmd_arr[j])
             if self.include_hw_frame_goal:
-                hw = _HW_SIGNS[side] * (cmd_arr - _HW_OFFSETS[side])
+                hw = urdf_to_hw(side, cmd_arr)
                 for j, joint in enumerate(BODY_JOINTS):
                     row[f"cmd_hw_{side}_{joint}"] = float(hw[j])
 

@@ -7,9 +7,10 @@ the status and the two allowed key presses to it. The browser therefore talks to
 one origin and is told "no session" rather than shown a dead image when there is
 none.
 
-While nothing is recording the console may open the assigned cameras itself, so
-the same tiles answer "is this camera pointing where I think" before a session
-starts. That preview is released before any session is launched.
+While nothing is recording the console may open the assigned cameras and the
+follower buses itself, so the same tiles answer "is this camera pointing where I
+think" and the same joint table answers "do both arms report" before a session
+starts. Both previews are released before any session is launched.
 """
 
 from __future__ import annotations
@@ -132,6 +133,11 @@ async def handle_session(request: web.Request) -> web.Response:
     state = app["session"].state()
     state["monitor"] = await monitor_get(app, "/status") if state["running"] else None
     state["preview"] = app["preview"].stream_names()
+    # With no session, the console's own reading of the arms fills the same
+    # table (measured only: nothing is commanding them).
+    state["preview_joints"] = (
+        None if state["running"] else await in_executor(app, app["arms"].snapshot)
+    )
     if state["running"]:
         state["controls"] = control_steps(str(state.get("input") or "quest"))
     return web.json_response(state)
@@ -145,9 +151,10 @@ async def handle_session_start(request: web.Request) -> web.Response:
     plan = await _plan_for(request, body)
     if plan["refusals"]:
         raise web.HTTPBadRequest(text="; ".join(plan["refusals"]))
-    # One process owns the cameras: the preview must let go before the recorder
-    # tries to open the same devices.
+    # One process owns a device: both previews must let go before the recorder
+    # tries to open the same cameras and the same buses.
     await in_executor(app, app["preview"].stop)
+    await in_executor(app, app["arms"].stop)
     try:
         state = await in_executor(app, app["session"].start, name, task, plan, body)
     except RuntimeError as exc:
@@ -301,6 +308,26 @@ async def handle_preview_stop(request: web.Request) -> web.Response:
     return web.json_response({"streams": []})
 
 
+async def handle_arms_start(request: web.Request) -> web.Response:
+    """Read the follower arms while nothing is recording (torque stays off)."""
+    app = request.app
+    if app["session"].running():
+        raise web.HTTPConflict(
+            text="a session is running — its own arms are already reported"
+        )
+    try:
+        sides = await in_executor(app, app["arms"].start, app["sensor_map_path"])
+    except RuntimeError as exc:
+        raise web.HTTPConflict(text=str(exc))
+    return web.json_response({"arms": sides})
+
+
+async def handle_arms_stop(request: web.Request) -> web.Response:
+    app = request.app
+    await in_executor(app, app["arms"].stop)
+    return web.json_response({"arms": []})
+
+
 def add_session_routes(app: web.Application) -> None:
     """Register the Collect tab's routes. ``session``/``preview``/``http`` must exist."""
     app.add_routes(
@@ -316,5 +343,7 @@ def add_session_routes(app: web.Application) -> None:
             web.get("/api/live/{name}.mjpg", handle_live_stream),
             web.post("/api/preview/start", handle_preview_start),
             web.post("/api/preview/stop", handle_preview_stop),
+            web.post("/api/preview/arms/start", handle_arms_start),
+            web.post("/api/preview/arms/stop", handle_arms_stop),
         ]
     )

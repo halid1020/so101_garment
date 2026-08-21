@@ -132,6 +132,9 @@ async def handle_arm_probe(request: web.Request) -> web.Response:
     _require_idle(app)
     body = await request.json()
     port = _body_str(body, "port")
+    # The Collect tab's idle reader holds both follower buses; one process may
+    # open a port once, so it lets go before this probe takes one.
+    await in_executor(app, app["arms"].stop)
     try:
         state = await in_executor(app, app["sensors_probe"].open, port)
     except RuntimeError as exc:

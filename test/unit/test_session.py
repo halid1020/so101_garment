@@ -23,6 +23,7 @@ from common.recording.collection_settings import (
 from common.web.session import (
     INTERRUPT_GRACE_S,
     QUIT_GRACE_S,
+    PreviewArms,
     SessionSupervisor,
     resolve_plan,
     session_refusals,
@@ -292,6 +293,51 @@ class TestSupervisor(unittest.TestCase):
         self._start()
         self.assertEqual(self.session.escalate(), "done")
         self.assertTrue(self.session.running())
+
+
+class TestPreviewArms(unittest.TestCase):
+    """The idle reading of the followers, assembled without a bus in sight."""
+
+    def test_nothing_is_reported_before_an_arm_answers(self):
+        arms = PreviewArms()
+        self.assertIsNone(arms.snapshot())
+        arms._buses = {"left": object()}  # opened, but no reading yet
+        self.assertIsNone(arms.snapshot())
+
+    def test_a_side_that_is_open_reports_and_the_other_stays_empty(self):
+        arms = PreviewArms()
+        arms._buses = {"left": object()}
+        arms._state = {"left": ([1.0, 2.0, 3.0, 4.0, 5.0], 0.25)}
+        arms._read_at = {"left": time.monotonic()}
+        snap = arms.snapshot()
+        self.assertEqual(snap["source"], "preview")
+        self.assertEqual(snap["joints"]["left"]["state"]["shoulder_pan"], 1.0)
+        self.assertEqual(snap["joints"]["left"]["state"]["gripper"], 0.25)
+        self.assertIsNone(snap["joints"]["right"]["state"]["shoulder_pan"])
+
+    def test_nothing_is_commanding_the_arms_so_the_command_half_is_empty(self):
+        # The console never writes to a bus it opened for reading, and the table
+        # must not suggest otherwise.
+        arms = PreviewArms()
+        arms._buses = {"left": object(), "right": object()}
+        arms._state = {
+            "left": ([0.0] * 5, 0.0),
+            "right": ([0.0] * 5, 0.0),
+        }
+        arms._read_at = {"left": time.monotonic(), "right": time.monotonic()}
+        snap = arms.snapshot()
+        self.assertFalse(snap["teleop_active"])
+        for side in ("left", "right"):
+            self.assertFalse(snap["joints"][side]["fresh"])
+            self.assertIsNone(snap["joints"][side]["command"]["wrist_roll"])
+
+    def test_an_unassigned_rig_is_refused_with_where_to_fix_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            empty = Path(d) / "sensor_map.yaml"
+            empty.write_text("cameras: {}\n")
+            with self.assertRaises(RuntimeError) as caught:
+                PreviewArms().start(empty)
+        self.assertIn("Signals", str(caught.exception))
 
 
 if __name__ == "__main__":

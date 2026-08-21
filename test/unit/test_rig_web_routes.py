@@ -70,7 +70,7 @@ class ConsoleTestCase(AioHTTPTestCase):
         # machine's real output directory.
         self._outputs = os.environ.get("SO101_OUTPUT_DIR")
         os.environ["SO101_OUTPUT_DIR"] = str(Path(self.tmp.name) / "outputs")
-        return build_app(
+        app = build_app(
             argparse.Namespace(
                 dir=str(self.root) if self.dir_given else None,
                 fps=None,
@@ -79,6 +79,11 @@ class ConsoleTestCase(AioHTTPTestCase):
                 mount_dir=str(Path(self.tmp.name) / "mounts"),
             )
         )
+        # No test may read the machine's real assignments: a route that opens
+        # devices would then open the arms and cameras of whatever rig is
+        # plugged into the machine running the tests.
+        app["sensor_map_path"] = Path(self.tmp.name) / "sensor_map.yaml"
+        return app
 
     async def tearDownAsync(self):
         await super().tearDownAsync()
@@ -97,6 +102,14 @@ class TestListing(ConsoleTestCase):
         for url in ("/", "/static/app.css", "/static/datasets.js"):
             resp = await self.client.get(url)
             self.assertEqual(resp.status, 200, url)
+
+    async def test_the_page_and_its_scripts_are_revalidated(self):
+        # A browser given a validator but no freshness rule may guess one and
+        # keep a script from cache: the page then runs against a script written
+        # for an older one. MEASURED as exactly that, so both must say no-cache.
+        for url in ("/", "/static/app.js", "/static/app.css"):
+            resp = await self.client.get(url)
+            self.assertEqual(resp.headers["Cache-Control"], "no-cache", url)
 
     async def test_console_reports_the_drive(self):
         body = await (await self.client.get("/api/console")).json()
@@ -269,6 +282,20 @@ class TestCollectTab(ConsoleTestCase):
             "/api/session/start", {"name": "../escape", "task": "fold"}
         )
         self.assertEqual(resp.status, 400)
+
+    async def test_nothing_reports_joints_until_something_is_reading_them(self):
+        body = await (await self.client.get("/api/session")).json()
+        self.assertIsNone(body["preview_joints"])
+
+    async def test_reading_the_arms_without_assignments_says_where_to_make_them(self):
+        resp = await self.post("/api/preview/arms/start", {})
+        self.assertEqual(resp.status, 409)
+        self.assertIn("Signals", await resp.text())
+
+    async def test_stopping_a_reader_that_never_started_is_harmless(self):
+        resp = await self.post("/api/preview/arms/stop", {})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["arms"], [])
 
     async def test_the_form_says_how_each_input_mode_is_driven(self):
         body = await (await self.client.get("/api/collect/config")).json()

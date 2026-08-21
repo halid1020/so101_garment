@@ -123,6 +123,17 @@ $('#c-stop').onclick = async () => {
   await pollSession();
 };
 
+$('#c-arms').onclick = async () => {
+  const on = $('#c-arms').dataset.on === '1';
+  $('#c-arms').disabled = true;
+  try {
+    await j(on ? '/api/preview/arms/stop' : '/api/preview/arms/start',
+            {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } catch (e) { alert(e.message); }
+  $('#c-arms').disabled = false;
+  await pollSession();
+};
+
 $('#c-preview').onclick = async () => {
   const on = $('#c-preview').dataset.on === '1';
   try {
@@ -150,25 +161,40 @@ function renderControls(steps) {
 const JOINT_ROWS = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex',
                     'wrist_roll', 'gripper'];
 
+// The table is drawn whether or not a session is running: an empty one saying
+// where the numbers come from is honest, while a pane that simply omits the
+// arms reads as a console that cannot see them.
 function renderJoints(monitor) {
-  // 'sig' rather than 'j': that name is the fetch helper everywhere else here.
-  const sig = monitor && monitor.joints;
-  $('#c-signals').hidden = !sig;
-  if (!sig) return;
+  const sig = monitor && monitor.joints;  // 'j' is the fetch helper here
+  const preview = !!(monitor && monitor.source === 'preview');
   const num = (v) => (v === null || v === undefined) ? '--' : v.toFixed(2);
   // A command older than a frame is what makes the recorded action fall back to
   // the measured state, so a stale column is dimmed rather than left to look
   // like a live one.
-  const cmdClass = (side) => sig[side].fresh ? '' : ' class="rate"';
+  const cmdClass = (side) => (sig && sig[side].fresh) ? '' : ' class="rate"';
+  const at = (side, half, name) => sig ? sig[side][half][name] : null;
   let html = '<tr><th></th><th colspan="2">left</th><th colspan="2">right</th></tr>'
     + '<tr><th></th><th>state</th><th>cmd</th><th>state</th><th>cmd</th></tr>';
   for (const name of JOINT_ROWS) {
     html += `<tr><th>${name}</th>` + ['left', 'right'].map(side =>
-      `<td>${num(sig[side].state[name])}</td>`
-      + `<td${cmdClass(side)}>${num(sig[side].command[name])}</td>`).join('') + '</tr>';
+      `<td>${num(at(side, 'state', name))}</td>`
+      + `<td${cmdClass(side)}>${num(at(side, 'command', name))}</td>`).join('')
+      + '</tr>';
   }
   $('#c-joints').innerHTML = html;
 
+  if (!sig) {
+    $('#c-teleop').textContent =
+      'no session — start one, or read the arms from here';
+    $('#c-drift').textContent = '';
+    return;
+  }
+  if (preview) {
+    $('#c-teleop').textContent = 'reading the arms — torque off, nothing commanded';
+    $('#c-drift').textContent =
+      `last read ${((monitor.joint_drift_s || 0) * 1000).toFixed(0)} ms ago`;
+    return;
+  }
   const leader = sessionState && sessionState.input === 'leader';
   $('#c-teleop').textContent = monitor.teleop_active
     ? (leader ? 'following the leaders' : 'teleoperating')
@@ -253,7 +279,10 @@ async function pollSession() {
     $('#c-stop').disabled = !!s.stopping;
     $('#c-stop').textContent = s.stopping ? 'Stopping…' : 'Stop session';
   }
-  renderJoints(s.monitor);
+  renderJoints(s.monitor || s.preview_joints);
+  $('#c-arms').hidden = !!s.running;
+  $('#c-arms').dataset.on = s.preview_joints ? '1' : '0';
+  $('#c-arms').textContent = s.preview_joints ? 'Stop reading' : 'Read the arms';
   if (s.running) renderControls(s.controls);
   $('#session-log').textContent = (s.tail || []).slice(-200).join('\n');
   $('#session-log').scrollTop = $('#session-log').scrollHeight;
