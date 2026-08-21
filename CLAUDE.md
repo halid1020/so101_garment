@@ -152,6 +152,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 - `documents/` — design docs & worklogs (teleop benchmark results, user
   study protocol, telegrip-native, remote policy inference, rig console)
   plus the living paper under `documents/paper/`.
+- `hpc/` — the Slurm cell on KCL CREATE and the traffic in both directions:
+  `provision_create.sh` (login node, once), `stage_datasets.sh` (collected
+  datasets up), `runs.tsv` + `submit_real.sh` + `create_real_vla.sbatch` (one
+  array task per dataset/policy), `create_sim_vla.sbatch`, and
+  `fetch_policies.sh` (the finished checkpoints back down, into the layout
+  `tool/policy_server.py` and `tool/run_policy_real.py` expect). Runbook:
+  `hpc/README.md`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
   `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).

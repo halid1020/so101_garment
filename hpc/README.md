@@ -22,6 +22,7 @@ The files:
 | `runs.tsv` | — | The real-data run matrix: one row per (dataset, policy) run. |
 | `submit_real.sh` | CREATE **login** node | Reads the matrix, checks staging, submits it as Slurm job arrays. |
 | `create_real_vla.sbatch` | CREATE **compute** node, via `sbatch` | One array task = one row: runs `test/system/long_vla_real.sh` for that dataset and policy. |
+| `fetch_policies.sh` | the **collection box** (or any machine) | Brings the finished checkpoints back out of scratch, into the layout the policy server and the on-robot runner expect. |
 
 ## Why a CREATE-specific path (not just `install.sh` + the driver)
 
@@ -283,10 +284,19 @@ is reused instead of retrained.
 
 ### 6. Evaluate — *at the rig*
 
-Copy a checkpoint back and run
-`tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
+Bring the finished checkpoints back with `fetch_policies.sh`, which copies only
+`checkpoints/last/pretrained_model` (the run directory itself is tens of GB) into
+one directory per (dataset, policy):
+
+```bash
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> --list
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> --dest ~/outputs/policies
+```
+
+Then `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
 `--dry-run`. A checkpoint too large for the rig's own machine can be served from
-a GPU box instead (`tool/policy_server.py` + `--server <url>`); see
+a GPU box instead (`--dest <gpu-host>:...`, then `tool/policy_server.py` +
+`--server <url>`); see
 [`../documents/remote_policy_inference.md`](../documents/remote_policy_inference.md).
 
 **pi0.5 is a deliberate follow-up.** Unlike ACT/Diffusion it finetunes a
