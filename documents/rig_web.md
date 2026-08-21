@@ -212,6 +212,26 @@ what it drops — `meta/action_space.json`, `meta/realsense.json`, and the
 per-episode files under `extra/` (sidecar, drift and identity), renumbered
 onto the merged episode indices.
 
+### Repairing a dataset that counts an episode nobody wrote
+
+A recording that was counted and never written leaves an episode number with
+nothing behind it: the list shows it as `?f`, and **no** rewrite of that dataset
+can run — not a deletion, not a merge — because LeRobot judges the whole local
+copy incomplete and goes looking for the missing part on the Hub.
+
+The pane says so when it happens, and offers **Repair**. It forgets the empty
+slots and renumbers the recordings after them, which is the part worth knowing
+before pressing it: what is now recording 5 may become recording 4. Nothing
+recorded is lost, marks for deletion follow their recordings, and the repair
+runs as a job in the corner like any other whole-dataset work.
+
+A dataset whose recordings are *all* missing is refused rather than repaired:
+that is a drive that is not mounted far more often than a dataset that truly
+holds nothing, and emptying its metadata would throw away the only record of
+what used to be there. So is damage that needs a decision — frames with no
+metadata, or metadata with no frames — because repairing either one means
+choosing what to discard.
+
 ## Assigning signals
 
 The rig is built from identical-looking USB devices: gripper and wrist

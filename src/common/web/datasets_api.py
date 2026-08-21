@@ -47,6 +47,11 @@ from aiohttp import web  # type: ignore[import]
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
+from common.recording.dataset_check import (
+    DatasetDamaged,
+    dataset_integrity,
+    repair_phantom_episodes,
+)
 from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
     compact_dataset,
@@ -144,11 +149,30 @@ def episodes_of(root: Path, name: str) -> dict:
         total = (max(lengths) + 1) if lengths else 0
     marked = [i for i in read_soft_deleted(path) if 0 <= i < total]
     visible = surviving_indices(total, marked)
+    # An episode with no length is either a metadata file that would not read
+    # (``damaged``) or one the dataset counts and never wrote. The two look
+    # identical in the list and need opposite remedies, so the pane is told
+    # which. This costs nothing: the episodes without a row are what the lengths
+    # already read say they are. Whether such an episode is truly empty or has
+    # frames nobody indexed is settled by the repair route, which reads the data.
+    missing = [i for i in range(total) if i not in lengths]
     return {
         "episodes": [{"index": k, "length": lengths.get(k)} for k in visible],
         "pending": len(marked),
         "total": total,
         "damaged": bad,
+        "integrity": {
+            "ok": not missing,
+            "repairable": bool(missing),
+            "summary": (
+                ""
+                if not missing
+                else f"episode(s) {', '.join(str(i) for i in missing[:6])}"
+                + ("" if len(missing) <= 6 else f" (+{len(missing) - 6} more)")
+                + " are counted by the dataset but have no recording behind them"
+            ),
+            "phantom": missing,
+        },
     }
 
 
@@ -670,6 +694,54 @@ async def handle_compact(request: web.Request) -> web.Response:
     return web.json_response(job)
 
 
+async def handle_repair(request: web.Request) -> web.Response:
+    """Drop episodes the dataset counts but never wrote -- a JOB, like compaction.
+
+    It rewrites every episode row and every data file (an index column each) and
+    renames the side files, which is fast next to a re-encode but far too slow to
+    hold a request open on a session-sized dataset.
+    """
+    app = request.app
+    name = request.match_info["name"]
+    path = dataset_root(app["root"], name)
+    refuse_while_busy(app)
+    report = await in_executor(app, dataset_integrity, path)
+    if report["ok"]:
+        raise web.HTTPBadRequest(text=f"{name} has nothing to repair")
+    if not report["repairable"]:
+        raise web.HTTPBadRequest(text=report["summary"])
+    problem = await in_executor(app, writability_problem, Path(app["root"]))
+    if problem:
+        raise web.HTTPConflict(text=f"cannot rewrite the dataset: {problem}")
+    depth_name, _ = await in_executor(app, _load_realsense, path)
+    depth_names = [depth_name] if depth_name else []
+
+    dropped = len(report["phantom"])
+    job = new_job(
+        app,
+        "repair",
+        name,
+        episodes=dropped,
+        message=f"dropping {dropped} empty episode slot(s) from {name}",
+    )
+
+    def run() -> None:
+        try:
+            result = repair_phantom_episodes(path, depth_names)
+        except (DatasetDamaged, OSError, ValueError) as exc:
+            finish(job, "failed", str(exc) or exc.__class__.__name__)
+            return
+        finish(
+            job,
+            "done",
+            f"{name} now holds {result['episodes']} recording(s); "
+            f"{result['renumbered']} were renumbered",
+        )
+
+    asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
+    return web.json_response(job)
+
+
 def add_dataset_routes(app: web.Application) -> None:
     """Register the browse / playback / episode-curation routes."""
     app.add_routes(
@@ -686,5 +758,6 @@ def add_dataset_routes(app: web.Application) -> None:
             web.post("/api/datasets/{name}/delete", handle_delete),
             web.post("/api/datasets/{name}/restore", handle_restore),
             web.post("/api/datasets/{name}/compact", handle_compact),
+            web.post("/api/datasets/{name}/repair", handle_repair),
         ]
     )

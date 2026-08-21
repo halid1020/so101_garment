@@ -480,6 +480,64 @@ class TestJobs(ConsoleTestCase):
         listed = await (await self.client.get("/api/jobs")).json()
         self.assertEqual(listed, [])
 
+    async def test_repairing_a_dataset_that_counts_a_phantom_is_a_job(self):
+        # The fixture's datasets are an info.json and nothing else, so every
+        # episode they count is one nobody wrote -- the fault at full strength.
+        result = {"episodes": 1, "renumbered": 1}
+        with mock.patch(
+            "common.web.datasets_api.repair_phantom_episodes", return_value=result
+        ) as repair:
+            body = await (await self.post("/api/datasets/cube-pnp/repair", {})).json()
+            job = await self._settle(body["id"])
+
+        self.assertEqual(job["kind"], "repair")
+        self.assertEqual(job["state"], "done")
+        self.assertIn("1 recording", job["message"])
+        self.assertEqual(repair.call_args.args[0].name, "cube-pnp")
+
+    async def test_a_dataset_with_nothing_behind_it_is_never_emptied(self):
+        # Every episode missing is a drive that is not mounted far more often
+        # than a dataset that truly holds none, so the repair refuses rather
+        # than rewriting the metadata that says what used to be here.
+        body = await (await self.post("/api/datasets/cube-pnp/repair", {})).json()
+        job = await self._settle(body["id"])
+
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("no recordings at all", job["message"])
+        self.assertTrue((self.root / "cube-pnp" / "meta" / "info.json").exists())
+
+    async def test_repairing_a_whole_dataset_is_refused_with_a_reason(self):
+        with mock.patch(
+            "common.web.datasets_api.dataset_integrity",
+            return_value={
+                "ok": True,
+                "repairable": False,
+                "summary": "",
+                "phantom": [],
+            },
+        ):
+            resp = await self.post("/api/datasets/cube-pnp/repair", {})
+
+        self.assertEqual(resp.status, 400)
+        self.assertIn("nothing to repair", await resp.text())
+
+    async def test_damage_that_needs_a_decision_is_refused_not_repaired(self):
+        report = {
+            "ok": False,
+            "repairable": False,
+            "summary": "episode(s) [2] have a recording but no metadata",
+            "phantom": [],
+        }
+        with mock.patch(
+            "common.web.datasets_api.dataset_integrity", return_value=report
+        ):
+            resp = await self.post("/api/datasets/cube-pnp/repair", {})
+
+        self.assertEqual(resp.status, 400)
+        self.assertIn("no metadata", await resp.text())
+        listed = await (await self.client.get("/api/jobs")).json()
+        self.assertEqual(listed, [])
+
     async def test_a_merge_may_delete_its_sources_once_it_has_worked(self):
         # The merge itself is LeRobot's; what is checked here is the console's
         # promise about the sources -- they go only after the output exists.

@@ -37,16 +37,20 @@ _IMG = np.zeros((6, 8, 3), dtype=np.uint8)
 
 
 class FakeDataset:
-    """Records writer calls; save_episode can be made to block on an event."""
+    """Records writer calls; save_episode can be made to block, or to fail.
 
-    num_episodes = 0
+    ``num_episodes`` advances only on a successful save, as a real dataset's
+    does: it is the dataset, not the recorder, that numbers episodes.
+    """
 
     def __init__(self) -> None:
         self.frames: list[dict] = []
         self.save_calls = 0
         self.clear_calls = 0
         self.finalized = False
+        self.num_episodes = 0
         self.save_gate: threading.Event | None = None
+        self.save_error: "Exception | None" = None
 
     def add_frame(self, frame: dict) -> None:
         self.frames.append(frame)
@@ -55,6 +59,9 @@ class FakeDataset:
         if self.save_gate is not None:
             self.save_gate.wait(timeout=5.0)
         self.save_calls += 1
+        if self.save_error is not None:
+            raise self.save_error
+        self.num_episodes += 1
 
     def clear_episode_buffer(self, *args, **kwargs) -> None:
         self.clear_calls = self.clear_calls + 1
@@ -374,6 +381,86 @@ class FakeDepthWriter:
 
     def abort_episode(self) -> None:
         self.aborted += 1
+
+
+class SpySidecar:
+    """Records the sidecar lifecycle an episode goes through."""
+
+    def __init__(self) -> None:
+        self.ended: list[int] = []
+        self.aborted = 0
+
+    def begin_episode(self, *a, **k) -> None:
+        pass
+
+    def end_episode(self, index: int) -> None:
+        self.ended.append(index)
+
+    def abort_episode(self) -> None:
+        self.aborted += 1
+
+    def stop(self) -> None:
+        pass
+
+
+class TestSaveThatFails(RecorderTestBase):
+    """A save that raises has not produced an episode, and must not pretend.
+
+    This is the fault that leaves a dataset counting an episode nobody wrote,
+    which LeRobot cannot open at all: it judges the whole local copy incomplete
+    and goes to the Hub for a version tag (see common.recording.dataset_check).
+    The recorder must therefore not advance its numbering past an episode that
+    was not written, nor leave side files named after it.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sidecar = SpySidecar()
+        self.recorder.sidecar = self.sidecar
+        self.depth = FakeDepthWriter()
+        self.recorder.depth_writer = self.depth
+
+    def _record_one(self) -> None:
+        self._record_some_frames()
+        self.assertTrue(self.recorder.request_stop_save())
+        self.assertTrue(
+            _wait_for(lambda: self.recorder.get_state() == RecorderState.IDLE)
+        )
+
+    def test_a_written_episode_advances_the_count(self):
+        self._record_one()
+
+        self.assertEqual(self.dataset.num_episodes, 1)
+        self.assertEqual(self.recorder.get_episode_count(), 1)
+        self.assertEqual(self.sidecar.ended, [0])
+
+    def test_a_failed_save_does_not_advance_the_count(self):
+        self.dataset.save_error = OSError("no space left on device")
+
+        self._record_one()
+
+        self.assertEqual(self.dataset.num_episodes, 0)
+        self.assertEqual(self.recorder.get_episode_count(), 0)
+
+    def test_a_failed_save_leaves_no_side_files_behind(self):
+        self.dataset.save_error = OSError("no space left on device")
+
+        self._record_one()
+
+        self.assertEqual(self.sidecar.ended, [])
+        self.assertEqual(self.sidecar.aborted, 1)
+        self.assertEqual(self.depth.ended, 0)
+        self.assertEqual(self.depth.aborted, 1)
+
+    def test_the_next_episode_takes_the_index_the_failed_one_did_not(self):
+        self.dataset.save_error = OSError("no space left on device")
+        self._record_one()
+        self.dataset.save_error = None
+
+        self._record_one()
+
+        self.assertEqual(self.sidecar.ended, [0])
+        self.assertEqual(self.recorder.get_episode_count(), 1)
 
 
 class TestDepthWiring(unittest.TestCase):

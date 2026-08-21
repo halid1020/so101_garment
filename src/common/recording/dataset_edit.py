@@ -491,6 +491,14 @@ def delete_episodes_in_place(
     # object caches what it loads, so the repair has to come first.
     repair_episode_metadata(root)
 
+    # And before LeRobot is constructed at all: an episode this dataset counts
+    # but never wrote makes LeRobot judge the whole local copy incomplete and
+    # reach for the Hub, which offline reports a local gap as an unreachable
+    # huggingface.co. Say what is actually wrong instead.
+    from common.recording.dataset_check import ensure_loadable
+
+    ensure_loadable(root)
+
     from lerobot.datasets.dataset_tools import delete_episodes
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 

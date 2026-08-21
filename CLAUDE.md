@@ -91,6 +91,10 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
   console — see below).
+- `src/common/recording/dataset_check.py` — is a dataset whole? The counted
+  episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
+  offset invariant, and the repair for an episode nobody wrote. Pure parquet +
+  JSON, no LeRobot import, so it can describe a dataset LeRobot refuses to open.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -206,6 +210,20 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     self-referential columns from each file's own path; the console runs
     it before a merge reads its sources, after a merge writes its output,
     and before any compaction.
+  - **An episode counted but never written breaks the whole dataset, and the
+    error blames the network:** `DatasetReader._check_cached_episodes_sufficient`
+    needs `set(range(total_episodes))` to be a subset of the episodes actually
+    present, so ONE missing index makes `LeRobotDataset.__init__` judge the
+    local copy incomplete and go to the Hub for a version tag — which offline
+    raises `OfflineModeIsEnabled: Cannot reach https://huggingface.co/...` for
+    a dataset that never left the drive (MEASURED on `cube-pnp-new`: 88 counted,
+    87 written, episode 4 absent from `meta/episodes/`, `data/` and `extra/`
+    alike, and `total_frames` 19 too high). `common/recording/dataset_check.py`
+    is the guard: `ensure_loadable` runs before anything constructs a
+    `LeRobotDataset`, and `repair_phantom_episodes` drops the empty slots and
+    renumbers the survivors. The console offers it as a Repair button. How such
+    a slot appears is not proven; the recorder no longer counts an episode whose
+    save raised, which is the one path we own.
   - **Video decoding / no sudo:** LeRobotDataset videos (PushT, LIBERO) are
     AV1-encoded. The default `torchcodec` backend dlopen's the *system*
     FFmpeg shared libs — on a box with no `ffmpeg` installed (or no sudo to
