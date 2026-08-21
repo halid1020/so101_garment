@@ -570,24 +570,39 @@ class EpisodeRecorder:
     # ── Terminal transitions ─────────────────────────────────────────────────
 
     def _save(self) -> None:
+        # A save that raises has NOT produced an episode, and everything below
+        # describes one: side files named after an index the dataset does not
+        # have, and a count one higher than what is on disk. A dataset that
+        # counts an episode nobody wrote cannot be opened by LeRobot at all
+        # (see common.recording.dataset_check), so a failure here is treated as
+        # a discard that says so, not as a save.
+        saved = True
         try:
             self.dataset.save_episode()
         except Exception as e:
+            saved = False
             if not self._note_storage_fault(e):
                 traceback.print_exc()
-        try:
-            # Land this episode's metadata on disk now rather than at exit, so an
-            # interrupted session keeps every episode it announced as saved and a
-            # review tool can open the dataset mid-session. See
-            # common.recording.dataset_edit.commit_episode_metadata.
-            commit_episode_metadata(self.dataset)
-        except Exception:
-            traceback.print_exc()
+        if saved:
+            try:
+                # Land this episode's metadata on disk now rather than at exit,
+                # so an interrupted session keeps every episode it announced as
+                # saved and a review tool can open the dataset mid-session. See
+                # common.recording.dataset_edit.commit_episode_metadata.
+                commit_episode_metadata(self.dataset)
+            except Exception:
+                traceback.print_exc()
         if self.sidecar is not None:
-            self.sidecar.end_episode(self._episode_index)
+            if saved:
+                self.sidecar.end_episode(self._episode_index)
+            else:
+                self.sidecar.abort_episode()
         if self.depth_writer is not None:
-            self.depth_writer.end_episode()
-        if self.root is not None:
+            if saved:
+                self.depth_writer.end_episode()
+            else:
+                self.depth_writer.abort_episode()
+        if saved and self.root is not None:
             try:
                 self._drift.write_parquet(self.root, self._episode_index)
             except Exception:
@@ -598,10 +613,23 @@ class EpisodeRecorder:
                 )
             except Exception:
                 traceback.print_exc()
-        self._print_stats(outcome="saved")
-        self._episode_index += 1
+        self._print_stats(outcome="saved" if saved else "NOT SAVED (write failed)")
+        self._episode_index = self._next_episode_index(saved)
         with self._lock:
             self._state = RecorderState.IDLE
+
+    def _next_episode_index(self, saved: bool) -> int:
+        """Where the NEXT episode goes: whatever the dataset says, if it says.
+
+        The dataset numbers episodes, not this recorder, and our side files are
+        named after that number -- so following its count keeps the two locked
+        together even when a save fails, rather than drifting by one and naming
+        every later side file after somebody else's episode.
+        """
+        count = getattr(self.dataset, "num_episodes", None)
+        if isinstance(count, int) and count >= 0:
+            return count
+        return self._episode_index + 1 if saved else self._episode_index
 
     def _note_storage_fault(self, exc: BaseException) -> bool:
         """Record whether ``exc`` means the storage itself has gone. Returns it.

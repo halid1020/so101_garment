@@ -40,14 +40,61 @@ you — it reads the requirement from the server's handshake.
 The output is a 12-D action in the same units as the state, which reaches the
 motors through the identical conversion a replayed recording takes.
 
-## 1. Put the checkpoint on the GPU machine
+## What has been trained
 
-A finished cluster run holds it under `train/<policy>/checkpoints/last/`:
+The real-data cell on the cluster (`hpc/README.md`) has produced these:
+
+| dataset | policy | final train loss | task string |
+|---|---|---|---|
+| cube-pnp | act | 0.066 | pick the cube and place it on the plate |
+| cube-pnp | diffusion | 0.002 | pick the cube and place it on the plate |
+| cube-dual-pnp-new | act | 0.085 | pick the cube and place it on the plate |
+| cube-dual-pnp-new | diffusion | 0.003 | pick the cube and place it on the plate |
+| fold-short | act | 0.114 | flatten the short and fold it |
+| fold-short | diffusion | 0.004 | flatten the short and fold it |
+
+Training loss ranks nothing on the robot; it is here so that a checkpoint can be
+told apart from a run that never converged. ACT and diffusion ignore the task
+string, but pass the recorded one anyway — it is what the dataset froze, and a
+policy that does read it will need it.
+
+Two footnotes on cube-pnp. Its ACT weights come from an earlier submission,
+whose run directory is named after the job id rather than the dataset, so it
+appears under that name in a listing. The re-run under the dataset name was
+cancelled at its 24-hour wall time, 8k of 80k steps in, at about ten seconds per
+optimiser step — worth diagnosing before that cell is submitted again, since the
+same recipe trains diffusion to completion on the same dataset.
+
+## 1. Bring the checkpoint back from the cluster
+
+A finished cluster run holds its final weights under
+`train/<policy>/checkpoints/last/pretrained_model/`, beside tens of gigabytes of
+intermediate checkpoints and optimiser state that inference has no use for.
+`hpc/fetch_policies.sh` reads the run directory, works out which
+(dataset, policy) pairs actually finished, and copies only what a server loads —
+one directory per pair, named for both:
 
 ```bash
-rsync -avP <run>/train/act/checkpoints/last/pretrained_model/ \
-    <user>@<host>:~/project/so101_garment/outputs/policies/cube-pnp-act/
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> --list
+bash hpc/fetch_policies.sh --from <user>@<create-login-host> \
+    --dest <gpu-host>:project/so101_garment/outputs/policies
 ```
+
+`--list` first. A run cancelled at its wall time still has checkpoints, just not
+a `last`, and it reads `unfinished` there instead of installing something that
+looks like a checkpoint and is not. `--datasets` and `--only` take a subset.
+
+The copy runs on the machine the weights are going to, pulling from the cluster
+over your forwarded SSH agent, so nothing lands on the rig's disk and no key is
+ever copied to the GPU box. A cluster that accepts logins only from inside its
+own network cannot be reached that way — the script checks before it moves
+anything, and `--bridge` then routes the bytes through the machine you are
+sitting at, in two hops. KCL CREATE, from outside its network, needs `--bridge`.
+
+Each checkpoint is then read back where it landed and reported: policy type,
+observation steps in, actions out, and the camera names it was trained on. Those
+names must be the rig's. If they are not, stop there — that is a
+training/collection mismatch, and no amount of networking will fix it.
 
 ACT is roughly 200 MB, diffusion about 1.1 GB.
 
@@ -68,6 +115,11 @@ steps in, actions out, and the camera names. If those camera names are not the
 rig's, stop here: the mismatch is a training/collection mismatch, not a network
 problem.
 
+Detached (`nohup`, `tmux`) it is the same command with `venv/bin/python -u`:
+redirected to a file, Python buffers its output, and the startup lines you want
+to read sit in that buffer for a long time. `GET /meta` answers the same
+questions over the tunnel once step 3 is up, whichever way it was started.
+
 ## 3. Open the tunnel — on the rig
 
 ```bash
@@ -76,6 +128,11 @@ ssh -N -L 8765:127.0.0.1:8765 <user>@<host>
 
 Leave it running in its own terminal. Traffic is then encrypted, no port is
 published, and no firewall change is needed at either site.
+
+Mind the port: the rig console gives a collection session's live monitor
+**8766** by default (`tool/rig_web.py --monitor-port`), so a policy server or a
+tunnel put there collides with a session that is recording. 8765 is free of
+that.
 
 ## 4. Run it — on the rig, dry first
 
@@ -101,6 +158,62 @@ venv/bin/python tool/run_policy_real.py \
 The arms ramp slowly to the policy's first action, then run at `--hz`. Ctrl+C,
 the end of `--seconds`, and any error all disable torque on the way out.
 
+## Watching a rollout
+
+A rollout that misbehaves is over in seconds and the terminal shows almost none
+of it. `--web` serves a live view of the run itself on loopback:
+
+```bash
+venv/bin/python tool/run_policy_real.py \
+    --server http://127.0.0.1:8765 --task "pick the cube and place it on the plate" \
+    --seconds 60 --web
+```
+
+It comes up with the cameras and the buses, before the first ramp, and answers
+the four questions a failed grasp raises:
+
+- **What the policy was shown** — the camera frames of the window that was
+  actually sent, beside the twelve joint values that went with them. Not the
+  live view: by the time a chunk is executing, the frames it was planned from
+  are half a second old, and those are the ones that explain the plan.
+- **What it planned** — the returned chunk as joint traces, with the part
+  already executed shaded, and the same chunk replayed in the rig's own twin.
+  The twin is forward kinematics with a camera: it shows where the plan puts the
+  arms, and nothing else. A toggle points it at the measured arms instead.
+- **What the arms did** — measured against commanded, per joint, with the two
+  **grippers on their own panel**. That is deliberate: across the collected
+  datasets the gripper channels span a few tenths of open fraction and never
+  reach either end, so a grasp is won or lost in a number that a table of twelve
+  hides.
+- **Whether it arrived in time** — round trip, how much of it was inference,
+  the queue depth against the depth that triggers the next request, and how many
+  ticks were spent holding.
+
+### The throttle
+
+Four buttons: **Hold**, **Step one chunk**, **Run**, **Stop**. Stepping is how a
+failure gets examined — one plan is executed, the arms stop, and the plan that
+produced the motion is still on the screen beside the motion it produced.
+
+Leaving a hold **drops whatever was queued**. A chunk planned before the pause
+was drawn from a picture of the world that is now minutes old, and executing it
+afterwards would be a surprise; the cost is one round trip on resume.
+
+The view can only ever ask for *less* motion than the terminal already
+authorised, or end the run. Torque is enabled once, at the confirmation prompt,
+and nothing in the browser can enable it — the page is unauthenticated and it
+steers a robot, which is why it binds loopback like everything else here. A
+local run (`--checkpoint`, no server) has no chunk to step through, and the
+button says so.
+
+### What it leaves behind
+
+Every rollout writes `$SO101_OUTPUT_DIR/policy_runs/<stamp>/`: `chunks.jsonl`,
+one line per plan, appended as it lands, so a run that dies mid-episode still
+leaves its plans; and `ticks.parquet`, one row per control tick with the
+measured joints, the goal written, the mode and the queue depth. `--no-log`
+skips it.
+
 ## What happens when the network misbehaves
 
 The arms are under torque, so a late chunk is a safety question rather than a
@@ -120,11 +233,16 @@ performance one:
   whatever the policy plans, which is what it does when run locally. Lower it to
   make the policy re-observe sooner — 15 is half a second at 30 Hz — at the cost
   of more requests.
-- `--prefetch N` asks for the next chunk once the queue falls to N actions
-  (default: a third of a chunk). It has to cover the round trip: the queue drains
-  at the control rate, so N must exceed *round trip × `--hz`*. A 640 ms round
-  trip at 30 Hz spends 19 actions, which the ACT default of 33 covers with room
-  to spare; a slow link, or a shortened `--actions-per-chunk`, wants a larger N.
+- `--prefetch N` asks for the next chunk once the queue falls to N actions. It
+  has to cover the round trip: the queue drains at the control rate, so N must
+  exceed *round trip × `--hz`*. **The default now measures that rather than
+  guessing it** — a third of a chunk until a round trip has been timed, then
+  whatever covers it with half again for jitter, never reaching the chunk
+  length. This matters: a diffusion chunk is 32 actions, 1.07 s at 30 Hz, and
+  half a second of inference makes the round trip about 0.6 s — 18 actions,
+  against a static third-of-a-chunk threshold of 10. Those rollouts ran a second
+  and held, ran a second and held. ACT never had the problem: 100 actions per
+  chunk against 18 ms of inference. Pass N to override the measurement.
 - `--hz` is the control rate; it should match the rate the dataset was recorded
   at (30 Hz here).
 

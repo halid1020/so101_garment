@@ -12,16 +12,10 @@ import traceback
 
 import numpy as np
 
-from common.configs import (
-    GRIPPER_OPEN_MAX_FRAC,
-    JOINT_STATE_STREAMING_RATE,
-    LEFT_ARM_HW_TO_URDF_OFFSETS_DEG,
-    LEFT_ARM_HW_TO_URDF_SIGNS,
-    RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG,
-    RIGHT_ARM_HW_TO_URDF_SIGNS,
-)
+from common.configs import GRIPPER_OPEN_MAX_FRAC, JOINT_STATE_STREAMING_RATE
 from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.device_faults import bus_gone
+from common.joint_frames import HW_TO_URDF_OFFSETS, HW_TO_URDF_SIGNS
 
 _BODY_DOF = 5  # SO101 has 5 actuated body joints per arm
 _BODY_JOINTS = [
@@ -33,17 +27,12 @@ _BODY_JOINTS = [
 ]
 # Everything in DualDataManager / IK / visualizer lives in URDF joint space;
 # only this thread talks to the motors, so the hw<->URDF sign+zero-offset
-# conversion happens here on read and write. Both are per arm (each servo
-# was zeroed and oriented independently during LeRobot calibration).
-# urdf = sign * hw + offset ; hw = sign * (urdf - offset)  [sign is +-1]
-_HW_TO_URDF_OFFSETS = {
-    "left": np.array(LEFT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
-    "right": np.array(RIGHT_ARM_HW_TO_URDF_OFFSETS_DEG, dtype=np.float64),
-}
-_HW_TO_URDF_SIGNS = {
-    "left": np.array(LEFT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
-    "right": np.array(RIGHT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
-}
+# conversion happens here on read and write. The tables are shared
+# (``common.joint_frames``, which also names the conversion for callers outside
+# this loop); they are applied inline below rather than through the helper
+# because both are hoisted out of a 100 Hz loop.
+_HW_TO_URDF_OFFSETS = HW_TO_URDF_OFFSETS
+_HW_TO_URDF_SIGNS = HW_TO_URDF_SIGNS
 
 
 def dual_joint_state_thread(

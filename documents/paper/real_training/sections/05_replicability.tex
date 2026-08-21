@@ -40,7 +40,12 @@ are at their home pose, that every camera and the depth device open at
 their configured resolution, that the dataset volume has headroom, and that
 the host-tuning items which reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
-that is quietly misconfigured.
+that is quietly misconfigured. The check is also read from the console of the
+following paragraphs, immediately above the form that starts a session, so it
+is consulted where the session begins rather than in a separate step that can
+be skipped; and where the volume is the item that fails, that console is also
+where the operator reclaims the space, so a failed check is answered in the
+same place it is raised.
 
 The check further reports which peripheral-bus hub each sensor and the
 storage volume depend upon. This is not fussiness about cabling. A rig of
@@ -75,7 +80,7 @@ claims. \unjustified{} the check is open-loop and single-arm-workspace, so
 it measures follower tracking, not task success.
 
 \paragraph{Episode review and curation.} A recorded dataset is inspected in
-a browser-based review tool served on the collection host: it lists the
+a browser-based console served on the collection host: it lists the
 datasets, lists each dataset's recordings, and plays a selected recording as
 the same composited sensor view the operator watched while collecting, with a
 draggable scrub control to move through it. A flawed episode --- a mistimed
@@ -84,6 +89,113 @@ individually or in batches, and the dataset is rewritten with the remaining
 episodes renumbered consistently across the training features and the side
 files, so curation leaves a valid dataset rather than a gap. Reviewing and
 pruning before training keeps a collection honest without re-running the rig.
+
+\paragraph{Dataset curation.} Curation of whole datasets belongs in the same
+place, because the mistakes it repairs are made in the sessions that produced
+the recordings. The console therefore also names, renames, deletes and merges
+the datasets on the collection volume. Naming is not a cosmetic concern here: a
+collection started session by session from a shell accumulates near-duplicate
+names, and a reviewer who cannot tell two of them apart cannot decide which to
+train on, so every entry is listed with its frame rate, its recorded streams,
+its instruction, its episode count and its size on the volume. Merging writes a
+new dataset and keeps the sources, so combining recordings is never itself
+destructive; a reviewer who wants the sources discarded says so, and they are
+removed only once the merged dataset stands complete, never before. Merging is
+refused, with the reason stated before any work begins, when the sources
+disagree on frame rate, robot type or recorded streams, or when any source
+still holds episodes marked for removal, whose indices would no longer denote
+the episodes the reviewer marked. Every operation that replaces a dataset moves
+the original aside and swaps the result into place only once it is complete, so
+an interruption leaves the collection as it was rather than partly rewritten,
+and a rewrite that cannot finish removes the partial copy it was building.
+
+Merging is where a subtlety of the underlying dataset format bites. Each
+episode's metadata records which metadata file holds it, and the merge
+implementation carries those references over from the sources into an output
+that numbers its files differently; the merged dataset therefore describes
+itself incorrectly, and the next operation to rewrite it fails partway through
+on a file that was never written. Since that reference is one a file can always
+be checked against, the platform corrects it from the file itself, before a
+merge reads its sources, after a merge writes its output, and before any
+removal begins. Curation is thus closed under merging: a merged collection can
+be curated and merged again, which is the whole point of merging sessions
+together.
+Rewriting a dataset takes minutes rather than moments, so the console performs
+it in the background and reports its progress while the reviewer carries on;
+and because these removals cannot be undone, each one is confirmed before it
+starts, while marking an episode, which the reviewer can reverse, is not.
+
+\paragraph{Reviewing away from the rig.} Which volume holds the collection is
+itself something the reviewer chooses while the console runs, and that volume
+need not be attached to the machine running it: given the operator's existing
+access to another host, the console mounts the remote collection directory and
+then treats it exactly as a local one. Reading a recording costs only the span
+of video it covers, so review over a link is comfortable, whereas rewriting a
+dataset moves every byte across it twice and belongs on the host that holds the
+volume. A collection can therefore be reviewed and curated from a desk, while
+the operations that reshape it stay where the recordings live.
+
+\paragraph{Binding devices to names.} A rig of this kind is assembled from
+devices that are indistinguishable to software. The gripper and wrist cameras
+are the same model bought together, and the arm buses present themselves in
+whatever order they were connected, so which physical device answers to which
+name is decided by the sockets they happen to occupy, and it changes whenever
+something is replugged. The platform therefore keeps an explicit map from each
+stream name to a socket-stable device alias, and identifies the devices for it
+physically: a camera is shown live until the operator presses its gel and sees
+which view changes, and an arm is recognised by wiggling it and watching which
+port's raw joint counts move. The bus is opened uncalibrated with its torque
+disabled for that test, so identification reads the arm and never drives it.
+
+Two properties of this map matter more than the procedure. It is per machine
+and never travels with the code, because it describes one rig's cabling.
+And it is checked rather than trusted: the console shows, for every name, whether
+the device it names is presently connected, since an assignment that has gone
+stale otherwise announces itself only as a stream missing from a recording,
+which is a poor place to discover it. Assignment is refused while a session is
+recording, because the session holds those very devices.
+
+\paragraph{Operating a session from the console.} Collection itself is driven
+from the same page. One process must own the rig, because a camera opens once
+and the arm buses are held under lock, so the console does not take the devices:
+it starts the recorder as a session of its own and asks it for what the operator
+needs to see. The session serves its frames and its state back over the
+machine's loopback interface, and the console forwards them, so the live view
+costs a single image compression per viewer and never touches the loop that
+writes the dataset. Two consequences matter for replicability. A rig needs no
+display of its own: the operator watches the streams, the recorder state, the
+episode count and any stream that has gone stale from whatever machine they are
+sitting at. And the session outlives the page, so closing or reloading the
+console cannot cost a recording.
+
+Cameras alone do not tell the operator whether the rig is doing what it is
+told, so the session reports its proprioception beside them: each arm's
+measured joint positions next to the command last written to its motors, which
+is precisely the pair stored as the state and the action of every frame. It
+answers the two questions a camera cannot. Whether the arms are following, by
+the agreement between the two columns; and whether the commands are arriving at
+all, because a command older than one frame is what makes a recorded action
+fall back to the measured state, and the console names the arm it happened to
+rather than leaving a plausible-looking number in place. The same question is worth asking before a session
+exists, so with nothing recording the console reads the arms itself, limp and
+uncommanded, and fills the same table: an operator can push each arm by hand
+and see that it is on the bus the map claims and that its calibration is
+loaded. The instructions for driving the session are shown beside it, each step
+labelled with the surface it belongs to, and they are generated from the same
+list the recorder prints to its terminal, so the two accounts of how the rig is
+operated cannot diverge.
+
+What may be pressed remotely is deliberately narrow. Starting and ending an
+episode, and ending the session, are decisions about the recording and are
+available. Enabling, parking and homing the arms move them, and move them
+before anyone has necessarily looked at the rig, so they remain on the headset
+and on the keyboard beside it; the browser only reports whether the arms are
+enabled, and refuses to start an episode until they are. Ending a session is a
+request the recorder honours between frames, which is what parks the arms,
+finishes an episode in progress and closes the dataset; the console escalates
+only if that request is ignored, and never to a signal that would abandon an
+open episode. \unjustified{} the division of controls is a judgement about
+where an operator's eyes are, not a measured safety result.
 
 \paragraph{Motion review.} Playing an episode back shows whether a
 demonstration did the right thing. It does not show whether it did it

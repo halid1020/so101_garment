@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -386,6 +387,80 @@ def read_episode_lengths(root: Path) -> "tuple[dict[int, int], list[str]]":
     return lengths, bad
 
 
+# ── Episodes-metadata repair ─────────────────────────────────────────────────
+#
+# Every row of ``meta/episodes/<chunk>/<file>.parquet`` carries the chunk and
+# file index of the file it is stored in. That pair is self-referential, so a
+# row can always be checked -- and corrected -- against its own path.
+#
+# It needs correcting because LeRobot's ``aggregate_datasets`` merges episode
+# metadata by copying each source's rows and merely OFFSETTING that column
+# (``datasets/aggregate.py``), while writing every row into the destination's
+# first file. A merged dataset therefore claims its episodes live in files that
+# were never written, and the next rewrite -- a compaction, or a second merge --
+# fails when ``dataset_tools._load_episode_with_stats`` opens one of them.
+# MEASURED on a merged dataset: 62 rows in ``file-000.parquet`` claiming file
+# indices 0..55. Freshly recorded datasets are consistent, so this repairs
+# damage rather than papering over the recorder.
+
+EPISODES_GLOB = "meta/episodes/chunk-*/file-*.parquet"
+META_CHUNK_KEY = "meta/episodes/chunk_index"
+META_FILE_KEY = "meta/episodes/file_index"
+_META_FILE_RE = re.compile(r"chunk-(\d+)/file-(\d+)\.parquet$")
+
+
+def meta_file_indices(path: Path) -> "tuple[int, int]":
+    """The ``(chunk, file)`` a metadata file's own path declares. Pure."""
+    match = _META_FILE_RE.search(Path(path).as_posix())
+    if match is None:
+        raise ValueError(f"not an episodes-metadata file: {path}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def episode_meta_files(root: Path) -> "list[Path]":
+    """Every episodes-metadata parquet in the dataset, in path order."""
+    return sorted(Path(root).glob(EPISODES_GLOB))
+
+
+def repair_episode_metadata(root: Path) -> "list[str]":
+    """Make every episodes-metadata row name the file it is really in.
+
+    Returns the files it rewrote (empty when the dataset was already
+    consistent), so a caller can say what it did. Only the two self-referential
+    index columns are touched, and the table is rewritten through pyarrow rather
+    than pandas so that every other column -- the per-episode statistics above
+    all -- keeps its exact type instead of being round-tripped through object
+    arrays. Each file is replaced atomically, so an interrupted repair leaves
+    the dataset as it was.
+    """
+    import pyarrow as pa  # type: ignore[import]
+    import pyarrow.parquet as pq  # type: ignore[import]
+
+    fixed: list[str] = []
+    root = Path(root)
+    for path in episode_meta_files(root):
+        chunk, index = meta_file_indices(path)
+        table = pq.read_table(path)
+        if META_CHUNK_KEY not in table.column_names:
+            continue  # not a v3.0 episodes table; leave it alone
+        wanted = {META_CHUNK_KEY: chunk, META_FILE_KEY: index}
+        if all(
+            table.column(key).to_pylist() == [value] * table.num_rows
+            for key, value in wanted.items()
+        ):
+            continue
+        for key, value in wanted.items():
+            position = table.column_names.index(key)
+            field = table.schema.field(position)
+            column = pa.array([value] * table.num_rows, type=field.type)
+            table = table.set_column(position, field, column)
+        temp = path.with_suffix(".parquet.partial")
+        pq.write_table(table, temp)
+        os.replace(temp, path)
+        fixed.append(str(path.relative_to(root)))
+    return fixed
+
+
 def delete_episodes_in_place(
     root: Path, repo_id: str, indices: "list[int]", depth_names: "list[str]"
 ) -> int:
@@ -410,6 +485,20 @@ def delete_episodes_in_place(
     if problem:
         raise ReadOnlyDatasetError(f"cannot rewrite the dataset: {problem}")
 
+    # Before anything reads the metadata: a dataset produced by a merge may
+    # claim its episodes live in metadata files that were never written, and
+    # LeRobot would open one of them partway through the rewrite. The dataset
+    # object caches what it loads, so the repair has to come first.
+    repair_episode_metadata(root)
+
+    # And before LeRobot is constructed at all: an episode this dataset counts
+    # but never wrote makes LeRobot judge the whole local copy incomplete and
+    # reach for the Hub, which offline reports a local gap as an unreachable
+    # huggingface.co. Say what is actually wrong instead.
+    from common.recording.dataset_check import ensure_loadable
+
+    ensure_loadable(root)
+
     from lerobot.datasets.dataset_tools import delete_episodes
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -424,27 +513,34 @@ def delete_episodes_in_place(
     stamp = time.strftime("%Y%m%d-%H%M%S")
     temp = root.parent / f"{root.name}.tmp-{stamp}"
 
-    delete_episodes(ds, indices, output_dir=temp, repo_id=repo_id)
+    # Everything up to the swap builds the temp dataset, and a failure anywhere
+    # in it (a re-encode that dies, a full disk) must not leave tens of
+    # gigabytes behind under a name nothing will ever look at again.
+    try:
+        delete_episodes(ds, indices, output_dir=temp, repo_id=repo_id)
 
-    # LeRobot rewrites meta/ from scratch, so our two dataset-level JSONs are not
-    # carried over — copy them across.
-    for fn in ("realsense.json", "action_space.json"):
-        src = root / "meta" / fn
-        if src.is_file():
-            (temp / "meta").mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, temp / "meta" / fn)
+        # LeRobot rewrites meta/ from scratch, so our two dataset-level JSONs
+        # are not carried over — copy them across.
+        for fn in ("realsense.json", "action_space.json"):
+            src = root / "meta" / fn
+            if src.is_file():
+                (temp / "meta").mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, temp / "meta" / fn)
 
-    # Re-index our side files (extra/) into the temp dataset per the mapping.
-    for src_rel, dst_rel in extra_reindex_ops(mapping, depth_names):
-        src = root / src_rel
-        if not src.exists():
-            continue
-        dst = temp / dst_rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir():
-            shutil.copytree(src, dst)
-        else:
-            shutil.copy2(src, dst)
+        # Re-index our side files (extra/) into the temp dataset per the mapping.
+        for src_rel, dst_rel in extra_reindex_ops(mapping, depth_names):
+            src = root / src_rel
+            if not src.exists():
+                continue
+            dst = temp / dst_rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+    except BaseException:
+        shutil.rmtree(temp, ignore_errors=True)
+        raise
 
     trash = root.parent / f"{root.name}.trash-{stamp}"
     os.replace(root, trash)  # atomic within the filesystem

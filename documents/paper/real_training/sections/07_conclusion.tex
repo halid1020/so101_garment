@@ -23,7 +23,17 @@ cameras and the measured joints and sending its predicted action through the
 same command path that produced the labels, so the arms execute exactly the
 action definition the dataset froze. The same reads first drive slowly to the
 policy's opening action and disable torque on exit, keeping the on-robot trial
-within the platform's safety envelope.
+within the platform's safety envelope. Where the trained model is too large for
+the machine at the rig, the forward pass may be hosted elsewhere without
+weakening any of this: an action-chunking policy plans many steps from a single
+observation, so the link carries one observation per chunk rather than one per
+control tick, and the rig retains the observation, the command path, the control
+rate and every safety decision. Only the weights move. The trial is also
+observable in the same terms as the collection it came from: the observation the
+policy was given, the plan it returned, and the motion the arms made of that
+plan, each visible while it happens and recorded for afterwards. An operator may
+hold the arms or advance them one plan at a time, so a failure can be examined
+at the pose that produced it rather than reconstructed from memory.
 
 This is a living document. An experiments section will report the first
 datasets collected on the platform, the measured drift budgets achieved,

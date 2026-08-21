@@ -51,6 +51,7 @@ import os
 import shutil
 import signal
 import sys
+import termios
 import threading
 import time
 import traceback
@@ -86,7 +87,9 @@ from common.recording import (
     build_dataset_features,
     load_recording_config,
 )
+from common.recording.controls import control_steps
 from common.recording.depth import DepthWriter
+from common.recording.monitor_server import MonitorServer, allowed_keys_for
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
@@ -583,6 +586,16 @@ def add_sensor_view_cli_args(parser: argparse.ArgumentParser) -> None:
         help="Ad-hoc camera for --sensor-view, e.g. "
         "left_arm_left_gripper=/dev/video4 (repeatable; default: the "
         "cameras assigned in src/conf/sensor_map.yaml)",
+    )
+    group.add_argument(
+        "--monitor-port",
+        type=int,
+        default=0,
+        metavar="PORT",
+        help="Serve the live view on this loopback port so the rig console "
+        "(tool/rig_web.py) can show the cameras and the recorder state in a "
+        "browser, and press A/Q remotely (0 = off, the default). No device is "
+        "opened for it: the frames are the ones this session already has",
     )
 
 
@@ -1110,25 +1123,27 @@ def main():
         else:
             print("⚠️  Cannot home: arms not enabled")
 
-    # Control surface. Quest: headset buttons via the quest reader.
-    # Leader: the same callbacks keyed to characters, dispatched either by
-    # the sensor-view window (if --sensor-view) or a terminal keyboard
-    # reader. Leader-follower has NO clutch — enabling (Y) starts the
-    # direct joint-to-joint follow; there is no engage/pause key.
-    leader_keys: dict = {}
-    if use_leader:
-        leader_keys = {
-            "y": _safe_button("Y (enable)", on_enable),
-            "x": _safe_button("X (park)", on_park),
-            "a": _safe_button("A (episode)", on_episode_toggle),
-            "b": _safe_button("B (home)", on_go_home),
-            "q": _safe_button("Q (quit)", data_manager.request_shutdown),
-        }
-    else:
-        quest_reader.on("button_y_pressed", _safe_button("Button Y", on_enable))
-        quest_reader.on("button_x_pressed", _safe_button("Button X", on_park))
-        quest_reader.on("button_a_pressed", _safe_button("Button A", on_episode_toggle))
-        quest_reader.on("button_b_pressed", _safe_button("Button B", on_go_home))
+    # Control surface, one table for every way a button can be pressed. Quest:
+    # the headset buttons bind to these closures. Leader: the same callbacks
+    # keyed to characters, dispatched either by the sensor-view window (if
+    # --sensor-view) or a terminal keyboard reader; leader-follower has NO
+    # clutch — enabling (Y) starts the direct joint-to-joint follow, and there
+    # is no engage/pause key. With --monitor-port the live monitor presses the
+    # two entries it is allowed to, which is why the table is now built in both
+    # modes rather than only for the leader.
+    button_actions: dict = {
+        "y": _safe_button("Y (enable)", on_enable),
+        "x": _safe_button("X (park)", on_park),
+        "a": _safe_button("A (episode)", on_episode_toggle),
+        "b": _safe_button("B (home)", on_go_home),
+        "q": _safe_button("Q (quit)", data_manager.request_shutdown),
+    }
+    leader_keys: dict = button_actions if use_leader else {}
+    if not use_leader:
+        quest_reader.on("button_y_pressed", button_actions["y"])
+        quest_reader.on("button_x_pressed", button_actions["x"])
+        quest_reader.on("button_a_pressed", button_actions["a"])
+        quest_reader.on("button_b_pressed", button_actions["b"])
         quest_reader.on(
             "button_lj_pressed",
             _safe_button(
@@ -1146,33 +1161,17 @@ def main():
 
     print()
     print("🚀 Dual-arm teleoperation ready.")
+    # The same list the rig console shows beside its live view
+    # (common.recording.controls), so the terminal and the browser cannot drift
+    # apart on how this session is driven.
     if use_leader:
         surface = "the sensor-view window" if args.sensor_view else "this terminal"
-        print(f"   Leader-follower mode — type keys into {surface}:")
-        print("   Y = enable (ready pose, torque on) + start follow")
-        print("   move the LEADER arms — the followers mirror them directly")
-        print("   squeeze the leader jaws to close the follower grippers")
-        print("   B = re-home to ready · X = park (torque off)")
-        if args.record:
-            print("   A = start an episode; press again to save")
-        print("   Q = quit")
-    else:
-        print("   1. Press BUTTON Y to enable both arms (ready pose, torque on)")
-        print("   2. Hold LEFT + RIGHT GRIP to activate teleoperation")
-        print("   3. Move controllers — arms follow!")
-        print("   4. Hold triggers to close grippers")
-        if args.record:
-            print("   5. Press BUTTON A to start an episode; press again to save")
-        else:
-            print("   5. BUTTON A records episodes (needs --record; warns otherwise)")
-        print("   6. Press BUTTON B to move both arms to the ready pose")
-        print("   7. Press BUTTON X to park (rest pose, torque off)")
-        if args.method == "mymethod":
-            print(
-                "   8. Deflect a THUMBSTICK to trim that arm's wrist (x = roll, "
-                "y = flex); its other joints freeze while deflected, then the "
-                "handle resumes from the new pose on release"
-            )
+        print(f"   Leader-follower mode — type the keys into {surface}:")
+    for step in control_steps(
+        "leader" if use_leader else "quest", record=args.record, method=args.method
+    ):
+        lead = f"{step['key']} = " if step["key"] else ""
+        print(f"   {lead}{step['what']}")
     if args.sensor_view and not use_leader:
         print("   👁 --sensor-view window: q/Esc closes it (teleop keeps running)")
     print("⚠️  Press Ctrl+C to exit")
@@ -1195,7 +1194,24 @@ def main():
     # RECORDING/IDLE + episodes-to-goal readout, so the operator drives the
     # session from the window without watching the terminal.
     view_key_help: list[str] | None = None
-    view_status_provider: "Callable[[], CollectionStatus] | None" = None
+    collection_status: "Callable[[], CollectionStatus] | None" = None
+    if recorder is not None:
+        _rec = recorder
+        _goal = args.episode_goal
+
+        def _collection_status() -> CollectionStatus:
+            st = _rec.get_state()
+            return CollectionStatus(
+                state_label=st.value,
+                episodes_done=_rec.get_episode_count(),
+                episodes_goal=_goal,
+                current_frames=_rec.get_current_frame_count(),
+                # PAUSED keeps the badge lit: the episode is still open, and
+                # the label itself tells the operator a stream is missing.
+                recording=st in (RecorderState.RECORDING, RecorderState.PAUSED),
+            )
+
+        collection_status = _collection_status
     if args.sensor_view:
         rec_hint = "A record" if args.record else "A —"
         if use_leader:
@@ -1207,23 +1223,29 @@ def main():
                 "btn B home",
                 "btn X park",
             ]
-        if recorder is not None:
-            _rec = recorder
-            _goal = args.episode_goal
+    view_status_provider = collection_status if args.sensor_view else None
 
-            def _collection_status() -> CollectionStatus:
-                st = _rec.get_state()
-                return CollectionStatus(
-                    state_label=st.value,
-                    episodes_done=_rec.get_episode_count(),
-                    episodes_goal=_goal,
-                    current_frames=_rec.get_current_frame_count(),
-                    # PAUSED keeps the badge lit: the episode is still open, and
-                    # the label itself tells the operator a stream is missing.
-                    recording=st in (RecorderState.RECORDING, RecorderState.PAUSED),
-                )
-
-            view_status_provider = _collection_status
+    # The browser live view. It opens NO device: it serves the frames this
+    # session already publishes, so it costs a JPEG encode per viewer and can
+    # run beside the window, or instead of it on a rig with no display.
+    monitor: MonitorServer | None = None
+    if args.monitor_port:
+        monitor_captures = view_captures or (
+            list(recorder.cameras) if recorder is not None else []
+        )
+        monitor = MonitorServer(
+            data_manager,
+            captures=monitor_captures,
+            status_provider=collection_status,
+            key_callbacks=button_actions,
+            # What a watcher may press depends on where the operator is: with a
+            # headset on, every button is to hand and only the two that move
+            # nothing are remote. Leader arms leave the page as the only surface
+            # a console-started session has, so enabling is remote there too.
+            allowed_keys=allowed_keys_for("leader" if use_leader else "quest"),
+            port=args.monitor_port,
+        )
+        monitor.start()
     keyboard: KeyboardButtons | None = None
 
     try:
@@ -1240,11 +1262,23 @@ def main():
                 status_provider=view_status_provider,
             )
         elif use_leader:
-            # No window: read the control keys from the terminal.
+            # No window: read the control keys from the terminal, if there is
+            # one. Started by the rig console there is not -- stdin is whatever
+            # the console inherited -- and that is not a reason to end a session
+            # the console can drive itself; it is a reason to say where the
+            # keys have to come from instead.
             keyboard = KeyboardButtons()
             for key, cb in leader_keys.items():
                 keyboard.on(key, cb)
-            keyboard.start()
+            try:
+                keyboard.start()
+            except (termios.error, ValueError, OSError) as exc:
+                keyboard = None
+                print(
+                    f"⌨️  no terminal to read the control keys from ({exc}). "
+                    "Drive this session from the rig console instead: it can "
+                    "enable the arms, record an episode and end the session."
+                )
         while not data_manager.is_shutdown_requested():
             time.sleep(1.0)
     except KeyboardInterrupt:
@@ -1271,6 +1305,8 @@ def main():
             recorder.shutdown()
         if quest_reader is not None:
             quest_reader.stop()
+        if monitor is not None:
+            monitor.stop()
         if keyboard is not None:
             keyboard.stop()  # restores the terminal
         input_thread.join(timeout=3.0)

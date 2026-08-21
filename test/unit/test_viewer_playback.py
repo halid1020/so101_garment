@@ -17,16 +17,21 @@ moving that decision back onto a throttled event.
 Run:  PYTHONPATH=.:src python -m unittest test.unit.test_viewer_playback
 """
 
-import re
 import unittest
+from pathlib import Path
 
-from tool.dataset_web import _INDEX_HTML
+_DATASETS_JS = (
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "common"
+    / "web"
+    / "static"
+    / "datasets.js"
+)
 
 
 def _script() -> str:
-    match = re.search(r"<script>(.*)</script>", _INDEX_HTML, re.S)
-    assert match, "the page has no script block"
-    return match.group(1)
+    return _DATASETS_JS.read_text()
 
 
 class TestEndOfEpisodeStop(unittest.TestCase):
@@ -89,7 +94,7 @@ class TestEndOfEpisodeStop(unittest.TestCase):
         # Episodes are packed end to end, so the frames after one belong to the
         # next. A margin keeps every displayed frame unambiguously inside the
         # episode even if the decoders stray; the rendered mp4 keeps them all.
-        from tool.dataset_web import _VIEW_END_MARGIN_S
+        from common.web.datasets_api import _VIEW_END_MARGIN_S
 
         self.assertGreater(_VIEW_END_MARGIN_S, 0.0)
         self.assertLess(

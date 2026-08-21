@@ -63,8 +63,16 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   episodes (quest mode only; `--no-record-ee` opts out), with the
   action-definition constants in `<root>/meta/action_space.json`; the
   `--sensor-view` monitor shows live per-stream drift + drop counts;
-  config in `src/conf/recording.yaml`, device indices are per-machine
-  placeholders).
+  `monitor_server.py` serves the same frames + recorder status + both
+  arms' measured-vs-last-sent joints over loopback for the rig console
+  when the recorder is given `--monitor-port` (off by default; its
+  control surface is a per-mode allow-list — `allowed_keys_for`: the episode
+  and quit keys with a headset on, plus ENABLE for a leader session, whose
+  keys are otherwise read from a terminal the console-started session does
+  not have; park and home stay physical in both);
+  `controls.py` is the ONE list of operator steps, printed by the teleop
+  tool and shown by the console; config in `src/conf/recording.yaml`,
+  device indices are per-machine placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
@@ -83,7 +91,54 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   windows out and executes the action chunks that come back) /
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
-  `documents/remote_policy_inference.md`).
+  `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
+  console — see below).
+- `src/common/recording/dataset_check.py` — is a dataset whole? The counted
+  episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
+  offset invariant, and the repair for an episode nobody wrote. Pure parquet +
+  JSON, no LeRobot import, so it can describe a dataset LeRobot refuses to open.
+- `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
+  in `configs.py`) and the conversion, shared by the joint-state thread, the
+  sidecar writer and the console's idle arm reader.
+- `src/common/web/` — the rig console served by `tool/rig_web.py` on
+  loopback: `datasets_api.py` (browsing, playback and episode curation —
+  this is the former `tool/dataset_web.py`, moved unchanged),
+  `lifecycle.py` (whole-dataset create-name checks, rename, delete and
+  merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes;
+  a merge may delete its sources once it has succeeded), `jobs.py` (the
+  one worker thread and the records the page's dock polls: merge,
+  compaction and the freeing of a deleted dataset all outlive their
+  request),
+  `roots.py` (which collection directory the console works on: name/target
+  rules, the sshfs command, `/proc/mounts` parsing, the remembered list —
+  pure, unit-tested) + `roots_api.py` (its routes, the `root_required`
+  middleware, and the refusal to switch under a running session or job),
+  `session.py` (supervises ONE collection
+  session as a subprocess — the same stream resolvers as the CLI, the
+  teleop command, the quit→SIGINT→SIGTERM stop ladder, and the console's
+  own idle previews of the cameras and of the follower arms, both released
+  before a session starts) + `session_api.py` (Collect routes; live frames
+  and the two allowed keys are PROXIED to the session's monitor, never
+  taken from a device), `sensors.py` (binding devices to stream names:
+  pure map operations + the wiggle-test arithmetic + an uncalibrated,
+  torque-off `ArmProbe`) + `sensors_api.py` (its routes; all refused while
+  a session runs, and the map path is injectable so a test never rewrites
+  the machine's real `sensor_map.yaml`), `util.py`, and the front-end
+  under `static/`
+  (`index.html` + one script per tab, no build step). The same package also
+  holds the ROLLOUT view, which is a separate page served by
+  `tool/run_policy_real.py --web` and not a console tab: `policy_view.py`
+  (what the policy was shown / planned / did, and the hold·step·run·stop
+  throttle; reads a snapshot, owns no device) + `policy_twin.py` (the
+  returned chunk drawn as the twin — `qpos` + `mj_forward`, no physics) +
+  `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
+  (the throttle's pure state machine and the prefetch arithmetic, shared with
+  the control loop) and `common/policy_log.py` (the per-run log under
+  `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
+  `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
+  one asks in the browser first, and marking an episode (reversible) does
+  not. The third tab is called **Signals** in the UI while the module,
+  routes and `sensor_map.yaml` keep the older `sensor` name.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,
@@ -94,14 +149,22 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `src/platform/`).
 - `src/platform/` — OpenSCAD rig design (`config.scad`, `board.scad`, …).
 - `test/` — tiered: `test/unit/` (fast, pure-python/pinocchio, no MuJoCo),
-  `test/integration/` (MuJoCo scenes), `test/system/`
+  `test/integration/` (MuJoCo scenes, plus the console↔session two-process
+  check `test_console_session.py`), `test/system/`
   (`smoke_test_pipeline.sh`, train→eval plumbing check;
   `smoke_vla_sim.sh`, sim-VLA collect→train→eval plumbing check).
   `test/__init__.py` is load-bearing (keeps the stdlib `test` package from
   shadowing it).
 - `documents/` — design docs & worklogs (teleop benchmark results, user
-  study protocol, telegrip-native, remote policy inference) plus the living
-  paper under `documents/paper/`.
+  study protocol, telegrip-native, remote policy inference, rig console)
+  plus the living paper under `documents/paper/`.
+- `hpc/` — the Slurm cell on KCL CREATE and the traffic in both directions:
+  `provision_create.sh` (login node, once), `stage_datasets.sh` (collected
+  datasets up), `runs.tsv` + `submit_real.sh` + `create_real_vla.sbatch` (one
+  array task per dataset/policy), `create_sim_vla.sbatch`, and
+  `fetch_policies.sh` (the finished checkpoints back down, into the layout
+  `tool/policy_server.py` and `tool/run_policy_real.py` expect). Runbook:
+  `hpc/README.md`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
   `test-system`, `test-system-vla`), `paper`, and `lint` targets.
 - Outputs go under `outputs/` (`$SO101_OUTPUT_DIR`, gitignored).
@@ -138,6 +201,31 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     for the `diffusion` policy the smoke test uses, the `diffusion` extra
     (`diffusers`) — neither is pulled in by `feetech,dataset,pi,libero,pusht`
     alone. `install.sh`'s `LEROBOT_EXTRAS` includes both now.
+  - **A merged dataset cannot be curated again, unrepaired:**
+    `aggregate_datasets` copies each source's episode-metadata rows and
+    merely OFFSETS their `meta/episodes/file_index`, while writing every
+    row into the destination's first file — so the merged dataset names
+    metadata files that were never written, and the next
+    `delete_episodes`/aggregation on it dies with `FileNotFoundError`
+    (MEASURED: 62 rows in `file-000.parquet` claiming indices 0..55).
+    `dataset_edit.repair_episode_metadata` rewrites those two
+    self-referential columns from each file's own path; the console runs
+    it before a merge reads its sources, after a merge writes its output,
+    and before any compaction.
+  - **An episode counted but never written breaks the whole dataset, and the
+    error blames the network:** `DatasetReader._check_cached_episodes_sufficient`
+    needs `set(range(total_episodes))` to be a subset of the episodes actually
+    present, so ONE missing index makes `LeRobotDataset.__init__` judge the
+    local copy incomplete and go to the Hub for a version tag — which offline
+    raises `OfflineModeIsEnabled: Cannot reach https://huggingface.co/...` for
+    a dataset that never left the drive (MEASURED on `cube-pnp-new`: 88 counted,
+    87 written, episode 4 absent from `meta/episodes/`, `data/` and `extra/`
+    alike, and `total_frames` 19 too high). `common/recording/dataset_check.py`
+    is the guard: `ensure_loadable` runs before anything constructs a
+    `LeRobotDataset`, and `repair_phantom_episodes` drops the empty slots and
+    renumbers the survivors. The console offers it as a Repair button. How such
+    a slot appears is not proven; the recorder no longer counts an episode whose
+    save raised, which is the one path we own.
   - **Video decoding / no sudo:** LeRobotDataset videos (PushT, LIBERO) are
     AV1-encoded. The default `torchcodec` backend dlopen's the *system*
     FFmpeg shared libs — on a box with no `ffmpeg` installed (or no sudo to

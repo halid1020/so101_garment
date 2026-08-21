@@ -23,11 +23,21 @@ background while the current one is still being executed, and if it does not
 arrive the arms HOLD their last goal and then stop (``--stall-hold`` /
 ``--stall-abort``) rather than run on stale plans.
 
+``--web`` serves a live view of the run on loopback (``common.web.policy_view``):
+the observation the policy was last shown, the chunk it planned -- replayed in
+the URDF twin -- what the arms did with it, and whether it arrived in time. From
+there a rollout can be HELD, advanced ONE CHUNK at a time, or resumed, which is
+how a failed grasp is examined: the plan that produced the motion is still on
+the screen beside the motion. Every rollout is also written to a run log for
+afterwards (``--no-log`` to skip).
+
 SAFETY: the followers MOVE (unless ``--dry-run``). After a confirmation (skip
 with ``--yes``) the arms ramp slowly to the policy's first action, then run at
 ``--hz`` until ``--seconds`` elapse or Ctrl+C. Torque is disabled again on exit,
 including on error. ``--dry-run`` reads sensors and prints the chosen actions
-but never enables torque or writes a goal. Keep the workspace clear.
+but never enables torque or writes a goal. The view can only ever ask for LESS
+motion or end the run -- it cannot enable torque, and it cannot arm a rollout
+the terminal did not. Keep the workspace clear.
 
 Usage:
 
@@ -58,6 +68,7 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
+from common.policy_run import RunControl, prefetch_threshold  # noqa: E402
 from tool.replay_on_robot import (  # noqa: E402
     _connect_followers,
     _ramp_to,
@@ -214,8 +225,25 @@ class LocalActionSource:
     def describe(self) -> str:
         return f"local '{self.type}' policy on {self.device}"
 
+    #: Inference here has no chunk to step through: the policy's own queue is
+    #: internal, so a tick either infers or dequeues and the operator sees one
+    #: action at a time.
+    chunked = False
+    last_chunk: "np.ndarray | None" = None
+    last_chunk_seq = 0
+    last_chunk_at = 0.0
+
     def offer(self, state: np.ndarray, images: dict) -> None:
         self._latest = (state, images)
+
+    def drain(self) -> None:
+        """Nothing is queued here; the next take() infers from what is offered."""
+
+    def set_paused(self, paused: bool) -> None:
+        """No background fetching to pause."""
+
+    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
+        return self._latest
 
     def take(self) -> "np.ndarray | None":
         if self._latest is None:
@@ -261,6 +289,7 @@ class RemoteActionSource:
         actions_per_chunk: "int | None" = None,
         prefetch: "int | None" = None,
         timeout_s: float = 20.0,
+        hz: float = 30.0,
     ) -> None:
         import json
 
@@ -279,9 +308,11 @@ class RemoteActionSource:
         self.actions = min(
             int(actions_per_chunk or self.server_actions), self.server_actions
         )
-        self.prefetch = (
-            int(prefetch) if prefetch is not None else max(1, self.actions // 3)
-        )
+        # The static default covers a fast policy; the threshold below grows it
+        # to cover whatever round trip this link turns out to have.
+        self.prefetch = max(1, self.actions // 3)
+        self.explicit_prefetch = None if prefetch is None else int(prefetch)
+        self.hz = float(hz)
         self.window = ObservationWindow(self.cameras, self.n_obs_steps)
 
         self._queue: "deque[np.ndarray]" = deque()
@@ -292,6 +323,39 @@ class RemoteActionSource:
         self.last_error: "str | None" = None
         self.round_trip_s = 0.0
         self.server_infer_s = 0.0
+        self._paused = False
+        self._last_sent: "tuple[np.ndarray, dict] | None" = None
+        self.last_chunk: "np.ndarray | None" = None
+        self.last_chunk_seq = 0
+        self.last_chunk_at = 0.0
+
+    #: A chunk is a visible unit here, so a rollout can be stepped one at a time.
+    chunked = True
+
+    @property
+    def threshold(self) -> int:
+        """Queue depth at which the next chunk is requested. See policy_run."""
+        return prefetch_threshold(
+            self.prefetch,
+            self.explicit_prefetch,
+            self.round_trip_s,
+            self.hz,
+            self.actions,
+        )
+
+    def drain(self) -> None:
+        """Forget what is queued: it was planned from an older observation."""
+        with self._lock:
+            self._queue.clear()
+
+    def set_paused(self, paused: bool) -> None:
+        """While paused the window keeps filling but no chunk is requested."""
+        with self._lock:
+            self._paused = bool(paused)
+
+    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
+        """The observation the last request carried -- what the policy was shown."""
+        return self._last_sent
 
     def describe(self) -> str:
         return (
@@ -317,13 +381,15 @@ class RemoteActionSource:
         with self._lock:
             if (
                 self._inflight
+                or self._paused
                 or self.fatal is not None
-                or len(self._queue) > self.prefetch
+                or len(self._queue) > self.threshold
             ):
                 return
             self._inflight = True
             self._seq += 1
             seq = self._seq
+        self._last_sent = (state, images)
         threading.Thread(
             target=self._fetch, args=(self.window.steps(), seq), daemon=True
         ).start()
@@ -351,6 +417,9 @@ class RemoteActionSource:
         else:
             with self._lock:
                 self._queue.extend(np.asarray(a, dtype=float) for a in chunk)
+                self.last_chunk = np.asarray(chunk, dtype=float)
+                self.last_chunk_seq = seq
+                self.last_chunk_at = time.time()
                 self.round_trip_s = time.perf_counter() - started
                 self.server_infer_s = float(
                     (header.get("timings") or {}).get("infer_s", 0.0)
@@ -444,6 +513,18 @@ def main() -> None:
     parser.add_argument(
         "--yes", action="store_true", help="Skip the 'arms will move' confirmation"
     )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Serve a live view of the rollout on loopback: what the policy was "
+        "shown, what it planned, what the arms did, and a hold/step throttle",
+    )
+    parser.add_argument("--web-port", type=int, default=8767, help="Live view port")
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="Do not write the run log (default: $SO101_OUTPUT_DIR/policy_runs/<stamp>)",
+    )
     args = parser.parse_args()
 
     if args.hz <= 0 or args.seconds <= 0:
@@ -468,6 +549,7 @@ def main() -> None:
             args.task,
             actions_per_chunk=args.actions_per_chunk,
             prefetch=args.prefetch,
+            hz=args.hz,
         )
     else:
         import torch
@@ -507,6 +589,36 @@ def main() -> None:
 
     buses = _connect_followers()
 
+    # The throttle exists whether or not anyone is watching: the loop consults
+    # it every tick, and only the view (if asked for) ever changes it.
+    control = RunControl()
+    control.publish(
+        hz=args.hz,
+        dry_run=bool(args.dry_run),
+        task=args.task,
+        source=source.describe(),
+        cameras=list(image_names),
+        chunked=bool(source.chunked),
+        ticks_total=int(args.seconds * args.hz),
+    )
+
+    view = None
+    if args.web:
+        from common.web.policy_view import PolicyView
+
+        view = PolicyView(
+            control, source, data_manager, image_names, port=args.web_port
+        )
+        view.start()
+        print(f"🖥️  live view on http://127.0.0.1:{args.web_port}/")
+
+    run_log = None
+    if not args.no_log:
+        from common.policy_log import RunLog
+
+        run_log = RunLog.create(task=args.task, source=source.describe(), hz=args.hz)
+        print(f"📝 run log: {run_log.root}")
+
     dt = 1.0 / args.hz
     n_ticks = int(args.seconds * args.hz)
     torque_on = False
@@ -534,8 +646,19 @@ def main() -> None:
 
         stalled_since: "float | None" = None
         warned = False
+        holds = 0
+        started_at = time.time()
         for tick in range(n_ticks):
             t0 = time.perf_counter()
+            if control.stopping:
+                print("⏹️  stopped from the live view")
+                break
+            # A mode change invalidates whatever was planned before it; a paused
+            # rollout keeps filling its window but asks for nothing.
+            if control.queue_stale():
+                source.drain()
+            source.set_paused(control.mode == "hold")
+
             images = _gather_images(data_manager, image_names)
             state = read_state(buses)
             source.offer(state, images)
@@ -543,7 +666,8 @@ def main() -> None:
                 print(f"⛔ {source.fatal} — stopping")
                 break
 
-            action12 = source.take()
+            gated = control.decide(source.depth if source.chunked else 1)
+            action12 = None if gated == "hold" else source.take()
             what = stall_decision(
                 action12 is not None,
                 0.0 if stalled_since is None else time.perf_counter() - stalled_since,
@@ -559,7 +683,14 @@ def main() -> None:
                         buses[s].sync_write(
                             "Goal_Position", goals[s], normalize=True, num_retry=2
                         )
+            elif control.mode != "run":
+                # Held or stepping: the pause is the operator's, so neither the
+                # warning nor the abort applies -- the arms keep their last goal.
+                holds += 1
+                stalled_since = None
+                warned = False
             else:
+                holds += 1
                 if stalled_since is None:
                     stalled_since = time.perf_counter()
                 if what == "abort":
@@ -575,18 +706,37 @@ def main() -> None:
                         f"({source.last_error or 'chunk not back yet'})"
                     )
 
-            if (
-                args.dry_run
-                and tick % max(1, int(args.hz)) == 0
-                and action12 is not None
-            ):
+            control.publish(
+                tick=tick,
+                t=tick / args.hz,
+                state=[round(v, 3) for v in state],
+                commanded=None if action12 is None else [round(v, 3) for v in action12],
+                queue=source.depth,
+                round_trip_s=round(source.round_trip_s, 4),
+                server_infer_s=round(getattr(source, "server_infer_s", 0.0), 4),
+                holds=holds,
+                last_error=source.last_error,
+                served=action12 is not None,
+            )
+            if run_log is not None:
+                run_log.tick(
+                    t=time.time() - started_at,
+                    state=state,
+                    commanded=action12,
+                    mode=control.mode,
+                    queue=source.depth,
+                )
+                run_log.note_chunk(source)
+
+            if tick % max(1, int(args.hz)) == 0 and action12 is not None:
                 extra = (
                     f"  queue={source.depth:>3} rtt={source.round_trip_s * 1e3:4.0f}ms"
                     if args.server
                     else ""
                 )
                 print(
-                    f"  t={tick / args.hz:5.1f}s  action[:6]={action12[:6].round(2)}{extra}"
+                    f"  t={tick / args.hz:5.1f}s  [{control.mode}]  "
+                    f"action[:6]={action12[:6].round(2)}{extra}"
                 )
             time.sleep(max(0.0, dt - (time.perf_counter() - t0)))
         else:
@@ -606,6 +756,11 @@ def main() -> None:
                 c.stop()
             except Exception:  # noqa: BLE001
                 pass
+        if run_log is not None:
+            run_log.close()
+            print(f"📝 run log written: {run_log.root}")
+        if view is not None:
+            view.stop()
 
 
 def _infer(
