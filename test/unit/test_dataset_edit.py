@@ -21,11 +21,14 @@ from common.recording.dataset_edit import (
     delete_episodes_in_place,
     deletion_mapping,
     episode_lengths,
+    episode_meta_files,
     extra_reindex_ops,
+    meta_file_indices,
     new_episode_uid,
     read_episode_lengths,
     read_episode_uid,
     read_soft_deleted,
+    repair_episode_metadata,
     surviving_indices,
     writability_problem,
     write_episode_uid,
@@ -431,6 +434,119 @@ class TestWritabilityProblem(unittest.TestCase):
                 statvfs.return_value = mock.Mock(f_flag=os.ST_RDONLY)
                 msg = writability_problem(Path(d))
         self.assertIn("read-only filesystem", msg)
+
+
+class TestEpisodeMetadataRepair(unittest.TestCase):
+    """The self-referential index columns of ``meta/episodes``.
+
+    A merged dataset carries rows that name metadata files which were never
+    written (LeRobot's aggregation offsets the source's indices instead of
+    writing the destination's), and every later rewrite then opens one of them
+    and dies. A row is stored IN a file, so the truth is the path.
+    """
+
+    def _write(self, root, chunk, index, rows):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        path = (
+            Path(root)
+            / "meta"
+            / "episodes"
+            / f"chunk-{chunk:03d}"
+            / f"file-{index:03d}.parquet"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        table = pa.table(
+            {
+                "episode_index": pa.array([r[0] for r in rows], type=pa.int64()),
+                "meta/episodes/chunk_index": pa.array(
+                    [r[1] for r in rows], type=pa.int64()
+                ),
+                "meta/episodes/file_index": pa.array(
+                    [r[2] for r in rows], type=pa.int64()
+                ),
+                "length": pa.array([100 + r[0] for r in rows], type=pa.int32()),
+                "stats/observation.state/mean": pa.array(
+                    [[0.5, 1.5] for _ in rows], type=pa.list_(pa.float64())
+                ),
+            }
+        )
+        pq.write_table(table, path)
+        return path
+
+    def test_rows_are_made_to_name_the_file_they_are_in(self):
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            # What a merge leaves behind: every row in file-000, claiming 0..2.
+            path = self._write(d, 0, 0, [(0, 0, 0), (1, 0, 1), (2, 0, 2)])
+            fixed = repair_episode_metadata(Path(d))
+            self.assertEqual(fixed, ["meta/episodes/chunk-000/file-000.parquet"])
+            table = pq.read_table(path)
+            self.assertEqual(
+                table.column("meta/episodes/file_index").to_pylist(), [0, 0, 0]
+            )
+            self.assertEqual(
+                table.column("meta/episodes/chunk_index").to_pylist(), [0, 0, 0]
+            )
+
+    def test_a_consistent_dataset_is_left_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(d, 0, 3, [(7, 0, 3), (8, 0, 3)])
+            before = path.stat().st_mtime_ns
+            self.assertEqual(repair_episode_metadata(Path(d)), [])
+            self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_every_other_column_survives_with_its_type(self):
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(d, 0, 0, [(0, 0, 0), (1, 0, 5)])
+            before = pq.read_table(path)
+            repair_episode_metadata(Path(d))
+            after = pq.read_table(path)
+            self.assertEqual(after.schema, before.schema)
+            for column in ("episode_index", "length", "stats/observation.state/mean"):
+                self.assertEqual(
+                    after.column(column).to_pylist(), before.column(column).to_pylist()
+                )
+
+    def test_each_file_is_repaired_against_its_own_path(self):
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            first = self._write(d, 0, 0, [(0, 0, 0)])
+            second = self._write(d, 1, 2, [(1, 0, 1)])
+            self.assertEqual(len(repair_episode_metadata(Path(d))), 1)
+            self.assertEqual(
+                pq.read_table(first)["meta/episodes/file_index"].to_pylist(), [0]
+            )
+            self.assertEqual(
+                pq.read_table(second)["meta/episodes/chunk_index"].to_pylist(), [1]
+            )
+            self.assertEqual(
+                pq.read_table(second)["meta/episodes/file_index"].to_pylist(), [2]
+            )
+
+    def test_no_partial_file_is_left_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, 0, 0, [(0, 0, 4)])
+            repair_episode_metadata(Path(d))
+            self.assertEqual(list(Path(d).rglob("*.partial")), [])
+
+    def test_a_dataset_without_episode_metadata_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(repair_episode_metadata(Path(d)), [])
+            self.assertEqual(episode_meta_files(Path(d)), [])
+
+    def test_the_indices_come_from_the_path(self):
+        self.assertEqual(
+            meta_file_indices(Path("x/meta/episodes/chunk-002/file-013.parquet")),
+            (2, 13),
+        )
+        with self.assertRaises(ValueError):
+            meta_file_indices(Path("meta/episodes/chunk-000/data.parquet"))
 
 
 if __name__ == "__main__":

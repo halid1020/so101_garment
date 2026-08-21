@@ -86,6 +86,7 @@ from common.recording import (
     build_dataset_features,
     load_recording_config,
 )
+from common.recording.controls import control_steps
 from common.recording.depth import DepthWriter
 from common.recording.monitor_server import MonitorServer
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
@@ -1159,33 +1160,17 @@ def main():
 
     print()
     print("🚀 Dual-arm teleoperation ready.")
+    # The same list the rig console shows beside its live view
+    # (common.recording.controls), so the terminal and the browser cannot drift
+    # apart on how this session is driven.
     if use_leader:
         surface = "the sensor-view window" if args.sensor_view else "this terminal"
-        print(f"   Leader-follower mode — type keys into {surface}:")
-        print("   Y = enable (ready pose, torque on) + start follow")
-        print("   move the LEADER arms — the followers mirror them directly")
-        print("   squeeze the leader jaws to close the follower grippers")
-        print("   B = re-home to ready · X = park (torque off)")
-        if args.record:
-            print("   A = start an episode; press again to save")
-        print("   Q = quit")
-    else:
-        print("   1. Press BUTTON Y to enable both arms (ready pose, torque on)")
-        print("   2. Hold LEFT + RIGHT GRIP to activate teleoperation")
-        print("   3. Move controllers — arms follow!")
-        print("   4. Hold triggers to close grippers")
-        if args.record:
-            print("   5. Press BUTTON A to start an episode; press again to save")
-        else:
-            print("   5. BUTTON A records episodes (needs --record; warns otherwise)")
-        print("   6. Press BUTTON B to move both arms to the ready pose")
-        print("   7. Press BUTTON X to park (rest pose, torque off)")
-        if args.method == "mymethod":
-            print(
-                "   8. Deflect a THUMBSTICK to trim that arm's wrist (x = roll, "
-                "y = flex); its other joints freeze while deflected, then the "
-                "handle resumes from the new pose on release"
-            )
+        print(f"   Leader-follower mode — type the keys into {surface}:")
+    for step in control_steps(
+        "leader" if use_leader else "quest", record=args.record, method=args.method
+    ):
+        lead = f"{step['key']} = " if step["key"] else ""
+        print(f"   {lead}{step['what']}")
     if args.sensor_view and not use_leader:
         print("   👁 --sensor-view window: q/Esc closes it (teleop keeps running)")
     print("⚠️  Press Ctrl+C to exit")

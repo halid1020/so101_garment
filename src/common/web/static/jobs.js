@@ -1,6 +1,6 @@
-// The job dock: the slow, whole-dataset work (a merge, freeing a deleted
-// dataset) runs on the server and is watched here, in the corner of the page,
-// instead of holding a dialog open. It polls only while something is running.
+// The job dock: the slow, whole-dataset work (a merge, a compaction, freeing a
+// deleted dataset) runs on the server and is watched here, in the corner of the
+// page, instead of holding a dialog open. It polls only while one is running.
 
 let jobs = [];
 let jobTimer = null;
@@ -8,7 +8,8 @@ let jobsSeen = new Set();
 let jobsFirstPoll = true;
 
 function jobLine(job) {
-  const verb = {merge: 'merging', delete: 'deleting'}[job.kind] || job.kind;
+  const verb = {merge: 'merging', delete: 'deleting',
+                compact: 'rewriting'}[job.kind] || job.kind;
   return `${verb} ${job.name} — ${job.message}`;
 }
 
@@ -59,7 +60,12 @@ $('#jobdock-head').onclick = () => {
   $('#jobdock-caret').textContent = list.hidden ? '▴' : '▾';
 };
 
-window.onJobFinished = () => { loadDatasets(); };
+window.onJobFinished = (job) => {
+  loadDatasets();
+  // A compaction renumbers the recordings of the dataset on screen, so the
+  // episode list beside it is stale in a way reloading the datasets cannot fix.
+  if (job && job.kind === 'compact' && job.name === curDataset) loadEpisodes();
+};
 
 // Started from here so a job that outlives the page (or a page opened while one
 // runs) is picked up on load, not only when this browser started it.

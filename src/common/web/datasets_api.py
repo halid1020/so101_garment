@@ -57,6 +57,7 @@ from common.recording.dataset_edit import (
     writability_problem,
     write_soft_deleted,
 )
+from common.web.jobs import finish, new_job, refuse_while_busy
 from common.web.lifecycle import directory_size, is_working_dir, read_dataset_meta
 from common.web.util import in_executor
 from tool.replay_recording import _load_realsense, load_depth_range, saved_episode_count
@@ -628,19 +629,45 @@ async def handle_restore(request: web.Request) -> web.Response:
 
 
 async def handle_compact(request: web.Request) -> web.Response:
-    """Really remove the marked episodes. Slow: rewrites and renumbers the dataset."""
+    """Really remove the marked episodes -- a JOB: it rewrites the whole dataset.
+
+    Every episode of every kept video file is re-encoded and renumbered, which
+    takes minutes on a session-sized dataset and much longer on a merged one, so
+    this returns a job for the dock rather than holding the request open. A
+    failure is reported there too, instead of as a request that dies after half
+    an hour.
+    """
     app = request.app
     name = request.match_info["name"]
     path = dataset_root(app["root"], name)
+    refuse_while_busy(app)
+    marked = await in_executor(app, read_soft_deleted, path)
+    if not marked:
+        raise web.HTTPBadRequest(text="no episodes are marked for deletion")
     depth_name, _ = await in_executor(app, _load_realsense, path)
     depth_names = [depth_name] if depth_name else []
-    try:
-        new_total = await in_executor(app, compact_dataset, path, name, depth_names)
-    except ReadOnlyDatasetError as exc:
-        raise web.HTTPConflict(text=str(exc))
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
-    return web.json_response({"episodes": new_total, "pending": 0})
+    problem = await in_executor(app, writability_problem, Path(app["root"]))
+    if problem:
+        raise web.HTTPConflict(text=f"cannot rewrite the dataset: {problem}")
+
+    job = new_job(
+        app,
+        "compact",
+        name,
+        episodes=len(marked),
+        message=f"removing {len(marked)} recording(s) from {name}",
+    )
+
+    def run() -> None:
+        try:
+            total = compact_dataset(path, name, depth_names)
+        except BaseException as exc:  # noqa: B036 - reported, not swallowed
+            finish(job, "failed", str(exc) or exc.__class__.__name__)
+            return
+        finish(job, "done", f"{name} now holds {total} recording(s)")
+
+    asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
+    return web.json_response(job)
 
 
 def add_dataset_routes(app: web.Application) -> None:

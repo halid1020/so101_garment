@@ -23,6 +23,7 @@ from typing import Any
 import aiohttp  # type: ignore[import]
 from aiohttp import web  # type: ignore[import]
 
+from common.recording.controls import control_steps
 from common.recording.monitor_server import encode_jpeg, mjpeg_part
 from common.web.session import resolve_plan
 from common.web.util import in_executor
@@ -58,7 +59,12 @@ def _recording_config() -> "dict[str, Any]":
 
 
 async def handle_collect_config(request: web.Request) -> web.Response:
-    """What the new-dataset form offers: this machine's cameras and defaults."""
+    """What the new-dataset form offers: this machine's cameras and defaults.
+
+    The control steps for both input modes come with it, so the form can say
+    what the operator is about to need -- a headset, or the keyboard at the rig
+    -- before a session exists to ask.
+    """
     app = request.app
     config = await in_executor(app, _recording_config)
     cameras = config.get("cameras") or {}
@@ -70,6 +76,7 @@ async def handle_collect_config(request: web.Request) -> web.Response:
             ],
             "realsense_rgb_name": (config.get("realsense") or {}).get("rgb_name"),
             "fps": config.get("fps"),
+            "controls": {mode: control_steps(mode) for mode in ("quest", "leader")},
         }
     )
 
@@ -125,6 +132,8 @@ async def handle_session(request: web.Request) -> web.Response:
     state = app["session"].state()
     state["monitor"] = await monitor_get(app, "/status") if state["running"] else None
     state["preview"] = app["preview"].stream_names()
+    if state["running"]:
+        state["controls"] = control_steps(str(state.get("input") or "quest"))
     return web.json_response(state)
 
 

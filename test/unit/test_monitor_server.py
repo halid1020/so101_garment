@@ -7,16 +7,19 @@ the multipart framing, and above all the control allow-list, because a key that
 moves both arms must not be pressable from a browser.
 """
 
+import time
 import unittest
 from dataclasses import dataclass
 
 import numpy as np
 from aiohttp.test_utils import AioHTTPTestCase
 
+from common.recording.controls import control_steps
 from common.recording.monitor_server import (
     BOUNDARY,
     MonitorServer,
     encode_jpeg,
+    joint_snapshot,
     key_refusal,
     mjpeg_part,
 )
@@ -37,12 +40,18 @@ class _State:
 
 
 class StubDataManager:
-    """The three reads the monitor makes, and nothing else."""
+    """Exactly the reads the monitor makes, and nothing else."""
 
     def __init__(self, names=("central", "wrist_camera_left")):
         self.frames = {n: np.full((48, 64, 3), 128, dtype=np.uint8) for n in names}
         self.ages = {n: 0.02 for n in names}
         self.shutdown = False
+        self.joints = np.arange(10, dtype=np.float64)
+        self.grippers = {"left": 0.25, "right": 0.75}
+        self.commands = {
+            "left": (np.arange(5, dtype=np.float64) + 0.5, 0.3, time.monotonic()),
+            "right": (None, None, None),
+        }
 
     def get_rgb_camera_names(self):
         return sorted(self.frames)
@@ -53,6 +62,18 @@ class StubDataManager:
 
     def get_rgb_image_age(self, name, now=None):
         return self.ages.get(name)
+
+    def get_current_joint_angles(self):
+        return None if self.joints is None else self.joints.copy()
+
+    def get_current_joint_angles_at(self, t_ref):
+        return None if self.joints is None else (self.joints.copy(), 0.004)
+
+    def get_current_gripper_open_value(self, side):
+        return self.grippers[side]
+
+    def get_last_sent_command(self, side):
+        return self.commands[side]
 
     def get_robot_activity_state(self):
         return _State("ENABLED")
@@ -109,6 +130,94 @@ class TestPureHelpers(unittest.TestCase):
         self.assertIsNone(encode_jpeg(None))
 
 
+class TestJointSnapshot(unittest.TestCase):
+    """What the console draws: the measured joints beside the sent command."""
+
+    def _commands(self, age=0.001):
+        now = 100.0
+        return now, {
+            "left": (np.arange(5, dtype=np.float64), 0.4, now - age),
+            "right": (None, None, None),
+        }
+
+    def test_each_side_takes_its_half_of_the_joint_vector(self):
+        now, commands = self._commands()
+        snap = joint_snapshot(
+            np.arange(10, dtype=np.float64), {"left": 0.1, "right": 0.9}, commands, now
+        )
+        self.assertEqual(snap["left"]["state"]["shoulder_pan"], 0.0)
+        self.assertEqual(snap["left"]["state"]["wrist_roll"], 4.0)
+        self.assertEqual(snap["right"]["state"]["shoulder_pan"], 5.0)
+        self.assertEqual(snap["right"]["state"]["wrist_roll"], 9.0)
+        self.assertEqual(snap["right"]["state"]["gripper"], 0.9)
+
+    def test_a_fresh_command_is_marked_fresh_with_its_age(self):
+        now, commands = self._commands(age=0.001)
+        snap = joint_snapshot(None, {}, commands, now)
+        self.assertTrue(snap["left"]["fresh"])
+        self.assertEqual(snap["left"]["command_age_s"], 0.001)
+        self.assertEqual(snap["left"]["command"]["gripper"], 0.4)
+
+    def test_a_stale_command_is_marked_stale(self):
+        # This is what makes the recorded action fall back to the measured
+        # state, so it has to be visible rather than merely old.
+        now, commands = self._commands(age=1.5)
+        snap = joint_snapshot(None, {}, commands, now)
+        self.assertFalse(snap["left"]["fresh"])
+        self.assertEqual(snap["left"]["command_age_s"], 1.5)
+
+    def test_before_any_reading_every_cell_is_empty(self):
+        now, commands = self._commands()
+        snap = joint_snapshot(None, {}, commands, now)
+        self.assertIsNone(snap["left"]["state"]["shoulder_pan"])
+        self.assertIsNone(snap["right"]["command"]["gripper"])
+        self.assertIsNone(snap["right"]["command_age_s"])
+        self.assertFalse(snap["right"]["fresh"])
+
+
+class TestControlSteps(unittest.TestCase):
+    """One list drives the terminal print and the console's instructions."""
+
+    def test_quest_mode_starts_by_enabling_and_ends_by_quitting(self):
+        steps = control_steps("quest")
+        self.assertEqual(steps[0]["key"], "Y")
+        self.assertEqual(steps[-1]["key"], "Q")
+
+    def test_only_the_two_allowed_keys_say_they_can_be_pressed_here(self):
+        here = {s["key"] for s in control_steps("quest") if "this page" in s["where"]}
+        self.assertEqual(here, {"A", "Q"})
+
+    def test_the_arm_moving_keys_stay_on_the_headset(self):
+        where = {s["key"]: s["where"] for s in control_steps("quest")}
+        for key in ("Y", "B", "X"):
+            self.assertEqual(where[key], "headset")
+
+    def test_leader_mode_names_the_keyboard_and_the_leader_arms(self):
+        steps = control_steps("leader")
+        where = {s["key"]: s["where"] for s in steps}
+        self.assertEqual(where["Y"], "session keyboard")
+        self.assertIn("this page", where["A"])
+        self.assertTrue(any("leader arms" in s["what"] for s in steps))
+        self.assertFalse(any(s["where"] == "controllers" for s in steps))
+
+    def test_quest_mode_explains_the_grips_and_the_triggers(self):
+        what = " ".join(s["what"] for s in control_steps("quest"))
+        self.assertIn("grips", what)
+        self.assertIn("trigger", what)
+
+    def test_the_wrist_trim_appears_only_for_the_method_that_has_it(self):
+        plain = " ".join(s["what"] for s in control_steps("quest"))
+        trimmed = " ".join(s["what"] for s in control_steps("quest", method="mymethod"))
+        self.assertNotIn("thumbstick", plain)
+        self.assertIn("thumbstick", trimmed)
+
+    def test_a_session_that_does_not_record_says_so_on_the_episode_key(self):
+        episode = next(
+            s for s in control_steps("quest", record=False) if s["key"] == "A"
+        )
+        self.assertIn("without recording", episode["what"])
+
+
 class TestStatusSnapshot(unittest.TestCase):
     def setUp(self):
         self.dm = StubDataManager()
@@ -141,6 +250,19 @@ class TestStatusSnapshot(unittest.TestCase):
         self.assertEqual(status["arms"], "ENABLED")
         self.assertEqual(status["recorder"]["episodes_done"], 2)
         self.assertEqual(status["recorder"]["episodes_goal"], 10)
+
+    def test_status_carries_both_arms_joints_and_their_drift(self):
+        status = self.monitor.status()
+        self.assertEqual(status["joints"]["right"]["state"]["shoulder_pan"], 5.0)
+        self.assertTrue(status["joints"]["left"]["fresh"])
+        self.assertFalse(status["joints"]["right"]["fresh"])
+        self.assertEqual(status["joint_drift_s"], 0.004)
+
+    def test_status_before_the_arms_are_read_has_empty_joint_cells(self):
+        self.dm.joints = None
+        status = self.monitor.status()
+        self.assertIsNone(status["joints"]["left"]["state"]["elbow_flex"])
+        self.assertIsNone(status["joint_drift_s"])
 
     def test_status_says_which_keys_may_be_pressed_remotely(self):
         self.assertEqual(self.monitor.status()["allowed_keys"], ["a", "q"])

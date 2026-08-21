@@ -3,24 +3,23 @@
 The rules all live in ``common.web.lifecycle``; this layer only reads the
 request and runs the slow parts off the event loop.
 
-Two operations outlive their request: a merge, which re-encodes every episode
-of every source, and freeing the bytes of a deleted dataset. Both run as JOBS on
-one worker thread -- the POST returns an id and the browser's job dock watches
-them -- so the page stays usable while they run and nothing starts twice.
+A merge re-encodes every episode of every source, and freeing the bytes of a
+deleted dataset takes about as long, so both outlive their request as JOBS
+(``common.web.jobs``): the POST returns a record and the browser's dock watches
+it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import shutil
-import time
-import uuid
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.dataset_edit import ReadOnlyDatasetError
+from common.web.jobs import finish, new_job, refuse_while_busy
 from common.web.lifecycle import (
     delete_dataset,
     directory_size,
@@ -84,54 +83,6 @@ async def handle_rename(request: web.Request) -> web.Response:
     return web.json_response({"name": path.name})
 
 
-# ── Jobs ─────────────────────────────────────────────────────────────────────
-
-# How much history the dock is given. A finished job is worth seeing for a
-# while (it says what the merge was called, or why it failed) but not forever.
-MAX_JOBS = 20
-JOB_TTL_S = 3600.0
-
-
-def prune_jobs(jobs: "dict[str, dict[str, Any]]", now: float) -> None:
-    """Forget finished jobs that are old or surplus. Running jobs always stay."""
-    finished = sorted(
-        (j for j in jobs.values() if j["state"] != "running"),
-        key=lambda j: j.get("finished") or j["started"],
-    )
-    for job in finished:
-        stale = now - (job.get("finished") or job["started"]) > JOB_TTL_S
-        if stale or len(jobs) > MAX_JOBS:
-            jobs.pop(job["id"], None)
-
-
-def _new_job(app: web.Application, kind: str, name: str, **extra: Any) -> dict:
-    job = {
-        "id": uuid.uuid4().hex[:8],
-        "kind": kind,
-        "state": "running",
-        "message": "starting",
-        "name": name,
-        "started": time.time(),
-        **extra,
-    }
-    app["jobs"][job["id"]] = job
-    prune_jobs(app["jobs"], job["started"])
-    return job
-
-
-def _finish(job: dict, state: str, message: str) -> None:
-    job["state"] = state
-    job["message"] = message
-    job["finished"] = time.time()
-
-
-async def handle_jobs(request: web.Request) -> web.Response:
-    """Every job the console remembers, newest first -- what the dock shows."""
-    jobs = request.app["jobs"]
-    prune_jobs(jobs, time.time())
-    return web.json_response(sorted(jobs.values(), key=lambda j: -j["started"]))
-
-
 async def handle_remove(request: web.Request) -> web.Response:
     """Delete a whole dataset: rename it into the trash now, free the bytes after."""
     app = request.app
@@ -146,11 +97,11 @@ async def handle_remove(request: web.Request) -> web.Response:
         raise web.HTTPConflict(text=str(exc))
     # The dataset is already unreachable under its name, so the operator is not
     # kept waiting; removing a hundred gigabytes of video is a job.
-    job = _new_job(app, "delete", name, message=f"freeing {name}")
+    job = new_job(app, "delete", name, message=f"freeing {name}")
 
     def run() -> None:
         purge(trash)  # never raises: the dataset is already gone from the list
-        _finish(job, "done", f"deleted {name}")
+        finish(job, "done", f"deleted {name}")
 
     asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
     return web.json_response({"deleted": name, "job": job["id"]})
@@ -197,17 +148,13 @@ async def handle_merge(request: web.Request) -> web.Response:
     out_name = _body_name(body, "name")
     drop_sources = bool(body.get("delete_sources"))
 
-    running = [j for j in app["jobs"].values() if j["state"] == "running"]
-    if running:
-        raise web.HTTPConflict(
-            text=f"{running[0]['kind']} already running ({running[0]['id']})"
-        )
+    refuse_while_busy(app)
 
     reasons = await in_executor(app, _merge_reasons, app["root"], names, out_name)
     if reasons:
         raise web.HTTPBadRequest(text="; ".join(reasons))
 
-    job = _new_job(app, "merge", out_name, sources=names, delete_sources=drop_sources)
+    job = new_job(app, "merge", out_name, sources=names, delete_sources=drop_sources)
     root = Path(app["root"])
 
     def run() -> None:
@@ -219,7 +166,7 @@ async def handle_merge(request: web.Request) -> web.Response:
                 progress=lambda m: job.__setitem__("message", m),
             )
         except BaseException as exc:  # noqa: B036 - reported, not swallowed
-            _finish(job, "failed", str(exc) or exc.__class__.__name__)
+            finish(job, "failed", str(exc) or exc.__class__.__name__)
             return
         # Only now, with the merged dataset in place, may the sources go: the
         # copy the operator asked for exists, so this can never be the step
@@ -230,23 +177,16 @@ async def handle_merge(request: web.Request) -> web.Response:
                 try:
                     purge(delete_dataset(root, name))
                 except BaseException as exc:  # noqa: B036 - reported, not swallowed
-                    _finish(
+                    finish(
                         job,
                         "failed",
                         f"merged into {out_name}, but {name} could not be "
                         f"removed: {exc or exc.__class__.__name__}",
                     )
                     return
-        _finish(job, "done", f"merged into {out_name}")
+        finish(job, "done", f"merged into {out_name}")
 
     asyncio.get_running_loop().run_in_executor(app["job_executor"], run)
-    return web.json_response(job)
-
-
-async def handle_job(request: web.Request) -> web.Response:
-    job = request.app["jobs"].get(request.match_info["id"])
-    if job is None:
-        raise web.HTTPNotFound(text="no such job")
     return web.json_response(job)
 
 
@@ -257,8 +197,6 @@ def add_lifecycle_routes(app: web.Application) -> None:
             web.post("/api/datasets/check-name", handle_check_name),
             web.post("/api/datasets/merge", handle_merge),
             web.post("/api/datasets/merge-check", handle_merge_check),
-            web.get("/api/datasets/jobs/{id}", handle_job),
-            web.get("/api/jobs", handle_jobs),
             web.post("/api/datasets/{name}/rename", handle_rename),
             web.post("/api/datasets/{name}/remove", handle_remove),
         ]

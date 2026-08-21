@@ -128,8 +128,21 @@ legend { font-size:11px; text-transform:uppercase; letter-spacing:.05em;
 #session-log { font-size:11px; max-height:26vh; overflow:auto; margin:0;
                padding:8px 12px; border-top:1px solid var(--bd); opacity:.75;
                white-space:pre-wrap; }
-#preflight summary { font-size:12px; opacity:.6; cursor:pointer;
-                     padding:8px 12px; border-top:1px solid var(--bd); }
+#preflight summary, #controls summary { font-size:12px; opacity:.6;
+    cursor:pointer; padding:8px 12px; border-top:1px solid var(--bd); }
+#c-controls { margin:0 12px 10px; width:calc(100% - 24px); }
+#c-controls td:first-child { width:2.4em; font-weight:600;
+                             font-variant-numeric:tabular-nums; }
+#c-controls td:last-child { width:11em; white-space:nowrap; }
+/* The live joint table: the same shape as the one the recorded episodes are
+   played with, so the two read alike. */
+#c-signals { margin-top:10px; }
+#c-signals .bar { border:0; padding:4px 0; }
+#c-joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
+            font-size:12px; }
+#c-joints th, #c-joints td { padding:2px 10px; text-align:right;
+                             border-bottom:1px solid var(--bd); }
+#c-joints th:first-child { text-align:left; opacity:.6; font-weight:400; }
 table.checks { border-collapse:collapse; font-size:12px; width:100%; }
 table.checks td { padding:2px 6px; vertical-align:top;
                   border-bottom:1px solid var(--bd); }
@@ -144,7 +157,12 @@ tr.lvl-OK td:first-child { color:#16a34a; }
 h3.sub { font-size:12px; text-transform:uppercase; letter-spacing:.05em;
          opacity:.6; margin:14px 0 4px; }
 .chips { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 10px; }
-.chips .chip { cursor:pointer; border:1px solid var(--bd); }
+/* Candidates, not toggles: every device here can be pressed, and the blue is
+   reserved for the ones that already have a name. */
+.chips .chip { cursor:pointer; border:1px solid var(--bd); opacity:1; }
+.chips .chip.bound { border-color:var(--sel); color:var(--sel); font-weight:600; }
+/* The name a shown device already carries, so pressing another one moves it. */
+button.sel { border-color:var(--sel); color:var(--sel); font-weight:600; }
 #s-cam-view .tile { max-width:480px; }
 #s-cam-img { width:100%; border-radius:8px; background:#000; display:block; }
 #s-map table.checks { margin-bottom:6px; }

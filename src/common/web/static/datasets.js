@@ -541,29 +541,28 @@ async function doDelete(indices) {
   }
 }
 
-// Compaction is the slow half: it rewrites and renumbers the dataset, so it
-// blocks the pane and every visible index changes afterwards.
+// Compaction is the slow half: it rewrites and renumbers the whole dataset, so
+// it runs as a job in the dock and every visible index changes when it lands.
 async function doCompact() {
   const ok = await confirmDialog({
     title: `Remove the marked episodes from ${curDataset}?`,
     body: 'This rewrites the dataset, renumbers the survivors and cannot be '
-      + 'undone. It may take a while.',
+      + 'undone. It runs in the background — watch it in the corner of the page.',
     confirmLabel: 'Remove for good',
   });
   if (!ok) return;
   const bar = $('#pending-bar');
   bar.classList.add('busy');
-  $('#pending-text').textContent = 'Removing… rewriting the dataset, please wait.';
+  $('#pending-text').textContent = 'Removing… rewriting the dataset.';
   try {
     await j(`/api/datasets/${curDataset}/compact`, {method: 'POST'});
-    curEpisode = null;
-    $('#viewer').innerHTML = '<p class="muted">Removed. Select a recording.</p>';
   } catch (e) {
     alert('compact failed: ' + e.message);
-  } finally {
     bar.classList.remove('busy');
     await loadDatasets(); await loadEpisodes();
+    return;
   }
+  pollJobs();  // the dock reloads the pane when the rewrite lands
 }
 
 async function doRestore() {

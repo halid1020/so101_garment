@@ -40,6 +40,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
 from common.web.datasets_api import add_dataset_routes
+from common.web.jobs import add_job_routes
 from common.web.lifecycle_api import add_lifecycle_routes
 from common.web.roots_api import (
     add_root_routes,
@@ -127,6 +128,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
         ]
     )
     add_root_routes(app)
+    add_job_routes(app)
     add_dataset_routes(app)
     add_lifecycle_routes(app)
     add_session_routes(app)

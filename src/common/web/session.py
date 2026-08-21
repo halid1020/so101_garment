@@ -275,6 +275,7 @@ class SessionSupervisor:
             "name": name,
             "task": task,
             "argv": argv,
+            "input": str(options.get("input") or "quest"),
             "resuming": plan["resuming"],
             "cameras": plan["cameras"],
             "depth": plan["depth"],

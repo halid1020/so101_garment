@@ -106,7 +106,20 @@ disagree on frame rate, robot type or recorded streams, or when any source
 still holds episodes marked for removal, whose indices would no longer denote
 the episodes the reviewer marked. Every operation that replaces a dataset moves
 the original aside and swaps the result into place only once it is complete, so
-an interruption leaves the collection as it was rather than partly rewritten.
+an interruption leaves the collection as it was rather than partly rewritten,
+and a rewrite that cannot finish removes the partial copy it was building.
+
+Merging is where a subtlety of the underlying dataset format bites. Each
+episode's metadata records which metadata file holds it, and the merge
+implementation carries those references over from the sources into an output
+that numbers its files differently; the merged dataset therefore describes
+itself incorrectly, and the next operation to rewrite it fails partway through
+on a file that was never written. Since that reference is one a file can always
+be checked against, the platform corrects it from the file itself, before a
+merge reads its sources, after a merge writes its output, and before any
+removal begins. Curation is thus closed under merging: a merged collection can
+be curated and merged again, which is the whole point of merging sessions
+together.
 Rewriting a dataset takes minutes rather than moments, so the console performs
 it in the background and reports its progress while the reviewer carries on;
 and because these removals cannot be undone, each one is confirmed before it
@@ -151,9 +164,22 @@ machine's loopback interface, and the console forwards them, so the live view
 costs a single image compression per viewer and never touches the loop that
 writes the dataset. Two consequences matter for replicability. A rig needs no
 display of its own: the operator watches the streams, the recorder state, the
-episode count against its target and any stream that has gone stale from
-whatever machine they are sitting at. And the session outlives the page, so
-closing or reloading the console cannot cost a recording.
+episode count and any stream that has gone stale from whatever machine they are
+sitting at. And the session outlives the page, so closing or reloading the
+console cannot cost a recording.
+
+Cameras alone do not tell the operator whether the rig is doing what it is
+told, so the session reports its proprioception beside them: each arm's
+measured joint positions next to the command last written to its motors, which
+is precisely the pair stored as the state and the action of every frame. It
+answers the two questions a camera cannot. Whether the arms are following, by
+the agreement between the two columns; and whether the commands are arriving at
+all, because a command older than one frame is what makes a recorded action
+fall back to the measured state, and the console names the arm it happened to
+rather than leaving a plausible-looking number in place. The instructions for
+driving the session are shown beside it, each step labelled with the surface it
+belongs to, and they are generated from the same list the recorder prints to
+its terminal, so the two accounts of how the rig is operated cannot diverge.
 
 What may be pressed remotely is deliberately narrow. Starting and ending an
 episode, and ending the session, are decisions about the recording and are

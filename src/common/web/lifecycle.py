@@ -33,6 +33,7 @@ from common.recording.dataset_edit import (
     ReadOnlyDatasetError,
     episode_uid_rel,
     read_soft_deleted,
+    repair_episode_metadata,
     writability_problem,
 )
 
@@ -366,9 +367,19 @@ def merge_datasets(
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     temp = root / f"{out_name}.tmp-{stamp}"
+    # A source that is itself the result of an earlier merge may name episode
+    # metadata files that were never written; the aggregation opens exactly
+    # those files, so it would fail here rather than at the end.
+    for source in roots:
+        for fixed in repair_episode_metadata(source):
+            say(f"repaired {source.name}/{fixed}")
     say(f"merging {', '.join(names)} → {out_name}")
     try:
         aggregate_datasets(list(names), out_name, roots=roots, aggr_root=temp)
+        # The aggregation writes every source's rows into the destination's own
+        # files but keeps the source's file indices, so the merged dataset would
+        # be the next one that cannot be curated. Correct it before the swap.
+        repair_episode_metadata(temp)
 
         for rel in ("action_space.json", "realsense.json"):
             src = _meta_json_choice(roots, rel)
