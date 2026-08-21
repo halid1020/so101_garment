@@ -12,7 +12,8 @@ It is deliberately thin:
 
 * frames come from the data manager's latest-frame store, which hands out a
   copy under its own lock, so serving a viewer cannot slow the record loop or
-  interleave with it;
+  interleave with it, and the joint snapshot beside them is read the same way --
+  nothing here opens a device or talks to a bus;
 * the control surface is an allow-list of keys, defaulting to the episode
   toggle and quit. Enabling, parking and homing drive both arms and stay on the
   headset and the keyboard, where the operator is looking at the rig;
@@ -28,6 +29,8 @@ import time
 from typing import Any, Callable, Iterable
 
 from aiohttp import web  # type: ignore[import]
+
+from common.recording.features import ACTION_FRESH_S, BODY_DOF, BODY_JOINTS, SIDES
 
 # The live view is a monitor, not a recording: a low rate and a small frame keep
 # it far below the cost of the capture threads it watches, and JPEG at this
@@ -90,6 +93,50 @@ def encode_jpeg(
     bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
     return buf.tobytes() if ok else None
+
+
+def _row(values, gripper: "float | None") -> "dict[str, float | None]":
+    """One side's ``{joint: value}``: five body joints and the gripper. Pure."""
+    out: dict[str, float | None] = {}
+    for i, name in enumerate(BODY_JOINTS):
+        out[name] = None if values is None else round(float(values[i]), 3)
+    out["gripper"] = None if gripper is None else round(float(gripper), 3)
+    return out
+
+
+def joint_snapshot(
+    measured: Any,
+    grippers: "dict[str, float | None]",
+    commands: "dict[str, tuple[Any, float | None, float | None]]",
+    now: float,
+    fresh_s: float = ACTION_FRESH_S,
+) -> "dict[str, Any]":
+    """Both arms' measured joints beside their last sent command. Pure.
+
+    The pair is the one the recorder STORES -- ``observation.state`` beside
+    ``action`` -- so what an operator watches during collection is what a policy
+    will later be trained on.
+
+    ``measured`` is the 10-DOF URDF-degree vector (left five, right five) or
+    ``None`` before the first read; ``commands[side]`` is what
+    ``DualDataManager.get_last_sent_command`` returns. ``fresh`` says whether
+    that command is recent enough to be the frame's action, which is the
+    question an operator watching this table is really asking.
+    """
+    out: dict[str, Any] = {}
+    for s, side in enumerate(SIDES):
+        segment = (
+            None if measured is None else measured[s * BODY_DOF : (s + 1) * BODY_DOF]
+        )
+        urdf_deg, gripper_open, t_mono = commands[side]
+        age = None if t_mono is None else max(0.0, now - float(t_mono))
+        out[side] = {
+            "state": _row(segment, grippers.get(side)),
+            "command": _row(urdf_deg, gripper_open),
+            "command_age_s": None if age is None else round(age, 3),
+            "fresh": age is not None and age < fresh_s,
+        }
+    return out
 
 
 class MonitorServer:
@@ -199,8 +246,25 @@ class MonitorServer:
                     "disconnects": getattr(capture, "disconnects", 0),
                 }
             )
+        measured = self.data_manager.get_current_joint_angles()
+        interpolated = self.data_manager.get_current_joint_angles_at(now)
         out: dict[str, Any] = {
             "streams": streams,
+            "joints": joint_snapshot(
+                measured,
+                {
+                    side: self.data_manager.get_current_gripper_open_value(side)
+                    for side in SIDES
+                },
+                {side: self.data_manager.get_last_sent_command(side) for side in SIDES},
+                now,
+            ),
+            # How stale the measured joints are at this instant: the same drift
+            # the desktop view prints, and the first thing to look at when the
+            # table stops moving.
+            "joint_drift_s": (
+                None if interpolated is None else round(abs(interpolated[1]), 4)
+            ),
             "arms": self.data_manager.get_robot_activity_state().value,
             "teleop_active": bool(self.data_manager.get_teleop_active()),
             "shutdown_requested": bool(self.data_manager.is_shutdown_requested()),

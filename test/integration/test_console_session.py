@@ -40,6 +40,11 @@ class Stub:
     def get_rgb_camera_names(self): return sorted(self.frames)
     def get_rgb_image(self, n): return self.frames[n].copy()
     def get_rgb_image_age(self, n, now=None): return 0.01
+    def get_current_joint_angles(self): return np.arange(10, dtype=float)
+    def get_current_joint_angles_at(self, t): return (np.arange(10, dtype=float), 0.003)
+    def get_current_gripper_open_value(self, side): return 0.5
+    def get_last_sent_command(self, side):
+        return (np.arange(5, dtype=float), 0.5, time.monotonic())
     def get_robot_activity_state(self):
         return type("S", (), {{"value": self.state}})()
     def get_teleop_active(self): return False
@@ -150,6 +155,15 @@ class TestConsoleSession(AioHTTPTestCase):
         self.assertEqual(body["monitor"]["arms"], "DISABLED")
         self.assertEqual(body["monitor"]["recorder"]["state"], "IDLE")
         self.assertEqual(body["monitor"]["allowed_keys"], ["a", "q"])
+        # The proprioception the operator watches instead of standing at the
+        # rig: both arms' measured joints beside the command last sent.
+        joints = body["monitor"]["joints"]
+        self.assertEqual(joints["left"]["state"]["shoulder_pan"], 0.0)
+        self.assertEqual(joints["right"]["state"]["shoulder_pan"], 5.0)
+        self.assertTrue(joints["right"]["fresh"])
+        self.assertEqual(body["monitor"]["joint_drift_s"], 0.003)
+        # And how it is driven, for the pane beside it.
+        self.assertEqual(body["controls"][0]["key"], "Y")
 
         # 3. Live view: the tiles follow the session, and frames arrive.
         streams = await (await self.client.get("/api/live/streams")).json()

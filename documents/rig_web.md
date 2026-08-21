@@ -76,7 +76,12 @@ Episode curation is in two steps:
    marks are pending, and the pane says so.
 2. **Remove for good** compacts: one rewrite of the whole dataset for the
    whole batch, renumbering the survivors and re-indexing the sidecar
-   files with them. This one asks first, because it cannot be undone.
+   files with them. This one asks first, because it cannot be undone, and
+   then runs as a job — a dataset of any size takes minutes to rewrite —
+   so the panel in the corner of the page is where it is watched and where
+   a failure is reported. The rewrite builds a sibling copy and swaps it in
+   at the end; if it cannot finish, the copy is removed and the dataset is
+   untouched.
 
 Marking is deliberately not confirmed — it is the frequent action while
 reviewing, and *Restore* takes it back. Everything that cannot be taken
@@ -106,20 +111,35 @@ are shown ticked and locked, because a resumed dataset must not drift from
 how it began, and anything you asked for that disagrees is reported rather
 than silently ignored. **Check** resolves the request without running it.
 
+**Driving the session.** *Driving the session* lists the steps in order —
+what enables the arms, what makes them follow, what closes the grippers,
+what records an episode and what ends the session — and, for each, the
+surface it lives on. It changes with the input mode, and it is the same
+list the terminal prints when teleoperation starts
+(`src/common/recording/controls.py`), so the browser cannot describe a rig
+it is not driving. Everything that moves an arm is on the headset or the
+keyboard at the rig; only the two steps marked *this page* are also
+buttons here, and they are exactly the two keys the session's monitor
+accepts.
+
 **While it runs.** The tiles are the session's own frames, proxied — no
 device is opened for them and the record loop is not touched, so the live
-view costs a JPEG encode per viewer. The status line carries the arm state,
-the recorder state, the episode count against its goal, the frame count of
-the episode in progress, and any stream that has gone stale. The
-recorder's output is tailed below the form.
+view costs a JPEG encode per viewer. Below them is the proprioception:
+both arms' measured joints beside the command last written to their motors,
+which is the pair stored as the state and the action of every recorded
+frame. A command older than a frame is dimmed and named, because that is
+what makes a recorded action fall back to the measured state; beside it are
+whether teleoperation is active (the grips) and how stale the joint stream
+is. The status line carries the arm state, the recorder state, the episode
+count, the frame count of the episode in progress, and any stream that has
+gone stale. The recorder's output is tailed below the form.
 
 **Episode** presses the session's own A button: it starts an episode, and
 pressing it again stops and saves. It is disabled until the arms are
-enabled, and it is worth reading the warning beside it — starting an
-episode drives BOTH ARMS to the ready pose. Enable, park and home are
-deliberately absent from the browser: they move the arms with nobody
-necessarily looking at the rig, so they stay on the headset and the session
-keyboard.
+enabled, and starting an episode drives BOTH ARMS to the ready pose, so
+stand clear first. Enable, park and home are deliberately absent from the
+browser: they move the arms with nobody necessarily looking at the rig, so
+they stay on the headset and the session keyboard.
 
 **Stop session** asks the session to quit, which is what parks the arms,
 finishes an in-flight episode and closes the dataset properly. Only if that
@@ -166,6 +186,17 @@ marked for deletion (their indices would be meaningless afterwards —
 compact or restore first); or when the drive has less free space than the
 sources add up to.
 
+**Repairing what a merge leaves behind.** Every row of a dataset's episode
+metadata names the file it is stored in, and LeRobot's aggregation writes
+the source's file numbers into a destination whose files are numbered
+differently — so a merged dataset claims its episodes live in files that
+were never written, and the next rewrite of it (a compaction, or a second
+merge) fails partway through. The console corrects those two columns
+against the files they are actually in, before a merge reads its sources,
+after a merge writes its output, and before a compaction begins. It is
+silent when there is nothing wrong, which is the case for everything that
+comes straight off the rig.
+
 A merge re-encodes every episode of every source, so it runs as a job and
 the dialog closes: the panel in the bottom corner of the page shows what is
 running and how far it has got, from whichever tab you are on, and reloads
@@ -195,6 +226,12 @@ to, and says whether that device is **here now**. An assignment that no
 longer resolves to a connected device is the failure worth catching early:
 a camera moved to another socket simply reads as an absent stream at
 collection time, which is a confusing way to find out.
+
+Each device in the working column carries the name it already has, and the
+name it carries is marked among the ones on offer, so pressing a different
+one visibly moves the mark. The console has to say this: the map stores
+each device's stable by-path alias while the buttons show it as the kernel
+names it, so only the server can tell which chip is which name.
 
 **Cameras.** *Scan devices* lists the capture nodes that actually deliver
 frames. Show one, press a gel or wave in front of it to see which camera it

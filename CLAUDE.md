@@ -63,12 +63,14 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   episodes (quest mode only; `--no-record-ee` opts out), with the
   action-definition constants in `<root>/meta/action_space.json`; the
   `--sensor-view` monitor shows live per-stream drift + drop counts;
-  `monitor_server.py` serves the same frames + recorder status over
-  loopback for the rig console when the recorder is given
-  `--monitor-port` (off by default; its control surface is an allow-list
-  of the episode and quit keys — anything that moves an arm stays on the
-  headset/keyboard); config in `src/conf/recording.yaml`, device indices
-  are per-machine placeholders).
+  `monitor_server.py` serves the same frames + recorder status + both
+  arms' measured-vs-last-sent joints over loopback for the rig console
+  when the recorder is given `--monitor-port` (off by default; its
+  control surface is an allow-list of the episode and quit keys —
+  anything that moves an arm stays on the headset/keyboard);
+  `controls.py` is the ONE list of operator steps, printed by the teleop
+  tool and shown by the console; config in `src/conf/recording.yaml`,
+  device indices are per-machine placeholders).
 - `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
   arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
   cameras), `telegrip_native.py` (drive the arms with the *unmodified
@@ -94,8 +96,10 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   this is the former `tool/dataset_web.py`, moved unchanged),
   `lifecycle.py` (whole-dataset create-name checks, rename, delete and
   merge; pure/filesystem, unit-tested) + `lifecycle_api.py` (its routes;
-  merge and the freeing of a deleted dataset run as JOBS the page's dock
-  polls, and a merge may delete its sources once it has succeeded),
+  a merge may delete its sources once it has succeeded), `jobs.py` (the
+  one worker thread and the records the page's dock polls: merge,
+  compaction and the freeing of a deleted dataset all outlive their
+  request),
   `roots.py` (which collection directory the console works on: name/target
   rules, the sshfs command, `/proc/mounts` parsing, the remembered list —
   pure, unit-tested) + `roots_api.py` (its routes, the `root_required`
@@ -171,6 +175,17 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     for the `diffusion` policy the smoke test uses, the `diffusion` extra
     (`diffusers`) — neither is pulled in by `feetech,dataset,pi,libero,pusht`
     alone. `install.sh`'s `LEROBOT_EXTRAS` includes both now.
+  - **A merged dataset cannot be curated again, unrepaired:**
+    `aggregate_datasets` copies each source's episode-metadata rows and
+    merely OFFSETS their `meta/episodes/file_index`, while writing every
+    row into the destination's first file — so the merged dataset names
+    metadata files that were never written, and the next
+    `delete_episodes`/aggregation on it dies with `FileNotFoundError`
+    (MEASURED: 62 rows in `file-000.parquet` claiming indices 0..55).
+    `dataset_edit.repair_episode_metadata` rewrites those two
+    self-referential columns from each file's own path; the console runs
+    it before a merge reads its sources, after a merge writes its output,
+    and before any compaction.
   - **Video decoding / no sudo:** LeRobotDataset videos (PushT, LIBERO) are
     AV1-encoded. The default `torchcodec` backend dlopen's the *system*
     FFmpeg shared libs — on a box with no `ffmpeg` installed (or no sudo to

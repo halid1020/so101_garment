@@ -18,6 +18,7 @@ from common.web.sensors import (
     assign_arm,
     assign_camera,
     assign_realsense,
+    bound_labels,
     clear_assignment,
     map_overview,
     read_map,
@@ -131,6 +132,37 @@ class TestOverview(unittest.TestCase):
         m = assign_camera(EMPTY, "central", "/dev/video0")
         view = map_overview(m, ["/dev/video0", "/dev/video2"], [], [])
         self.assertEqual(view["unassigned_cameras"], ["/dev/video2"])
+
+
+class TestBoundLabels(unittest.TestCase):
+    """Which of the devices in front of the operator already have a name."""
+
+    def test_a_named_device_carries_its_name(self):
+        m = assign_camera(EMPTY, "central", "/dev/video0")
+        self.assertEqual(
+            bound_labels(m, ["/dev/video0", "/dev/video2"], []),
+            {"/dev/video0": "central"},
+        )
+
+    def test_an_unassigned_device_is_absent_rather_than_empty(self):
+        self.assertEqual(bound_labels(EMPTY, ["/dev/video0"], []), {})
+
+    def test_both_arm_namespaces_are_named_by_role_and_side(self):
+        m = assign_arm(EMPTY, "follower", "right", "/dev/ttyACM0")
+        m = assign_arm(m, "leader", "left", "/dev/ttyACM1")
+        self.assertEqual(
+            bound_labels(m, [], ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2"]),
+            {"/dev/ttyACM0": "follower right", "/dev/ttyACM1": "leader left"},
+        )
+
+    def test_a_device_that_is_no_longer_connected_is_not_listed(self):
+        m = assign_camera(EMPTY, "central", "/dev/v4l/by-path/moved")
+        self.assertEqual(bound_labels(m, ["/dev/video0"], []), {})
+
+    def test_the_overview_carries_the_same_labels(self):
+        m = assign_camera(EMPTY, "central", "/dev/video0")
+        view = map_overview(m, ["/dev/video0"], [], [])
+        self.assertEqual(view["bound"], {"/dev/video0": "central"})
 
 
 class TestWiggleTest(unittest.TestCase):

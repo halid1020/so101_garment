@@ -25,7 +25,7 @@ from unittest import mock
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-from common.web.lifecycle_api import MAX_JOBS, prune_jobs
+from common.web.jobs import MAX_JOBS, prune_jobs
 from tool.rig_web import build_app
 
 _FEATURES = {
@@ -270,6 +270,15 @@ class TestCollectTab(ConsoleTestCase):
         )
         self.assertEqual(resp.status, 400)
 
+    async def test_the_form_says_how_each_input_mode_is_driven(self):
+        body = await (await self.client.get("/api/collect/config")).json()
+        quest = body["controls"]["quest"]
+        self.assertEqual(quest[0]["key"], "Y")
+        self.assertEqual(quest[0]["where"], "headset")
+        self.assertEqual(body["controls"]["leader"][0]["where"], "session keyboard")
+        here = {s["key"] for s in quest if "this page" in s["where"]}
+        self.assertEqual(here, {"A", "Q"})
+
     async def test_the_collection_form_offers_this_machines_cameras(self):
         body = await (await self.client.get("/api/collect/config")).json()
         self.assertTrue(body["cameras"])
@@ -278,6 +287,19 @@ class TestCollectTab(ConsoleTestCase):
 
 class TestSensorsTab(ConsoleTestCase):
     """Assignment writes a real per-machine file, so these point it at a copy."""
+
+    def setUp(self):
+        # An assignment is stored as the device's STABLE alias, which is looked
+        # up in this machine's /dev -- so on the rig itself the made-up devices
+        # below would resolve to whatever is really plugged in, and these tests
+        # would pass or fail depending on the hardware attached. The lookup is
+        # exercised by the desktop tool's own tests; here it stands aside.
+        patcher = mock.patch(
+            "common.web.sensors_api.stable_device_path", side_effect=lambda d: d
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
 
     async def get_application(self):
         app = await super().get_application()
@@ -311,6 +333,21 @@ class TestSensorsTab(ConsoleTestCase):
         self.assertEqual(row["device"], "/dev/video2")
         self.assertTrue(row["present"])
         self.assertTrue((self.root / "sensor_map.yaml").is_file())
+
+    async def test_a_connected_device_reports_the_name_it_carries(self):
+        await self.post(
+            "/api/sensors/camera/assign",
+            {"device": "/dev/video2", "name": "wrist_camera_left"},
+        )
+        await self.post(
+            "/api/sensors/arm/assign",
+            {"port": "/dev/ttyACM0", "role": "follower", "side": "left"},
+        )
+        body = await (await self.client.get("/api/sensors")).json()
+        self.assertEqual(
+            body["overview"]["bound"],
+            {"/dev/video2": "wrist_camera_left", "/dev/ttyACM0": "follower left"},
+        )
 
     async def test_assigning_an_unknown_name_is_refused(self):
         resp = await self.post(
@@ -385,6 +422,36 @@ class TestJobs(ConsoleTestCase):
         self.assertEqual(job["state"], "done")
         listed = await (await self.client.get("/api/jobs")).json()
         self.assertIn(body["job"], [j["id"] for j in listed])
+
+    async def test_removing_marked_episodes_for_good_is_a_job(self):
+        # The rewrite itself is LeRobot's, and far too slow for a test; what is
+        # checked here is that the operator gets a job to watch instead of a
+        # request that may die half an hour later.
+        await self.post("/api/datasets/cube-pnp/delete", {"episodes": [1]})
+        with mock.patch(
+            "common.web.datasets_api.compact_dataset", return_value=2
+        ) as compact:
+            body = await (await self.post("/api/datasets/cube-pnp/compact", {})).json()
+            job = await self._settle(body["id"])
+        self.assertEqual(job["kind"], "compact")
+        self.assertEqual(job["state"], "done")
+        self.assertIn("2 recording", job["message"])
+        self.assertEqual(compact.call_args.args[1], "cube-pnp")
+
+    async def test_a_rewrite_that_fails_says_why_in_the_dock(self):
+        await self.post("/api/datasets/cube-pnp/delete", {"episodes": [1]})
+        boom = FileNotFoundError("meta/episodes/chunk-000/file-001.parquet")
+        with mock.patch("common.web.datasets_api.compact_dataset", side_effect=boom):
+            body = await (await self.post("/api/datasets/cube-pnp/compact", {})).json()
+            job = await self._settle(body["id"])
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("file-001.parquet", job["message"])
+
+    async def test_removing_nothing_is_refused_before_a_job_is_made(self):
+        resp = await self.post("/api/datasets/cube-pnp/compact", {})
+        self.assertEqual(resp.status, 400)
+        listed = await (await self.client.get("/api/jobs")).json()
+        self.assertEqual(listed, [])
 
     async def test_a_merge_may_delete_its_sources_once_it_has_worked(self):
         # The merge itself is LeRobot's; what is checked here is the console's

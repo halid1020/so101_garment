@@ -56,17 +56,31 @@ function renderMap() {
   });
 }
 
+// A chip carries the name its device already has, so identifying six
+// identical cameras does not start again from nothing every time. The server
+// resolves it: the map stores by-path aliases, the chips are /dev/videoN.
+function chip(device, attr) {
+  const name = (sensors.overview.bound || {})[device];
+  const shown = device.split('/').pop();
+  return `<button class="chip${name ? ' bound' : ''}" ${attr}="${device}"
+    title="${device}">${shown}${name ? ` · ${name}` : ''}</button>`;
+}
+
+function boundName(device) {
+  return device ? (sensors.overview.bound || {})[device] || null : null;
+}
+
 function renderCandidates() {
   const c = sensors.candidates;
   $('#s-cams').innerHTML = c.cameras.length
-    ? c.cameras.map(d => `<button class="chip on" data-cam="${d}">${d}</button>`).join('')
+    ? c.cameras.map(d => chip(d, 'data-cam')).join('')
     : '<span class="muted">no capture devices found — press Scan devices</span>';
   document.querySelectorAll('#s-cams [data-cam]').forEach(b => {
     b.onclick = () => previewCamera(b.dataset.cam);
   });
 
   $('#s-ports').innerHTML = c.serial.length
-    ? c.serial.map(d => `<button class="chip on" data-port="${d}">${d}</button>`).join('')
+    ? c.serial.map(d => chip(d, 'data-port')).join('')
     : '<span class="muted">no serial ports found</span>';
   document.querySelectorAll('#s-ports [data-port]').forEach(b => {
     b.onclick = () => probePort(b.dataset.port);
@@ -74,16 +88,31 @@ function renderCandidates() {
 
   $('#s-rs').innerHTML = c.realsense.length
     ? c.realsense.map(d =>
-        `<button class="chip on" data-rs="${d.serial}">${d.name} (${d.serial})</button>`).join('')
+        `<button class="chip${d.serial === sensors.overview.realsense.serial
+          ? ' bound' : ''}" data-rs="${d.serial}">${d.name} (${d.serial})</button>`
+      ).join('')
     : '<span class="muted">no RealSense device found</span>';
   document.querySelectorAll('#s-rs [data-rs]').forEach(b => {
     b.onclick = () => assignRealsense(b.dataset.rs);
   });
 
+  const current = boundName(previewDevice);
   $('#s-cam-names').innerHTML = sensors.names.map(n =>
-    `<button data-name="${n}">${n}</button>`).join('');
+    `<button data-name="${n}"${n === current ? ' class="sel"' : ''}>${n}</button>`
+  ).join('');
   document.querySelectorAll('#s-cam-names [data-name]').forEach(b => {
     b.onclick = () => assignCamera(b.dataset.name);
+  });
+  markArmButtons();
+}
+
+// The four role/side buttons under the ticks: the probed port's own binding is
+// marked, so pressing another one visibly moves the mark to it.
+function markArmButtons() {
+  const current = boundName(probedPort);
+  document.querySelectorAll('#s-ticks [data-role]').forEach(b => {
+    const mine = `${b.dataset.role} ${b.dataset.side}` === current;
+    b.classList.toggle('sel', mine);
   });
 }
 
@@ -101,8 +130,10 @@ async function previewCamera(device) {
     $('#s-cam-view').hidden = false;
     $('#s-cam-cap').textContent = device;
     $('#s-cam-img').src = `/api/live/${encodeURIComponent(name)}.mjpg?t=${Date.now()}`;
-    $('#s-work-title').textContent = `showing ${device}`;
+    $('#s-work-title').textContent = `showing ${device}`
+      + (boundName(device) ? ` — currently ${boundName(device)}` : ' — unassigned');
     $('#s-release').hidden = false;
+    renderCandidates();  // the name this device already has is marked
   } catch (e) { $('#s-err').textContent = e.message; }
 }
 

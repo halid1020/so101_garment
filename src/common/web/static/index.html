@@ -67,9 +67,6 @@
               <option value="leader">leader arms</option>
             </select>
           </label>
-          <label class="row">Episode goal
-            <input id="c-goal" type="number" min="0" step="1" value="0">
-          </label>
           <label class="row"><input type="checkbox" id="c-view">
             also open the desktop window</label>
           <p class="muted" id="c-plan"></p>
@@ -86,10 +83,14 @@
             <button id="c-episode">Start episode</button>
             <button id="c-stop" class="danger">Stop session</button>
           </div>
-          <p class="muted">Starting an episode drives BOTH ARMS to the ready
-          pose first. Enable, park and home stay on the headset and the session
-          keyboard — stand clear of the rig before pressing this.</p>
+          <p class="muted">Everything below that moves an arm stays on the
+          headset or the keyboard at the rig — stand clear before it does.</p>
         </div>
+
+        <details id="controls" open>
+          <summary>Driving the session</summary>
+          <table class="checks" id="c-controls"></table>
+        </details>
 
         <details id="preflight">
           <summary>Rig readiness</summary>
@@ -104,6 +105,16 @@
           <button id="c-preview">Start preview</button>
         </div>
         <div class="tiles" id="live-tiles"></div>
+        <div id="c-signals" hidden>
+          <div class="bar">
+            <span class="grow muted" id="c-teleop"></span>
+            <span class="muted" id="c-drift"></span>
+          </div>
+          <table id="c-joints"></table>
+          <p class="muted">Measured joints beside the command last written to
+          the motors, in URDF degrees; the gripper is its open fraction. This is
+          the pair stored as the state and the action of every recorded frame.</p>
+        </div>
       </div>
     </section>
     <section class="pane" id="pane-signals" hidden>

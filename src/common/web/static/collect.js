@@ -4,6 +4,7 @@
 
 let sessionState = null;
 let liveStreams = [];
+let controlsByMode = {};
 let collectTimer = null;
 
 function collectVisible() {
@@ -12,6 +13,8 @@ function collectVisible() {
 
 async function loadCollectConfig() {
   const cfg = await j('/api/collect/config');
+  controlsByMode = cfg.controls || {};
+  renderControls(controlsByMode[$('#c-input').value]);
   const box = $('#c-streams');
   box.innerHTML = '<legend>Camera streams</legend>';
   for (const cam of cfg.cameras) {
@@ -36,7 +39,6 @@ function sessionRequest() {
     depth: $('#c-depth').checked,
     ee: $('#c-ee').checked,
     input: $('#c-input').value,
-    goal: Number($('#c-goal').value) || 0,
     sensor_view: $('#c-view').checked,
   };
 }
@@ -79,6 +81,10 @@ async function checkPlan() {
 
 $('#c-check').onclick = checkPlan;
 $('#c-name').onchange = checkPlan;
+$('#c-input').onchange = () => {
+  renderControls(controlsByMode[$('#c-input').value]);
+  if ($('#c-name').value.trim()) checkPlan();
+};
 
 $('#c-start').onclick = async () => {
   const plan = await checkPlan();
@@ -125,6 +131,56 @@ $('#c-preview').onclick = async () => {
   } catch (e) { alert(e.message); }
   await refreshTiles();
 };
+
+// ── Controls and signals ────────────────────────────────────────────────────
+
+// The steps come from the session (common/recording/controls.py), which is also
+// what the terminal prints, so this pane cannot describe a rig it is not
+// driving. Anything that moves an arm names the surface it lives on.
+function renderControls(steps) {
+  if (!steps || !steps.length) return;
+  $('#c-controls').innerHTML = steps.map(s => {
+    const here = s.where.includes('this page');
+    return `<tr class="${here ? 'lvl-OK' : ''}">
+      <td>${s.key || '·'}</td><td>${s.what}</td>
+      <td class="muted">${s.where}</td></tr>`;
+  }).join('');
+}
+
+const JOINT_ROWS = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex',
+                    'wrist_roll', 'gripper'];
+
+function renderJoints(monitor) {
+  // 'sig' rather than 'j': that name is the fetch helper everywhere else here.
+  const sig = monitor && monitor.joints;
+  $('#c-signals').hidden = !sig;
+  if (!sig) return;
+  const num = (v) => (v === null || v === undefined) ? '--' : v.toFixed(2);
+  // A command older than a frame is what makes the recorded action fall back to
+  // the measured state, so a stale column is dimmed rather than left to look
+  // like a live one.
+  const cmdClass = (side) => sig[side].fresh ? '' : ' class="rate"';
+  let html = '<tr><th></th><th colspan="2">left</th><th colspan="2">right</th></tr>'
+    + '<tr><th></th><th>state</th><th>cmd</th><th>state</th><th>cmd</th></tr>';
+  for (const name of JOINT_ROWS) {
+    html += `<tr><th>${name}</th>` + ['left', 'right'].map(side =>
+      `<td>${num(sig[side].state[name])}</td>`
+      + `<td${cmdClass(side)}>${num(sig[side].command[name])}</td>`).join('') + '</tr>';
+  }
+  $('#c-joints').innerHTML = html;
+
+  const leader = sessionState && sessionState.input === 'leader';
+  $('#c-teleop').textContent = monitor.teleop_active
+    ? (leader ? 'following the leaders' : 'teleoperating')
+    : (leader ? 'not following — enable the arms first'
+              : 'not teleoperating — hold both grips');
+  const drift = monitor.joint_drift_s;
+  const stale = ['left', 'right'].filter(side => !sig[side].fresh);
+  $('#c-drift').textContent =
+    (drift === null || drift === undefined
+      ? 'joints --' : `joints ${(drift * 1000).toFixed(0)} ms`)
+    + (stale.length ? ` · no fresh command: ${stale.join(', ')}` : '');
+}
 
 // ── Live tiles ──────────────────────────────────────────────────────────────
 
@@ -197,6 +253,8 @@ async function pollSession() {
     $('#c-stop').disabled = !!s.stopping;
     $('#c-stop').textContent = s.stopping ? 'Stopping…' : 'Stop session';
   }
+  renderJoints(s.monitor);
+  if (s.running) renderControls(s.controls);
   $('#session-log').textContent = (s.tail || []).slice(-200).join('\n');
   $('#session-log').scrollTop = $('#session-log').scrollHeight;
   await refreshTiles();
@@ -218,14 +276,27 @@ async function loadPreflight() {
 $('#preflight').ontoggle = () => { if ($('#preflight').open) loadPreflight(); };
 
 // Poll only while the tab is on screen: the live tiles are streams, and the
-// status is only interesting to someone looking at it.
-function collectTick() {
-  if (collectVisible()) pollSession();
+// status is only interesting to someone looking at it. A running session is
+// polled four times as often, because the joint table is worth watching move;
+// one request is in flight at a time, so a slow monitor cannot queue them up.
+let collectBusy = false;
+
+async function collectTick() {
+  if (collectVisible() && !collectBusy) {
+    collectBusy = true;
+    try { await pollSession(); }
+    catch (e) { /* the next tick tries again */ }
+    finally { collectBusy = false; }
+  }
+  const period = (sessionState && sessionState.running && collectVisible())
+    ? 400 : 1500;
+  clearTimeout(collectTimer);
+  collectTimer = setTimeout(collectTick, period);
 }
 
 window.addEventListener('load', () => {
   loadCollectConfig().catch(e => { $('#c-err').textContent = e.message; });
-  collectTimer = setInterval(collectTick, 1500);
+  collectTimer = setTimeout(collectTick, 300);
   // app.js chooses the pane before this file is parsed, so a console opened
   // straight on #collect has to be told once, here.
   if (collectVisible()) window.onPaneShown('collect');

@@ -152,6 +152,33 @@ def _present(node: "str | None", present_nodes: "set[str]") -> bool:
     return False
 
 
+def bound_labels(
+    sensor_map: "dict[str, Any]",
+    camera_nodes: "list[str]",
+    serial_nodes: "list[str]",
+) -> "dict[str, str]":
+    """What each CONNECTED device is already called, by device path. Pure.
+
+    The pane lists candidates as the kernel names them (``/dev/video4``,
+    ``/dev/ttyACM1``) while the map stores the stable by-path alias, so only the
+    server can say which chip is which name -- and saying it is the difference
+    between an operator identifying six identical cameras and re-identifying the
+    five that were already done.
+    """
+    labels: dict[str, str] = {}
+    for name, node in (sensor_map.get("cameras") or {}).items():
+        for candidate in camera_nodes:
+            if _present(str(node or ""), {candidate}):
+                labels[candidate] = str(name)
+    for role, section in (("follower", "arms"), ("leader", "leaders")):
+        for side, entry in (sensor_map.get(section) or {}).items():
+            node = _serial_node(entry) if entry else None
+            for candidate in serial_nodes:
+                if _present(str(node or ""), {candidate}):
+                    labels[candidate] = f"{role} {side}"
+    return labels
+
+
 def map_overview(
     sensor_map: "dict[str, Any]",
     camera_nodes: "list[str]",
@@ -193,6 +220,8 @@ def map_overview(
     return {
         "cameras": cameras,
         "arms": arms,
+        # Which of the devices in front of the operator already have a name.
+        "bound": bound_labels(sensor_map, camera_nodes, serial_nodes),
         "realsense": {
             "serial": assigned_serial,
             "name": (sensor_map.get("realsense") or {}).get("name"),
