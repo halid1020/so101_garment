@@ -91,6 +91,9 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
   console — see below).
+- `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
+  in `configs.py`) and the conversion, shared by the joint-state thread, the
+  sidecar writer and the console's idle arm reader.
 - `src/common/web/` — the rig console served by `tool/rig_web.py` on
   loopback: `datasets_api.py` (browsing, playback and episode curation —
   this is the former `tool/dataset_web.py`, moved unchanged),
@@ -107,7 +110,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `session.py` (supervises ONE collection
   session as a subprocess — the same stream resolvers as the CLI, the
   teleop command, the quit→SIGINT→SIGTERM stop ladder, and the console's
-  own idle camera preview) + `session_api.py` (Collect routes; live frames
+  own idle previews of the cameras and of the follower arms, both released
+  before a session starts) + `session_api.py` (Collect routes; live frames
   and the two allowed keys are PROXIED to the session's monitor, never
   taken from a device), `sensors.py` (binding devices to stream names:
   pure map operations + the wiggle-test arithmetic + an uncalibrated,

@@ -49,9 +49,9 @@ from common.web.roots_api import (
     unmount_own,
 )
 from common.web.sensors_api import add_sensor_routes
-from common.web.session import PreviewCameras, SessionSupervisor
+from common.web.session import PreviewArms, PreviewCameras, SessionSupervisor
 from common.web.session_api import add_session_routes
-from common.web.util import preinit_tqdm_lock
+from common.web.util import preinit_tqdm_lock, revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "static"
 
@@ -66,7 +66,7 @@ async def _open_client(app: web.Application) -> None:
 
 
 async def _close_session(app: web.Application) -> None:
-    """Release the cameras the preview holds; leave a collection session alone.
+    """Release the devices the previews hold; leave a collection session alone.
 
     A session is a separate process with the dataset open: closing the console
     must not end it, or an operator would lose a recording by restarting a web
@@ -76,6 +76,7 @@ async def _close_session(app: web.Application) -> None:
     console, and leaving it behind would strand a dead FUSE mount.
     """
     app["preview"].stop()
+    app["arms"].stop()
     app["sensors_probe"].close()
     await app["http"].close()
     unmount_own(app)
@@ -89,7 +90,9 @@ async def handle_console(request: web.Request) -> web.Response:
 
 def build_app(args: argparse.Namespace) -> web.Application:
     preinit_tqdm_lock()
-    app = web.Application(client_max_size=1024, middlewares=[root_required])
+    app = web.Application(
+        client_max_size=1024, middlewares=[revalidate_assets, root_required]
+    )
     outputs = Path(os.environ.get("SO101_OUTPUT_DIR", "outputs")).expanduser()
     app["roots_file"] = outputs / "rig_web_roots.json"
     app["mount_dir"] = Path(
@@ -109,14 +112,16 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # start twice.
     app["job_executor"] = ThreadPoolExecutor(max_workers=1)
     app["jobs"] = {}
-    # The collection session (a subprocess) and the console's own idle camera
-    # preview. Only one of the two ever holds a device.
+    # The collection session (a subprocess) and the console's own idle previews
+    # of the cameras and the follower arms. Only the session or the previews
+    # ever hold a device, never both.
     # The supervisor's root follows the console's; with none chosen yet the
     # placeholder is never used, because starting a session needs one.
     app["session"] = SessionSupervisor(
         app["root"] or Path.cwd(), monitor_port=getattr(args, "monitor_port", 8766)
     )
     app["preview"] = PreviewCameras()
+    app["arms"] = PreviewArms()
     app.on_startup.append(_open_client)
     app.on_cleanup.append(_close_session)
     app["cache_dir"] = outputs / "rig_web_cache"

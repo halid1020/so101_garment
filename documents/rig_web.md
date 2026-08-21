@@ -101,8 +101,11 @@ calibrations, poses, cameras, the depth device, disk headroom, and the
 host-tuning items that reduce timing jitter. The device checks are skipped
 while a session or a preview holds them; the file checks always answer.
 With nothing running, **Start preview** opens the assigned cameras so you
-can see where they point. The preview is always released before a session
-launches — one process owns a camera.
+can see where they point, and **Read the arms** opens the two follower buses
+to fill the joint table — calibrated, torque disabled, nothing commanded, so
+the arms stay limp and you can push them by hand and watch the numbers move.
+Both are released before a session launches, and before the Signals tab
+probes a port: one process owns a camera, and one owns a serial port.
 
 **Starting.** Fill in the dataset name, the instruction stored with every
 frame, and the streams. Typing the name of an existing dataset switches the

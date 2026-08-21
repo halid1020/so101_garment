@@ -8,6 +8,23 @@ from functools import partial
 from aiohttp import web  # type: ignore[import]
 
 
+# The page and its scripts are edited between runs of this console, and the
+# browser is not told how long they are good for -- aiohttp's static handler
+# sends a validator (ETag, Last-Modified) but no ``Cache-Control``, which lets a
+# browser guess a freshness lifetime and serve a script from cache without
+# asking. MEASURED consequence: a reload revalidated the page but not its
+# scripts, leaving a NEW page running an OLD script, whose first act was to read
+# a form field that no longer existed. Asking for revalidation every time costs
+# one conditional request on loopback and answers 304 when nothing changed.
+@web.middleware
+async def revalidate_assets(request: web.Request, handler):
+    response = await handler(request)
+    path = request.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 async def in_executor(app: web.Application, fn, *args):
     """Run a blocking call on the app's worker pool, off the event loop."""
     loop = asyncio.get_running_loop()
