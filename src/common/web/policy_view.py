@@ -40,10 +40,6 @@ from common.web.util import revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-#: The twin is a preview, not a video: a chunk is a second of motion and ten
-#: frames of it is plenty to see where the arms are being sent.
-TWIN_FPS = 10.0
-
 
 def chunk_payload(source) -> "dict[str, Any] | None":
     """The plan a source last received, as the page draws it. Pure."""
@@ -136,9 +132,10 @@ class PolicyView:
                 web.get("/api/status", self.handle_status),
                 web.post("/api/mode", self.handle_mode),
                 web.post("/api/strategy", self.handle_strategy),
+                web.post("/api/task", self.handle_task),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
                 web.get("/shown/{name}.jpg", self.handle_shown),
-                web.get("/twin.mjpg", self.handle_twin),
+                web.get("/twin.jpg", self.handle_twin),
                 web.static("/static", STATIC_DIR),
             ]
         )
@@ -231,6 +228,25 @@ class PolicyView:
         self.on_splice_change(settings)
         return web.json_response(settings)
 
+    async def handle_task(self, request: web.Request) -> web.Response:
+        """Set the language task the policy is given. See run_policy_real.
+
+        A run may be started without one -- that is the point of a console you
+        drive entirely from the browser -- and then it waits here before it
+        infers anything. Changing it later is allowed too: the task travels with
+        every request, so the next chunk simply answers a different question.
+        """
+        body = await request.json()
+        task = str(body.get("task", "")).strip()
+        if not task:
+            raise web.HTTPBadRequest(text="a task cannot be empty")
+        setter = getattr(self.source, "set_task", None)
+        if setter is None:
+            raise web.HTTPBadRequest(text="this source has no task to set")
+        setter(task)
+        self.control.publish(task=task)
+        return web.json_response({"task": task})
+
     async def handle_index(self, _request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "policy.html")
 
@@ -286,55 +302,55 @@ class PolicyView:
             raise web.HTTPNotFound(text=f"nothing sent for {name!r} yet")
         return web.Response(body=jpeg, content_type="image/jpeg")
 
-    async def handle_twin(self, request: web.Request) -> web.StreamResponse:
-        """A plan walked through in the twin, or the arms. Built on first use.
+    async def handle_twin(self, request: web.Request) -> web.Response:
+        """ONE frame of the twin: the arms now, and where action ``i`` sends them.
 
-        ``what=plan`` (the default) animates the chunk the policy returned from
-        the observation it was given, first action to last, on repeat: this is
-        the answer to "where would this plan put the arms". ``what=queued``
-        animates only what is still going to be executed, which under every
-        splice but ``append`` is a shorter and different sequence.
-        ``what=measured`` follows the real arms instead.
+        Blue is the measured pose, orange is ``last_chunk[i]``, drawn together so
+        the gap between the ghosts is the motion still to come.
 
-        The animation is ANCHORED to one sequence at a time. Both payloads carry
-        the same ``seq`` -- they describe the same plan -- so switching between
-        them without noticing would leave the frame index pointing into a
-        different, shorter list, and the twin would appear to jump between two
-        poses several times a second. The anchor is (kind, seq, length).
+        The CALLER names the frame -- ``?seq=<n>&i=<k>`` -- and gets a 409 if
+        that plan is no longer the current one. That is the whole point of this
+        route's shape. The previous twin was an endless MJPEG stream whose
+        subject the server picked afresh each frame out of payloads with
+        different lengths; between a plan being replaced underneath the
+        animation and a part arriving half-written into a live <img>, it
+        flickered, and no amount of anchoring inside the server could fix a
+        design that let the browser paint bytes it had not finished receiving.
+        A single still image cannot: the page only shows one that fully loaded.
         """
-        what = request.query.get("what", "plan")
-        step: "dict[str, Any]" = {"i": 0, "key": None, "actions": []}
+        try:
+            want_seq = int(request.query.get("seq", "0"))
+            index = int(request.query.get("i", "0"))
+        except ValueError:
+            raise web.HTTPBadRequest(text="seq and i must be integers")
 
-        def frame():
-            twin = self._ensure_twin()
-            if twin is None:
-                return None
-            if what == "measured":
-                state = (self.control.snapshot().get("state")) or []
-                return twin.render(state) if len(state) == 12 else None
-            payload = (
-                pending_payload(self.source)
-                if what == "queued"
-                else chunk_payload(self.source)
-            )
-            if payload is None:
-                # Nothing of the asked-for kind: hold the last sequence rather
-                # than borrowing the other one, which is what made it flicker.
-                if not step["actions"]:
-                    return None
-            else:
-                key = (payload["kind"], payload["seq"], payload["n"])
-                if key != step["key"]:
-                    step["key"], step["i"] = key, 0
-                    step["actions"] = payload["actions"]
-            actions = step["actions"]
-            if not actions:
-                return None
-            i = step["i"] % len(actions)
-            step["i"] = i + 1
-            return twin.render(actions[i])
+        chunk = getattr(self.source, "last_chunk", None)
+        if chunk is None:
+            raise web.HTTPNotFound(text="no plan has arrived yet")
+        have_seq = int(getattr(self.source, "last_chunk_seq", 0) or 0)
+        if have_seq != want_seq:
+            # Not an error: the page is one poll behind. It re-reads the status
+            # and asks again, and meanwhile keeps the frame it already has.
+            raise web.HTTPConflict(text=f"plan #{want_seq} is gone; now #{have_seq}")
+        actions = np.asarray(chunk, dtype=float)
+        plan = actions[index % len(actions)] if len(actions) else None
+        state = (self.control.snapshot().get("state")) or None
 
-        return await self._stream(request, frame, TWIN_FPS)
+        loop = asyncio.get_running_loop()
+        jpeg = await loop.run_in_executor(None, self._twin_jpeg, state, plan)
+        if jpeg is None:
+            raise web.HTTPNotFound(text="nothing to draw yet")
+        return web.Response(
+            body=jpeg,
+            content_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def _twin_jpeg(self, state, plan) -> "bytes | None":
+        twin = self._ensure_twin()
+        if twin is None:
+            return None
+        return encode_jpeg(twin.render_pair(state, plan), self.quality, self.max_width)
 
     def _ensure_twin(self):
         """Build the twin the first time somebody looks at it, never before."""

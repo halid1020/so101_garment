@@ -90,6 +90,11 @@ class LocalActionSource:
     last_chunk_seq = 0
     last_chunk_at = 0.0
 
+    def set_task(self, task: str) -> str:
+        """Change the language task. Takes effect on the next inference."""
+        self.task = str(task)
+        return self.task
+
     def offer(self, state: np.ndarray, images: dict) -> None:
         self._latest = (state, images)
 
@@ -327,6 +332,18 @@ class RemoteActionSource:
             "ramp_kind": self.ramp_kind,
             "blocking": self.strategy in BLOCKING,
         }
+
+    def set_task(self, task: str) -> str:
+        """Change the language task the requests carry.
+
+        The task travels with every ``/act`` message rather than being fixed at
+        the handshake, so this needs no reset: the next chunk simply answers a
+        different question. A run may therefore be STARTED without a task and
+        given one from the live view.
+        """
+        with self._lock:
+            self.task = str(task)
+            return self.task
 
     def set_paused(self, paused: bool) -> None:
         """While paused the window keeps filling but no chunk is requested."""

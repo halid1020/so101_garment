@@ -23,23 +23,30 @@ background while the current one is still being executed, and if it does not
 arrive the arms HOLD their last goal and then stop (``--stall-hold`` /
 ``--stall-abort``) rather than run on stale plans.
 
-``--web`` serves a live view of the run on loopback (``common.web.policy_view``):
-the observation the policy was last shown, the chunk it planned -- replayed in
-the URDF twin -- what the arms did with it, and whether it arrived in time. From
-there a rollout can be HELD, advanced ONE CHUNK at a time, or resumed, which is
-how a failed grasp is examined: the plan that produced the motion is still on
-the screen beside the motion. Every rollout is also written to a run log for
+``--web`` serves a live view of the run on loopback (``common.web.policy_view``)
+and is meant to be the WHOLE interface: the observation the policy was last
+shown, the chunk it planned -- drawn in the URDF twin as the arms now (blue)
+beside where that plan sends them (orange) -- what the arms did with it, and
+whether it arrived in time. From there a rollout is given its task, armed,
+HELD, advanced ONE CHUNK at a time, resumed, re-spliced and stopped. That is how
+a failed grasp is examined: the plan that produced the motion is still on the
+screen beside the motion. Every rollout is also written to a run log for
 afterwards (``--no-log`` to skip).
 
-SAFETY: the followers MOVE (unless ``--dry-run``). After a confirmation (skip
-with ``--yes``) the arms ramp slowly to the policy's first action, then run at
-``--hz`` until ``--seconds`` elapse or Ctrl+C. Torque is disabled again on exit,
-including on error. ``--dry-run`` reads sensors and prints the chosen actions
-but never enables torque or writes a goal. The view can only ever ask for LESS
-motion or end the run -- it cannot enable torque, and it cannot arm a rollout
-the terminal did not. Keep the workspace clear.
+SAFETY: the followers MOVE (unless ``--dry-run``). Consent is taken once, before
+any torque -- at the terminal by default, or ON THE PAGE when ``--web`` is used
+(``--arm-at-terminal`` puts the prompt back, ``--yes`` skips it). The page is
+unauthenticated on loopback, so with ``--web`` anyone who can reach the port can
+begin the motion. The arms then ramp slowly to the policy's first action and run
+at ``--hz`` until ``--seconds`` elapse (by default they do not: a run lasts until
+it is stopped), Stop is pressed, or Ctrl+C. Torque is disabled again on exit,
+including on error. ``--dry-run`` reads sensors and prints the chosen actions but
+never enables torque or writes a goal. Keep the workspace clear.
 
 Usage:
+
+    # everything else -- task, arming, throttle, splice -- happens on the page
+    venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 --web
 
     venv/bin/python tool/run_policy_real.py \\
         --checkpoint <run>/checkpoints/last/pretrained_model \\
@@ -47,9 +54,6 @@ Usage:
 
     venv/bin/python tool/run_policy_real.py \\
         --checkpoint <ckpt> --task "fold the towel" --hz 15 --seconds 60
-
-    venv/bin/python tool/run_policy_real.py \\
-        --server http://127.0.0.1:8765 --task "fold the towel" --dry-run
 """
 
 from __future__ import annotations
@@ -221,6 +225,38 @@ def tick_budget(seconds: float, hz: float) -> "int | None":
     return int(seconds * hz)
 
 
+def resolve_launch(
+    web: bool,
+    seconds: "float | None",
+    start_mode: "str | None",
+    arm_at_terminal: bool,
+    yes: bool,
+    dry_run: bool,
+) -> "tuple[float, str, bool]":
+    """Fill in what ``--web`` implies: duration, throttle, who consents. Pure.
+
+    ``run_policy_real.py --server URL --web`` is meant to be the whole command,
+    with everything else decided on the page, so under ``--web`` the defaults
+    change to the ones that console needs:
+
+      * no time limit -- a session spent stepping through plans and comparing
+        splices cannot know in advance how long it wants, and the old 30 s
+        default silently ended one at 900 ticks;
+      * ``preview`` -- the plan is shown in the twin before anything moves, and
+        Run is one click away;
+      * consent taken IN the page, because the page asks the same question the
+        terminal did and the operator is already looking at it.
+
+    Any flag given explicitly wins, and ``--arm-at-terminal`` puts the prompt
+    back. A dry run consents to nothing, having no torque to enable.
+    """
+    resolved_seconds = 0.0 if seconds is None else float(seconds)
+    if start_mode is None:
+        start_mode = "preview" if web else "run"
+    arm_from_view = bool(web and not arm_at_terminal and not yes and not dry_run)
+    return resolved_seconds, start_mode, arm_from_view
+
+
 def _first_action(source, timeout_s: float):
     """Block until the source has an action, or give up with a clear reason.
 
@@ -254,11 +290,18 @@ def main() -> None:
         help="Base URL of a tool/policy_server.py (remote inference); excludes --checkpoint",
     )
     parser.add_argument(
-        "--task", required=True, help="Language task string fed to the policy"
+        "--task",
+        default=None,
+        help="Language task string fed to the policy. Optional with --web: the "
+        "run then waits for one to be typed on the page",
     )
     parser.add_argument("--hz", type=float, default=30.0, help="Control rate (Hz)")
     parser.add_argument(
-        "--seconds", type=float, default=30.0, help="Run duration before stopping"
+        "--seconds",
+        type=float,
+        default=None,
+        help="Run duration before stopping (default: no limit; stop from the "
+        "page or with Ctrl+C)",
     )
     parser.add_argument(
         "--device", default=None, help="cpu/cuda (default auto, local only)"
@@ -335,19 +378,21 @@ def main() -> None:
     )
     parser.add_argument("--web-port", type=int, default=8767, help="Live view port")
     parser.add_argument(
-        "--arm-from-view",
+        "--arm-at-terminal",
         action="store_true",
-        help="Take the 'the arms will move' consent in the live view instead "
-        "of at the terminal. The page then starts the arms, so anyone who can "
-        "reach the port can; it binds loopback and is unauthenticated",
+        help="Take the 'the arms will move' consent at the terminal. Without "
+        "it, --web takes that consent on the PAGE, which means anyone who can "
+        "reach the port can start the arms; it binds loopback and is "
+        "unauthenticated",
     )
     parser.add_argument(
         "--start-mode",
         choices=("run", "hold", "preview"),
-        default="run",
-        help="What the throttle is doing when the loop starts. 'preview' ramps "
-        "to the first action and then waits, showing each queued chunk in the "
-        "twin until you execute it from the live view (needs --web)",
+        default=None,
+        help="What the throttle is doing when the loop starts (default: "
+        "'preview' with --web, 'run' without). 'preview' ramps to the first "
+        "action and then waits, showing each queued chunk in the twin until "
+        "you execute it from the live view",
     )
     parser.add_argument(
         "--no-log",
@@ -358,10 +403,18 @@ def main() -> None:
 
     if args.hz <= 0:
         raise SystemExit("❌ --hz must be > 0")
-    if args.seconds < 0:
+    if args.seconds is not None and args.seconds < 0:
         raise SystemExit("❌ --seconds must be >= 0 (0 means until stopped)")
-    if args.seconds == 0 and not args.web:
-        print("ℹ️  --seconds 0: this run ends on Ctrl+C only (no --web to stop it)")
+    seconds, start_mode, arm_from_view = resolve_launch(
+        bool(args.web),
+        args.seconds,
+        args.start_mode,
+        bool(args.arm_at_terminal),
+        bool(args.yes),
+        bool(args.dry_run),
+    )
+    if not args.task and not args.web:
+        raise SystemExit("❌ --task is required without --web (nothing can set it)")
     if bool(args.checkpoint) == bool(args.server):
         raise SystemExit(
             "❌ pass exactly one of --checkpoint (local) or --server (remote)"
@@ -370,12 +423,13 @@ def main() -> None:
         raise SystemExit(f"❌ checkpoint not found: {args.checkpoint}")
     if args.stall_abort <= args.stall_hold:
         raise SystemExit("❌ --stall-abort must be greater than --stall-hold")
-    if args.arm_from_view and not args.web:
-        raise SystemExit("❌ --arm-from-view needs --web: nothing else can arm it")
-    if args.start_mode != "run" and not args.web:
+    if start_mode != "run" and not args.web:
         # Nothing else can move the throttle off preview or hold, so the run
         # would ramp to the first action and then sit there until it timed out.
-        raise SystemExit(f"❌ --start-mode {args.start_mode} needs --web to leave it")
+        raise SystemExit(f"❌ --start-mode {start_mode} needs --web to leave it")
+
+    if seconds == 0 and not args.web:
+        print("ℹ️  no --seconds: this run ends on Ctrl+C only (no --web to stop it)")
 
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
@@ -385,7 +439,7 @@ def main() -> None:
         print(f"🌐 handshaking with {args.server} ...")
         source = RemoteActionSource(
             args.server,
-            args.task,
+            args.task or "",
             actions_per_chunk=args.actions_per_chunk,
             prefetch=args.prefetch,
             hz=args.hz,
@@ -400,7 +454,7 @@ def main() -> None:
 
         device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
         print(f"📦 loading policy from {args.checkpoint} on {device} ...")
-        source = LocalActionSource(str(args.checkpoint), device, args.task)
+        source = LocalActionSource(str(args.checkpoint), device, args.task or "")
     print(f"  ✓ {source.describe()}")
 
     from common.data_manager_dual import DualDataManager
@@ -424,12 +478,12 @@ def main() -> None:
 
     # The throttle exists whether or not anyone is watching: the loop consults
     # it every tick, and only the view (if asked for) ever changes it.
-    n_ticks = tick_budget(args.seconds, args.hz)
-    control = RunControl(mode=args.start_mode)
+    n_ticks = tick_budget(seconds, args.hz)
+    control = RunControl(mode=start_mode)
     control.publish(
         hz=args.hz,
         dry_run=bool(args.dry_run),
-        task=args.task,
+        task=args.task or "",
         source=source.describe(),
         cameras=list(image_names),
         chunked=bool(source.chunked),
@@ -446,7 +500,7 @@ def main() -> None:
             data_manager,
             image_names,
             port=args.web_port,
-            arm_from_view=bool(args.arm_from_view),
+            arm_from_view=arm_from_view,
         )
         if not view.start():
             # Almost always another rollout still holding the port. Carrying on
@@ -464,18 +518,16 @@ def main() -> None:
         print(f"🖥️  live view on http://127.0.0.1:{args.web_port}/")
         print("   Open it now: the cameras and the throttle are live already.")
 
-    if not args.dry_run and not args.yes and not args.arm_from_view:
+    if not args.dry_run and not args.yes and not arm_from_view:
         # Asked here, not earlier: the cameras, the buses and the live view are
         # all up, so the workspace can be checked on the screen that will show
         # the rollout rather than from memory.
         extra = (
-            f"\n   The throttle starts in '{args.start_mode}'"
-            if args.start_mode != "run"
-            else ""
+            f"\n   The throttle starts in '{start_mode}'" if start_mode != "run" else ""
         )
         print(
             "\n⚠️  The follower arms will MOVE under policy control: ramp to the "
-            f"first action, then {args.start_mode}.{extra}\n   Clear the "
+            f"first action, then {start_mode}.{extra}\n   Clear the "
             "workspace. Press Enter to proceed (Ctrl+C to abort)..."
         )
         try:
@@ -484,16 +536,32 @@ def main() -> None:
             raise SystemExit("aborted")
 
     run_log = None
-    if not args.no_log:
-        from common.policy_log import RunLog
-
-        run_log = RunLog.create(task=args.task, source=source.describe(), hz=args.hz)
-        print(f"📝 run log: {run_log.root}")
-
     dt = 1.0 / args.hz
     torque_on = False
+    task = args.task or ""
     try:
-        if args.arm_from_view and not args.dry_run:
+        if not task:
+            # A run may be started with no task at all -- that is what makes the
+            # one-command launch possible -- and it simply waits here. Nothing
+            # has been inferred and no torque exists yet.
+            print(
+                f"🖥️  waiting for a task on http://127.0.0.1:{args.web_port}/ "
+                f"(Ctrl+C to abort) ..."
+            )
+            while not task:
+                if control.stopping:
+                    raise SystemExit("aborted from the live view")
+                task = str(control.snapshot().get("task") or "")
+                time.sleep(0.05)
+            print(f"📝 task: “{task}”")
+
+        if not args.no_log:
+            from common.policy_log import RunLog
+
+            run_log = RunLog.create(task=task, source=source.describe(), hz=args.hz)
+            print(f"📝 run log: {run_log.root}")
+
+        if arm_from_view and not args.dry_run:
             # Waited out BEFORE the first inference, so the plan the arms ramp
             # to was drawn from the workspace as it is when consent is given,
             # not as it was while somebody was still clearing it.
@@ -515,10 +583,8 @@ def main() -> None:
         goals = policy_action_to_goals(action12)
 
         if args.dry_run:
-            print(
-                "🧪 dry-run: inferring at "
-                f"{args.hz:.0f} Hz for {args.seconds:.0f}s, NO motor writes"
-            )
+            span = "until stopped" if n_ticks is None else f"for {seconds:.0f}s"
+            print(f"🧪 dry-run: inferring at {args.hz:.0f} Hz {span}, NO motor writes")
         else:
             for b in buses.values():
                 b.enable_torque()

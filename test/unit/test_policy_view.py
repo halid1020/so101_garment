@@ -44,8 +44,14 @@ class StubSource:
         self.last_chunk = np.tile(np.arange(12.0), (32, 1)) if chunk else None
         self._sent = (np.arange(12.0), {c: frame() for c in CAMERAS}) if sent else None
 
+        self.task = "pick up the cube"
+
     def last_sent(self):
         return self._sent
+
+    def set_task(self, task):
+        self.task = task
+        return task
 
 
 class _SpliceSource(StubSource):
@@ -75,6 +81,20 @@ class _SpliceSource(StubSource):
             "ramp_kind": "linear",
             "blocking": self.strategy in ("sync", "receding"),
         }
+
+
+class StubTwin:
+    """Stands in for the MuJoCo renderer: records the pair it was asked for."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    def render_pair(self, now12, plan12):
+        self.calls.append((now12, plan12))
+        return frame(90)
+
+    def close(self):
+        pass
 
 
 class StubDataManager:
@@ -275,21 +295,91 @@ class TestPortAlreadyTaken(unittest.TestCase):
         self.assertIsNone(view.error)
 
 
-class TestTwinAnchoring(unittest.TestCase):
-    """The twin must animate ONE sequence, not alternate between two."""
+class TestPendingPayload(unittest.TestCase):
+    """What is still going to be executed, which is not what the policy said."""
 
-    def test_the_two_payloads_are_distinguishable(self):
-        # They share a seq -- they describe the same plan -- so 'kind' is the
-        # only thing that stops the animation swapping lists mid-walk.
+    def test_the_queue_is_reported_separately_from_the_plan(self):
         source = StubSource()
         source.pending = lambda: np.zeros((4, 12))
         plan = chunk_payload(source)
         queued = pending_payload(source)
-        self.assertEqual(plan["seq"], queued["seq"])
+        self.assertEqual(plan["n"], 32)
+        self.assertEqual(queued["n"], 4)
         self.assertNotEqual(plan["kind"], queued["kind"])
 
     def test_a_source_with_nothing_queued_has_no_pending_payload(self):
         self.assertIsNone(pending_payload(StubSource()))
+
+
+class TestTwinFrame(ViewTestCase):
+    """One still frame, named by the caller. See policy_view.handle_twin."""
+
+    async def get_application(self):
+        app = await super().get_application()
+        self.twin = StubTwin()
+        self.view._twin = self.twin
+        self.control.publish(state=[7.0] * 12)
+        return app
+
+    async def test_the_named_action_is_what_gets_drawn(self):
+        response = await self.client.get("/twin.jpg?seq=3&i=5")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.content_type, "image/jpeg")
+        self.assertTrue((await response.read()).startswith(b"\xff\xd8"))
+        now, plan = self.twin.calls[-1]
+        self.assertEqual(list(now), [7.0] * 12)
+        np.testing.assert_allclose(plan, self.source.last_chunk[5])
+
+    async def test_an_index_past_the_end_wraps_rather_than_failing(self):
+        self.assertEqual((await self.client.get("/twin.jpg?seq=3&i=99")).status, 200)
+        np.testing.assert_allclose(
+            self.twin.calls[-1][1], self.source.last_chunk[99 % 32]
+        )
+
+    async def test_a_plan_that_has_been_replaced_is_a_conflict_not_a_picture(self):
+        # The page is one poll behind. It must be told so it can re-read the
+        # status -- and meanwhile keep the frame it already has, rather than
+        # being handed a frame from a different plan.
+        response = await self.client.get("/twin.jpg?seq=2&i=0")
+
+        self.assertEqual(response.status, 409)
+        self.assertIn("#3", await response.text())
+        self.assertEqual(self.twin.calls, [])
+
+    async def test_a_seq_that_is_not_a_number_is_refused(self):
+        self.assertEqual((await self.client.get("/twin.jpg?seq=soon")).status, 400)
+
+    async def test_the_streaming_twin_is_gone(self):
+        # It could not be made not to flicker; see handle_twin.
+        self.assertEqual((await self.client.get("/twin.mjpg")).status, 404)
+
+
+class TestTwinBeforeAnyPlan(ViewTestCase):
+    source_kwargs = {"sent": False, "chunk": False}
+
+    async def test_there_is_nothing_to_draw_yet(self):
+        self.view._twin = StubTwin()
+
+        self.assertEqual((await self.client.get("/twin.jpg?seq=0")).status, 404)
+
+
+class TestTaskRoute(ViewTestCase):
+    """A run may be started with no task and given one here."""
+
+    async def test_setting_it_reaches_the_source_and_the_snapshot(self):
+        response = await self.client.post("/api/task", json={"task": "fold it"})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["task"], "fold it")
+        self.assertEqual(self.source.task, "fold it")
+        self.assertEqual(self.control.snapshot()["task"], "fold it")
+
+    async def test_surrounding_space_is_not_a_task(self):
+        response = await self.client.post("/api/task", json={"task": "   "})
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(self.source.task, "pick up the cube")
 
 
 class TestStrategyRoute(ViewTestCase):

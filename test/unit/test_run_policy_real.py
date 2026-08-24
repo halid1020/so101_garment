@@ -23,6 +23,7 @@ from common.policy_wire import decode_request, encode_chunk
 from tool.run_policy_real import (
     RemoteActionSource,
     policy_action_to_goals,
+    resolve_launch,
     stall_decision,
     tick_budget,
 )
@@ -227,6 +228,49 @@ class TestTickBudget(unittest.TestCase):
         # A session spent comparing splices from the live view wants one ramp,
         # one workspace and as long as it takes.
         self.assertIsNone(tick_budget(0.0, 30.0))
+
+
+class TestResolveLaunch(unittest.TestCase):
+    """What ``--web`` fills in, so the flag-free command is the whole command."""
+
+    def web(self, **kw):
+        args = dict(
+            web=True,
+            seconds=None,
+            start_mode=None,
+            arm_at_terminal=False,
+            yes=False,
+            dry_run=False,
+        )
+        args.update(kw)
+        return resolve_launch(**args)
+
+    def test_a_web_run_has_no_time_limit_and_starts_in_preview(self):
+        seconds, mode, arm = self.web()
+        self.assertEqual(seconds, 0.0)
+        self.assertEqual(mode, "preview")
+        self.assertTrue(arm)
+
+    def test_without_web_it_runs_and_consents_at_the_terminal(self):
+        seconds, mode, arm = resolve_launch(False, None, None, False, False, False)
+        self.assertEqual(mode, "run")
+        self.assertFalse(arm)
+        # Still unbounded: an operator who wants a duration asks for one.
+        self.assertEqual(seconds, 0.0)
+
+    def test_an_explicit_flag_beats_what_web_would_have_chosen(self):
+        seconds, mode, _ = self.web(seconds=12.0, start_mode="run")
+        self.assertEqual(seconds, 12.0)
+        self.assertEqual(mode, "run")
+
+    def test_arming_at_the_terminal_is_still_available(self):
+        self.assertFalse(self.web(arm_at_terminal=True)[2])
+
+    def test_a_skipped_confirmation_is_not_a_page_to_wait_for(self):
+        self.assertFalse(self.web(yes=True)[2])
+
+    def test_a_dry_run_consents_to_nothing_having_no_torque(self):
+        self.assertFalse(self.web(dry_run=True)[2])
 
 
 if __name__ == "__main__":

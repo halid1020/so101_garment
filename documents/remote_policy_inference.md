@@ -155,6 +155,9 @@ venv/bin/python tool/run_policy_real.py \
     --dry-run --seconds 20
 ```
 
+(Or just `--server http://127.0.0.1:8765 --web` and do everything in the
+browser — see *Watching a rollout* below. The task is optional there.)
+
 `--dry-run` reads the cameras and the followers and prints the actions the
 policy chooses, with the chunk-queue depth and the round-trip time, but never
 enables torque. Watch two things: the queue depth should never reach zero, and
@@ -168,18 +171,29 @@ venv/bin/python tool/run_policy_real.py \
 ```
 
 The arms ramp slowly to the policy's first action, then run at `--hz`. Ctrl+C,
-the end of `--seconds`, and any error all disable torque on the way out.
+**Stop** on the page, and any error all disable torque on the way out. There is
+**no default time limit** — pass `--seconds N` if you want one. A console
+session spent stepping through plans and swapping splices cannot know in advance
+how long it wants, and a default that quietly ended one at 900 ticks was a
+worse guess than none.
 
 ## Watching a rollout
 
 A rollout that misbehaves is over in seconds and the terminal shows almost none
-of it. `--web` serves a live view of the run itself on loopback:
+of it. `--web` serves a live view of the run itself on loopback, and it is meant
+to be the **whole interface** — this is the entire command:
 
 ```bash
-venv/bin/python tool/run_policy_real.py \
-    --server http://127.0.0.1:8765 --task "pick the cube and place it on the plate" \
-    --seconds 60 --web
+venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 --web
 ```
+
+Everything else happens in the browser: the **task** is typed in the header (the
+run waits for one before it infers anything, so `--task` is optional with
+`--web`), the arms are armed there, the throttle and the splice are there, and
+the run lasts until **Stop**. `--web` therefore implies three things, each of
+which can still be overridden: no time limit (`--seconds N`), a throttle that
+starts in **preview** (`--start-mode run`), and consent taken on the page
+(`--arm-at-terminal`, or `--yes` to skip it).
 
 It comes up with the cameras and the buses, before the first ramp, and answers
 the four questions a failed grasp raises:
@@ -188,10 +202,10 @@ the four questions a failed grasp raises:
   actually sent, beside the twelve joint values that went with them. Not the
   live view: by the time a chunk is executing, the frames it was planned from
   are half a second old, and those are the ones that explain the plan.
-- **What it planned** — the returned chunk as joint traces, with the part
-  already executed shaded, and the same chunk replayed in the rig's own twin.
-  The twin is forward kinematics with a camera: it shows where the plan puts the
-  arms, and nothing else. A toggle points it at the measured arms instead.
+- **What it planned** — the returned chunk as twelve small trace plots, one per
+  joint on its own scale, and the same chunk walked through in the rig's own
+  twin, where the arms as they are now (blue) are drawn inside where the plan
+  sends them (orange).
 - **What the arms did** — measured against commanded, per joint, with the two
   **grippers on their own panel**. That is deliberate: across the collected
   datasets the gripper channels span a few tenths of open fraction and never
@@ -219,19 +233,34 @@ Preview to inspect.
 
 ### The twin
 
-The twin walks through a plan so you can see where it puts the arms — forward
-kinematics with a camera, no physics, no contact. Its caption cycles between
-three subjects: **the returned chunk** (the whole plan the policy drew from the
-observation it was given, first action to last, on repeat), **what is still to
-execute** (shorter and different under every splice but `append` — the stale
-rows are gone, and under `blend` the leading actions are a cross-fade that
-appears in no chunk at all), and **the real arms**.
+One picture, one subject: **the arms as they are now, in transparent blue,
+inside where the selected action of the plan sends them, in transparent
+orange**. The gap between the two ghosts is the motion still to come, which is
+the thing worth looking at and which neither pose shows on its own. It is
+forward kinematics with a camera — `qpos` plus `mj_forward`, no physics, no
+contact, nothing grasped.
 
-It stays anchored to one of those at a time. Both plans carry the same
-identifier, because they describe the same plan, so a twin that switched between
-them without noticing would leave its frame counter pointing into a different,
-shorter list — and the arms would appear to jump between two poses several times
-a second.
+Underneath it is a transport: **play/pause, ◀ ▶ and a scrub bar** over the
+actions of the current plan. Pause and step to action 17 and look at it; the
+blue ghost keeps tracking the real arms while the orange one holds still, so a
+plan can be examined against the pose it will act from. A new plan restarts the
+walk at its first action.
+
+The upright line in the plan panel marks the action the twin is showing, so the
+two panels read as one picture.
+
+**On the flicker this used to have.** The twin was an endless MJPEG stream whose
+subject the server chose afresh each frame, out of three payloads with different
+lengths, painted straight into a live `<img>`. That arrangement cannot be made
+not to flicker: a restarted stream paints blank, a part that arrives
+half-written paints half an image, and a plan replaced underneath the animation
+paints a jump. It is now **one still image at a time**, named by the page
+(`/twin.jpg?seq=…&i=…`) and drawn to a canvas only once it has fully loaded — a
+frame that is slow, missing, or answered `409` because the plan moved on never
+reaches the screen, and the last good frame simply stays. Two consequences worth
+knowing: the twin no longer holds a permanent connection, and *what is still to
+execute* is no longer offered as a subject, because the queue drains every tick
+and a list that changes length underneath an animation is exactly the bug.
 
 **If the twin looks erratic, check that only one rollout is running.** A second
 rollout cannot bind the view's port, and it used to carry on regardless, leaving
@@ -239,25 +268,19 @@ an older run's cameras, plan and throttle on the screen while the arms in front
 of you moved to something else entirely. It now refuses to start instead, and
 says so.
 
-By default the view can only ever ask for *less* motion than the terminal
-already authorised, or end the run. Torque is enabled once, at the confirmation
-prompt, and nothing in the browser can enable it — the page is unauthenticated
-and it steers a robot, which is why it binds loopback like everything else here.
+### Arming, and where consent is taken
 
-### Arming from the page instead
-
-`--arm-from-view` moves that consent to the browser: there is no terminal
-prompt, and the page shows an **⚠️ Enable arms** button which asks the same
-question the terminal asked before it starts anything. The wait happens before
-the first inference, so the plan the arms ramp to was drawn from the workspace
-as it is when you consent, not as it was while you were still clearing it.
+**With `--web`, consent is taken in the browser.** There is no terminal prompt;
+the page shows an **⚠️ Enable arms** button which asks the same question the
+terminal asked, before it starts anything. The wait happens before the first
+inference, so the plan the arms ramp to was drawn from the workspace as it is
+when you consent, not as it was while you were still clearing it.
 
 **This is a real change in who can start the arms.** The port is loopback and
-unauthenticated, so anyone who can reach it can begin the motion — which is why
-it is a flag and not the default, and why a run started without it refuses an
-arm request from the page rather than offering a second, unguarded door to the
-same torque. Arming is one-way: `Stop` is how a run ends, and it releases
-torque.
+unauthenticated, so anyone who can reach it can begin the motion. Pass
+`--arm-at-terminal` to put the prompt back — the page then refuses an arm
+request rather than offering a second, unguarded door to the same torque.
+Arming is one-way either way: `Stop` is how a run ends, and it releases torque.
 
 ### Reading the page
 
@@ -267,7 +290,7 @@ three cameras plus the twin, the short requests — the status poll, the frames
 the policy was shown — queue behind streams that never finish, get dropped and
 retried, and the twin visibly stutters. The twin is the panel that answers a
 question, so it keeps the clear channel. Press **connect** on the live panel
-when you want them, and disconnect when the twin matters more.
+when you want them.
 
 The strip under the buttons is the health of the rollout, and it stays on
 screen because a rollout is over in seconds and scrolling loses it: **queue**
@@ -365,8 +388,16 @@ have no such hook.
 Four strategies compared across four runs means four ramps, four workspace
 resets, and whatever drifted between them landing in the comparison. The page's
 **splice** row changes it mid-run instead: pick a strategy, and the one number
-it actually uses appears beside it — the execute ratio for `receding`, the
-cross-fade for `blend`, the new-plan weight for `ensemble`.
+it actually uses appears beside it, with a sentence saying what the strategy
+does and whether it blocks. The three numbers are:
+
+- **execute … of each chunk** (`receding`) — run this fraction of each plan,
+  then stop and look again.
+- **ease in over N ticks** (`blend`) — the first N actions are mixed out of the
+  old plan into the new one, so the arms do not jump at the join. Shown in
+  seconds too, since ticks mean nothing without the rate.
+- **trust the new plan** (`ensemble`) — where the old and new plans overlap,
+  0 keeps the old and 1 takes the new.
 
 Switching **drops the queue**. What is in there was spliced under the old rule —
 under `append` it may be two plans deep, under `blend` its leading rows are a

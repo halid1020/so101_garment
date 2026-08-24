@@ -281,5 +281,23 @@ class TestRefusals(RemoteSourceCase):
         self.assertIn("RTC", str(caught.exception))
 
 
+class TestTaskCanBeSetLater(RemoteSourceCase):
+    """A run may be started with no task and given one from the live view."""
+
+    def test_the_next_request_carries_the_new_task(self):
+        source = self.source()
+        self.assertEqual(source.set_task("fold the towel"), "fold the towel")
+        self.fill(source)
+        sent = self.server.state["requests"][-1]
+        self.assertEqual(sent["task"], "fold the towel")
+
+    def test_a_source_may_start_with_no_task_at_all(self):
+        source = RemoteActionSource(self.url, "", hz=30.0)
+        self.assertEqual(source.task, "")
+        source.set_task("pick up the cube")
+        self.fill(source)
+        self.assertEqual(self.server.state["requests"][-1]["task"], "pick up the cube")
+
+
 if __name__ == "__main__":
     unittest.main()
