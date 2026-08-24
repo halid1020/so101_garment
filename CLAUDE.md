@@ -97,6 +97,15 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
   offset invariant, and the repair for an episode nobody wrote. Pure parquet +
   JSON, no LeRobot import, so it can describe a dataset LeRobot refuses to open.
+- `src/common/recording/dataset_view.py` — camera-ablation **views**: a dataset
+  directory naming only some cameras, with the video files symlinked from the
+  source (a few MB, not a copy). `meta/info.json` drives
+  `LeRobotDatasetMetadata.video_keys`, so an unnamed camera is never decoded AND
+  never reaches the policy — no `--policy.input_features` override to keep in
+  step. Also collapses a dataset's task strings onto the one covering the most
+  frames (position is no guide: on `cube-pnp-new` the typo is registered first),
+  and maps cameras onto pi0.5's pretrained slots (`PI05_SLOTS`). Built by
+  `tool/make_camera_view.py`; the cluster job builds one per `cameras` row.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -159,11 +168,14 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   study protocol, telegrip-native, remote policy inference, rig console)
   plus the living paper under `documents/paper/`.
 - `hpc/` — the Slurm cell on KCL CREATE and the traffic in both directions:
-  `provision_create.sh` (login node, once), `stage_datasets.sh` (collected
-  datasets up), `runs.tsv` + `submit_real.sh` + `create_real_vla.sbatch` (one
-  array task per dataset/policy), `create_sim_vla.sbatch`, and
+  `provision_create.sh` (login node, once; `SO101_STAGE_PI05=1` also caches the
+  ~14.5 GB `lerobot/pi05_base`, which is NOT licence-gated), `stage_datasets.sh`
+  (collected datasets up), `runs.tsv` + `submit_real.sh` +
+  `create_real_vla.sbatch` (one array task per dataset/policy/**camera set**;
+  policies `act|diffusion|pi05`), `create_sim_vla.sbatch`, and
   `fetch_policies.sh` (the finished checkpoints back down, into the layout
-  `tool/policy_server.py` and `tool/run_policy_real.py` expect). Runbook:
+  `tool/policy_server.py` and `tool/run_policy_real.py` expect; `--datasets`
+  matches a run name or the dataset before its `__<cameras>` suffix). Runbook:
   `hpc/README.md`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,
   `test-system`, `test-system-vla`), `paper`, and `lint` targets.
@@ -256,6 +268,24 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     10 steps in ~3.5 min, then `lerobot-eval` on the resulting checkpoint
     got 2/2 (100%) success on LIBERO-Spatial task 0 with real rollout
     videos written to `<run>/eval/videos/`.
+  - **pi0.5 finetuning must RENAME cameras, not re-derive them:** `pi05_base`
+    ships a populated `input_features` (three openpi slots — `base_0_rgb`,
+    `left_wrist_0_rgb`, `right_wrist_0_rgb` — and 32-D state/action), and
+    `make_policy` only derives features from the dataset `if not
+    cfg.input_features`. So a rig dataset's camera keys never reach it and the
+    forward pass raises "All image features are missing from the batch". The fix
+    is `--rename_map` (train.py: it requires a pretrained checkpoint), mapping
+    each rig camera onto the slot that means the same viewpoint. Overriding
+    `--policy.input_features` does NOT work as a way to drop a camera: draccus
+    MERGES the dict, so a slot left out of the override survives. It does not
+    need dropping anyway — pi0.5 pads a slot with no camera behind it to -1 and
+    gives it a zero attention mask, which is what an ablated camera should be.
+  - **AV1 is not the slow part** (measured, contrary to the obvious guess): our
+    recordings decode through `libdav1d` at ~2x the speed of the same clips
+    transcoded to H.264, so do not transcode a dataset to "speed up" training.
+    The dataloader floor is cameras x workers: 127 ms/batch for three cameras
+    and 56 ms for one, at batch 8. `long_vla_real.sh` now follows
+    `SLURM_CPUS_PER_TASK` instead of a hardcoded 4 worker processes.
 - The **smoke test** (`test/smoke_test_pipeline.sh`, VERIFIED end-to-end on
   CPU: train→checkpoint→eval all pass) uses a small `diffusion` policy on a
   few PushT episodes — validates plumbing, not skill. Real pi0.5+LIBERO

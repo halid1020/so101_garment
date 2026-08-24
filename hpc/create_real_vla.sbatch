@@ -1,7 +1,7 @@
 #!/bin/bash
 # =====================================================================
 # KCL CREATE (Slurm) -- REAL-data VLA training. ONE array task = ONE row of a
-# run manifest = one (dataset, policy) training run on a PRE-STAGED dataset
+# run manifest = one (dataset, policy, cameras) run on a PRE-STAGED dataset
 # collected on the rig. The real-world counterpart of create_sim_vla.sbatch:
 # no MuJoCo (no simulation here) and no in-loop evaluation (a real policy is
 # evaluated ON THE ROBOT with tool/run_policy_real.py, back at the rig).
@@ -22,7 +22,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:1                        # any >=12 GB GPU suffices for act+diffusion
+#SBATCH --gres=gpu:1                        # >=12 GB for act/diffusion, >=16 GB for pi05+LoRA
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00                     # overridden per group by submit_real.sh
 #SBATCH --array=0                           # overridden by submit_real.sh
@@ -47,10 +47,11 @@ if [ -z "$ROW" ]; then
     echo "❌ manifest $MANIFEST has no row $TASK_ID"; exit 1
 fi
 # `extra` is the last column and may contain spaces: read takes the rest.
-read -r DATASET POLICY STEPS BATCH HOURS EXTRA <<<"$ROW"
+read -r DATASET POLICY CAMERAS STEPS BATCH HOURS EXTRA <<<"$ROW"
 
 echo "======================================================================"
 echo " REAL-VLA  array task $TASK_ID  ->  dataset=$DATASET policy=$POLICY"
+echo "   cameras=$CAMERAS"
 echo "   steps=$STEPS batch=$BATCH hours=$HOURS extra=${EXTRA:--}"
 echo "   manifest=$MANIFEST"
 echo "======================================================================"
@@ -85,11 +86,29 @@ if [ ! -f "${DS}/meta/info.json" ]; then
     exit 1
 fi
 
+# ---- build this row's camera view -----------------------------------
+# The ablation compares the SAME episodes seen through different cameras, so
+# each camera set gets a view: metadata naming only those cameras, videos shared
+# with the source by symlink (a few MB, not a copy). Building is idempotent and
+# atomic, so concurrent array tasks asking for the same view cannot collide and
+# a resubmission reuses what is already there.
+if [ "${CAMERAS:--}" = "-" ] || [ "$CAMERAS" = "all" ]; then
+    CAMERAS="all"
+fi
+VIEW="$("$PWD/venv/bin/python" tool/make_camera_view.py \
+        --dataset "$DS" --cameras "$CAMERAS" \
+        --out-dir "${HF_LEROBOT_HOME}/local" --print path)" \
+    || { echo "❌ could not build the camera view for '$CAMERAS'"; exit 1; }
+echo "== camera view =="
+echo "   $VIEW"
+DS="$VIEW"
+
 # ---- run the training ------------------------------------------------
-# The run name is the DATASET, not the job id, so a requeue or a resubmission
-# after a wall-time hit reuses the finished checkpoints instead of retraining;
-# both policies of one dataset therefore share a run directory and one report.
-RUN_NAME="${SO101_RUN_TAG:-$DATASET}"
+# The run name is the VIEW, not the job id, so a requeue or a resubmission after
+# a wall-time hit reuses the finished checkpoints instead of retraining; every
+# policy trained on one camera set therefore shares a run directory and one
+# report, and the camera sets stay in separate directories.
+RUN_NAME="${SO101_RUN_TAG:-$(basename "$VIEW")}"
 args=(--dataset-root "$DS" --only "$POLICY" --run-name "$RUN_NAME")
 [ "${STEPS:--}" != "-" ] && args+=(--steps "$STEPS")
 [ "${BATCH:--}" != "-" ] && args+=(--batch "$BATCH")

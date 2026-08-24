@@ -179,7 +179,13 @@ fi
 
 selected() {  # selected <dataset> <policy>  -- against the two filters
     local ds="$1" pol="$2"
-    if [ -n "$FILTER_DATASETS" ] && ! [[ ",$FILTER_DATASETS," == *",$ds,"* ]]; then
+    # A camera-ablation run is named <dataset>__<camera slug>, so --datasets
+    # matches either the whole run name or the dataset it was built from:
+    # `--datasets cube-pnp-new` takes all three arms, `cube-pnp-new__all` one.
+    local base="${ds%%__*}"
+    if [ -n "$FILTER_DATASETS" ] \
+       && ! [[ ",$FILTER_DATASETS," == *",$ds,"* ]] \
+       && ! [[ ",$FILTER_DATASETS," == *",$base,"* ]]; then
         return 1
     fi
     if [ -n "$FILTER_POLICIES" ] && ! [[ ",$FILTER_POLICIES," == *",$pol,"* ]]; then

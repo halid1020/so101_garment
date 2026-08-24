@@ -1,9 +1,9 @@
 # Real-data training matrix for KCL CREATE.
 #
-# One row = one Slurm array task = one (dataset, policy) training run. Submit
-# with `bash hpc/submit_real.sh` on a CREATE login node; it filters these rows,
-# checks each dataset is staged, snapshots what it submits, and groups the rows
-# by wall time so a short cell does not queue behind a long reservation.
+# One row = one Slurm array task = one (dataset, policy, cameras) training run.
+# Submit with `bash hpc/submit_real.sh` on a CREATE login node; it filters these
+# rows, checks each dataset is staged, snapshots what it submits, and groups the
+# rows by wall time so a short cell does not queue behind a long reservation.
 #
 # Columns, whitespace-separated. `-` means "use the driver's default for this
 # policy" (test/system/long_vla_real.sh). `extra` is the LAST column and may
@@ -11,19 +11,39 @@
 # does not name is still reachable from here.
 #
 #   dataset : directory name staged under $HF_LEROBOT_HOME/local/
-#   policy  : act | diffusion
-#   steps   : optimiser steps          (default: act 80000, diffusion 100000)
-#   batch   : batch size               (default: act 8,     diffusion 32)
+#   policy  : act | diffusion | pi05
+#   cameras : `all`, or a comma list of camera names with NO spaces
+#             (central, wrist_camera_left, wrist_camera_right)
+#   steps   : optimiser steps          (default: act 80000, diffusion 100000, pi05 30000)
+#   batch   : batch size               (default: act 8, diffusion 32, pi05 8)
 #   hours   : Slurm wall time, hours   (rows sharing a value share one array)
 #   extra   : raw lerobot-train flags, or `-`
+#
+# The job builds a camera VIEW of the dataset for each distinct `cameras` value
+# -- same episodes and actions, only the visible cameras differ -- and trains on
+# that, so a row's run directory is named <dataset>__<camera slug>. Views cost a
+# few MB each: they share the source's video files by symlink.
 #
 # Left out on purpose: short_fold (1 episode) and cube-dual-pnp (2 episodes) are
 # smoke-sized, not training-sized -- use them with test/system/smoke_vla_real.sh.
 #
-# dataset            policy     steps   batch  hours  extra
-cube-pnp             act        80000   8      24     -
-cube-pnp             diffusion  100000  32     24     -
-cube-dual-pnp-new    act        80000   8      36     -
-cube-dual-pnp-new    diffusion  100000  32     36     -
-fold-short           act        80000   8      36     -
-fold-short           diffusion  100000  32     36     -
+# dataset            policy     cameras                          steps   batch  hours  extra
+#
+# --- camera ablation on cube-pnp-new: all three, central+left wrist, left wrist
+cube-pnp-new         act        all                              80000   8      36     -
+cube-pnp-new         act        central,wrist_camera_left        80000   8      36     -
+cube-pnp-new         act        wrist_camera_left                80000   8      36     -
+cube-pnp-new         diffusion  all                              100000  32     36     -
+cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -
+cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -
+cube-pnp-new         pi05       all                              30000   8      36     -
+cube-pnp-new         pi05       central,wrist_camera_left        30000   8      36     -
+cube-pnp-new         pi05       wrist_camera_left                30000   8      36     -
+#
+# --- earlier datasets, trained on every camera
+cube-pnp             act        all                              80000   8      24     -
+cube-pnp             diffusion  all                              100000  32     24     -
+cube-dual-pnp-new    act        all                              80000   8      36     -
+cube-dual-pnp-new    diffusion  all                              100000  32     36     -
+fold-short           act        all                              80000   8      36     -
+fold-short           diffusion  all                              100000  32     36     -

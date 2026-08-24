@@ -23,6 +23,7 @@ The files:
 | `submit_real.sh` | CREATE **login** node | Reads the matrix, checks staging, submits it as Slurm job arrays. |
 | `create_real_vla.sbatch` | CREATE **compute** node, via `sbatch` | One array task = one row: runs `test/system/long_vla_real.sh` for that dataset and policy. |
 | `fetch_policies.sh` | the **collection box** (or any machine) | Brings the finished checkpoints back out of scratch, into the layout the policy server and the on-robot runner expect. |
+| `tool/make_camera_view.py` | wherever the dataset is | Builds a **camera view**: the same episodes with only some cameras named. The job calls it; you rarely do. |
 
 ## Why a CREATE-specific path (not just `install.sh` + the driver)
 
@@ -221,6 +222,19 @@ the command line.
 
 `bash hpc/provision_create.sh`, as for the sim cell. Both cells share the venv.
 
+**Training any `pi05` row needs one more thing.** pi0.5 is a finetune, so the
+base weights must be on disk before training starts, and a compute node cannot
+fetch them. Pull them once, on the login node:
+
+```bash
+SO101_STAGE_PI05=1 bash hpc/provision_create.sh
+```
+
+That caches `lerobot/pi05_base` (~14.5 GB) under the shared HF cache, which
+`HF_HUB_OFFLINE=1` then resolves by name. The repo is **not** licence-gated, so
+no token and no terms acceptance are involved. Skip this and a `pi05` row fails
+at startup; `act` and `diffusion` rows are unaffected either way.
+
 ### 2. Stage the datasets — *collection box (NOT CREATE)*
 
 ```bash
@@ -240,18 +254,65 @@ would refuse the dataset on arrival anyway. Clear them in
 
 ### 3. Edit the run matrix — `hpc/runs.tsv`
 
-One row per run: `dataset policy steps batch hours extra`. `-` means "the
-driver's default for this policy"; `extra` is the last column and is handed to
-`lerobot-train` verbatim, so a flag the driver does not name is still reachable.
-Rows sharing an `hours` value are submitted as one array with that wall time, so
-a short cell does not queue behind a long reservation.
+One row per run: `dataset policy cameras steps batch hours extra`. `-` means
+"the driver's default for this policy"; `extra` is the last column and is handed
+to `lerobot-train` verbatim, so a flag the driver does not name is still
+reachable. Rows sharing an `hours` value are submitted as one array with that
+wall time, so a short cell does not queue behind a long reservation.
+
+`policy` is `act`, `diffusion` or `pi05`. `cameras` is `all` or a comma list of
+camera names **with no spaces** — a space there would shift every later column
+one place left, so the wrapper refuses the row rather than training the wrong
+size for the wrong time.
+
+#### What the `cameras` column does
+
+Ablating a camera has to change *only* which cameras the policy sees. The job
+therefore builds a **view** of the dataset for each distinct camera set: a
+directory LeRobot opens as an ordinary dataset, whose metadata names only those
+cameras and whose video files are symlinks back to the source. Same episodes,
+same frames, same actions.
+
+That is cheap in both senses. On disk a view is a few MB against the source's
+hundreds, because the videos — 99% of the bytes — are shared rather than copied.
+In time it is a saving, because `video_keys` comes from the view's own
+`info.json`, so a camera that is not named is never decoded: measured locally at
+batch 8, three cameras cost 127 ms/batch and one costs 56 ms.
+
+Building is idempotent and atomic, so array tasks that want the same view cannot
+collide and a resubmission reuses what is there. A run directory is named after
+the view (`cube-pnp-new__all`, `cube-pnp-new__central+wrist_left`,
+`cube-pnp-new__wrist_left`), which is what keeps the arms of an ablation from
+overwriting one another.
+
+Views also settle the dataset's **task string**. `cube-pnp-new` carries two
+spellings of one instruction because it was retyped partway through collection;
+the view keeps whichever covers the most frames and rewrites the rest. `act` and
+`diffusion` ignore language, but pi0.5 is conditioned on it. The source dataset
+is never modified.
+
+#### How pi0.5 differs
+
+Three consequences of it being a finetune of a 4.1B-param base:
+
+- it starts from `--policy.path` (the base staged in step 1), not a policy type;
+- it trains through **LoRA** (`--peft.r=16`), because full finetuning needs more
+  than 24 GB for AdamW's state alone. `--lora-r 0` turns that off for a very
+  large GPU;
+- its cameras are **renamed** onto the base's three pretrained slots
+  (central → `base_0_rgb`, left wrist → `left_wrist_0_rgb`, right wrist →
+  `right_wrist_0_rgb`) rather than derived from the dataset, because each slot
+  carries what it learned about that viewpoint. A slot with no camera behind it
+  is padded and masked by pi0.5 itself — which is exactly what an ablated camera
+  should look like to the model.
 
 ### 4. Submit — *login node → GPU nodes*
 
 ```bash
 bash hpc/submit_real.sh --dry-run        # see exactly what would be submitted
 bash hpc/submit_real.sh                  # everything in the matrix
-bash hpc/submit_real.sh --datasets cube-pnp --only act
+bash hpc/submit_real.sh --datasets cube-pnp-new --only act
+bash hpc/submit_real.sh --cameras wrist_camera_left    # one arm of the ablation
 bash hpc/submit_real.sh --partition <gpu-partition> --account <account> --concurrency 2
 ```
 
@@ -270,17 +331,21 @@ which run.
 ### 5. Collect results — *login node, then anywhere*
 
 ```
-<scratch>/so101_outputs/vla_real_long/<dataset>/
-    train/{act,diffusion}/checkpoints/last/pretrained_model
+<scratch>/so101_outputs/vla_real_long/<dataset>__<cameras>/
+    train/{act,diffusion,pi05}/checkpoints/last/pretrained_model
     results_<policy>.md     # one per finished run
-    results.md              # the dataset's summary table
+    results.md              # that camera set's summary table
     logs/
 ```
 
-Both policies of one dataset share that directory, because the run name is the
-**dataset**, not the job id. That is also what makes a resubmission cheap: a job
-that hit its wall time is simply submitted again, and every finished checkpoint
-is reused instead of retrained.
+Every policy trained on one camera set shares that directory, because the run
+name is the **view**, not the job id. That is also what makes a resubmission
+cheap: a job that hit its wall time is simply submitted again, and every
+finished checkpoint is reused instead of retrained.
+
+The camera ablation on `cube-pnp-new` therefore lands as three directories —
+`cube-pnp-new__all`, `cube-pnp-new__central+wrist_left`,
+`cube-pnp-new__wrist_left` — with three policies inside each.
 
 ### 6. Evaluate — *at the rig*
 
@@ -291,6 +356,10 @@ one directory per (dataset, policy):
 ```bash
 bash hpc/fetch_policies.sh --from <user>@<create-login-host> --list
 bash hpc/fetch_policies.sh --from <user>@<create-login-host> --dest ~/outputs/policies
+
+# the whole ablation, or one arm of it
+bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new --dest ~/outputs/policies
+bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new__wrist_left --dest ~/outputs/policies
 ```
 
 Then `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
@@ -299,11 +368,9 @@ a GPU box instead (`--dest <gpu-host>:...`, then `tool/policy_server.py` +
 `--server <url>`); see
 [`../documents/remote_policy_inference.md`](../documents/remote_policy_inference.md).
 
-**pi0.5 is a deliberate follow-up.** Unlike ACT/Diffusion it finetunes a
-licence-gated base (`lerobot/pi05_base`), which must be pre-staged to the
-offline node, and it needs LoRA (`--peft.r=16`) to fit a 24 GB GPU (see
-CLAUDE.md). Teach `long_vla_real.sh` the policy once the base is staged; the
-matrix already carries the policy as a column.
+**pi0.5 trains here now** (`--only pi05`), provided its base was staged in
+step 1. It is not licence-gated, contrary to an earlier note here — checked
+2026-08-24, `gated: false` — so staging is a plain download.
 
 ## Scaling out later
 
@@ -312,5 +379,8 @@ matrix already carries the policy as a column.
   oracle gate + collection phases (remove `--skip-collect`) and much more
   time.
 - More real cells: add rows to `runs.tsv`. Parallelism is already the
-  default there — one array task per (dataset, policy) — and
+  default there — one array task per (dataset, policy, camera set) — and
   `--concurrency` caps how many run at once if the queue needs it.
+- A different ablation: any camera subset the dataset actually has works in
+  the `cameras` column. Adding a camera the rig does not carry is refused by
+  name, with the ones that do exist listed.
