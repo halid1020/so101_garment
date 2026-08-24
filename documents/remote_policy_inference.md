@@ -31,6 +31,11 @@ Both `act` and `diffusion` trained on the rig's datasets take:
 | `observation.images.wrist_camera_right` | uint8 480×640×3 RGB | right wrist |
 | task | string | carried in the batch; ACT and diffusion ignore it |
 
+A policy trained on fewer cameras asks for fewer: the client reads the camera
+set from the server's handshake and sends exactly those, so an ablated
+checkpoint needs no flag at the rig. A checkpoint asking for a camera the rig
+cannot produce is a training/collection mismatch, and the run stops there.
+
 Frames go over the wire at the recorded resolution and are never pre-resized:
 the checkpoint's own processors normalise, and diffusion resizes internally.
 ACT is handed one observation; diffusion is handed the **last two consecutive**
@@ -83,6 +88,13 @@ bash hpc/fetch_policies.sh --from <user>@<create-login-host> \
 `--list` first. A run cancelled at its wall time still has checkpoints, just not
 a `last`, and it reads `unfinished` there instead of installing something that
 looks like a checkpoint and is not. `--datasets` and `--only` take a subset.
+
+A camera-ablation run is named for the dataset **and** the cameras it was
+trained on — `cube-pnp-new__all`, `cube-pnp-new__central+wrist_left`,
+`cube-pnp-new__wrist_left`. `--datasets` accepts either, so
+`--datasets cube-pnp-new` brings back the whole ablation and
+`--datasets cube-pnp-new__wrist_left` brings back one arm. Each lands in its own
+directory, so the three can be served and compared without being confused.
 
 The copy runs on the machine the weights are going to, pulling from the cluster
 over your forwarded SSH agent, so nothing lands on the rig's disk and no key is

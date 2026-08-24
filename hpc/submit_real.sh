@@ -3,7 +3,7 @@
 # Submit real-data VLA training to KCL CREATE (Slurm) from a run manifest.
 #
 # Run this on a CREATE *login* node, from the repo. It reads hpc/runs.tsv --
-# one row per (dataset, policy) training run -- filters it, checks every
+# one row per (dataset, policy, cameras) training run -- filters it, checks every
 # selected dataset is staged, and submits the rows as Slurm job arrays, one
 # array task per row. Nothing in the repo has to be edited to change which
 # datasets are trained: edit the manifest, or filter it on the command line.
@@ -11,12 +11,14 @@
 #   bash hpc/submit_real.sh                          # everything in runs.tsv
 #   bash hpc/submit_real.sh --datasets cube-pnp      # one dataset
 #   bash hpc/submit_real.sh --only act               # one policy
+#   bash hpc/submit_real.sh --cameras all            # one arm of the ablation
 #   bash hpc/submit_real.sh --dry-run                # print the sbatch commands
 #
 # Options:
 #   --manifest F      run matrix to read           (default hpc/runs.tsv)
 #   --datasets a,b    only these datasets
-#   --only a,b        only these policies          (act, diffusion)
+#   --only a,b        only these policies          (act, diffusion, pi05)
+#   --cameras SET     only rows with this exact cameras column
 #   --scratch DIR     node-visible scratch root    (default /scratch/users/$USER)
 #   --partition P     Slurm partition              (default: the sbatch's own)
 #   --account A       Slurm account, if enforced
@@ -37,6 +39,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/hpc/runs.tsv"
 FILTER_DATASETS=""
 FILTER_POLICIES=""
+FILTER_CAMERAS=""
 SCRATCH="${SO101_SCRATCH:-/scratch/users/${USER:-$(id -un)}}"
 PARTITION=""
 ACCOUNT=""
@@ -49,6 +52,7 @@ while [ $# -gt 0 ]; do
         --manifest) MANIFEST="$2"; shift 2;;
         --datasets) FILTER_DATASETS="$2"; shift 2;;
         --only) FILTER_POLICIES="$2"; shift 2;;
+        --cameras) FILTER_CAMERAS="$2"; shift 2;;
         --scratch) SCRATCH="$2"; shift 2;;
         --partition) PARTITION="$2"; shift 2;;
         --account) ACCOUNT="$2"; shift 2;;
@@ -87,27 +91,47 @@ while IFS= read -r line || [ -n "$line" ]; do
     LINE_NO=$((LINE_NO + 1))
     [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
     # `extra` is the last column and may contain spaces: read takes the rest.
-    read -r ds policy steps batch hours extra <<<"$line"
+    read -r ds policy cameras steps batch hours extra <<<"$line"
     if [ -z "${hours:-}" ]; then
-        echo "❌ $MANIFEST:$LINE_NO needs 5 fields (dataset policy steps batch hours): $line" >&2
+        echo "❌ $MANIFEST:$LINE_NO needs 6 fields (dataset policy cameras steps batch hours): $line" >&2
         exit 2
     fi
     case "$policy" in
-        act|diffusion) ;;
-        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy' (want act|diffusion)" >&2; exit 2;;
+        act|diffusion|pi05) ;;
+        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy' (want act|diffusion|pi05)" >&2; exit 2;;
+    esac
+    # A space here would silently shift every later column into `extra`, so the
+    # row would submit and train the wrong thing. Refuse it at the door.
+    case "$cameras" in
+        ''|*[[:space:]]*) echo "❌ $MANIFEST:$LINE_NO cameras must be 'all' or a comma list with no spaces: '$cameras'" >&2; exit 2;;
     esac
     case "$hours" in
         ''|*[!0-9]*) echo "❌ $MANIFEST:$LINE_NO hours must be a whole number: '$hours'" >&2; exit 2;;
     esac
+    # steps and batch are checked for the same reason the cameras column is: a
+    # stray space anywhere in the row shifts every later column left, and the
+    # row would still submit -- training the wrong size for the wrong time. A
+    # non-numeric steps/batch is the first place that shift becomes visible.
+    for field in steps:"$steps" batch:"$batch"; do
+        case "${field#*:}" in
+            -|*[!0-9]*)
+                [ "${field#*:}" = "-" ] && continue
+                echo "❌ $MANIFEST:$LINE_NO ${field%%:*} must be a whole number or '-': '${field#*:}'" >&2
+                echo "   (a space in the cameras column shifts every later column -- check that first)" >&2
+                exit 2;;
+        esac
+    done
     in_list "$ds" "$FILTER_DATASETS" || continue
     in_list "$policy" "$FILTER_POLICIES" || continue
-    ROWS+=("$ds	$policy	${steps:--}	${batch:--}	$hours	${extra:--}")
+    in_list "$cameras" "$FILTER_CAMERAS" || continue
+    ROWS+=("$ds	$policy	$cameras	${steps:--}	${batch:--}	$hours	${extra:--}")
 done < "$MANIFEST"
 
 if [ "${#ROWS[@]}" -eq 0 ]; then
     echo "❌ no rows selected from $MANIFEST" >&2
     [ -n "$FILTER_DATASETS" ] && echo "   --datasets $FILTER_DATASETS" >&2
     [ -n "$FILTER_POLICIES" ] && echo "   --only $FILTER_POLICIES" >&2
+    [ -n "$FILTER_CAMERAS" ] && echo "   --cameras $FILTER_CAMERAS" >&2
     exit 2
 fi
 
@@ -139,7 +163,7 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 SUB_DIR="$SCRATCH/so101_outputs/submissions/$STAMP"
 mkdir -p "$SUB_DIR"
 
-HOURS_SET="$(printf '%s\n' "${ROWS[@]}" | cut -f5 | sort -n -u)"
+HOURS_SET="$(printf '%s\n' "${ROWS[@]}" | cut -f6 | sort -n -u)"
 
 echo "manifest : $MANIFEST"
 echo "scratch  : $SCRATCH"
@@ -150,17 +174,17 @@ for hours in $HOURS_SET; do
     group_file="$SUB_DIR/runs_${hours}h.tsv"
     index_file="$SUB_DIR/index_${hours}h.md"
     {
-        echo "# dataset	policy	steps	batch	hours	extra"
-        printf '%s\n' "${ROWS[@]}" | awk -F'\t' -v h="$hours" '$5 == h'
+        echo "# dataset	policy	cameras	steps	batch	hours	extra"
+        printf '%s\n' "${ROWS[@]}" | awk -F'\t' -v h="$hours" '$6 == h'
     } > "$group_file"
     n="$(awk -F'\t' 'NF && $1 !~ /^#/' "$group_file" | wc -l)"
 
     {
         echo "# Array index -> run  (${hours} h group, submitted $STAMP)"
         echo
-        echo "| array id | dataset | policy | steps | batch |"
-        echo "|---------:|---------|--------|-------|-------|"
-        awk -F'\t' 'NF && $1 !~ /^#/ {printf "| %d | %s | %s | %s | %s |\n", NR-2, $1, $2, $3, $4}' "$group_file"
+        echo "| array id | dataset | policy | cameras | steps | batch |"
+        echo "|---------:|---------|--------|---------|-------|-------|"
+        awk -F'\t' 'NF && $1 !~ /^#/ {printf "| %d | %s | %s | %s | %s | %s |\n", NR-2, $1, $2, $3, $4, $5}' "$group_file"
     } > "$index_file"
 
     range="0-$((n - 1))"
@@ -176,7 +200,7 @@ for hours in $HOURS_SET; do
         "$REPO_ROOT/hpc/create_real_vla.sbatch")
 
     echo "== ${hours} h group — $n run(s), see $index_file"
-    awk -F'\t' 'NF && $1 !~ /^#/ {printf "   [%d] %s %s\n", NR-2, $1, $2}' "$group_file"
+    awk -F'\t' 'NF && $1 !~ /^#/ {printf "   [%d] %s %s  cameras=%s\n", NR-2, $1, $2, $3}' "$group_file"
     if [ "$DRY_RUN" = "1" ]; then
         printf '   DRY-RUN would submit: '; print_cmd "${cmd[@]}"
     else

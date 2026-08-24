@@ -8,8 +8,19 @@
 #     tool/run_policy_real.py at the rig, not on the cluster.
 # For each policy (act, diffusion by default) it trains a long run on the
 # staged real dataset, saves checkpoints, and writes a results.md pointing at
-# them and their final training loss. pi0.5 is a deliberate follow-up (it needs
-# the licence-gated base pre-staged + LoRA — see hpc/README.md).
+# them and their final training loss.
+#
+# `pi05` is also trainable here, and differs from the other two in three ways
+# that are all consequences of it being a FINETUNE of a 4.1B-param base rather
+# than a policy trained from scratch:
+#   * it starts from --policy.path (a pre-staged copy of lerobot/pi05_base;
+#     compute nodes are offline, so the base must already be in the HF cache);
+#   * it trains through LoRA, because full finetuning needs >24 GB just for
+#     AdamW's optimiser state — --lora-r 0 turns that off if the GPU is big;
+#   * its cameras are RENAMED onto the base's three pretrained slots rather
+#     than derived from the dataset, since each slot carries what it learned
+#     about that viewpoint. A slot with no camera behind it is padded and
+#     masked by pi0.5 itself, which is exactly what a camera ablation wants.
 #
 #   bash test/system/long_vla_real.sh --dataset-root <ds>
 #   bash test/system/long_vla_real.sh --dir /media/hdd/so101 --name towel_fold
@@ -41,7 +52,17 @@ RUN_NAME="vla_real_long_$(date +%Y%m%d_%H%M%S)"
 ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
 DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
 DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
+# pi0.5 finetunes a pretrained base: far fewer steps than training from scratch,
+# and a small batch because 4.1B params leave little room even under LoRA.
+PI05_STEPS=30000; PI05_BATCH=8; PI05_SAVE=5000
+PI05_BASE="${SO101_PI05_BASE:-lerobot/pi05_base}"
+PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GPU)
 STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
+# Every sample decodes one video frame per camera, so the loader is the floor on
+# training speed. Follow the CPUs the job was actually given rather than a fixed
+# 4: reading a dataset over network scratch with too few workers is the likeliest
+# explanation for the cube-pnp ACT run that hit its 24 h wall time at ~10 s/step.
+WORKERS="${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || echo 4)}"
 EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
@@ -57,9 +78,13 @@ while [ $# -gt 0 ]; do
         --act-steps) ACT_STEPS="$2"; shift 2;;
         --diff-steps) DIFF_STEPS="$2"; shift 2;;
         --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
+        --pi05-steps) PI05_STEPS="$2"; shift 2;;
+        --pi05-base) PI05_BASE="$2"; shift 2;;
+        --lora-r) PI05_LORA_R="$2"; shift 2;;
         --steps) STEPS="$2"; shift 2;;
         --batch) BATCH="$2"; shift 2;;
         --save-freq) SAVE_FREQ="$2"; shift 2;;
+        --workers) WORKERS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
         -h|--help) sed -n '2,32p' "$0"; exit 0;;
@@ -128,7 +153,9 @@ fi
 echo "======================================================================"
 echo " REAL-VLA LONG TRAINING"
 echo "   dataset : $REPO_ID  ($DATASET_ROOT)"
-echo "   policies: $ONLY   device: $DEVICE"
+echo "   policies: $ONLY   device: $DEVICE   loader workers: $WORKERS"
+echo "   cameras : $("$PY" "$REPO_ROOT/tool/make_camera_view.py" --dataset "$DATASET_ROOT" --list \
+                     | tail -n +2 | awk '{printf "%s ", $1}')"
 echo "   output  : $RUN_DIR"
 echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy_real.py)."
 echo "======================================================================"
@@ -147,7 +174,8 @@ train_cell() {
     case "$policy" in
         act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
         diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion)";;
+        pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.
@@ -161,12 +189,31 @@ train_cell() {
     local args=(
         --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"
         --dataset.video_backend=pyav
-        --output_dir="$out" --num_workers=4 --log_freq=100
+        --output_dir="$out" --num_workers="$WORKERS" --log_freq=100
         --env_eval_freq=0 --wandb.enable=false --policy.push_to_hub=false
         --policy.device="$DEVICE"
-        --policy.type="$policy" --steps="$steps"
-        --batch_size="$batch" --save_freq="$save"
+        --steps="$steps" --batch_size="$batch" --save_freq="$save"
     )
+    if [ "$policy" = "pi05" ]; then
+        # A finetune names its base instead of a policy type; the type comes
+        # from the base's own config.
+        args+=(--policy.path="$PI05_BASE")
+        [ "$PI05_LORA_R" != "0" ] && args+=(--peft.r="$PI05_LORA_R")
+        # Map THIS dataset's cameras onto the base's slots. Asking the dataset
+        # rather than hard-coding it is what makes a camera ablation work: a
+        # view with one camera produces a one-entry map, and pi0.5 pads and
+        # masks the two slots left over.
+        local rename
+        rename="$("$PY" "$REPO_ROOT/tool/make_camera_view.py" \
+            --dataset "$DATASET_ROOT" --print pi05-rename-map)" \
+            || fail "pi05 rename map for $DATASET_ROOT"
+        args+=(--rename_map="$rename")
+        echo "  pi0.5 base   : $PI05_BASE"
+        echo "  pi0.5 LoRA r : ${PI05_LORA_R} $([ "$PI05_LORA_R" = 0 ] && echo '(full finetune)')"
+        echo "  camera slots : $rename"
+    else
+        args+=(--policy.type="$policy")
+    fi
     if [ "$policy" = "diffusion" ]; then
         args+=(--policy.pretrained_backbone_weights=null
                --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]")
@@ -183,6 +230,7 @@ train_cell() {
 if [ "$SKIP_TRAIN" = "0" ]; then
     have act && train_cell act
     have diffusion && train_cell diffusion
+    have pi05 && train_cell pi05
 fi
 
 # ---- report ----------------------------------------------------------

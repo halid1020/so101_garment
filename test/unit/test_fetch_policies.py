@@ -176,6 +176,36 @@ class TestFetching(_FetchCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.fetched(), {"fold-short-diffusion"})
 
+    def test_a_dataset_filter_takes_every_arm_of_its_ablation(self):
+        # Camera-ablation runs are named <dataset>__<camera slug>. Asking for the
+        # dataset should bring back the whole experiment, not nothing.
+        for cameras in ("all", "central+wrist_left", "wrist_left"):
+            self.finished(f"cube-pnp-new__{cameras}", "act")
+        self.finished("fold-short", "act")
+
+        result = self.fetch("--dest", str(self.dest), "--datasets", "cube-pnp-new")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.fetched(),
+            {
+                "cube-pnp-new__all-act",
+                "cube-pnp-new__central+wrist_left-act",
+                "cube-pnp-new__wrist_left-act",
+            },
+        )
+
+    def test_one_arm_of_an_ablation_can_be_named_exactly(self):
+        for cameras in ("all", "wrist_left"):
+            self.finished(f"cube-pnp-new__{cameras}", "act")
+
+        result = self.fetch(
+            "--dest", str(self.dest), "--datasets", "cube-pnp-new__wrist_left"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.fetched(), {"cube-pnp-new__wrist_left-act"})
+
     def test_a_filter_that_matches_nothing_fails_loudly(self):
         self.finished("fold-short", "diffusion")
 

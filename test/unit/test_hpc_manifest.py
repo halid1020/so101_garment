@@ -26,31 +26,38 @@ MANIFEST = REPO / "hpc" / "runs.tsv"
 SUBMIT = REPO / "hpc" / "submit_real.sh"
 SBATCH = REPO / "hpc" / "create_real_vla.sbatch"
 
-POLICIES = {"act", "diffusion"}
+POLICIES = {"act", "diffusion", "pi05"}
 
 
 def manifest_rows(path: Path) -> "list[list[str]]":
-    """Data rows of a manifest, as the shell reads them: 5 fields plus the rest."""
+    """Data rows of a manifest, as the shell reads them: 6 fields plus the rest."""
     rows = []
     for line in path.read_text().splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        rows.append(line.split(maxsplit=5))
+        rows.append(line.split(maxsplit=6))
     return rows
 
 
 class TestRunManifest(unittest.TestCase):
-    def test_every_row_has_the_six_columns(self):
+    def test_every_row_has_the_seven_columns(self):
         for row in manifest_rows(MANIFEST):
-            self.assertEqual(len(row), 6, f"row is not 6 fields: {row}")
+            self.assertEqual(len(row), 7, f"row is not 7 fields: {row}")
 
     def test_policies_are_ones_the_driver_trains(self):
         for row in manifest_rows(MANIFEST):
             self.assertIn(row[1], POLICIES, f"unknown policy in {row}")
 
+    def test_the_cameras_column_never_contains_a_space(self):
+        # A space would shift every later column into `extra`, and the row would
+        # submit and train something other than what it says.
+        for row in manifest_rows(MANIFEST):
+            self.assertNotIn(" ", row[2], f"cameras must be comma-joined in {row}")
+            self.assertTrue(row[2], f"cameras must be given in {row}")
+
     def test_numeric_columns_are_numbers_or_the_default_marker(self):
         for row in manifest_rows(MANIFEST):
-            for field in row[2:5]:
+            for field in row[3:6]:
                 self.assertTrue(
                     field == "-" or field.isdigit(),
                     f"'{field}' is neither a number nor '-' in {row}",
@@ -59,13 +66,25 @@ class TestRunManifest(unittest.TestCase):
     def test_hours_is_always_given(self):
         # It becomes --time on the array, so it cannot fall back to a default.
         for row in manifest_rows(MANIFEST):
-            self.assertTrue(row[4].isdigit(), f"hours must be explicit in {row}")
+            self.assertTrue(row[5].isdigit(), f"hours must be explicit in {row}")
 
-    def test_a_dataset_and_policy_pair_appears_once(self):
-        pairs = [(r[0], r[1]) for r in manifest_rows(MANIFEST)]
+    def test_a_dataset_policy_and_camera_set_appears_once(self):
+        triples = [(r[0], r[1], r[2]) for r in manifest_rows(MANIFEST)]
         self.assertEqual(
-            len(pairs), len(set(pairs)), f"duplicate (dataset, policy) in {pairs}"
+            len(triples),
+            len(set(triples)),
+            f"duplicate (dataset, policy, cameras) in {triples}",
         )
+
+    def test_the_ablation_covers_every_policy_on_every_camera_set(self):
+        """The point of the matrix: one run per (policy, camera set) on cube-pnp-new."""
+        got = {(r[1], r[2]) for r in manifest_rows(MANIFEST) if r[0] == "cube-pnp-new"}
+        want = {
+            (policy, cameras)
+            for policy in ("act", "diffusion", "pi05")
+            for cameras in ("all", "central,wrist_camera_left", "wrist_camera_left")
+        }
+        self.assertEqual(got, want)
 
 
 class _WrapperCase(unittest.TestCase):
@@ -99,10 +118,11 @@ class _WrapperCase(unittest.TestCase):
 
 class TestSubmissionDryRun(_WrapperCase):
     MANIFEST = (
-        "# dataset policy steps batch hours extra\n"
-        "alpha  act        80000   8   24  -\n"
-        "alpha  diffusion  100000  32  24  -\n"
-        "beta   act        -       -   36  -\n"
+        "# dataset policy cameras steps batch hours extra\n"
+        "alpha  act        all     80000   8   24  -\n"
+        "alpha  diffusion  all     100000  32  24  -\n"
+        "alpha  act        wrist   80000   8   24  -\n"
+        "beta   act        all     -       -   36  -\n"
     )
 
     def setUp(self):
@@ -119,7 +139,7 @@ class TestSubmissionDryRun(_WrapperCase):
         lines = self.sbatch_lines(self.submit("--manifest", str(self.manifest)))
         self.assertEqual(len(lines), 2, lines)
         self.assertTrue(
-            any("--array=0-1" in ln and "--time=24:00:00" in ln for ln in lines)
+            any("--array=0-2" in ln and "--time=24:00:00" in ln for ln in lines)
         )
         self.assertTrue(
             any("--array=0-0" in ln and "--time=36:00:00" in ln for ln in lines)
@@ -140,8 +160,9 @@ class TestSubmissionDryRun(_WrapperCase):
         line = [ln for ln in self.sbatch_lines(result) if "--time=24:00:00" in ln][0]
         snapshot = Path(line.split("SO101_MANIFEST=")[1].split()[0])
         rows = manifest_rows(snapshot)
-        self.assertEqual([r[0] for r in rows], ["alpha", "alpha"])
-        self.assertEqual([r[1] for r in rows], ["act", "diffusion"])
+        self.assertEqual([r[0] for r in rows], ["alpha", "alpha", "alpha"])
+        self.assertEqual([r[1] for r in rows], ["act", "diffusion", "act"])
+        self.assertEqual([r[2] for r in rows], ["all", "all", "wrist"])
 
     def test_filters_narrow_what_is_submitted(self):
         lines = self.sbatch_lines(
@@ -155,6 +176,12 @@ class TestSubmissionDryRun(_WrapperCase):
         )
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("--time=36:00:00", lines[0])
+
+    def test_one_arm_of_the_ablation_can_be_submitted_alone(self):
+        result = self.submit("--manifest", str(self.manifest), "--cameras", "wrist")
+        lines = self.sbatch_lines(result)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("--array=0-0", lines[0])
 
     def test_a_filter_that_matches_nothing_is_refused(self):
         result = self.submit("--manifest", str(self.manifest), "--datasets", "gamma")
@@ -175,7 +202,7 @@ class TestSubmissionDryRun(_WrapperCase):
 
 class TestSubmissionRefusals(_WrapperCase):
     def test_an_unstaged_dataset_is_reported_instead_of_submitted(self):
-        manifest = self.write_manifest("alpha act 10 2 24 -\n")
+        manifest = self.write_manifest("alpha act all 10 2 24 -\n")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 1)
         self.assertIn("not staged", result.stderr)
@@ -184,18 +211,44 @@ class TestSubmissionRefusals(_WrapperCase):
         self.assertNotIn("DRY-RUN would submit", result.stdout)
 
     def test_an_unknown_policy_is_refused(self):
-        manifest = self.write_manifest("alpha pi05 10 2 24 -\n")
+        manifest = self.write_manifest("alpha smolvla all 10 2 24 -\n")
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown policy", result.stderr)
+
+    def test_pi05_is_a_policy_the_driver_trains(self):
+        manifest = self.write_manifest("alpha pi05 all 10 2 24 -\n")
+        self.stage("alpha")
+        result = self.submit("--manifest", str(manifest))
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_short_row_is_refused(self):
         manifest = self.write_manifest("alpha act 10\n")
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 2)
-        self.assertIn("needs 5 fields", result.stderr)
+        self.assertIn("needs 6 fields", result.stderr)
+
+    def test_a_space_in_the_cameras_column_is_refused(self):
+        # The shell has already split on that space by the time the row is read,
+        # so the cameras check cannot see it: 'wrist_camera_left' lands in steps
+        # and the real steps/batch/hours slide one column left -- leaving an
+        # hours that still looks valid. The numeric columns are what catch it.
+        manifest = self.write_manifest(
+            "alpha act central, wrist_camera_left 10 2 24 -\n"
+        )
+        self.stage("alpha")
+        result = self.submit("--manifest", str(manifest))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("steps", result.stderr)
+        self.assertIn("cameras column", result.stderr)
+
+    def test_an_empty_cameras_column_is_refused(self):
+        manifest = self.write_manifest("alpha act\n")
+        self.stage("alpha")
+        result = self.submit("--manifest", str(manifest))
+        self.assertEqual(result.returncode, 2)
 
 
 class TestBatchScriptPicksItsRow(unittest.TestCase):
@@ -211,11 +264,35 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.repo = self.tmp / "repo"
         (self.repo / "test" / "system").mkdir(parents=True)
+        (self.repo / "tool").mkdir(parents=True)
         (self.repo / "setup.sh").write_text("true\n")
         self.captured = self.tmp / "driver_args.txt"
         (self.repo / "test" / "system" / "long_vla_real.sh").write_text(
             f'printf "%s\\n" "$@" > {self.captured}\n'
         )
+        # The job builds a camera view before training. Stand in for the builder:
+        # record what it was asked for, and answer with a directory, so the test
+        # sees which view path the job then trains on.
+        self.view_args = self.tmp / "view_args.txt"
+        (self.repo / "venv" / "bin").mkdir(parents=True)
+        (self.repo / "venv" / "bin" / "python").write_text(
+            "#!/bin/bash\n"
+            f'printf "%s\\n" "$@" > {self.view_args}\n'
+            'ds=""; cams=""; out=""\n'
+            "while [ $# -gt 0 ]; do\n"
+            '  case "$1" in\n'
+            '    --dataset) ds="$2"; shift 2;;\n'
+            '    --cameras) cams="$2"; shift 2;;\n'
+            '    --out-dir) out="$2"; shift 2;;\n'
+            "    *) shift;;\n"
+            "  esac\n"
+            "done\n"
+            'slug="$cams"; [ "$cams" = "all" ] && slug="all"\n'
+            'view="$out/$(basename "$ds")__$slug"\n'
+            'mkdir -p "$view/meta" && echo "{}" > "$view/meta/info.json"\n'
+            'echo "$view"\n'
+        )
+        (self.repo / "venv" / "bin" / "python").chmod(0o755)
         self.scratch = self.tmp / "scratch"
         for name in ("alpha", "beta"):
             (self.scratch / "hf_lerobot" / "local" / name / "meta").mkdir(parents=True)
@@ -224,9 +301,10 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
             ).write_text("{}")
         self.manifest = self.tmp / "runs.tsv"
         self.manifest.write_text(
-            "# dataset policy steps batch hours extra\n"
-            "alpha  act        -  -  24  -\n"
-            "beta   diffusion  5  2  36  --policy.optimizer_lr=5e-5 --num_workers=1\n"
+            "# dataset policy cameras steps batch hours extra\n"
+            "alpha  act        all                        -  -  24  -\n"
+            "beta   diffusion  central,wrist_camera_left  5  2  36  "
+            "--policy.optimizer_lr=5e-5 --num_workers=1\n"
         )
 
     def run_task(self, task_id: int) -> "subprocess.CompletedProcess[str]":
@@ -244,20 +322,36 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
     def driver_args(self) -> "list[str]":
         return self.captured.read_text().splitlines()
 
+    def view_builder_args(self) -> "list[str]":
+        return self.view_args.read_text().splitlines()
+
     def test_the_index_selects_the_row(self):
         result = self.run_task(0)
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.driver_args()
         self.assertIn("--only", args)
         self.assertEqual(args[args.index("--only") + 1], "act")
-        self.assertTrue(args[args.index("--dataset-root") + 1].endswith("/alpha"))
+        self.assertTrue(args[args.index("--dataset-root") + 1].endswith("/alpha__all"))
 
-    def test_the_run_name_is_the_dataset_so_a_resubmission_resumes(self):
+    def test_the_row_s_cameras_reach_the_view_builder(self):
+        self.run_task(1)
+        args = self.view_builder_args()
+        self.assertEqual(args[args.index("--cameras") + 1], "central,wrist_camera_left")
+        self.assertTrue(args[args.index("--dataset") + 1].endswith("/beta"))
+
+    def test_training_happens_on_the_view_not_the_source(self):
+        # Otherwise every arm of the ablation would train on all the cameras.
+        self.run_task(1)
+        root = self.driver_args()[self.driver_args().index("--dataset-root") + 1]
+        self.assertTrue(root.endswith("__central,wrist_camera_left"), root)
+
+    def test_the_run_name_is_the_view_so_a_resubmission_resumes(self):
         # Not the job id: a requeue after a wall-time hit must reuse the
-        # checkpoints the previous attempt wrote.
+        # checkpoints the previous attempt wrote. It carries the camera set too,
+        # so the three arms of an ablation cannot overwrite each other.
         self.run_task(0)
         args = self.driver_args()
-        self.assertEqual(args[args.index("--run-name") + 1], "alpha")
+        self.assertEqual(args[args.index("--run-name") + 1], "alpha__all")
 
     def test_default_columns_pass_no_override(self):
         self.run_task(0)

@@ -116,6 +116,29 @@ m.resnet18(weights=m.ResNet18_Weights.DEFAULT)
 print("✓ ResNet18 weights cached under ~/.cache/torch/hub/checkpoints")
 PY
 
+# 5. Pre-stage the pi0.5 base (only if pi05 rows will be trained) ------
+# pi0.5 is a FINETUNE: lerobot-train needs the base weights on disk before it
+# starts, and a compute node cannot fetch them. ~14.5 GB, so this is opt-in --
+# `SO101_STAGE_PI05=1 bash hpc/provision_create.sh` -- and it goes to the shared
+# HF cache the job reads with HF_HUB_OFFLINE=1. The repo is NOT licence-gated
+# (checked 2026-08-24), so no token or terms acceptance is needed.
+PI05_REPO="${SO101_PI05_REPO:-lerobot/pi05_base}"
+if [ "${SO101_STAGE_PI05:-0}" = "1" ]; then
+    echo "=> Pre-staging ${PI05_REPO} (~14.5 GB) into the HF cache..."
+    python - "$PI05_REPO" <<'PY'
+import sys
+
+from huggingface_hub import snapshot_download
+
+path = snapshot_download(repo_id=sys.argv[1])
+print(f"✓ pi0.5 base cached at {path}")
+print("  Train against it by name; HF_HUB_OFFLINE=1 resolves it from this cache.")
+PY
+else
+    echo "=> Skipping the pi0.5 base (${PI05_REPO}, ~14.5 GB)."
+    echo "   Training a pi05 row needs it: re-run with SO101_STAGE_PI05=1"
+fi
+
 echo "=================================================="
 echo "✓ CREATE provisioning complete (sim-only subset)."
 echo "  Next: stage the dataset to scratch, then submit the job."

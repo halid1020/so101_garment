@@ -48,6 +48,41 @@ stored under neutral keys that a standard policy loader ignores, so a
 default joint-space policy is unaffected by their presence, while an
 end-effector experiment maps the stored target onto its action explicitly.
 
+\paragraph{Ablating a sensor without disturbing the rest.} A platform that
+records several viewpoints invites the question of how much each one
+contributes, and that question is only answerable if the comparison changes
+one thing. We therefore derive a \emph{view} of a collected dataset: a
+dataset in its own right that declares a chosen subset of the cameras while
+sharing the recorded frames themselves with the source. The episodes, the
+frames and the labels are the ones that were collected; only the declared
+sensor set differs. Because the learner reads the sensor set from the
+declaration, an undeclared camera is neither decoded nor presented to the
+policy, so the ablation costs less to train rather than more, and no
+training code learns about the experiment. Deriving a view rather than
+editing the recording also leaves the collected data untouched, which
+matters because these datasets are expensive to gather and are shared
+between experiments.
+
+\paragraph{One instruction per task.} A language-conditioned policy reads
+the instruction attached to each frame, so an instruction retyped partway
+through a collection session splits one task into two. The view settles
+this where it settles the sensor set: the spelling covering the most frames
+is kept and the remainder are rewritten onto it. Weight of evidence decides,
+not order of appearance, because the variant registered first is not
+necessarily the intended one. Policies that ignore language are unaffected,
+which is why the correction belongs to the derived dataset rather than to
+the collection procedure.
+
+\paragraph{Pretrained policies and fixed sensor slots.} A policy finetuned
+from a large pretrained base does not derive its inputs from the dataset:
+it arrives with a fixed set of sensor slots, each carrying what the base
+learned about that viewpoint. Such a policy joins the study by mapping each
+recorded camera onto the slot that means the same thing, rather than by
+renaming the recording. A slot left without a camera is the ablation
+itself, and the base handles it as absent evidence rather than as an error.
+This keeps one dataset, and one contract, serving policies that derive
+their interface from the data and policies that impose their own.
+
 \paragraph{Training parity with simulation.} Because a collected dataset is
 an ordinary dataset in the standard format, a policy trains on it through
 exactly the pipeline the simulated study uses --- the same learner, the same
