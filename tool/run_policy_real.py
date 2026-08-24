@@ -57,9 +57,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import threading
 import time
-from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -68,7 +66,8 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.policy_run import RunControl, prefetch_threshold  # noqa: E402
+from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
+from common.policy_run import RunControl  # noqa: E402
 from tool.replay_on_robot import (  # noqa: E402
     _connect_followers,
     _ramp_to,
@@ -195,248 +194,6 @@ def stall_decision(
     if stalled_s >= hold_s:
         return "warn"
     return "hold"
-
-
-class LocalActionSource:
-    """Inference in this process: one ``select_action`` per tick, as before.
-
-    The policy's own action queue means only every ``n_action_steps``-th call
-    touches the GPU; the rest are dequeues. Kept exactly as it was so that
-    running without ``--server`` is unchanged.
-    """
-
-    def __init__(self, checkpoint: str, device: str, task: str) -> None:
-        import torch
-
-        from tool.eval_sim_policy import build_batch, load_policy
-
-        self.torch = torch
-        self.build_batch = build_batch
-        self.policy, self.pre, self.post, self.type = load_policy(checkpoint, device)
-        self.policy.reset()
-        self.device = device
-        self.task = task
-        self.cameras: "list[str] | None" = None  # whatever the rig is configured with
-        self.fatal: "str | None" = None
-        self.last_error: "str | None" = None
-        self.round_trip_s = 0.0  # nothing travels; kept so both sources report alike
-        self._latest: "tuple[np.ndarray, dict] | None" = None
-
-    def describe(self) -> str:
-        return f"local '{self.type}' policy on {self.device}"
-
-    #: Inference here has no chunk to step through: the policy's own queue is
-    #: internal, so a tick either infers or dequeues and the operator sees one
-    #: action at a time.
-    chunked = False
-    last_chunk: "np.ndarray | None" = None
-    last_chunk_seq = 0
-    last_chunk_at = 0.0
-
-    def offer(self, state: np.ndarray, images: dict) -> None:
-        self._latest = (state, images)
-
-    def drain(self) -> None:
-        """Nothing is queued here; the next take() infers from what is offered."""
-
-    def set_paused(self, paused: bool) -> None:
-        """No background fetching to pause."""
-
-    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
-        return self._latest
-
-    def take(self) -> "np.ndarray | None":
-        if self._latest is None:
-            return None
-        state, images = self._latest
-        return _infer(
-            self.policy,
-            self.pre,
-            self.post,
-            self.build_batch,
-            state,
-            images,
-            self.task,
-            self.device,
-            self.torch,
-        )
-
-    @property
-    def depth(self) -> int:
-        return 0
-
-
-class RemoteActionSource:
-    """Inference on another machine; action chunks arrive ahead of being needed.
-
-    The rig keeps capturing at the control rate and feeds every observation into
-    a rolling window, because a policy with more than one observation step was
-    trained on adjacent frames. When the local action queue runs low, the window
-    is sent and the next chunk requested on a background thread, so the round
-    trip overlaps motion the rig is already executing and the network never sits
-    inside the control loop.
-
-    A request that the server rejects outright (4xx) is fatal: the observation
-    or the session is wrong and repeating it cannot help. A dropped connection
-    or a timeout is not -- the next tick tries again, and the caller's stall
-    policy decides how long that is allowed to go on.
-    """
-
-    def __init__(
-        self,
-        url: str,
-        task: str,
-        actions_per_chunk: "int | None" = None,
-        prefetch: "int | None" = None,
-        timeout_s: float = 20.0,
-        hz: float = 30.0,
-    ) -> None:
-        import json
-
-        from common.policy_wire import ObservationWindow
-
-        self.url = url.rstrip("/")
-        self.task = task
-        self.timeout_s = float(timeout_s)
-
-        meta = json.loads(self._rpc("/reset", b""))
-        self.type = meta["policy_type"]
-        self.session = meta["session"]
-        self.cameras = sorted(meta["cameras"])
-        self.n_obs_steps = int(meta["n_obs_steps"])
-        self.server_actions = int(meta["n_action_steps"])
-        self.actions = min(
-            int(actions_per_chunk or self.server_actions), self.server_actions
-        )
-        # The static default covers a fast policy; the threshold below grows it
-        # to cover whatever round trip this link turns out to have.
-        self.prefetch = max(1, self.actions // 3)
-        self.explicit_prefetch = None if prefetch is None else int(prefetch)
-        self.hz = float(hz)
-        self.window = ObservationWindow(self.cameras, self.n_obs_steps)
-
-        self._queue: "deque[np.ndarray]" = deque()
-        self._lock = threading.Lock()
-        self._inflight = False
-        self._seq = 0
-        self.fatal: "str | None" = None
-        self.last_error: "str | None" = None
-        self.round_trip_s = 0.0
-        self.server_infer_s = 0.0
-        self._paused = False
-        self._last_sent: "tuple[np.ndarray, dict] | None" = None
-        self.last_chunk: "np.ndarray | None" = None
-        self.last_chunk_seq = 0
-        self.last_chunk_at = 0.0
-
-    #: A chunk is a visible unit here, so a rollout can be stepped one at a time.
-    chunked = True
-
-    @property
-    def threshold(self) -> int:
-        """Queue depth at which the next chunk is requested. See policy_run."""
-        return prefetch_threshold(
-            self.prefetch,
-            self.explicit_prefetch,
-            self.round_trip_s,
-            self.hz,
-            self.actions,
-        )
-
-    def drain(self) -> None:
-        """Forget what is queued: it was planned from an older observation."""
-        with self._lock:
-            self._queue.clear()
-
-    def set_paused(self, paused: bool) -> None:
-        """While paused the window keeps filling but no chunk is requested."""
-        with self._lock:
-            self._paused = bool(paused)
-
-    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
-        """The observation the last request carried -- what the policy was shown."""
-        return self._last_sent
-
-    def describe(self) -> str:
-        return (
-            f"remote '{self.type}' policy at {self.url} "
-            f"({self.n_obs_steps} obs step(s) per request, {self.actions} actions per chunk)"
-        )
-
-    def _rpc(self, path: str, data: "bytes | None" = None) -> bytes:
-        import urllib.request
-
-        request = urllib.request.Request(
-            self.url + path,
-            data=data,
-            method="GET" if data is None else "POST",
-            headers={"Content-Type": "application/octet-stream"},
-        )
-        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-            return response.read()
-
-    def offer(self, state: np.ndarray, images: dict) -> None:
-        """Record this tick's observation and, if the queue is low, ask for more."""
-        self.window.push(state, images)
-        with self._lock:
-            if (
-                self._inflight
-                or self._paused
-                or self.fatal is not None
-                or len(self._queue) > self.threshold
-            ):
-                return
-            self._inflight = True
-            self._seq += 1
-            seq = self._seq
-        self._last_sent = (state, images)
-        threading.Thread(
-            target=self._fetch, args=(self.window.steps(), seq), daemon=True
-        ).start()
-
-    def _fetch(self, steps, seq: int) -> None:
-        import urllib.error
-
-        from common.policy_wire import decode_chunk, encode_request
-
-        started = time.perf_counter()
-        try:
-            message = encode_request(
-                steps, self.task, session=self.session, seq=seq, actions=self.actions
-            )
-            chunk, header = decode_chunk(self._rpc("/act", message))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", "replace").strip()[:200]
-            self.last_error = f"HTTP {exc.code}: {body}"
-            if 400 <= exc.code < 500:
-                self.fatal = self.last_error
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - a transport hiccup must not kill the loop
-            self.last_error = f"{type(exc).__name__}: {exc}"
-        else:
-            with self._lock:
-                self._queue.extend(np.asarray(a, dtype=float) for a in chunk)
-                self.last_chunk = np.asarray(chunk, dtype=float)
-                self.last_chunk_seq = seq
-                self.last_chunk_at = time.time()
-                self.round_trip_s = time.perf_counter() - started
-                self.server_infer_s = float(
-                    (header.get("timings") or {}).get("infer_s", 0.0)
-                )
-                self.last_error = None
-        finally:
-            with self._lock:
-                self._inflight = False
-
-    def take(self) -> "np.ndarray | None":
-        with self._lock:
-            return self._queue.popleft() if self._queue else None
-
-    @property
-    def depth(self) -> int:
-        with self._lock:
-            return len(self._queue)
 
 
 def _first_action(source, timeout_s: float):
@@ -761,18 +518,6 @@ def main() -> None:
             print(f"📝 run log written: {run_log.root}")
         if view is not None:
             view.stop()
-
-
-def _infer(
-    policy, preprocessor, postprocessor, build_batch, state, images, task, device, torch
-) -> np.ndarray:
-    """One policy step: observation -> 12-D action (numpy). Mirrors eval_sim_policy."""
-    batch = build_batch(state, images, task, device)
-    with torch.no_grad():
-        batch = preprocessor(batch)
-        action = policy.select_action(batch)
-        action = postprocessor(action)
-    return np.asarray(action.squeeze(0).to("cpu")).astype(float)
 
 
 if __name__ == "__main__":

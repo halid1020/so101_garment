@@ -1,0 +1,371 @@
+"""Where a rollout's actions come from: this process, or another machine.
+
+Both sources answer the same small protocol, so a control loop never learns
+which one it has:
+
+    ``offer(state, images)``  -- here is this tick's observation
+    ``take() -> action | None`` -- give me something to execute, or nothing
+    ``drain()`` / ``set_paused(bool)`` / ``depth`` / ``last_sent()``
+
+:class:`LocalActionSource` runs the forward pass inline, exactly as it always
+did. :class:`RemoteActionSource` sends the observation window to a GPU host and
+splices the returned chunk into what is already queued, following one of the
+strategies in :mod:`common.chunking`.
+
+Neither touches a camera or a servo bus, which is what lets the same client
+drive the rig and the digital twin.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections import deque
+
+import numpy as np
+
+from common.chunking import (
+    DEFAULT_BLEND_WINDOW,
+    DEFAULT_ENSEMBLE_WEIGHT,
+    GUIDED,
+    STRATEGIES,
+    ChunkingError,
+    delay_ticks,
+    splice,
+)
+from common.policy_run import prefetch_threshold
+
+
+def _infer(
+    policy, preprocessor, postprocessor, build_batch, state, images, task, device, torch
+) -> np.ndarray:
+    """One policy step: observation -> 12-D action (numpy). Mirrors eval_sim_policy."""
+    batch = build_batch(state, images, task, device)
+    with torch.no_grad():
+        batch = preprocessor(batch)
+        action = policy.select_action(batch)
+        action = postprocessor(action)
+    return np.asarray(action.squeeze(0).to("cpu")).astype(float)
+
+
+class LocalActionSource:
+    """Inference in this process: one ``select_action`` per tick, as before.
+
+    The policy's own action queue means only every ``n_action_steps``-th call
+    touches the GPU; the rest are dequeues. Kept exactly as it was so that
+    running without ``--server`` is unchanged.
+    """
+
+    def __init__(self, checkpoint: str, device: str, task: str) -> None:
+        import torch
+
+        from tool.eval_sim_policy import build_batch, load_policy
+
+        self.torch = torch
+        self.build_batch = build_batch
+        self.policy, self.pre, self.post, self.type = load_policy(checkpoint, device)
+        self.policy.reset()
+        self.device = device
+        self.task = task
+        self.cameras: "list[str] | None" = None  # whatever the rig is configured with
+        self.fatal: "str | None" = None
+        self.last_error: "str | None" = None
+        self.round_trip_s = 0.0  # nothing travels; kept so both sources report alike
+        self._latest: "tuple[np.ndarray, dict] | None" = None
+
+    def describe(self) -> str:
+        return f"local '{self.type}' policy on {self.device}"
+
+    #: Inference here has no chunk to step through: the policy's own queue is
+    #: internal, so a tick either infers or dequeues and the operator sees one
+    #: action at a time.
+    chunked = False
+    last_chunk: "np.ndarray | None" = None
+    last_chunk_seq = 0
+    last_chunk_at = 0.0
+
+    def offer(self, state: np.ndarray, images: dict) -> None:
+        self._latest = (state, images)
+
+    def drain(self) -> None:
+        """Nothing is queued here; the next take() infers from what is offered."""
+
+    def set_paused(self, paused: bool) -> None:
+        """No background fetching to pause."""
+
+    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
+        return self._latest
+
+    def take(self) -> "np.ndarray | None":
+        if self._latest is None:
+            return None
+        state, images = self._latest
+        return _infer(
+            self.policy,
+            self.pre,
+            self.post,
+            self.build_batch,
+            state,
+            images,
+            self.task,
+            self.device,
+            self.torch,
+        )
+
+    @property
+    def depth(self) -> int:
+        return 0
+
+
+class RemoteActionSource:
+    """Inference on another machine; action chunks arrive ahead of being needed.
+
+    The caller keeps capturing at the control rate and feeds every observation
+    into a rolling window, because a policy with more than one observation step
+    was trained on adjacent frames. When the local action queue runs low, the
+    window is sent and the next chunk requested on a background thread, so the
+    round trip overlaps motion already being executed and the network never sits
+    inside the control loop.
+
+    THE SPLICE. A chunk lands after the world has moved on, and ``strategy``
+    decides what to do about it -- see :mod:`common.chunking`. ``append`` is what
+    this class used to do unconditionally and remains the default, so an
+    unflagged run behaves exactly as it did; every other strategy discards the
+    rows whose moment has passed, which is measured from this link's own round
+    trip rather than assumed.
+
+    ``sync`` is the exception to all of the above: it blocks in ``offer`` until
+    the reply arrives, because its whole point is that nothing is executed from a
+    stale plan. The arms hold still for the round trip.
+
+    A request that the server rejects outright (4xx) is fatal: the observation
+    or the session is wrong and repeating it cannot help. A dropped connection
+    or a timeout is not -- the next tick tries again, and the caller's stall
+    policy decides how long that is allowed to go on.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        task: str,
+        actions_per_chunk: "int | None" = None,
+        prefetch: "int | None" = None,
+        timeout_s: float = 20.0,
+        hz: float = 30.0,
+        strategy: str = "append",
+        blend_window: int = DEFAULT_BLEND_WINDOW,
+        ramp_kind: str = "linear",
+        new_weight: float = DEFAULT_ENSEMBLE_WEIGHT,
+        camera_map: "dict[str, str] | None" = None,
+    ) -> None:
+        import json
+
+        from common.policy_wire import ObservationWindow
+
+        if strategy not in STRATEGIES:
+            raise ChunkingError(
+                f"unknown strategy: {strategy} (want one of {', '.join(STRATEGIES)})"
+            )
+        self.url = url.rstrip("/")
+        self.task = task
+        self.timeout_s = float(timeout_s)
+        self.strategy = strategy
+        self.blend_window = int(blend_window)
+        self.ramp_kind = ramp_kind
+        self.new_weight = float(new_weight)
+        #: Rename a camera on the way out, for a checkpoint that was trained
+        #: under a different name for the same viewpoint (the twin renders
+        #: ``scene`` where the rig records ``central``). Renaming here rather
+        #: than in the environment keeps the wire honest about what the
+        #: checkpoint asked for.
+        self.camera_map = dict(camera_map or {})
+
+        meta = json.loads(self._rpc("/reset", b""))
+        self.type = meta["policy_type"]
+        self.session = meta["session"]
+        self.cameras = sorted(meta["cameras"])
+        self.n_obs_steps = int(meta["n_obs_steps"])
+        self.server_actions = int(meta["n_action_steps"])
+        self.actions = min(
+            int(actions_per_chunk or self.server_actions), self.server_actions
+        )
+        # The static default covers a fast policy; the threshold below grows it
+        # to cover whatever round trip this link turns out to have.
+        self.prefetch = max(1, self.actions // 3)
+        self.explicit_prefetch = None if prefetch is None else int(prefetch)
+        self.hz = float(hz)
+        self.window = ObservationWindow(self.cameras, self.n_obs_steps)
+
+        self._queue: "deque[np.ndarray]" = deque()
+        self._lock = threading.Lock()
+        self._inflight = False
+        self._seq = 0
+        self.fatal: "str | None" = None
+        self.last_error: "str | None" = None
+        self.round_trip_s = 0.0
+        self.server_infer_s = 0.0
+        #: Ticks of round trip the last splice compensated for, and how many
+        #: actions it threw away because their moment had passed. Reported so a
+        #: strategy can be judged without re-deriving it from the log.
+        self.last_delay = 0
+        self.dropped_stale = 0
+        self._paused = False
+        self._last_sent: "tuple[np.ndarray, dict] | None" = None
+        self.last_chunk: "np.ndarray | None" = None
+        self.last_chunk_seq = 0
+        self.last_chunk_at = 0.0
+
+    #: A chunk is a visible unit here, so a rollout can be stepped one at a time.
+    chunked = True
+
+    @property
+    def guided(self) -> bool:
+        """True when the smoothing is the policy's job, not the splice's."""
+        return self.strategy in GUIDED
+
+    @property
+    def threshold(self) -> int:
+        """Queue depth at which the next chunk is requested. See policy_run.
+
+        ``sync`` asks only once the queue is empty: it is defined by not having
+        a plan in flight while one is executing.
+        """
+        if self.strategy == "sync":
+            return 0
+        return prefetch_threshold(
+            self.prefetch,
+            self.explicit_prefetch,
+            self.round_trip_s,
+            self.hz,
+            self.actions,
+        )
+
+    def drain(self) -> None:
+        """Forget what is queued: it was planned from an older observation."""
+        with self._lock:
+            self._queue.clear()
+
+    def set_paused(self, paused: bool) -> None:
+        """While paused the window keeps filling but no chunk is requested."""
+        with self._lock:
+            self._paused = bool(paused)
+
+    def last_sent(self) -> "tuple[np.ndarray, dict] | None":
+        """The observation the last request carried -- what the policy was shown."""
+        return self._last_sent
+
+    def describe(self) -> str:
+        return (
+            f"remote '{self.type}' policy at {self.url} "
+            f"({self.n_obs_steps} obs step(s) per request, "
+            f"{self.actions} actions per chunk, {self.strategy} splice)"
+        )
+
+    def _rpc(self, path: str, data: "bytes | None" = None) -> bytes:
+        import urllib.request
+
+        request = urllib.request.Request(
+            self.url + path,
+            data=data,
+            method="GET" if data is None else "POST",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            return response.read()
+
+    def _rename(self, images: dict) -> dict:
+        if not self.camera_map:
+            return images
+        return {
+            self.camera_map.get(name, name): frame for name, frame in images.items()
+        }
+
+    def offer(self, state: np.ndarray, images: dict) -> None:
+        """Record this tick's observation and, if the queue is low, ask for more."""
+        images = self._rename(images)
+        self.window.push(state, images)
+        with self._lock:
+            if (
+                self._inflight
+                or self._paused
+                or self.fatal is not None
+                or len(self._queue) > self.threshold
+            ):
+                return
+            self._inflight = True
+            self._seq += 1
+            seq = self._seq
+        self._last_sent = (state, images)
+        steps = self.window.steps()
+        if self.strategy == "sync":
+            # Blocking on purpose: nothing may be executed from a stale plan, so
+            # the caller waits here rather than running the queue down.
+            self._fetch(steps, seq)
+            return
+        threading.Thread(target=self._fetch, args=(steps, seq), daemon=True).start()
+
+    def _splice_in(self, chunk: np.ndarray, delay: int) -> None:
+        """Merge an arrived chunk into the queue. Caller holds the lock."""
+        leftover = (
+            np.asarray(self._queue, dtype=float)
+            if self._queue
+            else np.zeros((0, chunk.shape[1]), dtype=float)
+        )
+        merged = splice(
+            self.strategy,
+            leftover,
+            chunk,
+            delay,
+            window=self.blend_window,
+            ramp_kind=self.ramp_kind,
+            new_weight=self.new_weight,
+        )
+        self.last_delay = delay
+        self.dropped_stale = 0 if self.strategy == "append" else min(delay, len(chunk))
+        self._queue = deque(np.asarray(row, dtype=float) for row in merged)
+
+    def _fetch(self, steps, seq: int) -> None:
+        import urllib.error
+
+        from common.policy_wire import decode_chunk, encode_request
+
+        started = time.perf_counter()
+        try:
+            message = encode_request(
+                steps, self.task, session=self.session, seq=seq, actions=self.actions
+            )
+            chunk, header = decode_chunk(self._rpc("/act", message))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace").strip()[:200]
+            self.last_error = f"HTTP {exc.code}: {body}"
+            if 400 <= exc.code < 500:
+                self.fatal = self.last_error
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a transport hiccup must not kill the loop
+            self.last_error = f"{type(exc).__name__}: {exc}"
+        else:
+            round_trip = time.perf_counter() - started
+            arrived = np.asarray(chunk, dtype=float)
+            with self._lock:
+                self._splice_in(arrived, delay_ticks(round_trip, self.hz))
+                self.last_chunk = arrived
+                self.last_chunk_seq = seq
+                self.last_chunk_at = time.time()
+                self.round_trip_s = round_trip
+                self.server_infer_s = float(
+                    (header.get("timings") or {}).get("infer_s", 0.0)
+                )
+                self.last_error = None
+        finally:
+            with self._lock:
+                self._inflight = False
+
+    def take(self) -> "np.ndarray | None":
+        with self._lock:
+            return self._queue.popleft() if self._queue else None
+
+    @property
+    def depth(self) -> int:
+        with self._lock:
+            return len(self._queue)
