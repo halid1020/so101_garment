@@ -174,6 +174,78 @@ class TestSync(RemoteSourceCase):
         self.assertEqual(source.depth, CHUNK)
 
 
+class TestReceding(RemoteSourceCase):
+    """Execute a fraction of each chunk, then go and look again."""
+
+    def test_it_asks_only_once_the_queue_is_empty(self):
+        self.assertEqual(self.source(strategy="receding").threshold, 0)
+
+    def test_offer_blocks_and_leaves_the_ratio_queued(self):
+        source = self.source(strategy="receding", execute_ratio=0.5)
+        source.offer(*self.observation())
+        self.assertEqual(source.depth, CHUNK // 2)
+
+    def test_the_ratio_applies_to_the_chunk_that_actually_came_back(self):
+        source = self.source(strategy="receding", execute_ratio=0.25)
+        source.offer(*self.observation())
+        self.assertEqual(source.depth, CHUNK // 4)
+
+    def test_the_next_request_starts_from_the_new_observation(self):
+        # Drain what was queued; the next offer must go and ask again rather
+        # than serving the part of the last plan it threw away.
+        source = self.source(strategy="receding", execute_ratio=0.5)
+        source.offer(*self.observation())
+        while source.take() is not None:
+            pass
+        source.offer(*self.observation())
+        self.assertEqual(len(self.server.state["requests"]), 2)
+        self.assertEqual(source.depth, CHUNK // 2)
+
+
+class TestSwitchingStrategy(RemoteSourceCase):
+    """Changing the splice while the run continues."""
+
+    def test_the_queue_is_dropped_because_it_was_spliced_by_another_rule(self):
+        source = self.source(strategy="append")
+        self.fill(source)
+        self.assertGreater(source.depth, 0)
+        source.set_strategy("replace")
+        self.assertEqual(source.depth, 0)
+        self.assertEqual(source.strategy, "replace")
+
+    def test_the_settings_it_returns_are_the_ones_in_force(self):
+        source = self.source()
+        settings = source.set_strategy("receding", execute_ratio=0.25)
+        self.assertEqual(settings["strategy"], "receding")
+        self.assertEqual(settings["execute_ratio"], 0.25)
+        self.assertTrue(settings["blocking"])
+        self.assertEqual(settings, source.settings())
+
+    def test_a_number_can_be_changed_without_changing_the_strategy(self):
+        source = self.source(strategy="blend")
+        source.set_strategy(None, blend_window=9)
+        self.assertEqual(source.strategy, "blend")
+        self.assertEqual(source.blend_window, 9)
+
+    def test_an_unknown_strategy_is_refused_and_changes_nothing(self):
+        source = self.source(strategy="append")
+        with self.assertRaises(ChunkingError):
+            source.set_strategy("clever")
+        self.assertEqual(source.strategy, "append")
+
+    def test_switching_to_rtc_is_refused_by_a_host_that_cannot_guide(self):
+        source = self.source(strategy="append")
+        with self.assertRaises(ChunkingError):
+            source.set_strategy("rtc")
+        self.assertEqual(source.strategy, "append")
+
+    def test_a_ratio_outside_the_unit_interval_is_refused(self):
+        source = self.source()
+        for bad in (0.0, 1.5, -1):
+            with self.assertRaises(ChunkingError, msg=str(bad)):
+                source.set_strategy("receding", execute_ratio=bad)
+
+
 class TestCameraMap(RemoteSourceCase):
     def test_a_camera_is_renamed_on_the_way_out(self):
         # The twin renders 'scene'; this checkpoint was trained on 'central'.

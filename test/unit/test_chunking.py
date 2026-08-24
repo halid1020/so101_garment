@@ -12,6 +12,7 @@ import numpy as np
 
 from common.chunking import (
     DEFAULT_BLEND_WINDOW,
+    DEFAULT_EXECUTE_RATIO,
     STRATEGIES,
     ChunkingError,
     delay_ticks,
@@ -84,6 +85,49 @@ class TestSync(unittest.TestCase):
     def test_a_leftover_means_the_caller_was_not_synchronous(self):
         with self.assertRaises(ChunkingError):
             splice("sync", ladder(2), ladder(5))
+
+
+class TestReceding(unittest.TestCase):
+    """Execute a fraction of the plan, then go and look again."""
+
+    def test_it_keeps_the_ratio_of_whatever_length_came_back(self):
+        # A fraction, not a count, so it means the same against ACT's hundred
+        # actions and diffusion's thirty-two.
+        out = splice("receding", np.zeros((0, 2)), ladder(12), execute_ratio=0.5)
+        self.assertEqual(len(out), 6)
+        np.testing.assert_allclose(out, ladder(6))
+        self.assertEqual(
+            len(splice("receding", np.zeros((0, 2)), ladder(100), execute_ratio=0.25)),
+            25,
+        )
+
+    def test_a_ratio_of_one_is_the_whole_chunk(self):
+        out = splice("receding", np.zeros((0, 2)), ladder(9), execute_ratio=1.0)
+        np.testing.assert_allclose(out, ladder(9))
+
+    def test_it_always_executes_at_least_one_action(self):
+        # Otherwise a small ratio on a short chunk makes no progress at all and
+        # the run stalls looking busy.
+        out = splice("receding", np.zeros((0, 2)), ladder(3), execute_ratio=0.01)
+        self.assertEqual(len(out), 1)
+
+    def test_a_leftover_means_the_caller_was_not_blocking(self):
+        with self.assertRaises(ChunkingError):
+            splice("receding", ladder(2), ladder(8))
+
+    def test_a_ratio_outside_the_unit_interval_is_refused(self):
+        for bad in (0.0, -0.5, 1.5):
+            with self.assertRaises(ChunkingError, msg=str(bad)):
+                splice("receding", np.zeros((0, 2)), ladder(8), execute_ratio=bad)
+
+    def test_the_delay_does_not_enter_into_it(self):
+        # The arms held still for the reply, so row 0 is still the right start.
+        a = splice("receding", np.zeros((0, 2)), ladder(8), delay=5, execute_ratio=0.5)
+        b = splice("receding", np.zeros((0, 2)), ladder(8), delay=0, execute_ratio=0.5)
+        np.testing.assert_allclose(a, b)
+
+    def test_the_default_ratio_is_half(self):
+        self.assertEqual(DEFAULT_EXECUTE_RATIO, 0.5)
 
 
 class TestReplace(unittest.TestCase):
@@ -186,14 +230,15 @@ class TestPlanLag(unittest.TestCase):
         self.assertEqual(plan_lag("append", leftover_len=27, delay=18), 45)
 
     def test_every_aligning_strategy_executes_the_plan_on_time(self):
-        for strategy in ("replace", "blend", "ensemble", "rtc", "sync"):
+        for strategy in ("replace", "blend", "ensemble", "rtc", "sync", "receding"):
             self.assertEqual(plan_lag(strategy, 27, 18), 0, msg=strategy)
 
 
 class TestEveryStrategyIsUsable(unittest.TestCase):
     def test_each_named_strategy_splices_something(self):
         for strategy in STRATEGIES:
-            leftover = np.zeros((0, 2)) if strategy == "sync" else ladder(4)
+            blocking = strategy in ("sync", "receding")
+            leftover = np.zeros((0, 2)) if blocking else ladder(4)
             out = splice(strategy, leftover, ladder(12), delay=2)
             self.assertGreater(len(out), 0, msg=strategy)
             self.assertEqual(out.shape[1], 2, msg=strategy)

@@ -48,6 +48,35 @@ class StubSource:
         return self._sent
 
 
+class _SpliceSource(StubSource):
+    """A chunked source that records the splice it was asked for."""
+
+    def __init__(self):
+        super().__init__()
+        self.strategy = "append"
+        self.params: dict = {}
+
+    def set_strategy(self, strategy=None, **params):
+        from common.chunking import STRATEGIES, ChunkingError
+
+        if strategy is not None and strategy not in STRATEGIES:
+            raise ChunkingError(f"unknown strategy: {strategy}")
+        if strategy is not None:
+            self.strategy = strategy
+        self.params.update(params)
+        return self.settings()
+
+    def settings(self):
+        return {
+            "strategy": self.strategy,
+            "execute_ratio": self.params.get("execute_ratio", 0.5),
+            "blend_window": self.params.get("blend_window", 5),
+            "new_weight": self.params.get("new_weight", 0.7),
+            "ramp_kind": "linear",
+            "blocking": self.strategy in ("sync", "receding"),
+        }
+
+
 class StubDataManager:
     def get_rgb_image(self, name):
         return frame(200)
@@ -261,6 +290,54 @@ class TestTwinAnchoring(unittest.TestCase):
 
     def test_a_source_with_nothing_queued_has_no_pending_payload(self):
         self.assertIsNone(pending_payload(StubSource()))
+
+
+class TestStrategyRoute(ViewTestCase):
+    """Changing the splice from the page."""
+
+    async def get_application(self):
+        warnings.filterwarnings("ignore", message=".*app\\[.*")
+        self.control = RunControl()
+        self.source = _SpliceSource()
+        self.view = PolicyView(
+            self.control, self.source, StubDataManager(), CAMERAS, port=0
+        )
+        return self.view.build_app()
+
+    async def test_a_known_strategy_is_applied_and_echoed_back(self):
+        r = await self.client.post("/api/strategy", json={"strategy": "receding"})
+        self.assertEqual(r.status, 200)
+        self.assertEqual((await r.json())["strategy"], "receding")
+        self.assertEqual(self.source.strategy, "receding")
+
+    async def test_its_numbers_travel_with_it(self):
+        await self.client.post(
+            "/api/strategy", json={"strategy": "receding", "execute_ratio": 0.25}
+        )
+        self.assertEqual(self.source.params["execute_ratio"], 0.25)
+
+    async def test_an_unknown_strategy_is_refused(self):
+        r = await self.client.post("/api/strategy", json={"strategy": "clever"})
+        self.assertEqual(r.status, 400)
+
+    async def test_the_run_is_told_so_it_can_close_a_measurement(self):
+        seen = []
+        self.view.on_splice_change = seen.append
+        await self.client.post("/api/strategy", json={"strategy": "replace"})
+        self.assertEqual([s["strategy"] for s in seen], ["replace"])
+
+    async def test_the_page_is_offered_the_whole_list(self):
+        body = await self.status()
+        self.assertIn("receding", body["strategies"])
+        self.assertEqual(body["splice"]["strategy"], "append")
+
+
+class TestStrategyRouteLocalRun(ViewTestCase):
+    """A local run has no chunk to splice, so the control does not apply."""
+
+    async def test_it_is_refused_rather_than_silently_ignored(self):
+        r = await self.client.post("/api/strategy", json={"strategy": "replace"})
+        self.assertEqual(r.status, 400)
 
 
 if __name__ == "__main__":

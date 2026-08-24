@@ -23,6 +23,11 @@ first) and the chunk that just landed (``incoming``, whose row 0 was planned for
     module existed, and its cost is stated below.
   * ``sync``     -- there are never any leftovers, because the caller blocked
     for the reply. Simple and reproducible; the arms pause at every boundary.
+  * ``receding`` -- ``sync``, but only the first FRACTION of the chunk is kept
+    and the rest is thrown away, so the policy re-observes long before its plan
+    runs out. Classic receding horizon, and the baseline the others argue
+    against. It BLOCKS: the arms hold still for every round trip, and the name
+    describes the horizon, not any concurrency.
   * ``replace``  -- drop the leftovers, drop the first ``delay`` rows of the new
     chunk, execute the rest. Action ``k`` then runs at the time it was planned
     for. The seam is a step change.
@@ -56,7 +61,15 @@ import math
 import numpy as np
 
 #: Strategy names, in the order they are worth trying.
-STRATEGIES = ("sync", "append", "replace", "blend", "ensemble", "rtc")
+STRATEGIES = (
+    "sync",
+    "receding",
+    "append",
+    "replace",
+    "blend",
+    "ensemble",
+    "rtc",
+)
 
 #: Strategies whose smoothing is computed by the policy rather than here. The
 #: client-side splice is ``replace``; what differs is that the request carries
@@ -72,6 +85,11 @@ DEFAULT_ENSEMBLE_WEIGHT = 0.7
 
 #: Default cross-fade length, in control ticks.
 DEFAULT_BLEND_WINDOW = 5
+
+#: Default fraction of a returned chunk that ``receding`` executes before it
+#: asks again. A fraction rather than a count, so it means the same thing
+#: against ACT's hundred actions and diffusion's thirty-two.
+DEFAULT_EXECUTE_RATIO = 0.5
 
 
 class ChunkingError(ValueError):
@@ -130,6 +148,7 @@ def splice(
     window: int = DEFAULT_BLEND_WINDOW,
     ramp_kind: str = "linear",
     new_weight: float = DEFAULT_ENSEMBLE_WEIGHT,
+    execute_ratio: float = DEFAULT_EXECUTE_RATIO,
 ) -> np.ndarray:
     """The queue to execute once ``incoming`` lands. Pure.
 
@@ -159,16 +178,24 @@ def splice(
         _check_dims(old, new)
         return np.concatenate([old, new], axis=0)
 
-    if strategy == "sync":
+    if strategy in ("sync", "receding"):
         # The caller blocked for this reply, so the arms did not move while it
         # was in flight and row 0 is still the right place to start. A leftover
         # here means the caller is not actually synchronous.
         if old.size:
             raise ChunkingError(
-                "sync spliced a chunk while actions were still queued: "
-                "a synchronous caller must drain before it requests"
+                f"{strategy} spliced a chunk while actions were still queued: "
+                "a blocking caller must drain before it requests"
             )
-        return new.copy()
+        if strategy == "sync":
+            return new.copy()
+        # Receding: keep the front of the plan and discard the rest, so the
+        # next observation is taken while this one is still recent. At least
+        # one action, or the run makes no progress at all.
+        if not 0.0 < execute_ratio <= 1.0:
+            raise ChunkingError(f"execute_ratio must be in (0, 1], got {execute_ratio}")
+        keep = max(1, int(math.ceil(execute_ratio * len(new))))
+        return new[:keep].copy()
 
     # Everything below aligns the new plan to the present: rows 0..delay-1 were
     # planned for ticks that have already been executed from the previous chunk.

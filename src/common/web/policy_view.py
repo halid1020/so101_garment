@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 from aiohttp import web  # type: ignore[import]
 
+from common.chunking import STRATEGIES
 from common.recording.monitor_server import (
     BOUNDARY,
     DEFAULT_MAX_WIDTH,
@@ -105,6 +106,10 @@ class PolicyView:
         self.arm_from_view = bool(arm_from_view)
         #: Why the view is not serving, if it is not. See :meth:`start`.
         self.error: "str | None" = None
+        #: Called with the new settings whenever the splice changes, so a run
+        #: can close one measurement segment and open the next. Set by the
+        #: caller; a no-op if nobody cares.
+        self.on_splice_change = lambda _settings: None
         self.control = control
         self.source = source
         self.data_manager = data_manager
@@ -130,6 +135,7 @@ class PolicyView:
                 web.get("/", self.handle_index),
                 web.get("/api/status", self.handle_status),
                 web.post("/api/mode", self.handle_mode),
+                web.post("/api/strategy", self.handle_strategy),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
                 web.get("/shown/{name}.jpg", self.handle_shown),
                 web.get("/twin.mjpg", self.handle_twin),
@@ -199,9 +205,31 @@ class PolicyView:
             "threshold": int(getattr(source, "threshold", 0) or 0),
             "actions_per_chunk": int(getattr(source, "actions", 0) or 0),
             "pending": pending_payload(source),
-            "strategy": getattr(source, "strategy", None),
+            "strategies": list(STRATEGIES),
+            "splice": (source.settings() if hasattr(source, "settings") else None),
             "arm_from_view": bool(self.arm_from_view),
         }
+
+    async def handle_strategy(self, request: web.Request) -> web.Response:
+        """Change the splice while the run continues. See policy_client."""
+        setter = getattr(self.source, "set_strategy", None)
+        if setter is None:
+            raise web.HTTPBadRequest(
+                text="this run infers locally, one action at a time: there is "
+                "no chunk to splice"
+            )
+        body = await request.json()
+        params = {
+            key: body[key]
+            for key in ("execute_ratio", "blend_window", "new_weight", "ramp_kind")
+            if body.get(key) is not None
+        }
+        try:
+            settings = setter(body.get("strategy"), **params)
+        except ValueError as exc:  # ChunkingError is one
+            raise web.HTTPBadRequest(text=str(exc))
+        self.on_splice_change(settings)
+        return web.json_response(settings)
 
     async def handle_index(self, _request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "policy.html")

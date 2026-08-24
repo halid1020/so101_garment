@@ -261,6 +261,14 @@ torque.
 
 ### Reading the page
 
+**The live cameras are not connected until you ask.** Every MJPEG stream is a
+connection that never closes, and a browser allows about six per origin; with
+three cameras plus the twin, the short requests — the status poll, the frames
+the policy was shown — queue behind streams that never finish, get dropped and
+retried, and the twin visibly stutters. The twin is the panel that answers a
+question, so it keeps the clear channel. Press **connect** on the live panel
+when you want them, and disconnect when the twin matters more.
+
 The strip under the buttons is the health of the rollout, and it stays on
 screen because a rollout is over in seconds and scrolling loses it: **queue**
 against the depth that triggers the next request (red at zero — the arms are
@@ -307,7 +315,8 @@ here that changes what the arms do rather than merely when they ask.
 | `replace` | drops the leftovers and the rows whose moment has passed | execute each action at the tick it was planned for |
 | `blend` | `replace`, then cross-fades out of the old plan over `--blend-window` ticks | remove the step change at the join |
 | `ensemble` | averages the overlap, `--new-weight` on the newer plan | hedge between two plans that disagree |
-| `sync` | blocks for the reply; nothing is executed from a stale plan | a baseline, and only that — see the warning below |
+| `sync` | blocks for the reply, then executes the WHOLE chunk | a baseline, and only that — see the warning below |
+| `receding` | blocks, then executes only `--execute-ratio` of the chunk and throws the rest away | re-observe early; the classic receding horizon |
 | `rtc` | guidance inside the denoiser, on the host | nothing yet; the host refuses it |
 
 `append` is the default, so a run without the flag behaves exactly as it did
@@ -327,6 +336,17 @@ in the twin against a 32-action diffusion chunk and an 18-tick delay:
 `--actions-per-chunk`, or accept the holds, or use `blend`, which pays the same
 price but does not step at the join.
 
+**`receding` is the one you were promised, and it blocks.** Send an
+observation, wait, execute a fraction of what comes back, stop, ask again. The
+fraction is of *whatever length arrived*, so it means the same thing against
+ACT's hundred actions and diffusion's thirty-two: `--execute-ratio 0.5` on a
+12-action chunk executes 6. Lower it to re-observe sooner, at the cost of a
+round trip for every fraction of a chunk of motion. Nothing about the name is a
+claim of concurrency — the arms hold still for every round trip, exactly as
+`sync` does. It is `sync --actions-per-chunk N` with N chosen as a fraction, and
+it earns its own name because that fraction is the quantity being studied and
+because it can be changed while the rig runs.
+
 **`sync` blocks the control loop.** It waits for the reply inside the tick, so
 at a 700 ms round trip the loop runs at about 1.3 Hz rather than 30. The arms
 are safe — the servos hold their last goal and nothing is written from a stale
@@ -339,6 +359,28 @@ answer would be plain `replace` under another name. The client checks the
 handshake and stops rather than giving you a result labelled `rtc` that is not.
 It applies to pi0.5 and other flow-matching policies only; ACT and diffusion
 have no such hook.
+
+### Changing the splice without stopping
+
+Four strategies compared across four runs means four ramps, four workspace
+resets, and whatever drifted between them landing in the comparison. The page's
+**splice** row changes it mid-run instead: pick a strategy, and the one number
+it actually uses appears beside it — the execute ratio for `receding`, the
+cross-fade for `blend`, the new-plan weight for `ensemble`.
+
+Switching **drops the queue**. What is in there was spliced under the old rule —
+under `append` it may be two plans deep, under `blend` its leading rows are a
+cross-fade into a plan the new rule would not have chosen — so carrying it over
+would make the first chunk after every switch belong to neither. The cost is one
+round trip, the same as resuming from a pause.
+
+Each switch closes a **measurement segment**. The run ends with one row per
+splice that was actually in force, so a single session on a single scene fills
+the comparison table rather than producing one average over settings that were
+never in force at the same time.
+
+`--seconds 0` runs until you press **Stop** (or Ctrl+C), which is what that
+session wants: one ramp, one workspace, as long as it takes.
 
 ### What the run tells you afterwards
 

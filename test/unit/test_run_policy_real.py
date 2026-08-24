@@ -24,6 +24,7 @@ from tool.run_policy_real import (
     RemoteActionSource,
     policy_action_to_goals,
     stall_decision,
+    tick_budget,
 )
 
 _BODY = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
@@ -213,6 +214,19 @@ class TestRemoteActionSource(unittest.TestCase):
         self.assertIsNone(source.fatal)
         self.assertIn("500", source.last_error or "")
         self.assertEqual(source.depth, 0)
+
+
+class TestTickBudget(unittest.TestCase):
+    """How long a run lasts, and what 'until stopped' means."""
+
+    def test_a_duration_becomes_that_many_ticks(self):
+        self.assertEqual(tick_budget(30.0, 30.0), 900)
+        self.assertEqual(tick_budget(1.5, 20.0), 30)
+
+    def test_zero_seconds_means_no_limit(self):
+        # A session spent comparing splices from the live view wants one ramp,
+        # one workspace and as long as it takes.
+        self.assertIsNone(tick_budget(0.0, 30.0))
 
 
 if __name__ == "__main__":

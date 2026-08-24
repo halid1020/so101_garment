@@ -19,6 +19,26 @@
     <button id="p-stop" class="danger">Stop</button>
   </header>
 
+  <!-- The splice in force, changeable here so four strategies can be compared
+       on ONE scene with one ramp, instead of four runs that drift apart. -->
+  <div id="p-splice">
+    <label>splice
+      <select id="p-strategy"></select>
+    </label>
+    <label id="p-ratio-wrap" hidden>execute
+      <input id="p-ratio" type="range" min="0.05" max="1" step="0.05">
+      <output id="p-ratio-out"></output> of each chunk
+    </label>
+    <label id="p-window-wrap" hidden>cross-fade
+      <input id="p-window" type="number" min="1" max="50" step="1"> ticks
+    </label>
+    <label id="p-weight-wrap" hidden>new plan
+      <input id="p-weight" type="range" min="0" max="1" step="0.05">
+      <output id="p-weight-out"></output>
+    </label>
+    <span class="muted" id="p-splice-note"></span>
+  </div>
+
   <!-- The numbers you look at while something is going wrong, always on
        screen: a rollout is over in seconds and scrolling loses it. -->
   <div id="p-vitals">
@@ -72,9 +92,13 @@
       <table id="p-timing" class="checks"></table>
     </section>
 
+    <!-- Off until asked for. Four never-ending streams against a browser
+         limit of about six connections starves the twin, and the twin is the
+         one panel here that answers a question. -->
     <section class="card" id="c-live">
       <h2>Live cameras
-        <span class="muted">now — not what any plan was drawn from</span></h2>
+        <span class="muted">now — not what any plan was drawn from</span>
+        <button id="p-live-connect" class="link">connect</button></h2>
       <div class="tiles" id="p-live"></div>
     </section>
   </main>

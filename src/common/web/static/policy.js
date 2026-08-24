@@ -64,17 +64,36 @@ function setTwin() {
 // -- the pictures -----------------------------------------------------
 // Built once, when the status first names the cameras: an <img> on an mjpeg
 // stream is left alone by the browser, and rebuilding it would restart it.
+// The live cameras are NOT connected on load. Each MJPEG stream is a
+// connection that never closes, and a browser allows about six per origin; with
+// three cameras plus the twin the short requests -- the status poll, the frames
+// the policy was shown -- queue behind them, get dropped and retried, and the
+// twin visibly stutters. The twin is the panel that answers a question, so it
+// gets the clear channel and the cameras are opened only when asked for.
+let liveConnected = false;
 function buildTiles(cameras) {
   if ($('#p-live').children.length) return;
   const tile = (src, caption) =>
     `<figure class="tile"><img src="${src}" alt="${caption}">
      <figcaption>${caption}</figcaption></figure>`;
-  $('#p-live').innerHTML = cameras.map(
-    (c) => tile(`/stream/${c}.mjpg`, c)).join('');
-  $('#p-shown').innerHTML = cameras.map(
-    (c) => tile('', c)).join('');
+  $('#p-live').innerHTML = cameras.map((c) => tile('', c)).join('');
+  $('#p-shown').innerHTML = cameras.map((c) => tile('', c)).join('');
   setTwin();
 }
+
+$('#p-live-connect').onclick = () => {
+  const btn = $('#p-live-connect');
+  const imgs = $('#p-live').querySelectorAll('img');
+  if (liveConnected) {
+    imgs.forEach((img) => img.removeAttribute('src'));
+    liveConnected = false;
+    btn.textContent = 'connect';
+    return;
+  }
+  imgs.forEach((img) => { img.src = `/stream/${img.alt}.mjpg`; });
+  liveConnected = true;
+  btn.textContent = 'disconnect (frees the twin\u2019s connection)';
+};
 
 // The frames the last request carried are still, so they are fetched rather
 // than streamed -- once per chunk, which is when they change.
@@ -125,6 +144,66 @@ function fmt(v, digits = 2) {
   return (v === null || v === undefined) ? '—' : v.toFixed(digits);
 }
 
+// -- the splice -------------------------------------------------------
+// Changing it mid-run drops the queue: what is in there was spliced under the
+// old rule. The server does that; here we only send the change and let the
+// next poll tell us what took effect.
+let spliceKnown = null;
+async function setSplice(body) {
+  try {
+    spliceKnown = await j('/api/strategy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    paintSplice(spliceKnown);
+    $('#p-err').hidden = true;
+  } catch (e) {
+    $('#p-err').textContent = e.message;
+    $('#p-err').hidden = false;
+  }
+  poll();
+}
+
+$('#p-strategy').onchange = () => setSplice({strategy: $('#p-strategy').value});
+$('#p-ratio').oninput = () => { $('#p-ratio-out').value = $('#p-ratio').value; };
+$('#p-ratio').onchange =
+  () => setSplice({execute_ratio: parseFloat($('#p-ratio').value)});
+$('#p-window').onchange =
+  () => setSplice({blend_window: parseInt($('#p-window').value, 10)});
+$('#p-weight').oninput = () => { $('#p-weight-out').value = $('#p-weight').value; };
+$('#p-weight').onchange =
+  () => setSplice({new_weight: parseFloat($('#p-weight').value)});
+
+// Only the number the current strategy actually uses is on screen, so the row
+// never offers a knob that does nothing.
+function paintSplice(sp) {
+  if (!sp) return;
+  if ($('#p-strategy').value !== sp.strategy) $('#p-strategy').value = sp.strategy;
+  const show = (wrap, on) => { $(wrap).hidden = !on; };
+  show('#p-ratio-wrap', sp.strategy === 'receding');
+  show('#p-window-wrap', sp.strategy === 'blend');
+  show('#p-weight-wrap', sp.strategy === 'ensemble');
+  if (document.activeElement !== $('#p-ratio')) {
+    $('#p-ratio').value = sp.execute_ratio;
+    $('#p-ratio-out').value = sp.execute_ratio;
+  }
+  if (document.activeElement !== $('#p-window')) $('#p-window').value = sp.blend_window;
+  if (document.activeElement !== $('#p-weight')) {
+    $('#p-weight').value = sp.new_weight;
+    $('#p-weight-out').value = sp.new_weight;
+  }
+  $('#p-splice-note').textContent = sp.blocking
+    ? 'blocks: the arms hold still for every round trip'
+    : 'overlaps: the next plan is fetched while this one runs';
+}
+
+function buildStrategies(names) {
+  const sel = $('#p-strategy');
+  if (sel.options.length || !names || !names.length) return;
+  sel.innerHTML = names.map((n) => `<option value="${n}">${n}</option>`).join('');
+}
+
 // -- the vitals -------------------------------------------------------
 // The four numbers that decide whether a rollout is healthy, sized so they
 // read across the room, and coloured only when something is actually wrong.
@@ -157,9 +236,11 @@ function vitals(s) {
   vital('v-chunk',
         s.pending ? `${s.pending.n}` : (s.chunk ? `${s.chunk.n}` : '—'),
         s.pending ? 'queued to execute' : 'plan, actions');
-  vital('v-splice', s.strategy || '—', 'splice');
-  vital('v-progress', `${ticks}/${s.ticks_total || 0}`,
-        `${(s.t || 0).toFixed(0)} s at ${s.hz || 0} Hz`);
+  vital('v-splice', (s.splice && s.splice.strategy) || '—', 'splice');
+  vital('v-progress',
+        s.ticks_total ? `${ticks}/${s.ticks_total}` : `${(s.t || 0).toFixed(0)} s`,
+        s.ticks_total ? `${(s.t || 0).toFixed(0)} s at ${s.hz || 0} Hz`
+                      : `running until stopped, ${s.hz || 0} Hz`);
 }
 
 function timing(s) {
@@ -236,6 +317,9 @@ function render(s) {
   // Only while this run is waiting for consent it delegated to us.
   $('#p-arm').hidden = !(s.arm_from_view && !s.armed && !s.dry_run);
 
+  buildStrategies(s.strategies);
+  paintSplice(s.splice);
+  $('#p-splice').hidden = s.chunked === false;
   buildTiles(s.cameras || []);
   refreshShown(s.cameras || [], s.chunk ? s.chunk.seq : -1);
   $('#p-shown-note').textContent = s.chunk

@@ -55,6 +55,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
 import sys
 import time
@@ -66,10 +67,11 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.chunk_metrics import summarise  # noqa: E402
+from common.chunk_metrics import compare, summarise  # noqa: E402
 from common.chunking import (  # noqa: E402
     DEFAULT_BLEND_WINDOW,
     DEFAULT_ENSEMBLE_WEIGHT,
+    DEFAULT_EXECUTE_RATIO,
     STRATEGIES,
 )
 from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
@@ -202,6 +204,23 @@ def stall_decision(
     return "hold"
 
 
+def _ticks(budget: "int | None"):
+    """Tick indices for this run: ``budget`` of them, or without end."""
+    return itertools.count() if budget is None else range(budget)
+
+
+def tick_budget(seconds: float, hz: float) -> "int | None":
+    """How many ticks a run gets, or ``None`` for no limit. Pure.
+
+    ``--seconds 0`` means "until somebody stops it", which is what a session
+    spent comparing splices from the live view needs: one ramp, one workspace,
+    one scene, and as long as it takes.
+    """
+    if seconds <= 0:
+        return None
+    return int(seconds * hz)
+
+
 def _first_action(source, timeout_s: float):
     """Block until the source has an action, or give up with a clear reason.
 
@@ -276,6 +295,13 @@ def main() -> None:
         help="Remote, --strategy blend: shape of that cross-fade",
     )
     parser.add_argument(
+        "--execute-ratio",
+        type=float,
+        default=DEFAULT_EXECUTE_RATIO,
+        help="Remote, --strategy receding: fraction of each returned chunk to "
+        "execute before asking again (0-1; 0.5 of a 12-action chunk is 6)",
+    )
+    parser.add_argument(
         "--new-weight",
         type=float,
         default=DEFAULT_ENSEMBLE_WEIGHT,
@@ -330,8 +356,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.hz <= 0 or args.seconds <= 0:
-        raise SystemExit("❌ --hz and --seconds must be > 0")
+    if args.hz <= 0:
+        raise SystemExit("❌ --hz must be > 0")
+    if args.seconds < 0:
+        raise SystemExit("❌ --seconds must be >= 0 (0 means until stopped)")
+    if args.seconds == 0 and not args.web:
+        print("ℹ️  --seconds 0: this run ends on Ctrl+C only (no --web to stop it)")
     if bool(args.checkpoint) == bool(args.server):
         raise SystemExit(
             "❌ pass exactly one of --checkpoint (local) or --server (remote)"
@@ -363,6 +393,7 @@ def main() -> None:
             blend_window=args.blend_window,
             ramp_kind=args.ramp,
             new_weight=args.new_weight,
+            execute_ratio=args.execute_ratio,
         )
     else:
         import torch
@@ -393,6 +424,7 @@ def main() -> None:
 
     # The throttle exists whether or not anyone is watching: the loop consults
     # it every tick, and only the view (if asked for) ever changes it.
+    n_ticks = tick_budget(args.seconds, args.hz)
     control = RunControl(mode=args.start_mode)
     control.publish(
         hz=args.hz,
@@ -401,7 +433,7 @@ def main() -> None:
         source=source.describe(),
         cameras=list(image_names),
         chunked=bool(source.chunked),
-        ticks_total=int(args.seconds * args.hz),
+        ticks_total=int(n_ticks or 0),
     )
 
     view = None
@@ -459,7 +491,6 @@ def main() -> None:
         print(f"📝 run log: {run_log.root}")
 
     dt = 1.0 / args.hz
-    n_ticks = int(args.seconds * args.hz)
     torque_on = False
     try:
         if args.arm_from_view and not args.dry_run:
@@ -502,12 +533,45 @@ def main() -> None:
         holds = 0
         # What the arms actually did, so the run can be judged after it rather
         # than only watched during it. See common/chunk_metrics.
+        # One measurement SEGMENT per splice in force. Switching strategy from
+        # the page closes the current segment and opens the next, so a session
+        # spent comparing them ends with one row each rather than one average
+        # over settings that were never in force at the same time.
+        segments: "list[dict]" = []
         executed: "list[np.ndarray]" = []
         seams: "list[int]" = []
         round_trips: "list[float]" = []
         last_seq = 0
+
+        def close_segment(name: str) -> None:
+            if executed:
+                row = summarise(
+                    np.asarray(executed),
+                    seams,
+                    held_ticks=segment_holds[0],
+                    total_ticks=len(executed) + segment_holds[0],
+                    round_trips_s=round_trips,
+                )
+                row["strategy"] = name
+                segments.append(row)
+            executed.clear()
+            seams.clear()
+            round_trips.clear()
+            segment_holds[0] = 0
+
+        segment_holds = [0]
+        current = [getattr(source, "strategy", args.strategy)]
+
+        if view is not None:
+
+            def on_splice_change(settings, _current=current):
+                close_segment(_current[0])
+                _current[0] = settings["strategy"]
+                print(f"🔀 splice is now {settings['strategy']}")
+
+            view.on_splice_change = on_splice_change
         started_at = time.time()
-        for tick in range(n_ticks):
+        for tick in _ticks(n_ticks):
             t0 = time.perf_counter()
             if control.stopping:
                 print("⏹️  stopped from the live view")
@@ -560,6 +624,10 @@ def main() -> None:
                 warned = False
             else:
                 holds += 1
+                # Only a hold while RUNNING is the splice's doing; a pause the
+                # operator asked for would otherwise swamp the measurement,
+                # since preview holds on every single tick.
+                segment_holds[0] += 1
                 if stalled_since is None:
                     stalled_since = time.perf_counter()
                 if what == "abort":
@@ -609,7 +677,7 @@ def main() -> None:
                 )
             time.sleep(max(0.0, dt - (time.perf_counter() - t0)))
         else:
-            print(f"✓ finished {n_ticks} ticks")
+            print(f"✓ finished {n_ticks} ticks")  # never for an endless run
     except KeyboardInterrupt:
         print("\n⏹️  interrupted")
     finally:
@@ -625,24 +693,11 @@ def main() -> None:
                 c.stop()
             except Exception:  # noqa: BLE001
                 pass
-        if args.server and executed:
-            row = summarise(
-                np.asarray(executed),
-                seams,
-                held_ticks=holds,
-                total_ticks=len(executed) + holds,
-                round_trips_s=round_trips,
-            )
-            ratio = row["seam_ratio"]
-            rtt = row["round_trip_ms_median"]
-            print(
-                f"\n📐 {args.strategy}: "
-                f"seam ratio {'—' if ratio is None else format(ratio, '.2f')}  "
-                f"held {row['held_fraction']:.0%}  "
-                f"path {row['path_length']:.1f}  "
-                f"chunks {row['chunks']}  "
-                f"rtt median {'—' if rtt is None else format(rtt, '.0f') + ' ms'}"
-            )
+        if args.server:
+            close_segment(current[0])
+            if segments:
+                print("\n📐 what each splice did on this scene:\n")
+                print(compare(segments))
         if run_log is not None:
             run_log.close()
             print(f"📝 run log written: {run_log.root}")

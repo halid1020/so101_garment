@@ -27,12 +27,18 @@ import numpy as np
 from common.chunking import (
     DEFAULT_BLEND_WINDOW,
     DEFAULT_ENSEMBLE_WEIGHT,
+    DEFAULT_EXECUTE_RATIO,
     GUIDED,
     STRATEGIES,
     ChunkingError,
     delay_ticks,
     splice,
 )
+
+#: Strategies that block in ``offer`` until the reply lands. They ask only when
+#: the queue is empty, so nothing is ever executed from a stale plan -- and the
+#: arms hold still for the whole round trip, which is the price.
+BLOCKING = ("sync", "receding")
 from common.policy_run import prefetch_threshold
 
 
@@ -158,6 +164,7 @@ class RemoteActionSource:
         new_weight: float = DEFAULT_ENSEMBLE_WEIGHT,
         camera_map: "dict[str, str] | None" = None,
         virtual_delay_ticks: "int | None" = None,
+        execute_ratio: float = DEFAULT_EXECUTE_RATIO,
     ) -> None:
         import json
 
@@ -174,6 +181,7 @@ class RemoteActionSource:
         self.blend_window = int(blend_window)
         self.ramp_kind = ramp_kind
         self.new_weight = float(new_weight)
+        self.execute_ratio = float(execute_ratio)
         #: Rename a camera on the way out, for a checkpoint that was trained
         #: under a different name for the same viewpoint (the twin renders
         #: ``scene`` where the rig records ``central``). Renaming here rather
@@ -198,7 +206,8 @@ class RemoteActionSource:
         self.actions = min(
             int(actions_per_chunk or self.server_actions), self.server_actions
         )
-        if self.guided and not bool(meta.get("rtc")):
+        self.host_guides = bool(meta.get("rtc"))
+        if self.guided and not self.host_guides:
             # Refused rather than quietly downgraded: RTC's smoothing happens
             # inside the denoiser on the host, so a host that does not do it
             # gives exactly 'replace' -- and a run labelled 'rtc' that was
@@ -246,10 +255,10 @@ class RemoteActionSource:
     def threshold(self) -> int:
         """Queue depth at which the next chunk is requested. See policy_run.
 
-        ``sync`` asks only once the queue is empty: it is defined by not having
-        a plan in flight while one is executing.
+        A blocking strategy asks only once the queue is empty: it is defined by
+        not having a plan in flight while one is executing.
         """
-        if self.strategy == "sync":
+        if self.strategy in BLOCKING:
             return 0
         return prefetch_threshold(
             self.prefetch,
@@ -263,6 +272,61 @@ class RemoteActionSource:
         """Forget what is queued: it was planned from an older observation."""
         with self._lock:
             self._queue.clear()
+
+    def set_strategy(self, strategy: "str | None" = None, **params) -> dict:
+        """Change the splice, and the numbers it uses, while the run continues.
+
+        The queue is DROPPED. What is in it was spliced under the old rule --
+        under ``append`` it may be two plans deep, under ``blend`` its leading
+        rows are a cross-fade into a plan the new rule would not have chosen --
+        and carrying that into a different strategy would make the first chunk
+        of every switch belong to neither. The cost is one round trip, which is
+        the same cost as resuming from a pause.
+
+        Returns the settings now in force, so a caller need not guess what was
+        accepted. Unknown parameters are ignored rather than refused: the page
+        sends whatever its controls hold, and only some apply to any strategy.
+        """
+        if strategy is not None and strategy not in STRATEGIES:
+            raise ChunkingError(
+                f"unknown strategy: {strategy} (want one of {', '.join(STRATEGIES)})"
+            )
+        if strategy in GUIDED and not self.host_guides:
+            raise ChunkingError(
+                f"the host at {self.url} does not do RTC guidance "
+                f"(policy '{self.type}'); its answer would be plain 'replace'"
+            )
+        ratio = params.get("execute_ratio")
+        if ratio is not None and not 0.0 < float(ratio) <= 1.0:
+            raise ChunkingError(f"execute_ratio must be in (0, 1], got {ratio}")
+        with self._lock:
+            if strategy is not None:
+                self.strategy = strategy
+            if ratio is not None:
+                self.execute_ratio = float(ratio)
+            if params.get("blend_window") is not None:
+                self.blend_window = max(1, int(params["blend_window"]))
+            if params.get("new_weight") is not None:
+                weight = float(params["new_weight"])
+                if not 0.0 <= weight <= 1.0:
+                    raise ChunkingError(f"new_weight must be in [0, 1], got {weight}")
+                self.new_weight = weight
+            if params.get("ramp_kind") is not None:
+                self.ramp_kind = str(params["ramp_kind"])
+            self._queue.clear()
+            self._pending = None
+        return self.settings()
+
+    def settings(self) -> dict:
+        """The splice in force and the numbers it uses."""
+        return {
+            "strategy": self.strategy,
+            "execute_ratio": round(self.execute_ratio, 3),
+            "blend_window": int(self.blend_window),
+            "new_weight": round(self.new_weight, 3),
+            "ramp_kind": self.ramp_kind,
+            "blocking": self.strategy in BLOCKING,
+        }
 
     def set_paused(self, paused: bool) -> None:
         """While paused the window keeps filling but no chunk is requested."""
@@ -321,7 +385,7 @@ class RemoteActionSource:
             # Inline, so the wall clock plays no part in when this lands.
             self._fetch(steps, seq)
             return
-        if self.strategy == "sync":
+        if self.strategy in BLOCKING:
             # Blocking on purpose: nothing may be executed from a stale plan, so
             # the caller waits here rather than running the queue down.
             self._fetch(steps, seq)
@@ -343,6 +407,7 @@ class RemoteActionSource:
             window=self.blend_window,
             ramp_kind=self.ramp_kind,
             new_weight=self.new_weight,
+            execute_ratio=self.execute_ratio,
         )
         self.last_delay = delay
         self.dropped_stale = 0 if self.strategy == "append" else min(delay, len(chunk))

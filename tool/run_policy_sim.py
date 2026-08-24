@@ -84,6 +84,7 @@ def make_source(args, strategy: str, hz: float):
             blend_window=args.blend_window,
             ramp_kind=args.ramp,
             new_weight=args.new_weight,
+            execute_ratio=args.execute_ratio,
             camera_map=parse_camera_map(args.camera_map),
             virtual_delay_ticks=(
                 args.latency_ticks if args.pace == "virtual" else None
@@ -212,6 +213,12 @@ def main() -> int:
     parser.add_argument("--blend-window", type=int, default=5)
     parser.add_argument("--ramp", choices=("linear", "exp"), default="linear")
     parser.add_argument("--new-weight", type=float, default=0.7)
+    parser.add_argument(
+        "--execute-ratio",
+        type=float,
+        default=0.5,
+        help="--strategy receding: fraction of each chunk to execute (0-1)",
+    )
     parser.add_argument(
         "--camera-map",
         default=None,
