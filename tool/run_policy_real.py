@@ -66,6 +66,12 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
+from common.chunk_metrics import summarise  # noqa: E402
+from common.chunking import (  # noqa: E402
+    DEFAULT_BLEND_WINDOW,
+    DEFAULT_ENSEMBLE_WEIGHT,
+    STRATEGIES,
+)
 from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
 from common.policy_run import RunControl  # noqa: E402
 from tool.replay_on_robot import (  # noqa: E402
@@ -251,6 +257,31 @@ def main() -> None:
         help="Remote: request the next chunk once the queue falls to N actions",
     )
     parser.add_argument(
+        "--strategy",
+        default="append",
+        choices=STRATEGIES,
+        help="Remote: how an arriving chunk joins the one already executing. "
+        "'append' is what this tool has always done; see common/chunking.py",
+    )
+    parser.add_argument(
+        "--blend-window",
+        type=int,
+        default=DEFAULT_BLEND_WINDOW,
+        help="Remote, --strategy blend: ticks to cross-fade out of the old plan",
+    )
+    parser.add_argument(
+        "--ramp",
+        choices=("linear", "exp"),
+        default="linear",
+        help="Remote, --strategy blend: shape of that cross-fade",
+    )
+    parser.add_argument(
+        "--new-weight",
+        type=float,
+        default=DEFAULT_ENSEMBLE_WEIGHT,
+        help="Remote, --strategy ensemble: weight on the newly arrived plan",
+    )
+    parser.add_argument(
         "--stall-hold",
         type=float,
         default=0.5,
@@ -307,6 +338,10 @@ def main() -> None:
             actions_per_chunk=args.actions_per_chunk,
             prefetch=args.prefetch,
             hz=args.hz,
+            strategy=args.strategy,
+            blend_window=args.blend_window,
+            ramp_kind=args.ramp,
+            new_weight=args.new_weight,
         )
     else:
         import torch
@@ -404,6 +439,12 @@ def main() -> None:
         stalled_since: "float | None" = None
         warned = False
         holds = 0
+        # What the arms actually did, so the run can be judged after it rather
+        # than only watched during it. See common/chunk_metrics.
+        executed: "list[np.ndarray]" = []
+        seams: "list[int]" = []
+        round_trips: "list[float]" = []
+        last_seq = 0
         started_at = time.time()
         for tick in range(n_ticks):
             t0 = time.perf_counter()
@@ -423,6 +464,15 @@ def main() -> None:
                 print(f"⛔ {source.fatal} — stopping")
                 break
 
+            seq = int(getattr(source, "last_chunk_seq", 0) or 0)
+            if seq != last_seq:
+                # Where the new plan STARTS, which under 'append' is behind
+                # every leftover rather than on this tick.
+                seams.append(len(executed) + int(getattr(source, "boundary_offset", 0)))
+                last_seq = seq
+                if source.round_trip_s:
+                    round_trips.append(float(source.round_trip_s))
+
             gated = control.decide(source.depth if source.chunked else 1)
             action12 = None if gated == "hold" else source.take()
             what = stall_decision(
@@ -434,6 +484,7 @@ def main() -> None:
             if what == "serve":
                 stalled_since = None
                 warned = False
+                executed.append(np.asarray(action12, dtype=float))
                 goals = policy_action_to_goals(action12)
                 if not args.dry_run:
                     for s in _SIDES:
@@ -513,6 +564,24 @@ def main() -> None:
                 c.stop()
             except Exception:  # noqa: BLE001
                 pass
+        if args.server and executed:
+            row = summarise(
+                np.asarray(executed),
+                seams,
+                held_ticks=holds,
+                total_ticks=len(executed) + holds,
+                round_trips_s=round_trips,
+            )
+            ratio = row["seam_ratio"]
+            rtt = row["round_trip_ms_median"]
+            print(
+                f"\n📐 {args.strategy}: "
+                f"seam ratio {'—' if ratio is None else format(ratio, '.2f')}  "
+                f"held {row['held_fraction']:.0%}  "
+                f"path {row['path_length']:.1f}  "
+                f"chunks {row['chunks']}  "
+                f"rtt median {'—' if rtt is None else format(rtt, '.0f') + ' ms'}"
+            )
         if run_log is not None:
             run_log.close()
             print(f"📝 run log written: {run_log.root}")

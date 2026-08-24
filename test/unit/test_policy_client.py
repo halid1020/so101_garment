@@ -153,7 +153,9 @@ class TestBoundaryOffset(RemoteSourceCase):
         self.assertEqual(source.boundary_offset, 7)
 
     def test_replacing_puts_the_join_at_the_next_tick(self):
-        for strategy in ("replace", "blend", "ensemble", "rtc"):
+        # 'rtc' is absent because this stub host cannot guide, and asking it
+        # for RTC is refused; its splice is covered in test_chunking.
+        for strategy in ("replace", "blend", "ensemble"):
             source = self.source(strategy=strategy)
             source.drain()
             source._queue.extend(np.zeros(12) for _ in range(7))
@@ -198,6 +200,13 @@ class TestRefusals(RemoteSourceCase):
     def test_an_unknown_strategy_is_refused_before_the_handshake(self):
         with self.assertRaises(ChunkingError):
             self.source(strategy="clever")
+
+    def test_rtc_against_a_host_that_cannot_guide_is_refused(self):
+        # Silently giving 'replace' under the name 'rtc' would produce a
+        # result nobody could trust afterwards.
+        with self.assertRaises(ChunkingError) as caught:
+            self.source(strategy="rtc")
+        self.assertIn("RTC", str(caught.exception))
 
 
 if __name__ == "__main__":

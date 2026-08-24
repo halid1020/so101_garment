@@ -198,6 +198,15 @@ class RemoteActionSource:
         self.actions = min(
             int(actions_per_chunk or self.server_actions), self.server_actions
         )
+        if self.guided and not bool(meta.get("rtc")):
+            # Refused rather than quietly downgraded: RTC's smoothing happens
+            # inside the denoiser on the host, so a host that does not do it
+            # gives exactly 'replace' -- and a run labelled 'rtc' that was
+            # really 'replace' is a result nobody can trust afterwards.
+            raise ChunkingError(
+                f"the host at {self.url} does not do RTC guidance "
+                f"(policy '{self.type}'); its answer would be plain 'replace'"
+            )
         # The static default covers a fast policy; the threshold below grows it
         # to cover whatever round trip this link turns out to have.
         self.prefetch = max(1, self.actions // 3)

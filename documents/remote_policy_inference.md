@@ -239,6 +239,70 @@ performance one:
 - **A dropped connection or a server error (5xx)**: retried on the next tick,
   under the same stall budget.
 
+## Choosing how a chunk joins the one already executing
+
+A chunk is planned from one observation and comes back after the arms have
+moved on. `--strategy` decides what to do about that, and it is the one knob
+here that changes what the arms do rather than merely when they ask.
+
+| strategy | what it does | use it to |
+|---|---|---|
+| `append` | queues the new chunk behind the leftovers, discarding nothing | reproduce every rollout recorded before this existed |
+| `replace` | drops the leftovers and the rows whose moment has passed | execute each action at the tick it was planned for |
+| `blend` | `replace`, then cross-fades out of the old plan over `--blend-window` ticks | remove the step change at the join |
+| `ensemble` | averages the overlap, `--new-weight` on the newer plan | hedge between two plans that disagree |
+| `sync` | blocks for the reply; nothing is executed from a stale plan | a baseline, and only that — see the warning below |
+| `rtc` | guidance inside the denoiser, on the host | nothing yet; the host refuses it |
+
+`append` is the default, so a run without the flag behaves exactly as it did
+before. It is also the one to beat: because it discards nothing, the arriving
+chunk's first action waits for every leftover to drain, and the request fires
+when the queue falls to the prefetch threshold — which is sized to cover the
+round trip. Every plan is therefore executed a whole threshold behind the
+observation it was drawn from: about 0.9 s for a 32-action diffusion chunk at
+30 Hz, about 1.1 s for ACT. The prefetch threshold ends up controlling two
+unrelated things, the network runway and the staleness of every action, and the
+aligning strategies exist to separate them.
+
+**Alignment is not free.** Dropping the stale rows shortens every chunk by the
+round trip, so the queue empties sooner and the arms hold more often. Measured
+in the twin against a 32-action diffusion chunk and an 18-tick delay:
+`replace` held on 28 % of ticks where `append` held on 6 %. Raise
+`--actions-per-chunk`, or accept the holds, or use `blend`, which pays the same
+price but does not step at the join.
+
+**`sync` blocks the control loop.** It waits for the reply inside the tick, so
+at a 700 ms round trip the loop runs at about 1.3 Hz rather than 30. The arms
+are safe — the servos hold their last goal and nothing is written from a stale
+plan — but the motion is a series of pauses, and it is a baseline to measure
+against rather than a way to run the rig.
+
+**`rtc` is refused, on purpose.** Its smoothing happens inside the flow-matching
+denoiser on the host, and `tool/policy_server.py` does not do that yet, so the
+answer would be plain `replace` under another name. The client checks the
+handshake and stops rather than giving you a result labelled `rtc` that is not.
+It applies to pi0.5 and other flow-matching policies only; ACT and diffusion
+have no such hook.
+
+### What the run tells you afterwards
+
+A remote run now ends with one line:
+
+```
+📐 replace: seam ratio 1.04  held 28%  path 573.1  chunks 12  rtt median 740 ms
+```
+
+The **seam ratio** compares the step in commanded joints at a chunk boundary
+with the step everywhere else: 1 means the joins are invisible, 3 means every
+boundary is a visible flinch, 10 means the arms lurch. It reads `—` when the run
+cannot support the comparison — fewer than two boundaries, or a trajectory that
+barely moved — because a ratio of noise over noise would read as a result.
+
+Read it beside the other columns, never alone. A strategy can buy a beautiful
+ratio by ignoring what the policy just saw: a long `--blend-window`, or
+`--new-weight` near zero, smooths the join by declining to act on new
+information. `held` and the task outcome are what stop that passing unnoticed.
+
 ## Tuning
 
 - `--actions-per-chunk N` executes at most N actions per request. The default is
