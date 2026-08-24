@@ -30,7 +30,15 @@ async function setMode(mode) {
   poll();
 }
 
+$('#p-arm').onclick = () => {
+  // The same sentence the terminal used to print, in the one place that can
+  // still stop it being true.
+  if (!confirm('The follower arms will MOVE: they ramp to the policy\u2019s '
+               + 'first action, then follow it. Is the workspace clear?')) return;
+  setMode('arm');
+};
 $('#p-hold').onclick = () => setMode('hold');
+$('#p-preview').onclick = () => setMode('preview');
 $('#p-step').onclick = () => setMode('step');
 $('#p-run').onclick = () => setMode('run');
 $('#p-stop').onclick = () => setMode('stop');
@@ -107,6 +115,43 @@ function fmt(v, digits = 2) {
   return (v === null || v === undefined) ? '—' : v.toFixed(digits);
 }
 
+// -- the vitals -------------------------------------------------------
+// The four numbers that decide whether a rollout is healthy, sized so they
+// read across the room, and coloured only when something is actually wrong.
+function vital(id, value, note, level) {
+  const el = $(`#${id}`);
+  el.querySelector('b').textContent = value;
+  if (note !== undefined) el.querySelector('span').textContent = note;
+  el.className = `vital${level ? ' ' + level : ''}`;
+}
+
+function vitals(s) {
+  const queue = s.queue === undefined ? null : s.queue;
+  const need = s.threshold || 0;
+  const remote = s.chunked !== false;
+  // An empty queue means the arms are holding for want of a plan; a queue at
+  // or below the threshold with nothing in flight is about to be.
+  const level = queue === 0 ? 'bad' : (queue !== null && queue <= need ? 'warn' : '');
+  vital('v-queue', queue === null ? '—' : String(queue),
+        remote ? `queue · asks at ${need}` : 'queue · local', level);
+  const rtt = (s.round_trip_s || 0) * 1000;
+  vital('v-rtt', remote && rtt ? `${rtt.toFixed(0)} ms` : '—', 'round trip');
+  const infer = (s.server_infer_s || 0) * 1000;
+  vital('v-infer', remote && infer ? `${infer.toFixed(0)} ms` : '—',
+        'inference, of that');
+  const holds = s.holds || 0;
+  const ticks = s.tick || 0;
+  vital('v-holds', `${holds}`,
+        ticks ? `held · ${((holds / ticks) * 100).toFixed(0)}% of ticks` : 'held',
+        holds && ticks && holds / ticks > 0.4 ? 'warn' : '');
+  vital('v-chunk',
+        s.pending ? `${s.pending.n}` : (s.chunk ? `${s.chunk.n}` : '—'),
+        s.pending ? 'queued to execute' : 'plan, actions');
+  vital('v-splice', s.strategy || '—', 'splice');
+  vital('v-progress', `${ticks}/${s.ticks_total || 0}`,
+        `${(s.t || 0).toFixed(0)} s at ${s.hz || 0} Hz`);
+}
+
 function timing(s) {
   const rtt = (s.round_trip_s || 0) * 1000;
   const need = (s.threshold || 0);
@@ -173,21 +218,35 @@ function render(s) {
   $('#p-mode').className = `mode ${mode}`;
   $('#p-clock').textContent = s.task ? `“${s.task}”` : '';
   $('#p-torque').hidden = !!s.dry_run;
-  ['hold', 'step', 'run'].forEach((m) => {
+  ['hold', 'preview', 'step', 'run'].forEach((m) => {
     $(`#p-${m}`).classList.toggle('sel', m === mode);
   });
   $('#p-step').disabled = s.chunked === false;
+  $('#p-preview').disabled = s.chunked === false;
+  // Only while this run is waiting for consent it delegated to us.
+  $('#p-arm').hidden = !(s.arm_from_view && !s.armed && !s.dry_run);
 
   buildTiles(s.cameras || []);
   refreshShown(s.cameras || [], s.chunk ? s.chunk.seq : -1);
+  const twinBtn = $('#p-twin-what');
+  if (twinWhat === 'plan') {
+    // Under every splice but 'append' the queue is not the returned chunk:
+    // say which one is on screen, or the picture is quietly misleading.
+    twinBtn.textContent = s.pending
+      ? 'showing: what will execute' : 'showing: the plan';
+  }
   $('#p-shown-note').textContent = s.chunk
     ? `the window of plan #${s.chunk.seq}, ${((Date.now() / 1000) - s.chunk.at).toFixed(1)} s ago`
     : 'nothing sent yet';
   jointsTable(s.state, s.commanded);
   grippers(s.state, s.commanded);
+  vitals(s);
   timing(s);
-  const executed = s.chunk ? s.chunk.n - (s.queue || 0) : 0;
-  drawChunk(s.chunk, executed);
+  // How much of THIS chunk has gone. The queue can hold more than one
+  // chunk's worth under the 'append' splice, so it is clamped rather than
+  // subtracted blind -- otherwise the shading runs backwards.
+  const queued = Math.min(s.queue || 0, s.chunk ? s.chunk.n : 0);
+  drawChunk(s.chunk, s.chunk ? s.chunk.n - queued : 0);
 }
 
 async function poll() {

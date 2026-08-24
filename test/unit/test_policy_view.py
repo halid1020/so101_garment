@@ -170,5 +170,53 @@ class TestChunkPayload(unittest.TestCase):
         self.assertEqual(payload["actions"][0][11], 11.0)
 
 
+class TestArming(ViewTestCase):
+    """Consent to move the arms, when a run delegates it to the page."""
+
+    async def get_application(self):
+        warnings.filterwarnings("ignore", message=".*app\\[.*")
+        self.control = RunControl()
+        self.control.publish(dry_run=False)
+        self.source = StubSource()
+        self.view = PolicyView(
+            self.control,
+            self.source,
+            StubDataManager(),
+            CAMERAS,
+            port=0,
+            arm_from_view=True,
+        )
+        return self.view.build_app()
+
+    async def test_the_page_reports_that_it_must_arm_this_run(self):
+        body = await self.status()
+        self.assertTrue(body["arm_from_view"])
+        self.assertFalse(body["armed"])
+
+    async def test_arming_is_recorded_and_does_not_change_the_mode(self):
+        before = self.control.mode
+        await self.mode("arm")
+        self.assertTrue(self.control.armed)
+        self.assertEqual(self.control.mode, before)
+
+    async def test_arming_twice_is_harmless(self):
+        for _ in range(2):
+            await self.mode("arm")
+        self.assertTrue(self.control.armed)
+
+
+class TestArmingRefused(ViewTestCase):
+    """A run that took its consent at the terminal keeps it there."""
+
+    async def test_the_page_cannot_open_a_second_door_to_the_torque(self):
+        response = await self.mode("arm")
+        self.assertEqual(response.status, 400)
+        self.assertFalse(self.control.armed)
+
+    async def test_and_does_not_offer_the_button(self):
+        body = await self.status()
+        self.assertFalse(body["arm_from_view"])
+
+
 if __name__ == "__main__":
     unittest.main()

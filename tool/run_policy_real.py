@@ -309,6 +309,21 @@ def main() -> None:
     )
     parser.add_argument("--web-port", type=int, default=8767, help="Live view port")
     parser.add_argument(
+        "--arm-from-view",
+        action="store_true",
+        help="Take the 'the arms will move' consent in the live view instead "
+        "of at the terminal. The page then starts the arms, so anyone who can "
+        "reach the port can; it binds loopback and is unauthenticated",
+    )
+    parser.add_argument(
+        "--start-mode",
+        choices=("run", "hold", "preview"),
+        default="run",
+        help="What the throttle is doing when the loop starts. 'preview' ramps "
+        "to the first action and then waits, showing each queued chunk in the "
+        "twin until you execute it from the live view (needs --web)",
+    )
+    parser.add_argument(
         "--no-log",
         action="store_true",
         help="Do not write the run log (default: $SO101_OUTPUT_DIR/policy_runs/<stamp>)",
@@ -325,6 +340,12 @@ def main() -> None:
         raise SystemExit(f"❌ checkpoint not found: {args.checkpoint}")
     if args.stall_abort <= args.stall_hold:
         raise SystemExit("❌ --stall-abort must be greater than --stall-hold")
+    if args.arm_from_view and not args.web:
+        raise SystemExit("❌ --arm-from-view needs --web: nothing else can arm it")
+    if args.start_mode != "run" and not args.web:
+        # Nothing else can move the throttle off preview or hold, so the run
+        # would ramp to the first action and then sit there until it timed out.
+        raise SystemExit(f"❌ --start-mode {args.start_mode} needs --web to leave it")
 
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
@@ -351,17 +372,6 @@ def main() -> None:
         source = LocalActionSource(str(args.checkpoint), device, args.task)
     print(f"  ✓ {source.describe()}")
 
-    if not args.dry_run and not args.yes:
-        print(
-            "\n⚠️  The follower arms will MOVE under policy control: ramp to the "
-            "first action, then run.\n   Clear the workspace. Press Enter to "
-            "proceed (Ctrl+C to abort)..."
-        )
-        try:
-            input()
-        except (EOFError, KeyboardInterrupt):
-            raise SystemExit("aborted")
-
     from common.data_manager_dual import DualDataManager
 
     data_manager = DualDataManager()
@@ -383,7 +393,7 @@ def main() -> None:
 
     # The throttle exists whether or not anyone is watching: the loop consults
     # it every tick, and only the view (if asked for) ever changes it.
-    control = RunControl()
+    control = RunControl(mode=args.start_mode)
     control.publish(
         hz=args.hz,
         dry_run=bool(args.dry_run),
@@ -399,10 +409,35 @@ def main() -> None:
         from common.web.policy_view import PolicyView
 
         view = PolicyView(
-            control, source, data_manager, image_names, port=args.web_port
+            control,
+            source,
+            data_manager,
+            image_names,
+            port=args.web_port,
+            arm_from_view=bool(args.arm_from_view),
         )
         view.start()
         print(f"🖥️  live view on http://127.0.0.1:{args.web_port}/")
+        print("   Open it now: the cameras and the throttle are live already.")
+
+    if not args.dry_run and not args.yes and not args.arm_from_view:
+        # Asked here, not earlier: the cameras, the buses and the live view are
+        # all up, so the workspace can be checked on the screen that will show
+        # the rollout rather than from memory.
+        extra = (
+            f"\n   The throttle starts in '{args.start_mode}'"
+            if args.start_mode != "run"
+            else ""
+        )
+        print(
+            "\n⚠️  The follower arms will MOVE under policy control: ramp to the "
+            f"first action, then {args.start_mode}.{extra}\n   Clear the "
+            "workspace. Press Enter to proceed (Ctrl+C to abort)..."
+        )
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit("aborted")
 
     run_log = None
     if not args.no_log:
@@ -415,6 +450,20 @@ def main() -> None:
     n_ticks = int(args.seconds * args.hz)
     torque_on = False
     try:
+        if args.arm_from_view and not args.dry_run:
+            # Waited out BEFORE the first inference, so the plan the arms ramp
+            # to was drawn from the workspace as it is when consent is given,
+            # not as it was while somebody was still clearing it.
+            print(
+                f"🖥️  waiting for 'Enable arms' on "
+                f"http://127.0.0.1:{args.web_port}/ (Ctrl+C to abort) ..."
+            )
+            while not control.armed:
+                if control.stopping:
+                    raise SystemExit("aborted from the live view")
+                time.sleep(0.05)
+            print("✅ armed from the live view")
+
         # Warm up the observation, then run one inference for the ramp target.
         images = _gather_images(data_manager, image_names)
         state = read_state(buses)

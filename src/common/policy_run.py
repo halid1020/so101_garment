@@ -9,20 +9,41 @@ be tested without either of them.
 
 THE THROTTLE. A rollout is in one of three modes:
 
-  * ``run``  -- serve an action every tick, which is what an evaluation does.
-  * ``hold`` -- serve nothing; the servos keep their last commanded goal.
-  * ``step`` -- serve exactly one chunk, then fall back to ``hold``.
+  * ``run``     -- serve an action every tick, which is what an evaluation does.
+  * ``hold``    -- serve nothing; the servos keep their last commanded goal.
+  * ``preview`` -- serve nothing, but KEEP what is queued, so the plan on the
+    screen is the plan that will execute when it is asked for.
+  * ``step``    -- serve exactly one chunk, then fall back to where it came from.
 
 ``step`` is how a failure is examined: one plan is executed, the arms stop, and
 the plan that produced the motion is still on the screen beside it.
+
+``preview`` and ``step`` together are how a plan is inspected BEFORE it moves
+anything: watch the queued chunk in the twin, then execute that same chunk on
+the arms, then return to ``preview`` for the next one. That cycle only works
+because a step taken from ``preview`` returns to ``preview``, and because
+previewing does not throw the plan away.
 
 Leaving ``hold`` DROPS whatever is queued (``queue_stale``), because a chunk was
 planned from an observation taken before the pause -- possibly minutes before --
 and executing it afterwards would drive the arms from a stale picture of the
 world. The cost is one round trip on resume; the alternative is a surprise.
+Nothing else drops it: a plan examined in ``preview`` is worth exactly as much a
+moment later, and dropping it there would make the inspection meaningless.
 
-The modes only ever gate motion the operator already authorised at the terminal,
-where torque is enabled after a confirmation. Nothing here can enable torque.
+ARMING. By default the modes only ever gate motion the operator already
+authorised at the terminal, where torque is enabled after a confirmation, and
+nothing here can enable torque.
+
+A run may instead DELEGATE that consent to the view (``--arm-from-view``), and
+then :meth:`RunControl.arm` is what the terminal prompt was: a single,
+one-way, irreversible-by-the-page act, taken once, before any torque. It cannot
+be undone from the page because disarming a robot mid-motion is not a thing a
+button should imply -- ``stop`` is how a run ends, and it disables torque.
+
+Delegating it is a real change in who can start the arms: the view binds
+loopback and is unauthenticated, so anyone who can reach that port can begin the
+motion. That is why it is a flag and not the default.
 """
 
 from __future__ import annotations
@@ -32,9 +53,12 @@ import threading
 import time
 
 #: What a rollout may be doing. ``stop`` is a request, not a mode: it ends the
-#: run through the same path Ctrl+C takes, which disables torque.
-MODES = ("run", "step", "hold")
-REQUESTS = MODES + ("stop",)
+#: run through the same path Ctrl+C takes, which disables torque. ``arm`` is
+#: not a mode either: it is the one-way consent that lets torque be enabled at
+#: all, and only a run started with that consent DELEGATED to the view will
+#: wait for it -- see ``ARMING`` below.
+MODES = ("run", "step", "hold", "preview")
+REQUESTS = MODES + ("stop", "arm")
 
 
 def gate(mode: str, depth: int, budget: int) -> "tuple[str, int]":
@@ -49,7 +73,7 @@ def gate(mode: str, depth: int, budget: int) -> "tuple[str, int]":
     """
     if mode == "run":
         return ("serve" if depth > 0 else "wait"), 0
-    if mode == "hold":
+    if mode in ("hold", "preview"):
         return "hold", 0
     if budget > 0:
         return ("serve", budget - 1) if depth > 0 else ("wait", budget)
@@ -100,9 +124,15 @@ class RunControl:
         self._lock = threading.Lock()
         self._mode = mode
         self._budget = 0
+        self._step_from = "hold"
         self._stop = False
+        self._armed = False
         self._queue_stale = False
-        self._snapshot: "dict" = {"mode": mode, "started": time.time()}
+        self._snapshot: "dict" = {
+            "mode": mode,
+            "started": time.time(),
+            "armed": False,
+        }
 
     # -- the watcher's side --------------------------------------------
     def request(self, mode: str) -> str:
@@ -115,9 +145,19 @@ class RunControl:
             if mode == "stop":
                 self._stop = True
                 return self._mode
+            if mode == "arm":
+                # One way: consent is given once and never taken back here.
+                self._armed = True
+                return self._mode
             if mode != self._mode:
-                # Anything queued was planned before this decision was taken.
-                self._queue_stale = True
+                if self._mode == "hold":
+                    # Only a pause invalidates a plan: it may have lasted
+                    # minutes, and the world in that observation is gone.
+                    self._queue_stale = True
+                if mode == "step":
+                    # So that inspecting a plan and executing it is a cycle
+                    # rather than a one-way trip into hold.
+                    self._step_from = "preview" if self._mode == "preview" else "hold"
                 self._budget = 0
                 self._mode = mode
             return self._mode
@@ -137,6 +177,12 @@ class RunControl:
         with self._lock:
             return self._stop
 
+    @property
+    def armed(self) -> bool:
+        """True once consent to enable torque has been given."""
+        with self._lock:
+            return self._armed
+
     def queue_stale(self) -> bool:
         """True once, when the queue must be dropped before the next tick."""
         with self._lock:
@@ -149,9 +195,12 @@ class RunControl:
             what, budget = gate(self._mode, depth, self._budget)
             self._budget = budget
             if self._mode == "step" and what == "serve" and budget == 0:
-                self._mode = "hold"  # that was the last action of the chunk
+                # That was the last action of the chunk.
+                self._mode = self._step_from
             return what
 
     def publish(self, **fields) -> None:
         with self._lock:
-            self._snapshot.update(fields, mode=self._mode, stopping=self._stop)
+            self._snapshot.update(
+                fields, mode=self._mode, stopping=self._stop, armed=self._armed
+            )

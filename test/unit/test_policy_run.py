@@ -69,11 +69,42 @@ class TestRunControl(unittest.TestCase):
         self.assertEqual(served, ["wait", "serve", "serve", "serve", "hold"])
         self.assertEqual(control.mode, "hold")
 
-    def test_changing_mode_marks_the_queue_stale_exactly_once(self):
+    def test_leaving_a_pause_marks_the_queue_stale_exactly_once(self):
+        # The plan queued before a pause was drawn from a picture of the world
+        # that may be minutes old. Resuming is where that is thrown away.
         control = RunControl()
         control.request("hold")
+        control.request("run")
         self.assertTrue(control.queue_stale())
         self.assertFalse(control.queue_stale())
+
+    def test_previewing_a_plan_does_not_throw_it_away(self):
+        # The whole point of preview is that the plan on the screen is the plan
+        # that executes; dropping it would make the inspection meaningless.
+        control = RunControl()
+        control.request("preview")
+        self.assertFalse(control.queue_stale())
+        control.request("step")
+        self.assertFalse(control.queue_stale())
+
+    def test_a_preview_serves_nothing_however_full_the_queue(self):
+        control = RunControl(mode="preview")
+        self.assertEqual([control.decide(9) for _ in range(3)], ["hold"] * 3)
+
+    def test_a_step_taken_from_preview_returns_to_preview(self):
+        # So that inspect-then-execute is a cycle rather than a one-way trip.
+        control = RunControl(mode="preview")
+        control.request("step")
+        for depth in (3, 2, 1):
+            control.decide(depth)
+        self.assertEqual(control.mode, "preview")
+
+    def test_a_step_taken_from_a_pause_still_ends_in_a_pause(self):
+        control = RunControl(mode="hold")
+        control.request("step")
+        for depth in (2, 1):
+            control.decide(depth)
+        self.assertEqual(control.mode, "hold")
 
     def test_asking_for_the_mode_already_in_force_changes_nothing(self):
         control = RunControl()

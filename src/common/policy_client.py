@@ -415,6 +415,19 @@ class RemoteActionSource:
         self.last_chunk_seq = seq
         self.last_chunk_at = time.time()
 
+    def pending(self) -> "np.ndarray | None":
+        """The actions that will be executed next, in order.
+
+        NOT the chunk the policy returned: under every strategy but ``append``
+        the queue is the spliced result, and under ``blend`` its leading rows
+        exist in no chunk at all. A preview that showed the raw chunk would be
+        showing motion the arms are not going to make.
+        """
+        with self._lock:
+            if not self._queue:
+                return None
+            return np.asarray(self._queue, dtype=float)
+
     def take(self) -> "np.ndarray | None":
         with self._lock:
             self._release_due()

@@ -211,10 +211,38 @@ Leaving a hold **drops whatever was queued**. A chunk planned before the pause
 was drawn from a picture of the world that is now minutes old, and executing it
 afterwards would be a surprise; the cost is one round trip on resume.
 
-The view can only ever ask for *less* motion than the terminal already
-authorised, or end the run. Torque is enabled once, at the confirmation prompt,
-and nothing in the browser can enable it — the page is unauthenticated and it
-steers a robot, which is why it binds loopback like everything else here. A
+By default the view can only ever ask for *less* motion than the terminal
+already authorised, or end the run. Torque is enabled once, at the confirmation
+prompt, and nothing in the browser can enable it — the page is unauthenticated
+and it steers a robot, which is why it binds loopback like everything else here.
+
+### Arming from the page instead
+
+`--arm-from-view` moves that consent to the browser: there is no terminal
+prompt, and the page shows an **⚠️ Enable arms** button which asks the same
+question the terminal asked before it starts anything. The wait happens before
+the first inference, so the plan the arms ramp to was drawn from the workspace
+as it is when you consent, not as it was while you were still clearing it.
+
+**This is a real change in who can start the arms.** The port is loopback and
+unauthenticated, so anyone who can reach it can begin the motion — which is why
+it is a flag and not the default, and why a run started without it refuses an
+arm request from the page rather than offering a second, unguarded door to the
+same torque. Arming is one-way: `Stop` is how a run ends, and it releases
+torque.
+
+### Reading the page
+
+The strip under the buttons is the health of the rollout, and it stays on
+screen because a rollout is over in seconds and scrolling loses it: **queue**
+against the depth that triggers the next request (red at zero — the arms are
+waiting for a plan), **round trip** and how much of it was inference, **held**
+ticks as a percentage, the size of the **queued** plan, the **splice** in force,
+and progress. Below it, what the policy was shown sits beside what it planned
+and what the arms did, because every question worth asking of a failed grasp
+spans the three. The live cameras are last on purpose: by the time a chunk is
+executing, the frames it was planned from are half a second old, and those are
+the ones that explain the plan. A
 local run (`--checkpoint`, no server) has no chunk to step through, and the
 button says so.
 

@@ -1,29 +1,87 @@
 /* The rollout page. Everything structural comes from app.css; these are the
-   few things a live rollout needs and the console does not. */
-#p-main { padding:0 12px 24px; overflow:auto; }
-#p-main h2 { font-size:13px; font-weight:600; margin:18px 0 6px; }
+   few things a live rollout needs and the console does not.
+
+   LAYOUT. A rollout is over in seconds, so the page is a dashboard rather than
+   a document: the vitals never leave the screen, and what the policy SAW sits
+   beside what it PLANNED and what the arms DID, because every question worth
+   asking of a failed grasp spans those three. Nothing that matters is below
+   the fold on a laptop screen; the live cameras are last because they are the
+   one panel that cannot explain anything -- by the time a chunk is executing,
+   the frames it was planned from are half a second old. */
+
+#p-main { padding:0 12px 16px; overflow:auto;
+          display:grid; gap:10px;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          grid-template-areas:
+            "shown shown twin plan"
+            "joints grip timing timing"
+            "live live live live"; }
+#c-shown  { grid-area:shown; }
+#c-twin   { grid-area:twin; }
+#c-plan   { grid-area:plan; }
+#c-joints { grid-area:joints; }
+#c-grip   { grid-area:grip; }
+#c-timing { grid-area:timing; }
+#c-live   { grid-area:live; }
+
+/* Narrower than a laptop: stack, keeping seen-planned-did in that order. */
+@media (max-width:1100px) {
+  #p-main { grid-template-columns:repeat(2, minmax(0, 1fr));
+            grid-template-areas:
+              "shown shown" "twin plan" "joints grip"
+              "timing timing" "live live"; }
+}
+@media (max-width:700px) {
+  #p-main { grid-template-columns:minmax(0, 1fr);
+            grid-template-areas:
+              "shown" "twin" "plan" "joints" "grip" "timing" "live"; }
+}
+
+.card { border:1px solid var(--bd); border-radius:8px; padding:8px 10px 10px;
+        min-width:0; }
+.card h2 { font-size:12px; font-weight:600; margin:0 0 6px;
+           display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
 .muted { opacity:.6; font-weight:400; font-size:12px; }
+
+/* The vitals strip: one glance answers "is it keeping up". */
+#p-vitals { display:flex; gap:8px; flex-wrap:wrap; padding:8px 12px 0; }
+.vital { flex:1 1 110px; border:1px solid var(--bd); border-radius:8px;
+         padding:5px 9px; min-width:0; }
+.vital b { display:block; font-size:17px; font-weight:600;
+           font-variant-numeric:tabular-nums; white-space:nowrap;
+           overflow:hidden; text-overflow:ellipsis; }
+.vital span { font-size:11px; opacity:.6; }
+/* Starvation is the failure this page exists to make obvious. */
+.vital.bad b { color:#dc2626; }
+.vital.warn b { color:#d97706; }
+
 .mode { font-size:12px; padding:2px 10px; border-radius:999px;
         border:1px solid var(--bd); font-variant-numeric:tabular-nums; }
 .mode.run { color:#16a34a; border-color:#16a34a88; }
 .mode.hold { color:#d97706; border-color:#d9770688; }
 .mode.step { color:#2563eb; border-color:#2563eb88; }
-.bar.torque { color:#d97706; font-size:12px; }
-#p-shown img, #p-live img, #p-twin { width:100%; border-radius:8px;
+.mode.preview { color:#7c3aed; border-color:#7c3aed88; }
+#p-preview.sel, #p-step.sel, #p-run.sel, #p-hold.sel { font-weight:600; }
+.bar.torque { color:#d97706; font-size:12px; margin:8px 12px 0; }
+.bar.err { margin:8px 12px 0; }
+
+#p-shown img, #p-live img, #p-twin { width:100%; border-radius:6px;
                                      background:#000; display:block; }
-#p-chunk { width:100%; height:220px; border:1px solid var(--bd);
+#p-chunk { width:100%; height:200px; border:1px solid var(--bd);
            border-radius:4px; }
 #p-joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
-            font-size:12px; }
-#p-joints th, #p-joints td { padding:2px 10px; text-align:right;
+            font-size:12px; width:100%; }
+#p-joints th, #p-joints td { padding:2px 6px; text-align:right;
                              border-bottom:1px solid var(--bd); }
 #p-joints th:first-child, #p-joints td:first-child { text-align:left;
                                                      opacity:.6; }
 #p-joints td.far { color:#dc2626; }
-.grips { display:flex; gap:24px; }
+.grips { display:flex; gap:20px; }
 .grip { font-variant-numeric:tabular-nums; }
-.grip b { display:block; font-size:22px; font-weight:600; }
+.grip b { display:block; font-size:20px; font-weight:600; }
 .grip .cmd { color:#2563eb; }
 .grip .gap { font-size:12px; opacity:.7; }
+.checks { font-size:12px; border-collapse:collapse; width:100%; }
+.checks td { padding:2px 6px; vertical-align:top; }
 button.link { border:0; background:none; padding:0; font-size:11px;
               opacity:.7; text-decoration:underline; }

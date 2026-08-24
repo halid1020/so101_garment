@@ -58,6 +58,29 @@ def chunk_payload(source) -> "dict[str, Any] | None":
     }
 
 
+def pending_payload(source) -> "dict[str, Any] | None":
+    """What the arms will actually execute next, in order. Pure.
+
+    Distinct from :func:`chunk_payload`, which is what the policy SAID. The two
+    differ under every splice but ``append``: the queue has had the stale rows
+    removed and, under ``blend``, its first few actions are a cross-fade that
+    appears in no chunk. The twin draws this one, because a preview that showed
+    the raw plan would show motion the arms are not going to make.
+    """
+    getter = getattr(source, "pending", None)
+    if getter is None:
+        return None
+    queued = getter()
+    if queued is None or len(queued) == 0:
+        return None
+    actions = np.asarray(queued, dtype=float)
+    return {
+        "seq": int(getattr(source, "last_chunk_seq", 0) or 0),
+        "n": int(actions.shape[0]),
+        "actions": actions.round(3).tolist(),
+    }
+
+
 class PolicyView:
     """One rollout's view: the frames, the numbers, the twin and the throttle."""
 
@@ -72,7 +95,12 @@ class PolicyView:
         view_fps: float = DEFAULT_VIEW_FPS,
         quality: int = DEFAULT_QUALITY,
         max_width: int = DEFAULT_MAX_WIDTH,
+        arm_from_view: bool = False,
     ) -> None:
+        #: Whether this run delegated its 'the arms will move' consent to the
+        #: page. False means the terminal already took it and the page must
+        #: not offer a second, unguarded door to the same torque.
+        self.arm_from_view = bool(arm_from_view)
         self.control = control
         self.source = source
         self.data_manager = data_manager
@@ -156,6 +184,9 @@ class PolicyView:
             else np.asarray(sent[0]).round(3).tolist(),
             "threshold": int(getattr(source, "threshold", 0) or 0),
             "actions_per_chunk": int(getattr(source, "actions", 0) or 0),
+            "pending": pending_payload(source),
+            "strategy": getattr(source, "strategy", None),
+            "arm_from_view": bool(self.arm_from_view),
         }
 
     async def handle_index(self, _request: web.Request) -> web.Response:
@@ -167,10 +198,17 @@ class PolicyView:
     async def handle_mode(self, request: web.Request) -> web.Response:
         body = await request.json()
         mode = str(body.get("mode", ""))
-        if mode == "step" and not getattr(self.source, "chunked", False):
+        if mode == "arm" and not self.arm_from_view:
+            # This run took its consent at the terminal. Accepting it here too
+            # would mean two doors to the same torque, one of them unguarded.
+            raise web.HTTPBadRequest(
+                text="this run was armed at the terminal; the page cannot "
+                "enable the arms (start it with --arm-from-view)"
+            )
+        if mode in ("step", "preview") and not getattr(self.source, "chunked", False):
             raise web.HTTPBadRequest(
                 text="this run infers locally, one action at a time: it has no "
-                "chunk to step through"
+                "chunk to preview or step through"
             )
         try:
             now = self.control.request(mode)
@@ -218,10 +256,12 @@ class PolicyView:
             if measured:
                 state = (self.control.snapshot().get("state")) or []
                 return twin.render(state) if len(state) == 12 else None
-            payload = chunk_payload(self.source)
+            # What will be executed, falling back to what was planned when
+            # nothing is queued (a run between chunks, or a local source).
+            payload = pending_payload(self.source) or chunk_payload(self.source)
             if payload is None:
                 return None
-            if payload["seq"] != step["seq"]:
+            if payload["seq"] != step["seq"] or step["i"] >= payload["n"]:
                 step["seq"], step["i"] = payload["seq"], 0
             i = step["i"] % payload["n"]
             step["i"] = i + 1

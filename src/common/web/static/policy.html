@@ -11,51 +11,72 @@
     <span id="p-mode" class="mode">…</span>
     <span id="p-clock" class="muted"></span>
     <span class="grow"></span>
-    <button id="p-hold">Hold</button>
-    <button id="p-step">Step one chunk</button>
+    <button id="p-arm" class="danger" hidden>⚠️ Enable arms</button>
+    <button id="p-preview">Preview</button>
+    <button id="p-step">Execute one chunk</button>
     <button id="p-run">Run</button>
+    <button id="p-hold">Hold</button>
     <button id="p-stop" class="danger">Stop</button>
   </header>
+
+  <!-- The numbers you look at while something is going wrong, always on
+       screen: a rollout is over in seconds and scrolling loses it. -->
+  <div id="p-vitals">
+    <div class="vital" id="v-queue"><b>—</b><span>queue</span></div>
+    <div class="vital" id="v-rtt"><b>—</b><span>round trip</span></div>
+    <div class="vital" id="v-infer"><b>—</b><span>inference</span></div>
+    <div class="vital" id="v-holds"><b>—</b><span>held</span></div>
+    <div class="vital" id="v-chunk"><b>—</b><span>plan</span></div>
+    <div class="vital" id="v-splice"><b>—</b><span>splice</span></div>
+    <div class="vital" id="v-progress"><b>—</b><span>progress</span></div>
+  </div>
+
+  <p class="bar torque" id="p-torque">The arms are under torque. <b>Preview</b>
+    shows the queued plan in the twin without moving anything;
+    <b>Execute one chunk</b> runs exactly that plan and stops; <b>Hold</b>
+    freezes and drops the queue; <b>Stop</b> ends the run and releases torque.</p>
+  <p class="bar err" id="p-err" hidden></p>
+
   <main id="p-main">
-    <p class="bar torque" id="p-torque">The arms are under torque. Hold stops
-      them where they are; Step runs exactly one plan; Stop ends the run and
-      releases torque.</p>
-    <p class="bar err" id="p-err" hidden></p>
+    <!-- Left: what it saw. Right: what it decided and what happened.
+         Side by side, because every debugging question spans the two. -->
+    <section class="card" id="c-shown">
+      <h2>What the policy was shown
+        <span class="muted" id="p-shown-note"></span></h2>
+      <div class="tiles" id="p-shown"></div>
+    </section>
 
-    <h2>What the policy was shown <span class="muted" id="p-shown-note"></span></h2>
-    <div class="tiles" id="p-shown"></div>
+    <section class="card" id="c-twin">
+      <h2>What will move
+        <button id="p-twin-what" class="link">showing: the plan</button></h2>
+      <figure class="tile"><img id="p-twin" alt="the plan, in the twin"></figure>
+    </section>
 
-    <h2>What it planned</h2>
-    <div class="pair">
-      <figure class="tile">
-        <img id="p-twin" alt="the plan, in the twin">
-        <figcaption>
-          <button id="p-twin-what" class="link">showing: the plan</button>
-        </figcaption>
-      </figure>
-      <figure class="plot">
-        <canvas id="p-chunk" width="560" height="220"></canvas>
-        <figcaption id="p-chunk-note" class="muted"></figcaption>
-      </figure>
-    </div>
+    <section class="card" id="c-plan">
+      <h2>The plan <span class="muted" id="p-chunk-note"></span></h2>
+      <canvas id="p-chunk" width="560" height="200"></canvas>
+    </section>
 
-    <h2>What the arms did</h2>
-    <div class="panels">
-      <div class="panel">
-        <h3>Joints <span>measured · commanded · error, degrees</span></h3>
-        <table id="p-joints"></table>
-      </div>
-      <div class="panel">
-        <h3>Grippers <span>open fraction</span></h3>
-        <div id="p-grip" class="grips"></div>
-      </div>
-    </div>
+    <section class="card" id="c-joints">
+      <h2>Joints <span class="muted">measured · commanded · error, degrees</span></h2>
+      <table id="p-joints"></table>
+    </section>
 
-    <h2>Did the plan arrive in time</h2>
-    <table id="p-timing" class="checks"></table>
+    <section class="card" id="c-grip">
+      <h2>Grippers <span class="muted">open fraction</span></h2>
+      <div id="p-grip" class="grips"></div>
+    </section>
 
-    <h2>Live cameras</h2>
-    <div class="tiles" id="p-live"></div>
+    <section class="card" id="c-timing">
+      <h2>Did the plan arrive in time</h2>
+      <table id="p-timing" class="checks"></table>
+    </section>
+
+    <section class="card" id="c-live">
+      <h2>Live cameras
+        <span class="muted">now — not what any plan was drawn from</span></h2>
+      <div class="tiles" id="p-live"></div>
+    </section>
   </main>
   <script src="/static/policy.js"></script>
 </body></html>
