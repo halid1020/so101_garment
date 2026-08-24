@@ -51,6 +51,7 @@ def chunk_payload(source) -> "dict[str, Any] | None":
         return None
     actions = np.asarray(chunk, dtype=float)
     return {
+        "kind": "plan",
         "seq": int(getattr(source, "last_chunk_seq", 0) or 0),
         "at": float(getattr(source, "last_chunk_at", 0.0) or 0.0),
         "n": int(actions.shape[0]),
@@ -75,6 +76,7 @@ def pending_payload(source) -> "dict[str, Any] | None":
         return None
     actions = np.asarray(queued, dtype=float)
     return {
+        "kind": "queued",
         "seq": int(getattr(source, "last_chunk_seq", 0) or 0),
         "n": int(actions.shape[0]),
         "actions": actions.round(3).tolist(),
@@ -101,6 +103,8 @@ class PolicyView:
         #: page. False means the terminal already took it and the page must
         #: not offer a second, unguarded door to the same torque.
         self.arm_from_view = bool(arm_from_view)
+        #: Why the view is not serving, if it is not. See :meth:`start`.
+        self.error: "str | None" = None
         self.control = control
         self.source = source
         self.data_manager = data_manager
@@ -134,12 +138,22 @@ class PolicyView:
         )
         return app
 
-    def start(self) -> None:
+    def start(self) -> bool:
+        """Serve the view. False if it could not bind, with ``error`` set.
+
+        The caller must not shrug this off. A rollout whose view failed to bind
+        leaves the operator looking at SOME OTHER run's page -- the previous
+        one, still holding the port -- showing that run's cameras and that run's
+        plan, with a throttle wired to a rollout that has nothing to do with the
+        arms now moving. Everything on screen is plausible and none of it is
+        true.
+        """
         self._thread = threading.Thread(
             target=self._serve, name="policy-view", daemon=True
         )
         self._thread.start()
         self._started.wait(timeout=5.0)
+        return self.error is None
 
     def _serve(self) -> None:
         loop = asyncio.new_event_loop()
@@ -149,8 +163,8 @@ class PolicyView:
             loop.run_until_complete(self._run())
             self._started.set()
             loop.run_forever()
-        except Exception as exc:  # a dead view must never end the rollout
-            print(f"⚠️  live view stopped: {exc}")
+        except Exception as exc:  # noqa: BLE001 - reported, not raised, here
+            self.error = f"{type(exc).__name__}: {exc}"
             self._started.set()
         finally:
             loop.close()
@@ -245,27 +259,52 @@ class PolicyView:
         return web.Response(body=jpeg, content_type="image/jpeg")
 
     async def handle_twin(self, request: web.Request) -> web.StreamResponse:
-        """The plan, or the arms, drawn as the twin. Built on first request."""
-        measured = request.query.get("what") == "measured"
-        step = {"i": 0, "seq": -1}
+        """A plan walked through in the twin, or the arms. Built on first use.
+
+        ``what=plan`` (the default) animates the chunk the policy returned from
+        the observation it was given, first action to last, on repeat: this is
+        the answer to "where would this plan put the arms". ``what=queued``
+        animates only what is still going to be executed, which under every
+        splice but ``append`` is a shorter and different sequence.
+        ``what=measured`` follows the real arms instead.
+
+        The animation is ANCHORED to one sequence at a time. Both payloads carry
+        the same ``seq`` -- they describe the same plan -- so switching between
+        them without noticing would leave the frame index pointing into a
+        different, shorter list, and the twin would appear to jump between two
+        poses several times a second. The anchor is (kind, seq, length).
+        """
+        what = request.query.get("what", "plan")
+        step: "dict[str, Any]" = {"i": 0, "key": None, "actions": []}
 
         def frame():
             twin = self._ensure_twin()
             if twin is None:
                 return None
-            if measured:
+            if what == "measured":
                 state = (self.control.snapshot().get("state")) or []
                 return twin.render(state) if len(state) == 12 else None
-            # What will be executed, falling back to what was planned when
-            # nothing is queued (a run between chunks, or a local source).
-            payload = pending_payload(self.source) or chunk_payload(self.source)
+            payload = (
+                pending_payload(self.source)
+                if what == "queued"
+                else chunk_payload(self.source)
+            )
             if payload is None:
+                # Nothing of the asked-for kind: hold the last sequence rather
+                # than borrowing the other one, which is what made it flicker.
+                if not step["actions"]:
+                    return None
+            else:
+                key = (payload["kind"], payload["seq"], payload["n"])
+                if key != step["key"]:
+                    step["key"], step["i"] = key, 0
+                    step["actions"] = payload["actions"]
+            actions = step["actions"]
+            if not actions:
                 return None
-            if payload["seq"] != step["seq"] or step["i"] >= payload["n"]:
-                step["seq"], step["i"] = payload["seq"], 0
-            i = step["i"] % payload["n"]
+            i = step["i"] % len(actions)
             step["i"] = i + 1
-            return twin.render(payload["actions"][i])
+            return twin.render(actions[i])
 
         return await self._stream(request, frame, TWIN_FPS)
 

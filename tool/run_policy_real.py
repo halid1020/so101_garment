@@ -416,7 +416,19 @@ def main() -> None:
             port=args.web_port,
             arm_from_view=bool(args.arm_from_view),
         )
-        view.start()
+        if not view.start():
+            # Almost always another rollout still holding the port. Carrying on
+            # would put an older run's cameras and throttle on the screen while
+            # THESE arms move, which is worse than no view at all.
+            for c in captures:
+                c.stop()
+            data_manager.request_shutdown()
+            raise SystemExit(
+                f"❌ the live view could not start on port {args.web_port}: "
+                f"{view.error}\n   Another rollout is probably still running "
+                f"(pgrep -af run_policy_real). Stop it, or pass a different "
+                f"--web-port."
+            )
         print(f"🖥️  live view on http://127.0.0.1:{args.web_port}/")
         print("   Open it now: the cameras and the throttle are live already.")
 

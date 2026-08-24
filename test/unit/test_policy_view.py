@@ -20,7 +20,7 @@ import numpy as np
 from aiohttp.test_utils import AioHTTPTestCase
 
 from common.policy_run import RunControl
-from common.web.policy_view import PolicyView, chunk_payload
+from common.web.policy_view import PolicyView, chunk_payload, pending_payload
 
 CAMERAS = ["central", "wrist_camera_left"]
 
@@ -216,6 +216,51 @@ class TestArmingRefused(ViewTestCase):
     async def test_and_does_not_offer_the_button(self):
         body = await self.status()
         self.assertFalse(body["arm_from_view"])
+
+
+class TestPortAlreadyTaken(unittest.TestCase):
+    """A view that cannot bind must say so, not serve somebody else's run."""
+
+    def test_start_reports_failure_rather_than_pretending(self):
+        import socket
+
+        taken = socket.socket()
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        self.addCleanup(taken.close)
+        port = taken.getsockname()[1]
+
+        view = PolicyView(
+            RunControl(), StubSource(), StubDataManager(), CAMERAS, port=port
+        )
+        self.addCleanup(view.stop)
+        self.assertFalse(view.start())
+        self.assertIsNotNone(view.error)
+
+    def test_a_free_port_starts_cleanly(self):
+        view = PolicyView(
+            RunControl(), StubSource(), StubDataManager(), CAMERAS, port=0
+        )
+        self.addCleanup(view.stop)
+        self.assertTrue(view.start())
+        self.assertIsNone(view.error)
+
+
+class TestTwinAnchoring(unittest.TestCase):
+    """The twin must animate ONE sequence, not alternate between two."""
+
+    def test_the_two_payloads_are_distinguishable(self):
+        # They share a seq -- they describe the same plan -- so 'kind' is the
+        # only thing that stops the animation swapping lists mid-walk.
+        source = StubSource()
+        source.pending = lambda: np.zeros((4, 12))
+        plan = chunk_payload(source)
+        queued = pending_payload(source)
+        self.assertEqual(plan["seq"], queued["seq"])
+        self.assertNotEqual(plan["kind"], queued["kind"])
+
+    def test_a_source_with_nothing_queued_has_no_pending_payload(self):
+        self.assertIsNone(pending_payload(StubSource()))
 
 
 if __name__ == "__main__":

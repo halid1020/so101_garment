@@ -42,14 +42,24 @@ $('#p-preview').onclick = () => setMode('preview');
 $('#p-step').onclick = () => setMode('step');
 $('#p-run').onclick = () => setMode('run');
 $('#p-stop').onclick = () => setMode('stop');
+// Three subjects, in the order you want them while debugging: the plan the
+// policy returned, then only the part still to be executed, then the arms.
+const TWIN_WHAT = [
+  ['plan', 'the returned chunk'],
+  ['queued', 'what is still to execute'],
+  ['measured', 'the real arms'],
+];
 $('#p-twin-what').onclick = () => {
-  twinWhat = twinWhat === 'plan' ? 'measured' : 'plan';
-  $('#p-twin-what').textContent =
-    `showing: ${twinWhat === 'plan' ? 'the plan' : 'the arms'}`;
-  // A new src restarts the stream, which is how the twin switches subject.
-  $('#p-twin').src = twinWhat === 'plan' ? '/twin.mjpg'
-                                         : '/twin.mjpg?what=measured';
+  const at = TWIN_WHAT.findIndex(([k]) => k === twinWhat);
+  twinWhat = TWIN_WHAT[(at + 1) % TWIN_WHAT.length][0];
+  setTwin();
 };
+function setTwin() {
+  const label = (TWIN_WHAT.find(([k]) => k === twinWhat) || TWIN_WHAT[0])[1];
+  $('#p-twin-what').textContent = `showing: ${label} — click to change`;
+  // A new src restarts the stream, which is how the twin switches subject.
+  $('#p-twin').src = `/twin.mjpg?what=${twinWhat}`;
+}
 
 // -- the pictures -----------------------------------------------------
 // Built once, when the status first names the cameras: an <img> on an mjpeg
@@ -63,7 +73,7 @@ function buildTiles(cameras) {
     (c) => tile(`/stream/${c}.mjpg`, c)).join('');
   $('#p-shown').innerHTML = cameras.map(
     (c) => tile('', c)).join('');
-  $('#p-twin').src = '/twin.mjpg';
+  setTwin();
 }
 
 // The frames the last request carried are still, so they are fetched rather
@@ -228,13 +238,6 @@ function render(s) {
 
   buildTiles(s.cameras || []);
   refreshShown(s.cameras || [], s.chunk ? s.chunk.seq : -1);
-  const twinBtn = $('#p-twin-what');
-  if (twinWhat === 'plan') {
-    // Under every splice but 'append' the queue is not the returned chunk:
-    // say which one is on screen, or the picture is quietly misleading.
-    twinBtn.textContent = s.pending
-      ? 'showing: what will execute' : 'showing: the plan';
-  }
   $('#p-shown-note').textContent = s.chunk
     ? `the window of plan #${s.chunk.seq}, ${((Date.now() / 1000) - s.chunk.at).toFixed(1)} s ago`
     : 'nothing sent yet';

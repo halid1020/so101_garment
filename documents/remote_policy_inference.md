@@ -203,13 +203,41 @@ the four questions a failed grasp raises:
 
 ### The throttle
 
-Four buttons: **Hold**, **Step one chunk**, **Run**, **Stop**. Stepping is how a
-failure gets examined — one plan is executed, the arms stop, and the plan that
-produced the motion is still on the screen beside the motion it produced.
+Five buttons: **Preview**, **Execute one chunk**, **Run**, **Hold**, **Stop**.
 
-Leaving a hold **drops whatever was queued**. A chunk planned before the pause
-was drawn from a picture of the world that is now minutes old, and executing it
-afterwards would be a surprise; the cost is one round trip on resume.
+**Preview and Execute are a cycle**, and it is how a rollout is walked one plan
+at a time. Preview freezes the arms but KEEPS what is queued, so the twin shows
+the motion that is about to happen; Execute runs exactly that plan and returns
+to Preview, with the next chunk already queued behind it. Nothing moves between
+the two, so there is as long as you like to look.
+
+**Hold is not Preview**, and the difference is why both exist: leaving a Hold
+**drops whatever was queued**, because a plan made before a pause was drawn from
+a picture of the world that may now be minutes old. Preview keeps it, because a
+plan you are looking at is worth the same a moment later. Use Hold to stop; use
+Preview to inspect.
+
+### The twin
+
+The twin walks through a plan so you can see where it puts the arms — forward
+kinematics with a camera, no physics, no contact. Its caption cycles between
+three subjects: **the returned chunk** (the whole plan the policy drew from the
+observation it was given, first action to last, on repeat), **what is still to
+execute** (shorter and different under every splice but `append` — the stale
+rows are gone, and under `blend` the leading actions are a cross-fade that
+appears in no chunk at all), and **the real arms**.
+
+It stays anchored to one of those at a time. Both plans carry the same
+identifier, because they describe the same plan, so a twin that switched between
+them without noticing would leave its frame counter pointing into a different,
+shorter list — and the arms would appear to jump between two poses several times
+a second.
+
+**If the twin looks erratic, check that only one rollout is running.** A second
+rollout cannot bind the view's port, and it used to carry on regardless, leaving
+an older run's cameras, plan and throttle on the screen while the arms in front
+of you moved to something else entirely. It now refuses to start instead, and
+says so.
 
 By default the view can only ever ask for *less* motion than the terminal
 already authorised, or end the run. Torque is enabled once, at the confirmation
