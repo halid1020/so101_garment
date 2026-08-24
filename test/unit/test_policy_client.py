@@ -142,6 +142,25 @@ class TestAligningStrategies(RemoteSourceCase):
         self.assertIsNone(source.take())
 
 
+class TestBoundaryOffset(RemoteSourceCase):
+    """Where the new plan actually STARTS, which is not where it landed."""
+
+    def test_appending_puts_the_join_behind_every_leftover(self):
+        source = self.source(strategy="append")
+        source.drain()
+        source._queue.extend(np.zeros(12) for _ in range(7))
+        source._splice_in(np.ones((CHUNK, 12)), delay=2)
+        self.assertEqual(source.boundary_offset, 7)
+
+    def test_replacing_puts_the_join_at_the_next_tick(self):
+        for strategy in ("replace", "blend", "ensemble", "rtc"):
+            source = self.source(strategy=strategy)
+            source.drain()
+            source._queue.extend(np.zeros(12) for _ in range(7))
+            source._splice_in(np.ones((CHUNK, 12)), delay=2)
+            self.assertEqual(source.boundary_offset, 0, msg=strategy)
+
+
 class TestSync(RemoteSourceCase):
     def test_it_asks_only_once_the_queue_is_empty(self):
         self.assertEqual(self.source(strategy="sync").threshold, 0)

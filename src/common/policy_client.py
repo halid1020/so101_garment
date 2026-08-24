@@ -157,6 +157,7 @@ class RemoteActionSource:
         ramp_kind: str = "linear",
         new_weight: float = DEFAULT_ENSEMBLE_WEIGHT,
         camera_map: "dict[str, str] | None" = None,
+        virtual_delay_ticks: "int | None" = None,
     ) -> None:
         import json
 
@@ -179,6 +180,14 @@ class RemoteActionSource:
         #: than in the environment keeps the wire honest about what the
         #: checkpoint asked for.
         self.camera_map = dict(camera_map or {})
+        #: Deterministic pacing. When set, the request is made inline and the
+        #: reply is WITHHELD for exactly this many ticks however long it really
+        #: took, so a strategy can be swept against a delay the network will not
+        #: oblige by producing, and the same sweep answers the same way twice.
+        self.virtual_delay_ticks = (
+            None if virtual_delay_ticks is None else max(0, int(virtual_delay_ticks))
+        )
+        self._pending: "tuple[np.ndarray, int, int] | None" = None
 
         meta = json.loads(self._rpc("/reset", b""))
         self.type = meta["policy_type"]
@@ -209,6 +218,7 @@ class RemoteActionSource:
         #: strategy can be judged without re-deriving it from the log.
         self.last_delay = 0
         self.dropped_stale = 0
+        self.boundary_offset = 0
         self._paused = False
         self._last_sent: "tuple[np.ndarray, dict] | None" = None
         self.last_chunk: "np.ndarray | None" = None
@@ -287,6 +297,7 @@ class RemoteActionSource:
         with self._lock:
             if (
                 self._inflight
+                or self._pending is not None
                 or self._paused
                 or self.fatal is not None
                 or len(self._queue) > self.threshold
@@ -297,6 +308,10 @@ class RemoteActionSource:
             seq = self._seq
         self._last_sent = (state, images)
         steps = self.window.steps()
+        if self.virtual_delay_ticks is not None:
+            # Inline, so the wall clock plays no part in when this lands.
+            self._fetch(steps, seq)
+            return
         if self.strategy == "sync":
             # Blocking on purpose: nothing may be executed from a stale plan, so
             # the caller waits here rather than running the queue down.
@@ -322,6 +337,12 @@ class RemoteActionSource:
         )
         self.last_delay = delay
         self.dropped_stale = 0 if self.strategy == "append" else min(delay, len(chunk))
+        #: Actions still to be taken before the FIRST action of the chunk just
+        #: spliced. Zero for every strategy that replaces the queue; for
+        #: ``append`` it is the whole leftover, because that is exactly how long
+        #: the new plan waits. A caller measuring the join needs this: the
+        #: boundary is not where the chunk landed, it is where it starts.
+        self.boundary_offset = len(leftover) if self.strategy == "append" else 0
         self._queue = deque(np.asarray(row, dtype=float) for row in merged)
 
     def _fetch(self, steps, seq: int) -> None:
@@ -348,10 +369,16 @@ class RemoteActionSource:
             round_trip = time.perf_counter() - started
             arrived = np.asarray(chunk, dtype=float)
             with self._lock:
-                self._splice_in(arrived, delay_ticks(round_trip, self.hz))
-                self.last_chunk = arrived
-                self.last_chunk_seq = seq
-                self.last_chunk_at = time.time()
+                if self.virtual_delay_ticks is not None:
+                    # Withheld: released by take() after the chosen number of
+                    # ticks, so the queue drains for exactly as long as the
+                    # experiment says it should.
+                    self._pending = (arrived, self.virtual_delay_ticks, seq)
+                else:
+                    self._splice_in(arrived, delay_ticks(round_trip, self.hz))
+                    self.last_chunk = arrived
+                    self.last_chunk_seq = seq
+                    self.last_chunk_at = time.time()
                 self.round_trip_s = round_trip
                 self.server_infer_s = float(
                     (header.get("timings") or {}).get("infer_s", 0.0)
@@ -361,11 +388,36 @@ class RemoteActionSource:
             with self._lock:
                 self._inflight = False
 
+    def _release_due(self) -> None:
+        """Count a withheld chunk down one tick, splicing it when due.
+
+        Caller holds the lock. The delay is spent whether or not the queue has
+        anything left, because that is what a real round trip does.
+        """
+        if self._pending is None:
+            return
+        chunk, remaining, seq = self._pending
+        if remaining > 0:
+            self._pending = (chunk, remaining - 1, seq)
+            return
+        self._pending = None
+        self._splice_in(chunk, self.virtual_delay_ticks or 0)
+        self.last_chunk = chunk
+        self.last_chunk_seq = seq
+        self.last_chunk_at = time.time()
+
     def take(self) -> "np.ndarray | None":
         with self._lock:
+            self._release_due()
             return self._queue.popleft() if self._queue else None
 
     @property
     def depth(self) -> int:
         with self._lock:
             return len(self._queue)
+
+    @property
+    def in_flight(self) -> bool:
+        """True while a request is out, or a reply is being withheld."""
+        with self._lock:
+            return self._inflight or self._pending is not None
