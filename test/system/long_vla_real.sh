@@ -149,15 +149,58 @@ RUN_DIR="$OUT_ROOT/vla_real_long/$RUN_NAME"
 mkdir -p "$RUN_DIR/logs"
 
 if [ -z "$DEVICE" ]; then
-    DEVICE="$("$PY" - <<'PY'
+    # Reports WHY, not just what: "cpu unavailable" (torch cannot use any GPU)
+    # and "cpu small" (there is one, but it is under MIN_GB) need opposite
+    # responses, and the guard below can only tell them apart if we say so.
+    DEVICE_WHY="$("$PY" - <<'PY'
 import torch
+
 MIN_GB = 8.0
-if torch.cuda.is_available() and torch.cuda.get_device_properties(0).total_memory/1e9 >= MIN_GB:
-    print("cuda")
+if not torch.cuda.is_available():
+    print("cpu unavailable")
+elif torch.cuda.get_device_properties(0).total_memory / 1e9 < MIN_GB:
+    print("cpu small")
 else:
-    print("cpu")
+    print("cuda ok")
 PY
 )"
+    DEVICE="${DEVICE_WHY%% *}"
+    WHY="${DEVICE_WHY##* }"
+
+    # A batch job that quietly falls back to the CPU is the worst outcome
+    # available: a 4.1B-param finetune cannot finish on CPU, so the row burns
+    # its entire wall-time reservation, writes no checkpoint, and logs nothing
+    # that looks wrong. MEASURED 2026-08-25 on CREATE: three pi05 array tasks
+    # landed on a node that HAD allocated them a GPU (CUDA_VISIBLE_DEVICES=0,
+    # torch.cuda.device_count() == 1) which torch then could not use --
+    # is_available() False, torch.cuda.init() raising "No CUDA GPUs are
+    # available" -- and trained on CPU, reaching no steps in ten minutes where
+    # the same run on a healthy node did a hundred in fifty seconds. That is a
+    # sick node, not a configuration choice, so refuse it. Asking for CPU
+    # explicitly with --device cpu still works, and a GPU merely too SMALL
+    # still falls back quietly, which is what a laptop smoke test wants.
+    if [ "$DEVICE" = "cpu" ] && [ "$WHY" = "unavailable" ] \
+       && [ -n "${CUDA_VISIBLE_DEVICES:-}${SLURM_JOB_GPUS:-}" ]; then
+        echo "❌ A GPU was allocated to this job (CUDA_VISIBLE_DEVICES='${CUDA_VISIBLE_DEVICES:-}')," >&2
+        echo "   but torch cannot use it, so this run would train on the CPU:" >&2
+        "$PY" - >&2 <<'PY'
+import torch
+
+print(f"     torch {torch.__version__}   device_count={torch.cuda.device_count()}")
+try:
+    torch.cuda.init()
+except Exception as exc:
+    print(f"     torch.cuda.init(): {type(exc).__name__}: {exc}")
+PY
+        echo "   That usually means the NODE's GPU is unhealthy. Resubmit without it" >&2
+        echo "   -- CREATE's Slurm ignores SBATCH_EXCLUDE, so pass --exclude to sbatch" >&2
+        echo "   directly, reusing the snapshot submit_real.sh already wrote:" >&2
+        echo "     sbatch --exclude=${SLURMD_NODENAME:-<node>} --array=... --time=...:00:00 \\" >&2
+        echo "       --export=ALL,SO101_REPO_ROOT=...,SO101_SCRATCH=...,SO101_MANIFEST=<snapshot> \\" >&2
+        echo "       hpc/create_real_vla.sbatch" >&2
+        echo "   Or pass --device cpu if CPU training really is intended." >&2
+        exit 1
+    fi
 fi
 
 echo "======================================================================"
