@@ -14,6 +14,10 @@ mode can hold the arms, advance them one chunk, resume, or end the run -- every
 one of which asks for LESS motion than the terminal already authorised. Torque
 is enabled once, at the confirmation prompt, and nothing here can enable it.
 
+Resetting for another attempt is the same kind of thing: the page raises a flag,
+the loop holds the arms and drops the plan, and where the scene is a data
+structure the loop puts it back. Nothing on this side commands a joint.
+
 Served on 127.0.0.1: it is unauthenticated, and it steers a robot.
 """
 
@@ -116,7 +120,13 @@ class PolicyView:
         max_width: int = DEFAULT_MAX_WIDTH,
         arm_from_view: bool = False,
         twin_port: "int | None" = None,
+        resettable: "str | None" = None,
     ) -> None:
+        #: How the next attempt on this scene begins, if it can begin from
+        #: here at all: ``sim`` means the loop can put the scene back itself,
+        #: ``manual`` means a person has to, and ``None`` means the button is
+        #: not offered. Never a way to move anything -- see :meth:`handle_reset`.
+        self.resettable = resettable
         #: Whether this run delegated its 'the arms will move' consent to the
         #: page. False means the terminal already took it and the page must
         #: not offer a second, unguarded door to the same torque.
@@ -160,6 +170,7 @@ class PolicyView:
                 web.get("/", self.handle_index),
                 web.get("/api/status", self.handle_status),
                 web.post("/api/mode", self.handle_mode),
+                web.post("/api/reset", self.handle_reset),
                 web.post("/api/strategy", self.handle_strategy),
                 web.post("/api/task", self.handle_task),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
@@ -227,7 +238,14 @@ class PolicyView:
                 self._twin = None
         if self._loop is None:
             return
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        # A view whose start() failed -- a taken port is the usual way -- has
+        # a loop object that its own thread already closed, and asking a closed
+        # loop to stop raises. Shutting down is not the place to find that out.
+        if not self._loop.is_closed():
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                pass
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
@@ -248,6 +266,7 @@ class PolicyView:
             "strategies": list(STRATEGIES),
             "splice": (source.settings() if hasattr(source, "settings") else None),
             "arm_from_view": bool(self.arm_from_view),
+            "resettable": self.resettable,
             "twin_url": (None if self._twin is None else self._twin.url),
             "twin_error": self.twin_error,
         }
@@ -318,6 +337,43 @@ class PolicyView:
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc))
         return web.json_response({"mode": now})
+
+    async def handle_reset(self, _request: web.Request) -> web.Response:
+        """Begin the next attempt on this scene. Moves nothing, ever.
+
+        All this does is raise a flag the control loop reads: the loop drops to
+        ``hold``, closes the measurement segment so two attempts are not
+        averaged into one, throws away the plan drawn from the scene as it was,
+        and -- in the twin, where a scene is a data structure -- puts it back.
+        On the bench nothing can be put back by a button, so the answer carries
+        the instruction instead and the arms simply stop where they are.
+
+        Refused while the policy is RUNNING. Resetting under motion would mean
+        the world changing beneath a plan already being executed, which is worth
+        one deliberate click on Hold first.
+        """
+        if self.resettable is None:
+            raise web.HTTPBadRequest(
+                text="this run has no scene it can begin again: reset it the "
+                "way it was started"
+            )
+        mode = self.control.mode
+        if mode == "run":
+            raise web.HTTPBadRequest(
+                text="the policy is running: hold it first, then reset"
+            )
+        self.control.request("reset")
+        instruction = (
+            ""
+            if self.resettable == "sim"
+            else (
+                "The run is held and its plan dropped. Put the scene back and "
+                "return the arms by hand, then press Run when you are ready."
+            )
+        )
+        return web.json_response(
+            {"resettable": self.resettable, "instruction": instruction}
+        )
 
     # -- pictures ------------------------------------------------------
     async def handle_mjpeg(self, request: web.Request) -> web.StreamResponse:

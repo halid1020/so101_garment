@@ -38,6 +38,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         state = self.server.state
         if self.path == "/reset":
+            state["resets"] += 1
             self._send(
                 json.dumps(
                     {
@@ -63,7 +64,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 class RemoteSourceCase(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _StubHandler)
-        self.server.state = {"requests": []}
+        self.server.state = {"requests": [], "resets": 0}
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.addCleanup(self.server.server_close)
@@ -265,6 +266,48 @@ class TestSwitchingStrategy(RemoteSourceCase):
         for bad in (0.0, 1.5, -1):
             with self.assertRaises(ChunkingError, msg=str(bad)):
                 source.set_strategy("receding", execute_ratio=bad)
+
+
+class TestStartingAnotherAttempt(RemoteSourceCase):
+    """A reset from the page has to reach the HOST, not only the local queue."""
+
+    def test_the_session_is_started_again(self):
+        # The host keeps per-session state -- a diffusion policy's own action
+        # queue, an RTC guide's previous plan -- and none of it describes the
+        # scene about to be attempted.
+        source = self.source()
+        self.assertEqual(self.server.state["resets"], 1)
+
+        source.reset()
+
+        self.assertEqual(self.server.state["resets"], 2)
+
+    def test_and_nothing_planned_for_the_old_episode_survives_it(self):
+        source = self.source()
+        self.fill(source)
+        self.assertGreater(source.depth, 0)
+
+        source.reset()
+
+        self.assertEqual(source.depth, 0)
+        self.assertIsNone(source.last_chunk)
+
+    def test_the_window_is_emptied_so_the_next_plan_sees_only_the_new_scene(self):
+        source = self.source()
+        self.fill(source)
+
+        source.reset()
+
+        self.assertFalse(source.window.ready)
+
+    def test_the_chunk_length_it_negotiated_is_kept(self):
+        # Re-deriving it from the fresh handshake must not quietly widen a run
+        # that was started with --actions-per-chunk.
+        source = self.source(actions_per_chunk=3)
+
+        source.reset()
+
+        self.assertEqual(source.actions, 3)
 
 
 class TestCameraMap(RemoteSourceCase):

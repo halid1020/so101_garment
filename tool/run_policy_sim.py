@@ -18,10 +18,18 @@ workspace.
     venv/bin/python tool/run_policy_sim.py --server http://127.0.0.1:8765 \\
         --task handover --strategy blend --camera-map scene=central
 
-    # the comparison this exists for
+    # the comparison this exists for: every strategy at every tuning
     venv/bin/python tool/run_policy_sim.py --server http://127.0.0.1:8765 \\
-        --task handover --sweep append,replace,blend,ensemble \\
+        --task handover --grid all \\
         --pace virtual --latency-ticks 18 --episodes 5
+
+THE GRID. ``--grid`` takes ``all`` -- the built-in seventeen cells -- or a
+``;``-separated list of ``strategy[:param=v1,v2]`` terms, and a cell is a
+strategy TOGETHER with the numbers it reads, because the strategies are not
+comparable as bare names. ``common/chunk_sweep.py`` holds the syntax, the grid
+and the reason ``rtc`` is not in it. Every cell runs the same seeds, and the
+table is ranked by success rate first and by how fast the successes finished
+second -- which is the question the sweep exists to answer.
 
 PACING. ``--pace realtime`` holds 30 Hz against the wall clock and measures the
 link you actually have. ``--pace virtual`` ignores the wall clock: the twin
@@ -47,7 +55,9 @@ sys.path.insert(0, str(_root / "src"))
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-from common.chunk_metrics import compare, summarise  # noqa: E402
+from common.chunk_metrics import summarise  # noqa: E402
+from common.chunk_sweep import expand_grid  # noqa: E402
+from common.chunk_sweep import SPEC_HELP, SweepSpecError, cell_label  # noqa: E402
 from common.chunking import STRATEGIES  # noqa: E402
 from common.policy_rig import TwinRig  # noqa: E402
 from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
@@ -67,38 +77,71 @@ def parse_camera_map(text: "str | None") -> "dict[str, str]":
         raise SystemExit(f"❌ {exc}")
 
 
-def make_source(args, strategy: str, hz: float):
-    """A local or remote action source, configured for one strategy."""
+def make_source(args, cell: dict, hz: float):
+    """A local or remote action source, configured for one sweep cell.
+
+    One source per cell rather than one reconfigured between them: a fresh
+    handshake carries no queue, no in-flight request and no round-trip history
+    from the tuning before it, and the prefetch threshold grows from the link
+    this cell actually saw rather than the last one's.
+    """
     if args.server:
         from common.policy_client import RemoteActionSource
 
+        # The flags are the floor; the cell overrides whatever it names. A cell
+        # only ever names parameters its own strategy reads, so a flag that does
+        # not apply to this strategy is simply carried unused.
+        knobs = {
+            "blend_window": args.blend_window,
+            "ramp_kind": args.ramp,
+            "new_weight": args.new_weight,
+            "execute_ratio": args.execute_ratio,
+        }
+        knobs.update({k: v for k, v in cell.items() if k != "strategy"})
         return RemoteActionSource(
             args.server,
             args.task_string,
             actions_per_chunk=args.actions_per_chunk,
             prefetch=args.prefetch,
             hz=hz,
-            strategy=strategy,
-            blend_window=args.blend_window,
-            ramp_kind=args.ramp,
-            new_weight=args.new_weight,
-            execute_ratio=args.execute_ratio,
+            strategy=cell["strategy"],
             camera_map=parse_camera_map(args.camera_map),
             virtual_delay_ticks=(
                 args.latency_ticks if args.pace == "virtual" else None
             ),
+            **knobs,
         )
     from common.policy_client import LocalActionSource
 
     return LocalActionSource(args.checkpoint, args.device, args.task_string)
 
 
-def run_episode(env, source, scenario, args, strategy: str, composer=None) -> dict:
+def rehandshake(source) -> None:
+    """Put a source back to how it started, between two episodes.
+
+    Thirty trials of one cell only mean thirty independent samples if nothing
+    survives the boundary. ``reset()`` is the source's own word for that where
+    it has one -- a fresh session with the host, so the observation window and
+    the server's sampler state go too -- and dropping the queue is the most that
+    can be done where it does not. A local policy keeps its action queue inside
+    itself, so that gets reset as well where it is reachable.
+    """
+    reset = getattr(source, "reset", None)
+    if callable(reset):
+        reset()
+    else:
+        source.drain()
+    policy = getattr(source, "policy", None)
+    if policy is not None and hasattr(policy, "reset"):
+        policy.reset()
+
+
+def run_episode(env, source, scenario, args, label: str, composer=None) -> dict:
     """One rollout. Returns the metrics row for this episode."""
     from tool.eval_sim_policy import _released
 
     env.reset(scenario)
-    source.drain()
+    rehandshake(source)
     rig = TwinRig(
         env,
         cameras=list(args.camera_names),
@@ -111,8 +154,14 @@ def run_episode(env, source, scenario, args, strategy: str, composer=None) -> di
     round_trips: "list[float]" = []
     held = 0
     success = False
+    #: The tick index at which the task was first done AND let go of. This is
+    #: the finishing speed the sweep exists to measure: two cells that both
+    #: succeed are not equally good if one takes half as long to get there.
+    ticks_to_success: "int | None" = None
     last_seq = 0
     dt = 1.0 / args.fps
+    tick = -1
+    wall0 = time.perf_counter()
 
     for tick in range(args.max_ticks):
         started = time.perf_counter()
@@ -149,6 +198,7 @@ def run_episode(env, source, scenario, args, strategy: str, composer=None) -> di
 
         if env.success() and _released(env):
             success = True
+            ticks_to_success = tick
             break
 
         if args.pace == "realtime":
@@ -162,7 +212,12 @@ def run_episode(env, source, scenario, args, strategy: str, composer=None) -> di
         success=success,
         round_trips_s=round_trips,
     )
-    row["strategy"] = strategy
+    row["cell"] = label
+    row["strategy"] = str(getattr(source, "strategy", label))
+    # 0-based, so a successful episode has ticks == ticks_to_success + 1.
+    row["ticks_to_success"] = ticks_to_success
+    row["fps"] = float(args.fps)
+    row["wall_s"] = round(time.perf_counter() - wall0, 2)
     row["place_err_mm"] = round(float(env.place_error() * 1e3), 2)
     return row
 
@@ -181,9 +236,14 @@ def main() -> int:
         help="How an arriving chunk joins the one executing (default: append)",
     )
     parser.add_argument(
+        "--grid",
+        help="Sweep these (strategy, tuning) cells on the same seeds, then rank "
+        "them. Overrides --strategy. " + SPEC_HELP,
+    )
+    parser.add_argument(
         "--sweep",
-        help="Comma list of strategies to run in turn on the same seeds, "
-        "then compare. Overrides --strategy.",
+        help="Deprecated spelling of --grid that takes a comma list of bare "
+        "strategy names; each runs at the tuning the flags below give.",
     )
     parser.add_argument(
         "--pace",
@@ -201,7 +261,15 @@ def main() -> int:
     parser.add_argument("--seeds", choices=("simple", "val", "full"), default="val")
     parser.add_argument("--episodes", type=int, default=None)
     parser.add_argument("--simple-seed", type=int, default=None)
-    parser.add_argument("--fps", type=float, default=30.0)
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="Control rate, driven into the twin as well as the client. PIN "
+        "this to the rate the checkpoint under test was trained at (30 for the "
+        "existing handover checkpoint) — a sweep run at another rate compares "
+        "the strategies on a policy that is being stepped wrong",
+    )
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--device", default="auto")
@@ -224,7 +292,11 @@ def main() -> int:
         "(the default; pass 'none' for a sim-trained policy)",
     )
     parser.add_argument("--out", help="Write the metrics table here")
-    parser.add_argument("--video-dir", help="Write one rollout video per episode")
+    parser.add_argument(
+        "--video-dir",
+        help="Write one composite rollout video per episode here, named for the "
+        "cell and the seed (slow: it renders an extra overview per tick)",
+    )
     args = parser.parse_args()
 
     if bool(args.checkpoint) == bool(args.server):
@@ -235,6 +307,32 @@ def main() -> int:
         raise SystemExit("❌ --pace virtual needs --latency-ticks N")
     if args.latency_ticks is not None and args.pace != "virtual":
         raise SystemExit("❌ --latency-ticks only applies to --pace virtual")
+    if args.grid and args.sweep:
+        raise SystemExit("❌ pass --grid or --sweep, not both")
+
+    spec = args.grid
+    if args.sweep:
+        # One path, not two: the old comma list is the new syntax with the
+        # separator swapped, and every cell then takes its tuning from the
+        # flags exactly as it did before.
+        print("⚠ --sweep is deprecated; use --grid")
+        spec = ";".join(s.strip() for s in args.sweep.split(",") if s.strip())
+    try:
+        cells = expand_grid(
+            spec or args.strategy,
+            defaults={
+                "execute_ratio": args.execute_ratio,
+                "blend_window": args.blend_window,
+                "new_weight": args.new_weight,
+                "ramp_kind": args.ramp,
+            },
+        )
+    except SweepSpecError as exc:
+        raise SystemExit(f"❌ {exc}")
+    if len(cells) > 1 and not args.server:
+        # A local source has no splice: every cell would run the same policy and
+        # the table would be one experiment repeated under N different labels.
+        raise SystemExit("❌ a grid of more than one cell needs --server")
 
     from sim_datagen.env import CAMERAS, TASKS, PickPlaceTwinEnv
     from sim_datagen.seeds import EVAL_SEEDS, VAL_SEEDS
@@ -252,23 +350,21 @@ def main() -> int:
         pool = list(VAL_SEEDS if args.seeds == "val" else EVAL_SEEDS)
         seeds = pool[: args.episodes] if args.episodes else pool
 
-    strategies = (
-        [s.strip() for s in args.sweep.split(",")] if args.sweep else [args.strategy]
-    )
-    for name in strategies:
-        if name not in STRATEGIES:
-            raise SystemExit(f"❌ unknown strategy '{name}'")
+    video_dir = Path(args.video_dir) if args.video_dir else None
+    if video_dir is not None:
+        video_dir.mkdir(parents=True, exist_ok=True)
 
-    env = PickPlaceTwinEnv(args.task)
-    print(f"▶ {args.task}: {len(seeds)} episode(s) x {len(strategies)} strategy(ies)")
+    env = _make_env(PickPlaceTwinEnv, args.task, args.fps)
+    print(f"▶ {args.task}: {len(seeds)} episode(s) x {len(cells)} cell(s)")
     print(f"  cameras: {', '.join(args.camera_names)}   pace: {args.pace}")
+    print(f"  grid: {', '.join(cell_label(c) for c in cells)}")
 
     rows: "list[dict]" = []
-    for strategy in strategies:
-        source = make_source(args, strategy, args.fps)
-        print(f"\n== {strategy} — {source.describe()}")
-        per_episode = []
-        for seed in seeds:
+    for cell in cells:
+        label = cell_label(cell)
+        source = make_source(args, cell, args.fps)
+        print(f"\n== {label} — {source.describe()}")
+        for i, seed in enumerate(seeds):
             scenario = _scenario_for_seed(args.task, seed)
             script = _make_script(args.task, scenario, env)
             args.max_ticks = int(
@@ -278,55 +374,191 @@ def main() -> int:
                     else 1.5 * script.duration * args.fps
                 )
             )
-            row = run_episode(env, source, scenario, args, strategy)
+            composer = _make_composer(args) if video_dir is not None else None
+            row = run_episode(env, source, scenario, args, label, composer)
             row["seed"] = seed
-            per_episode.append(row)
+            rows.append(row)
+            if composer is not None and video_dir is not None:
+                composer.save(video_dir / _video_name(label, seed, i))
+                composer.close()
             ratio = row["seam_ratio"]
+            reached = row["ticks_to_success"]
             print(
                 f"  seed {seed:>6}  {'✓' if row['success'] else '·'}  "
                 f"seam {'—' if ratio is None else f'{ratio:.2f}'}  "
                 f"held {row['held_fraction']:.0%}  "
-                f"{row['place_err_mm']:.0f} mm"
+                f"{row['place_err_mm']:.0f} mm  "
+                f"{'—' if reached is None else f'{reached / args.fps:.1f} s'}"
             )
-        rows.extend(per_episode)
 
-    table = compare(_fold(rows))
+    table = _table(_fold(rows))
     print("\n" + table)
     if args.out:
         Path(args.out).write_text(
-            f"# Chunking strategies — {args.task}\n\n{table}\n"
+            f"# Chunking strategies — {args.task}\n\n"
+            f"grid: `{spec or args.strategy}` · {len(seeds)} episode(s) per cell · "
+            f"seeds `{args.seeds}` · pace `{args.pace}`"
+            + (
+                f" · latency {args.latency_ticks} ticks\n\n"
+                if args.pace == "virtual"
+                else "\n\n"
+            )
+            + f"{table}\n"
             f"```json\n{json.dumps(rows, indent=2)}\n```\n"
         )
         print(f"✓ wrote {args.out}")
     return 0
 
 
+def _make_env(env_cls, task: str, fps: float):
+    """The twin, stepped at the rate the client is being paced at.
+
+    The environment took its tick rate as a constant until recently and takes
+    it as an argument now; asked for by keyword only where the constructor
+    admits one, so this tool works either side of that change and never
+    silently runs a 25 Hz twin under a 30 Hz client.
+    """
+    import inspect
+
+    if "fps" in inspect.signature(env_cls).parameters:
+        return env_cls(task, fps=fps)
+    return env_cls(task)
+
+
+def _make_composer(args):
+    """The rollout-video composer ``eval_sim_policy`` uses, on the same frames."""
+    from common.eval_video import EvalVideoComposer
+
+    return EvalVideoComposer(int(round(args.fps)))
+
+
+def _video_name(label: str, seed: int, index: int) -> str:
+    """A cell label carries '/' and '@'; a filename may not carry the first."""
+    return f"{label.replace('/', '-')}_seed{seed}_{index}.mp4"
+
+
+def _median(values: "list[float]") -> "float | None":
+    """Median of what is there, or None when nothing is. Pure, no numpy."""
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return float(ordered[mid])
+    return float((ordered[mid - 1] + ordered[mid]) / 2.0)
+
+
 def _fold(rows: "list[dict]") -> "list[dict]":
-    """Average the per-episode rows of each strategy into one row."""
-    folded: "dict[str, dict]" = {}
+    """The per-episode rows of each cell -> one row per cell.
+
+    ``success`` is a RATE, not a verdict: over thirty seeds a strategy that
+    finishes twenty-nine of them is not the same as one that finishes none, and
+    an ``all()`` over the episodes calls both of them False.
+
+    ``ticks_to_success`` is folded as a MEDIAN over the episodes that succeeded,
+    because a failure has no finishing time and counting it as the timeout would
+    make the metric a second, worse-scaled success rate. A cell that never
+    succeeded reports no time at all rather than a zero.
+    """
+    folded: "dict[str, list[dict]]" = {}
     for row in rows:
-        bucket = folded.setdefault(row["strategy"], {"strategy": row["strategy"]})
-        bucket.setdefault("_rows", []).append(row)
+        folded.setdefault(str(row.get("cell") or row["strategy"]), []).append(row)
     out = []
-    for name, bucket in folded.items():
-        group = bucket["_rows"]
+    for label, group in folded.items():
         ratios = [r["seam_ratio"] for r in group if r["seam_ratio"] is not None]
         trips = [
             r["round_trip_ms_median"]
             for r in group
-            if r["round_trip_ms_median"] is not None
+            if r.get("round_trip_ms_median") is not None
         ]
+        wins = [r for r in group if r.get("success")]
+        reached = [
+            float(r["ticks_to_success"])
+            for r in wins
+            if r.get("ticks_to_success") is not None
+        ]
+        errs = [
+            float(r["place_err_mm"]) for r in group if r.get("place_err_mm") is not None
+        ]
+        fps = float(group[0].get("fps") or 0.0)
+        median_ticks = _median(reached)
         out.append(
             {
-                "strategy": name,
-                "success": all(r["success"] for r in group),
-                "seam_ratio": float(np.mean(ratios)) if ratios else None,
-                "held_fraction": float(np.mean([r["held_fraction"] for r in group])),
-                "path_length": float(np.mean([r["path_length"] for r in group])),
-                "round_trip_ms_median": float(np.mean(trips)) if trips else None,
+                "strategy": label,
+                "cell": label,
+                "base_strategy": group[0].get("strategy", label),
+                "episodes": len(group),
+                "successes": len(wins),
+                "success": len(wins) / len(group),
+                "ticks_to_success_median": median_ticks,
+                "seconds_to_success_median": (
+                    None if median_ticks is None or fps <= 0 else median_ticks / fps
+                ),
+                "seam_ratio": _median(ratios) if ratios else None,
+                "held_fraction": float(
+                    sum(r["held_fraction"] for r in group) / len(group)
+                ),
+                "path_length": float(sum(r["path_length"] for r in group) / len(group)),
+                "round_trip_ms_median": (
+                    float(sum(trips) / len(trips)) if trips else None
+                ),
+                "place_err_mm": float(sum(errs) / len(errs)) if errs else None,
+                "wall_s": round(float(sum(r.get("wall_s", 0.0) for r in group)), 1),
             }
         )
-    return out
+    return sorted(out, key=_rank)
+
+
+def _rank(row: dict):
+    """Best first: most successes, then the quickest to get there.
+
+    Seam ratio breaks the remaining ties. It is the reason the strategies were
+    written, but it is not the reason to choose one: a cell that finishes the
+    task more often, and sooner, wins over a cell with prettier joins.
+    """
+    reached = row.get("ticks_to_success_median")
+    ratio = row.get("seam_ratio")
+    return (
+        -float(row.get("success") or 0.0),
+        float("inf") if reached is None else float(reached),
+        float("inf") if ratio is None else float(ratio),
+        str(row.get("strategy", "")),
+    )
+
+
+def _table(folded: "list[dict]") -> str:
+    """A markdown table of one folded row per cell, best first. Pure."""
+    if not folded:
+        return "_no runs_\n"
+    header = (
+        "| cell | success | median t→done | seam ratio | held | path "
+        "| place err | rtt median | wall |\n"
+        "|---|---|---|---|---|---|---|---|---|\n"
+    )
+    lines = []
+    for row in sorted(folded, key=_rank):
+        secs = row.get("seconds_to_success_median")
+        ratio = row.get("seam_ratio")
+        rtt = row.get("round_trip_ms_median")
+        err = row.get("place_err_mm")
+        lines.append(
+            "| {name} | {ok:.0%} ({n}/{eps}) | {secs} | {ratio} | {held:.0%} "
+            "| {path:.1f} | {err} | {rtt} | {wall:.0f} s |\n".format(
+                name=row.get("strategy", "?"),
+                ok=float(row.get("success") or 0.0),
+                n=int(row.get("successes", 0)),
+                eps=int(row.get("episodes", 0)),
+                secs="—" if secs is None else f"{secs:.2f} s",
+                ratio="—" if ratio is None else f"{ratio:.2f}",
+                held=float(row.get("held_fraction", 0.0) or 0.0),
+                path=float(row.get("path_length", 0.0) or 0.0),
+                err="—" if err is None else f"{err:.0f} mm",
+                rtt="—" if rtt is None else f"{rtt:.0f} ms",
+                wall=float(row.get("wall_s", 0.0) or 0.0),
+            )
+        )
+    return header + "".join(lines)
 
 
 if __name__ == "__main__":

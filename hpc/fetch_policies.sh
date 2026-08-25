@@ -20,7 +20,7 @@
 #   --dest DEST       where to put them: a local dir or HOST:dir  (required
 #                     unless --list)
 #   --datasets a,b    only these datasets
-#   --only a,b        only these policies (act, diffusion)
+#   --only a,b        only these policies (act, diffusion, pi05)
 #   --as NAME         name the destination after NAME instead of the run
 #                     directory (one run at a time). A run resubmitted without
 #                     a --run-name is called after its job id, which says

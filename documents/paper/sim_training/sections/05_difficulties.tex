@@ -196,3 +196,16 @@ than derived; each is flagged where introduced. They are stable across
 the seeds exercised so far, and the oracle gate exists precisely to
 catch a future regression in any of them before it can poison a
 training run.
+
+\subsection{A control rate that must divide the integrator}
+\label{sec:diff-rate}
+The control rate is a parameter of the simulated environment rather than
+a constant, and a requested rate is refused unless it divides the
+physics rate exactly. The refusal matters more than the flexibility. A
+control period that is not a whole number of integrator steps leaves
+recorded timestamps drifting against the motion they label, a fraction
+of a step per tick, accumulating silently across an episode; the
+recording still looks well formed, and nothing in the pipeline
+announces the discrepancy. Refusing the rate at the point it is asked
+for turns a slow corruption of every downstream timestamp into an error
+message.

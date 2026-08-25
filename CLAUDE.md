@@ -92,7 +92,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   puts the twin behind the same `common/policy_rig.py` seam so the WHOLE
   procedure — page, arming, throttle, splice, log — can be rehearsed with no
   robot. Not to be confused with `run_policy_sim.py`, which is the BATCH
-  chunking-strategy sweep over many scored seeds) /
+  chunking-strategy sweep over many scored seeds — its `--grid` expands a
+  strategy x hyper-parameter grid via `common/chunk_sweep.py`) /
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
@@ -154,6 +155,22 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   one asks in the browser first, and marking an episode (reversible) does
   not. The third tab is called **Signals** in the UI while the module,
   routes and `sensor_map.yaml` keep the older `sensor` name.
+- `src/sim_datagen/` — the simulated tasks and their scripted demonstrators.
+  `env.py` holds `TASKS` (`single`, `handover`, and `handover_split`) and the
+  tick rate: `PHYSICS_HZ` 600, `DEFAULT_FPS` **25**, and `substeps_for(fps)`,
+  which REFUSES a rate that does not divide the physics rate rather than
+  rounding it — every sim tool takes `--fps` and threads it into
+  `PickPlaceTwinEnv(task, fps=...)`. The existing 30 fps datasets and the
+  handover checkpoint stay valid; anything measuring one of them must pin
+  `--fps 30`. `handover_split` is the relay whose plate lies OUTSIDE the left
+  arm's reach, so the hand-off is forced by geometry and not merely
+  demonstrated; its cube spawn varies (the plain `simple` mode repeated ONE
+  spawn 100 times, per-channel spread exactly zero). MEASURED while setting
+  its sampling boxes: excluding the cube from the right arm as well breaks the
+  pick — a 22 mm cube at that extension exceeds the oracle's open-loop grasp
+  accuracy (direct oracle failed 3 of 4 probes there, 90.9 % inside the box
+  actually shipped), while excluding the PLATE from the left arm costs nothing
+  because a release only has to land inside the 20 mm success radius.
 - `src/sim_benchmark/` — MuJoCo IK-method benchmark: `scene.py`,
   `method_adapter.py`, `methods/` (pluggable registry incl.
   `telegrip_split.py`), `mock_quest.py` / `mock_quest_device.py`,

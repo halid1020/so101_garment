@@ -260,20 +260,26 @@ class BenchRig:
                 pass
 
 
-def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]"):
-    """The twin standing where the bench stands. Returns ``(rig, env)``.
+def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]", hz: float = 30.0):
+    """The twin standing where the bench stands. ``(rig, env, scenario)``.
 
-    A rehearsal, not an evaluation: one scenario, no resetting, no scoring.
+    A rehearsal, not an evaluation: one scenario, one scene, no scoring.
     ``tool/run_policy_sim.py`` is the harness that scores many of them.
+
+    The scenario is HANDED BACK rather than thrown away, because that value is
+    the whole of what "put it back the way it was" means here: reset from the
+    page spawns the same objects in the same places, so a second attempt is
+    compared against the first rather than against a different problem.
     """
     from common.policy_rig import TwinRig
     from sim_datagen.env import CAMERAS, PickPlaceTwinEnv
     from tool.eval_sim_policy import _scenario_for_seed
 
+    scenario = _scenario_for_seed(task, seed)
     env = PickPlaceTwinEnv(task)
-    env.reset(_scenario_for_seed(task, seed))
-    rig = TwinRig(env, cameras=list(CAMERAS), camera_map=camera_map)
-    return rig, env
+    env.reset(scenario)
+    rig = TwinRig(env, cameras=list(CAMERAS), camera_map=camera_map, fps=hz)
+    return rig, env, scenario
 
 
 def stall_decision(
@@ -609,12 +615,13 @@ def main() -> None:
     print(f"  ✓ {source.describe()}")
 
     env = None
+    scenario = None
     if args.sim:
         seed = args.sim_seed
         if seed is None:
             seed = 0 if args.sim == "single" else 14
         print(f"🧪 rehearsing in the twin: {args.sim}, scenario seed {seed}")
-        rig, env = build_sim_rig(args.sim, seed, camera_map)
+        rig, env, scenario = build_sim_rig(args.sim, seed, camera_map, hz=args.hz)
     else:
         rig = BenchRig(camera_map=camera_map)
     image_names = list(rig.cameras)
@@ -659,6 +666,10 @@ def main() -> None:
             port=args.web_port,
             twin_port=args.twin_port,
             arm_from_view=arm_from_view,
+            # The twin can put its own scene back; a real table cannot be
+            # tidied by a button, so there the page holds the run and says
+            # what the operator has to do.
+            resettable="sim" if args.sim else "manual",
         )
         if not view.start():
             # Almost always another rollout still holding the port. Carrying on
@@ -749,6 +760,12 @@ def main() -> None:
             rig.enable(action12)
             print("🔴 running policy ...")
 
+        # Set again by a reset: the next attempt's first action is reached at
+        # the same deliberate pace as this one's, because after an attempt the
+        # arms are wherever it left them and the new plan starts from the pose
+        # the scene was put back to.
+        needs_ramp = False
+
         stalled_since: "float | None" = None
         warned = False
         holds = 0
@@ -800,6 +817,26 @@ def main() -> None:
             # rollout keeps filling its window but asks for nothing.
             if control.queue_stale():
                 source.drain()
+            # Another attempt on the same scene. Everything drawn from the
+            # attempt just ended goes: the measurement segment is closed so two
+            # attempts are not averaged into one, the queue and the host's
+            # session are dropped, and the throttle falls back to hold so the
+            # operator decides when the next one begins.
+            if control.reset_requested():
+                _close_segment(current[0])
+                if scenario is not None and hasattr(rig, "reset"):
+                    rig.reset(scenario)
+                source.drain()
+                start_over = getattr(source, "reset", None)
+                if start_over is not None:
+                    start_over()
+                control.request("hold")
+                needs_ramp = True
+                print(
+                    "↺ reset: scene restored, plan dropped, holding"
+                    if scenario is not None
+                    else "↺ reset: plan dropped, holding — put the scene back by hand"
+                )
             source.set_paused(control.mode == "hold")
 
             state, images = rig.observe()
@@ -828,6 +865,11 @@ def main() -> None:
             if what == "serve":
                 stalled_since = None
                 warned = False
+                if needs_ramp:
+                    needs_ramp = False
+                    if not args.dry_run:
+                        print("🏁 ramping to the new attempt's first action ...")
+                        rig.enable(action12)
                 executed.append(np.asarray(action12, dtype=float))
                 if not args.dry_run:
                     rig.command(action12)

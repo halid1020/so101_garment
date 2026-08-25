@@ -29,13 +29,14 @@ class SimRigTestCase(unittest.TestCase):
         cls.CAMERAS = CAMERAS
         cls.env = PickPlaceTwinEnv("handover")
 
-    def rig(self, camera_map=None):
+    def rig(self, camera_map=None, fps=30.0):
         self.env.reset(self._scenario())
         return TwinRig(
             self.env,
             cameras=list(self.CAMERAS),
             camera_wh=(160, 120),
             camera_map=camera_map,
+            fps=fps,
         )
 
     def _scenario(self):
@@ -137,9 +138,50 @@ class TestEnable(SimRigTestCase):
         moved, _ = rig.observe()
         self.assertGreater(abs(moved[0] - start[0]), 1.0)
 
+    def test_the_ramp_lasts_RAMP_S_at_whatever_rate_the_run_ticks_at(self):
+        # The sim's control rate is a parameter, and a ramp counted in ticks at
+        # an assumed 30 Hz would last the wrong number of seconds at any other.
+        rig = self.rig(fps=25.0)
+        start, _ = rig.observe()
+
+        rig.enable(np.asarray(start, dtype=float))
+
+        self.assertEqual(rig.ticks, int(RAMP_S * 25.0))
+
     def test_shutdown_releases_nothing_and_raises_nothing(self):
         rig = self.rig()
         rig.shutdown()
+
+
+class TestReset(SimRigTestCase):
+    """Another attempt on the same scene, which is what the page's Reset asks."""
+
+    def test_it_puts_the_scene_back_where_the_scenario_spawned_it(self):
+        rig = self.rig()
+        at_spawn, _ = rig.observe()
+        away = np.asarray(at_spawn, dtype=float).copy()
+        away[0] += 15.0  # fifteen degrees of left shoulder pan
+        for _ in range(40):
+            rig.command(away)
+        moved, _ = rig.observe()
+        self.assertGreater(abs(moved[0] - at_spawn[0]), 1.0)
+
+        rig.reset(self._scenario())
+
+        back, _ = rig.observe()
+        np.testing.assert_allclose(back, at_spawn, atol=1e-3)
+
+    def test_and_forgets_the_pose_the_last_attempt_ended_in(self):
+        # hold() re-commands last_action, so keeping it across a reset would
+        # drive the arms to a goal chosen for a scene that is no longer there.
+        rig = self.rig()
+        state, _ = rig.observe()
+        rig.command(np.asarray(state, dtype=float))
+
+        rig.reset(self._scenario())
+
+        self.assertIsNone(rig.last_action)
+        self.assertEqual(rig.ticks, 0)
 
 
 class TestFrameCache(unittest.TestCase):

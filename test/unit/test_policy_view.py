@@ -105,6 +105,8 @@ class StubDataManager:
 
 class ViewTestCase(AioHTTPTestCase):
     source_kwargs: dict = {}
+    #: What the run can put back between attempts: None, "sim" or "manual".
+    resettable: "str | None" = None
 
     async def get_application(self):
         warnings.filterwarnings("ignore", message=".*app\\[.*")
@@ -120,6 +122,7 @@ class ViewTestCase(AioHTTPTestCase):
             CAMERAS,
             port=0,
             twin_port=0,
+            resettable=self.resettable,
         )
         return self.view.build_app()
 
@@ -128,6 +131,9 @@ class ViewTestCase(AioHTTPTestCase):
 
     async def mode(self, mode: str):
         return await self.client.post("/api/mode", json={"mode": mode})
+
+    async def reset(self):
+        return await self.client.post("/api/reset")
 
 
 class TestStatus(ViewTestCase):
@@ -273,6 +279,68 @@ class TestArmingRefused(ViewTestCase):
     async def test_and_does_not_offer_the_button(self):
         body = await self.status()
         self.assertFalse(body["arm_from_view"])
+
+
+class TestResetNotOffered(ViewTestCase):
+    """A run with no scene it can begin again does not pretend it has one."""
+
+    async def test_the_page_is_told_there_is_nothing_to_reset(self):
+        self.assertIsNone((await self.status())["resettable"])
+
+    async def test_and_asking_anyway_is_refused_rather_than_ignored(self):
+        response = await self.reset()
+
+        self.assertEqual(response.status, 400)
+        self.assertFalse(self.control.reset_requested())
+
+
+class TestResetInTheTwin(ViewTestCase):
+    """A rehearsal can put its own scene back, so the loop is simply told."""
+
+    resettable = "sim"
+
+    async def test_the_page_is_told_the_scene_can_be_put_back(self):
+        self.assertEqual((await self.status())["resettable"], "sim")
+
+    async def test_resetting_under_a_running_policy_is_refused(self):
+        # The world changing beneath a plan already executing is worth one
+        # deliberate click on Hold first.
+        response = await self.reset()
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("hold", (await response.text()).lower())
+        self.assertFalse(self.control.reset_requested())
+
+    async def test_a_held_run_may_begin_again_and_the_loop_hears_it_once(self):
+        await self.mode("hold")
+
+        response = await self.reset()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["instruction"], "")
+        self.assertTrue(self.control.reset_requested())
+        self.assertFalse(self.control.reset_requested())
+
+    async def test_and_the_throttle_is_left_exactly_where_it_was(self):
+        await self.mode("preview")
+        await self.reset()
+
+        self.assertEqual(self.control.mode, "preview")
+
+
+class TestResetOnTheBench(ViewTestCase):
+    """No button tidies a real table, so the answer says who has to."""
+
+    resettable = "manual"
+
+    async def test_the_answer_carries_the_instruction_rather_than_moving_anything(self):
+        await self.mode("hold")
+
+        body = await (await self.reset()).json()
+
+        self.assertEqual(body["resettable"], "manual")
+        self.assertIn("by hand", body["instruction"])
+        self.assertTrue(self.control.reset_requested())
 
 
 class TestPortAlreadyTaken(unittest.TestCase):

@@ -13,6 +13,13 @@ the same wire and the same splice.
     ``cameras``  -- the names ``observe`` will produce
     ``frames``   -- ``get_rgb_image(name)``, the one thing the live view asks
 
+Two more are OPTIONAL, and a caller must ask whether they are there rather than
+assume: ``hold()``, which spends a tick on a rig whose clock only moves when
+commanded, and ``reset(scenario)``, which puts a scene back for the next
+attempt. Neither exists on the bench -- a bench tick passes whether anyone
+commands it, and no button can tidy a real table -- so they are not in the
+protocol, and the loop reaches them through ``getattr``.
+
 A DEPLOYMENT needs two things a benchmark does not, so they are in the protocol
 rather than in one implementation: ``enable``, which is where torque is turned
 on and the arms are ramped to the first action, and ``frames``, which is where
@@ -34,7 +41,12 @@ import numpy as np
 
 
 class Rig(Protocol):
-    """The robot, as much of it as a rollout loop needs to know."""
+    """The robot, as much of it as a rollout loop needs to know.
+
+    Only what every rig can answer is declared here. ``hold()`` and
+    ``reset(scenario)`` are optional -- see the module docstring -- and a caller
+    must look for them before it calls them.
+    """
 
     cameras: "list[str]"
 
@@ -108,10 +120,12 @@ class FrameCache:
 class TwinRig:
     """The MuJoCo twin behind the same three methods as the bench.
 
-    One ``command`` is exactly 1/30 s of simulated time, so a tick here and a
-    recorded frame mean the same thing. Nothing reads the wall clock: the world
-    advances only when ``command`` is called, which is what lets a rollout
-    inject a chosen inference delay and get the same answer every time.
+    One ``command`` is exactly one control period, ``1/fps``, of simulated time,
+    so a tick here and a recorded frame mean the same thing; how many physics
+    substeps that takes is the environment's business, not this class's.
+    Nothing reads the wall clock: the world advances only when ``command`` is
+    called, which is what lets a rollout inject a chosen inference delay and get
+    the same answer every time.
 
     Rendering happens on whichever thread calls ``observe``, and must therefore
     be the control thread only -- ``mujoco.Renderer`` is not thread-safe, and
@@ -124,11 +138,16 @@ class TwinRig:
         cameras: "list[str]",
         camera_wh: "tuple[int, int]" = (640, 480),
         camera_map: "dict[str, str] | None" = None,
+        fps: float = 30.0,
     ) -> None:
         from tool.eval_sim_policy import decode_action
 
         self.env = env
         self.camera_wh = (int(camera_wh[0]), int(camera_wh[1]))
+        #: The control rate the caller is ticking at. Only the ramp reads it --
+        #: everything else here counts ticks, not seconds -- but a ramp measured
+        #: in the wrong rate lasts the wrong number of seconds.
+        self.fps = float(fps)
         self._decode = decode_action
         #: Applied to the names this rig REPORTS, so a caller that asks what
         #: cameras exist is told what the policy will be sent. The client does
@@ -179,9 +198,23 @@ class TwinRig:
         target = np.asarray(first_action12, dtype=float)
         state, _ = self.env.observe(self.camera_wh)
         start = np.asarray(state, dtype=float)
-        steps = max(1, int(RAMP_S * 30.0))
+        steps = max(1, int(RAMP_S * self.fps))
         for i in range(1, steps + 1):
             self.command(start + (target - start) * (i / steps))
+
+    def reset(self, scenario) -> None:
+        """Put the scene back for another attempt, and forget the last one.
+
+        Clearing :attr:`last_action` is the part that is easy to miss: ``hold``
+        re-commands it, so a rollout that reset and then held would drive the
+        arms to a pose chosen for the episode that has just ended, into a scene
+        that no longer contains what it was reaching for. Zeroing the tick count
+        keeps the twin's clock and the new attempt's log agreeing about when it
+        began.
+        """
+        self.env.reset(scenario)
+        self.last_action = None
+        self.ticks = 0
 
     def shutdown(self) -> None:
         """Nothing to release: no torque, no bus, no camera thread."""

@@ -45,12 +45,13 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
 from common.configs import GRIPPER_OPEN_MAX_FRAC  # noqa: E402
 from common.eval_video import EvalVideoComposer  # noqa: E402
 from sim_benchmark.constants import SIDES  # noqa: E402
-from sim_datagen.env import TASKS, PickPlaceTwinEnv  # noqa: E402
+from sim_datagen.env import DEFAULT_FPS, TASKS, PickPlaceTwinEnv  # noqa: E402
 from sim_datagen.oracle import (  # noqa: E402
     HandoverContactScript,
     SinglePickPlaceScript,
     generate_relay_scenarios,
     generate_single_scenarios,
+    generate_split_relay_scenarios,
 )
 from sim_datagen.seeds import EVAL_SEEDS, VAL_SEEDS  # noqa: E402
 
@@ -63,6 +64,8 @@ RELEASE_FRAC = 0.5 * GRIPPER_OPEN_MAX_FRAC
 def _scenario_for_seed(task: str, seed: int) -> Any:
     if task == "single":
         return generate_single_scenarios(1, seed=seed)[0]
+    if task == "handover_split":
+        return generate_split_relay_scenarios(1, seed=seed)[0]
     return generate_relay_scenarios(1, seed=seed)[0]
 
 
@@ -224,7 +227,12 @@ def main() -> int:
         help="simple mode: the single seed whose scenario is repeated "
         "(default 0). Must match the collector's --simple-seed for this task.",
     )
-    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=int(DEFAULT_FPS),
+        help="control and dataset rate; must divide the twin physics rate",
+    )
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -242,7 +250,7 @@ def main() -> int:
     camera_wh = (args.camera_width, args.camera_height)
     task_str = TASKS[args.task]
 
-    env = PickPlaceTwinEnv(args.task)
+    env = PickPlaceTwinEnv(args.task, fps=args.fps)
     policy, preprocessor, postprocessor, policy_type = load_policy(
         args.checkpoint, device
     )

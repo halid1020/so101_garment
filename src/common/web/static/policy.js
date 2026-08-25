@@ -37,6 +37,27 @@ async function setMode(mode) {
   poll();
 }
 
+// Another attempt on the same scene. This asks for LESS motion, not more --
+// the run drops to hold and its plan is thrown away -- but it is still the end
+// of whatever was being watched, so it is confirmed like arming is.
+async function resetRun() {
+  const sim = status.resettable === 'sim';
+  if (!confirm(sim
+      ? 'Put the scene back for another attempt? The run holds and its plan '
+        + 'is dropped; nothing moves until you press Run.'
+      : 'Hold the run and drop its plan, ready for another attempt? Nothing '
+        + 'moves from here — you put the scene back yourself.')) return;
+  try {
+    const answer = await j('/api/reset', {method: 'POST'});
+    // Only the bench has one: in the twin the scene is already back.
+    if (answer.instruction) $('#p-torque').textContent = answer.instruction;
+    $('#p-err').hidden = true;
+  } catch (e) {
+    fail(e);
+  }
+  poll();
+}
+
 $('#p-arm').onclick = () => {
   // The same sentence the terminal used to print, in the one place that can
   // still stop it being true.
@@ -49,6 +70,7 @@ $('#p-preview').onclick = () => setMode('preview');
 $('#p-step').onclick = () => setMode('step');
 $('#p-run').onclick = () => setMode('run');
 $('#p-stop').onclick = () => setMode('stop');
+$('#p-reset').onclick = resetRun;
 
 // -- the task ---------------------------------------------------------
 // A run may be started with no task at all; it waits for this.
@@ -464,6 +486,8 @@ function render(s) {
   $('#p-preview').disabled = s.chunked === false;
   // Only while this run is waiting for consent it delegated to us.
   $('#p-arm').hidden = !(s.arm_from_view && !s.armed && !s.dry_run);
+  // Offered only by a run that has a scene it can begin again.
+  $('#p-reset').hidden = !s.resettable;
   // The task box shows what the run has, until somebody starts typing a change.
   const task = s.task || '';
   $('#p-task').classList.toggle('unset', !task);

@@ -12,10 +12,13 @@ the real client -- its threading, its handshake and its queue -- without a GPU.
 """
 
 import json
+import sys
 import threading
 import time
+import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 import numpy as np
 
@@ -23,6 +26,7 @@ from common.policy_wire import decode_request, encode_chunk
 from tool.run_policy import (
     RemoteActionSource,
     _hold,
+    build_sim_rig,
     parse_camera_map,
     policy_action_to_goals,
     resolve_launch,
@@ -298,6 +302,48 @@ class TestCameraMap(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             parse_camera_map("wrist_camera_left")
         self.assertIn("wrist_camera_left", str(caught.exception))
+
+
+class _FakeTwinEnv:
+    """As much of the twin as ``build_sim_rig`` touches, and no MuJoCo."""
+
+    def __init__(self, task):
+        self.task = task
+        self.scenarios: list = []
+
+    def reset(self, scenario):
+        self.scenarios.append(scenario)
+
+
+class TestBuildSimRig(unittest.TestCase):
+    """The rehearsal rig, and the one value a reset from the page needs."""
+
+    def build(self, **kwargs):
+        env_module = types.ModuleType("sim_datagen.env")
+        env_module.CAMERAS = ["scene"]
+        env_module.PickPlaceTwinEnv = _FakeTwinEnv
+        eval_module = types.ModuleType("tool.eval_sim_policy")
+        eval_module._scenario_for_seed = lambda task, seed: {"seed": seed}
+        eval_module.decode_action = lambda action: (action[:5], action[5])
+        with mock.patch.dict(
+            sys.modules,
+            {"sim_datagen.env": env_module, "tool.eval_sim_policy": eval_module},
+        ):
+            return build_sim_rig("handover", 14, {}, **kwargs)
+
+    def test_the_scenario_is_handed_back_and_is_the_one_the_scene_was_built_from(self):
+        # Without it a reset would spawn a DIFFERENT problem, and the second
+        # attempt could not be compared with the first.
+        rig, env, scenario = self.build()
+
+        self.assertEqual(scenario, {"seed": 14})
+        self.assertEqual(env.scenarios, [scenario])
+        self.assertEqual(rig.cameras, ["scene"])
+
+    def test_the_rig_ramps_at_the_rate_the_run_is_ticking_at(self):
+        rig, _, _ = self.build(hz=25.0)
+
+        self.assertEqual(rig.fps, 25.0)
 
 
 class TestSimTaskString(unittest.TestCase):

@@ -111,6 +111,27 @@ class TestRunControl(unittest.TestCase):
         control.request("run")
         self.assertFalse(control.queue_stale())
 
+    def test_a_reset_is_asked_for_once_and_read_once(self):
+        # The loop must not put the scene back on every tick after one press.
+        control = RunControl()
+        self.assertFalse(control.reset_requested())
+        control.request("reset")
+        self.assertTrue(control.reset_requested())
+        self.assertFalse(control.reset_requested())
+
+    def test_a_reset_leaves_the_throttle_where_it_was(self):
+        # What happens after the scene is back is the loop's decision, not this
+        # flag's: it holds, and the operator starts the next attempt.
+        control = RunControl(mode="preview")
+        self.assertEqual(control.request("reset"), "preview")
+        self.assertEqual(control.mode, "preview")
+
+    def test_a_reset_is_not_a_stop_and_does_not_invalidate_by_itself(self):
+        control = RunControl()
+        control.request("reset")
+        self.assertFalse(control.stopping)
+        self.assertFalse(control.queue_stale())
+
     def test_stop_is_a_request_not_a_mode(self):
         control = RunControl()
         self.assertEqual(control.request("stop"), "run")

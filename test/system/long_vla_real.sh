@@ -28,10 +28,16 @@
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --act-steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only act --steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --extra "--policy.optimizer_lr=5e-5"
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --keep-checkpoints 3
 #
 # --steps/--batch/--save-freq apply to whichever policy --only selects, so one
 # cluster row per (dataset, policy) needs one column each; --extra is handed to
 # lerobot-train verbatim, so a flag this script does not name is still reachable.
+#
+# --keep-checkpoints N (default 2) bounds what a run leaves on disk: lerobot-train
+# writes a checkpoint every --save_freq steps and never removes one, so a 100k-step
+# diffusion run parks ten ~3.3 GB copies. That filled CREATE's 200 GB scratch quota
+# and killed four jobs mid-save; 0 disables the pruning.
 #
 # The script resumes: a finished checkpoint is reused, a partial train dir is
 # cleared. Several invocations may share one --run-name (that is how the cluster
@@ -63,6 +69,9 @@ STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
 # 4: reading a dataset over network scratch with too few workers is the likeliest
 # explanation for the cube-pnp ACT run that hit its 24 h wall time at ~10 s/step.
 WORKERS="${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || echo 4)}"
+# How many step checkpoints to keep per policy once training finishes (see
+# prune_checkpoints below for why this is not simply "all of them"). 0 => keep all.
+KEEP_CKPTS=2
 EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
@@ -85,9 +94,10 @@ while [ $# -gt 0 ]; do
         --batch) BATCH="$2"; shift 2;;
         --save-freq) SAVE_FREQ="$2"; shift 2;;
         --workers) WORKERS="$2"; shift 2;;
+        --keep-checkpoints) KEEP_CKPTS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
-        -h|--help) sed -n '2,32p' "$0"; exit 0;;
+        -h|--help) sed -n '2,38p' "$0"; exit 0;;
         *) echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
@@ -163,6 +173,48 @@ echo "======================================================================"
 fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 have() { case ",$ONLY," in *",$1,"*) return 0;; *) return 1;; esac; }
 
+# lerobot-train writes a checkpoint every --save_freq steps and never removes an
+# older one, so a 100k-step diffusion run parks ten ~3.3 GB copies and an 80k-step
+# ACT run eight ~590 MB ones. On CREATE that is fatal rather than merely untidy:
+# the scratch quota is a HARD 200 GB (ceph.quota.max_bytes), and in August 2026
+# four array tasks ran for 1.5-17 h and then died inside save_pretrained with
+# "OSError: [Errno 122] Disk quota exceeded" -- 182 GB of that scratch was
+# superseded intermediates. Nothing downstream wants them: hpc/fetch_policies.sh
+# only ever copies checkpoints/last/pretrained_model.
+#
+# Keeps the newest $KEEP_CKPTS step directories AND whatever `last` resolves to.
+# Those are normally the same directory, but a run whose save was interrupted
+# leaves a newest one that is a truncated stub while `last` still names the last
+# checkpoint written whole -- keeping both means pruning can never orphan `last`,
+# which is the only thing a resume or a fetch reads.
+prune_checkpoints() {
+    local policy="$1"
+    local ck="$RUN_DIR/train/${policy}/checkpoints"
+    [ "$KEEP_CKPTS" = "0" ] && return 0
+    [ -d "$ck" ] || return 0
+
+    local keep_last=""
+    [ -e "$ck/last" ] && keep_last="$(basename "$(readlink -f "$ck/last")")"
+
+    local steps=() d
+    for d in "$ck"/[0-9]*/; do
+        [ -d "$d" ] || continue          # an unmatched glob stays literal
+        steps+=("$(basename "$d")")
+    done
+    [ "${#steps[@]}" -le "$KEEP_CKPTS" ] && return 0
+
+    # Oldest first. `sort -n` rather than lexical, so a run whose --save-freq
+    # produced differently-padded names still orders correctly.
+    local drop=$(( ${#steps[@]} - KEEP_CKPTS )) s
+    while read -r s; do
+        [ -n "$s" ] || continue
+        [ "$s" = "$keep_last" ] && continue
+        echo "  ✂ pruning superseded checkpoint ${policy}/${s}"
+        rm -rf "${ck:?}/${s}"
+    done < <(printf '%s\n' "${steps[@]}" | sort -n | head -n "$drop")
+}
+
+
 train_cell() {
     local policy="$1"
     local out="$RUN_DIR/train/${policy}"
@@ -228,9 +280,9 @@ train_cell() {
 }
 
 if [ "$SKIP_TRAIN" = "0" ]; then
-    have act && train_cell act
-    have diffusion && train_cell diffusion
-    have pi05 && train_cell pi05
+    have act && { train_cell act; prune_checkpoints act; }
+    have diffusion && { train_cell diffusion; prune_checkpoints diffusion; }
+    have pi05 && { train_cell pi05; prune_checkpoints pi05; }
 fi
 
 # ---- report ----------------------------------------------------------
