@@ -4,7 +4,7 @@
 # run manifest = one (dataset, policy, cameras) run on a PRE-STAGED dataset
 # collected on the rig. The real-world counterpart of create_sim_vla.sbatch:
 # no MuJoCo (no simulation here) and no in-loop evaluation (a real policy is
-# evaluated ON THE ROBOT with tool/run_policy_real.py, back at the rig).
+# evaluated ON THE ROBOT with tool/run_policy.py, back at the rig).
 #
 # Submit it through the wrapper, which fills everything site-specific in and
 # picks the array range from the manifest:
@@ -118,4 +118,4 @@ bash test/system/long_vla_real.sh "${args[@]}"
 
 echo "✓ Done. Checkpoints + results.md under:"
 echo "  ${SO101_OUTPUT_DIR}/vla_real_long/${RUN_NAME}/"
-echo "  Evaluate a checkpoint ON THE ROBOT with tool/run_policy_real.py."
+echo "  Evaluate a checkpoint ON THE ROBOT with tool/run_policy.py."

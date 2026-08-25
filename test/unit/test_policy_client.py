@@ -1,6 +1,6 @@
 """Unit tests for the splice strategies as the remote client applies them.
 
-``test_run_policy_real`` already covers the client's transport behaviour -- the
+``test_run_policy`` already covers the client's transport behaviour -- the
 handshake, the window, what is fatal. These are about the one thing that changed
 when the strategies arrived: what the queue holds after a chunk lands, and that
 an unflagged run still behaves exactly as it did.
@@ -134,12 +134,33 @@ class TestAligningStrategies(RemoteSourceCase):
 
     def test_a_stale_round_trip_can_empty_the_queue(self):
         # Longer in flight than the chunk is long: everything planned was for a
-        # tick that has gone by, and the caller must see a stall, not an error.
+        # tick that has gone by, and the caller must see a stall, not a crash.
         source = self.source(strategy="replace")
         source.drain()
         source._splice_in(np.ones((CHUNK, 12)), delay=CHUNK + 5)
         self.assertEqual(source.depth, 0)
         self.assertIsNone(source.take())
+
+    def test_and_says_why_rather_than_looking_like_a_dead_server(self):
+        # MEASURED on a real link: 72 ticks of round trip against a 32-action
+        # diffusion chunk. Every aligning splice then discards every row of
+        # every chunk, for ever, and the rollout hangs for a minute before
+        # dying of "no action" -- which blames the wrong thing entirely.
+        source = self.source(strategy="blend")
+        source.drain()
+        source._splice_in(np.ones((CHUNK, 12)), delay=CHUNK + 5)
+
+        self.assertIn("stale on arrival", source.last_error or "")
+        self.assertIn("blend", source.last_error or "")
+        self.assertIn(str(CHUNK), source.last_error or "")
+
+    def test_a_splice_that_kept_something_says_nothing(self):
+        source = self.source(strategy="replace")
+        source.drain()
+        source._splice_in(np.ones((CHUNK, 12)), delay=1)
+
+        self.assertEqual(source.depth, CHUNK - 1)
+        self.assertIsNone(source.last_error)
 
 
 class TestBoundaryOffset(RemoteSourceCase):

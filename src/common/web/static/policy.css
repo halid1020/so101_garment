@@ -66,10 +66,16 @@
 .bar.torque { color:#d97706; font-size:12px; margin:8px 12px 0; }
 .bar.err { margin:8px 12px 0; }
 
-#p-shown img, #p-live img, #p-twin { width:100%; border-radius:6px;
-                                     background:#000; display:block; }
-/* The twin's transport. The page owns the frame index -- it asks for one still
-   image at a time -- so stepping through a plan costs nothing extra. */
+#p-shown img, #p-live img { width:100%; border-radius:6px;
+                            background:#000; display:block; }
+/* The twin is a viser scene in an iframe: it renders on the viewer's own GPU,
+   so it can be orbited at no cost to the rollout. Give it real height -- an
+   iframe has no intrinsic size, and a flat one looks like a broken image. */
+#p-twin { width:100%; height:380px; min-height:280px; border:0;
+          border-radius:6px; background:#000; display:block; }
+#p-twin-err { color:#e0730f; margin:6px 0 0; }
+/* The twin's transport. The page owns the frame index -- it aims the scene at
+   one action at a time -- so stepping through a plan costs nothing extra. */
 #p-twin-bar { display:flex; gap:6px; align-items:center; margin-top:6px;
               font-size:12px; }
 #p-twin-bar button { font-size:12px; padding:2px 8px; }

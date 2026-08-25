@@ -5,7 +5,7 @@
 # the parts that only exist in simulation:
 #   * NO oracle gate / collection — the dataset was teleoperated on the rig;
 #   * NO in-loop evaluation — a real policy is evaluated ON THE ROBOT with
-#     tool/run_policy_real.py at the rig, not on the cluster.
+#     tool/run_policy.py at the rig, not on the cluster.
 # For each policy (act, diffusion by default) it trains a long run on the
 # staged real dataset, saves checkpoints, and writes a results.md pointing at
 # them and their final training loss.
@@ -157,7 +157,7 @@ echo "   policies: $ONLY   device: $DEVICE   loader workers: $WORKERS"
 echo "   cameras : $("$PY" "$REPO_ROOT/tool/make_camera_view.py" --dataset "$DATASET_ROOT" --list \
                      | tail -n +2 | awk '{printf "%s ", $1}')"
 echo "   output  : $RUN_DIR"
-echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy_real.py)."
+echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy.py)."
 echo "======================================================================"
 
 fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
@@ -283,7 +283,7 @@ REPORT="$RUN_DIR/results.md"
     done
     echo
     echo "On-robot evaluation is not run here. Copy a checkpoint back to the rig"
-    echo "and run \`tool/run_policy_real.py --checkpoint <ckpt> --task ...\`."
+    echo "and run \`tool/run_policy.py --checkpoint <ckpt> --task ...\`."
 } > "$REPORT.tmp"
 mv "$REPORT.tmp" "$REPORT"
 

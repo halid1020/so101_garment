@@ -1,12 +1,20 @@
-"""Run a trained policy on the PHYSICAL followers (on-robot inference).
+"""Run a trained policy on the rig: the physical followers, or the twin.
 
-The real-hardware analogue of ``tool/eval_sim_policy.py``: instead of rolling a
-checkpoint out in the twin, this builds observations from the live cameras and
-the followers' measured joints, runs the SAME inference (``load_policy`` ->
-preprocess -> ``select_action`` -> postprocess), and sends the predicted 12-D
-action to the followers through the exact conversion the recorder and
-``tool/replay_on_robot.py`` use. So the action definition the dataset froze is
-what drives the arms — no separate real-inference code path.
+The deployment tool. It builds observations from the live cameras and the
+followers' measured joints, runs the SAME inference (``load_policy`` ->
+preprocess -> ``select_action`` -> postprocess) that ``tool/eval_sim_policy.py``
+runs, and sends the predicted 12-D action to the followers through the exact
+conversion the recorder and ``tool/replay_on_robot.py`` use. So the action
+definition the dataset froze is what drives the arms — no separate
+real-inference code path.
+
+``--sim`` puts the digital twin where the bench stands (``common.policy_rig``),
+with no camera, no bus and no motor anywhere. Everything else is identical — the
+page, the arming handshake, the throttle, the splice, the stall ladder, the run
+log — so a procedure rehearsed in simulation is the procedure the arms will run,
+in the same order. It is how this tool is checked without a robot in the room.
+(For MANY scored episodes on chosen seeds instead of one interactive rollout,
+``tool/run_policy_sim.py`` is the batch harness.)
 
 The policy input must match training: the enabled cameras (``recording.yaml``)
 supply ``observation.images.<name>`` and both followers supply the 12-D
@@ -33,7 +41,7 @@ a failed grasp is examined: the plan that produced the motion is still on the
 screen beside the motion. Every rollout is also written to a run log for
 afterwards (``--no-log`` to skip).
 
-SAFETY: the followers MOVE (unless ``--dry-run``). Consent is taken once, before
+SAFETY: the followers MOVE (unless ``--dry-run`` or ``--sim``). Consent is taken once, before
 any torque -- at the terminal by default, or ON THE PAGE when ``--web`` is used
 (``--arm-at-terminal`` puts the prompt back, ``--yes`` skips it). The page is
 unauthenticated on loopback, so with ``--web`` anyone who can reach the port can
@@ -46,13 +54,18 @@ never enables torque or writes a goal. Keep the workspace clear.
 Usage:
 
     # everything else -- task, arming, throttle, splice -- happens on the page
-    venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 --web
+    venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 --web
 
-    venv/bin/python tool/run_policy_real.py \\
+    # the same procedure, rehearsed against the twin: no robot required
+    venv/bin/python tool/run_policy.py --sim handover --web \\
+        --server http://127.0.0.1:8765 \\
+        --camera-map wrist_camera_left=wrist_left,wrist_camera_right=wrist_right
+
+    venv/bin/python tool/run_policy.py \\
         --checkpoint <run>/checkpoints/last/pretrained_model \\
         --task "fold the towel" --dry-run          # infer only, no motion
 
-    venv/bin/python tool/run_policy_real.py \\
+    venv/bin/python tool/run_policy.py \\
         --checkpoint <ckpt> --task "fold the towel" --hz 15 --seconds 60
 """
 
@@ -79,6 +92,7 @@ from common.chunking import (  # noqa: E402
     STRATEGIES,
 )
 from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
+from common.policy_rig import RAMP_S, parse_camera_map  # noqa: E402
 from common.policy_run import RunControl  # noqa: E402
 from tool.replay_on_robot import (  # noqa: E402
     _connect_followers,
@@ -187,6 +201,81 @@ def _gather_images(data_manager, names: "list[str]", timeout_s: float = 5.0) -> 
         time.sleep(0.05)
 
 
+class BenchRig:
+    """The physical followers behind ``common.policy_rig.Rig``.
+
+    Everything that can move a motor or open a camera lives here, and the
+    control loop above talks only to the protocol -- which is what lets the twin
+    stand in this class's place for a rehearsal, with the page, the arming
+    handshake, the throttle and the log all unchanged.
+    """
+
+    def __init__(self, camera_map: "dict[str, str] | None" = None) -> None:
+        from common.data_manager_dual import DualDataManager
+
+        self.camera_map = dict(camera_map or {})
+        self.frames = DualDataManager()
+        self.captures = _start_cameras(self.frames)
+        self._names = [c.name for c in self.captures]
+        self.cameras = sorted(self.camera_map.get(n, n) for n in self._names)
+        self.buses: dict = {}
+        self.torque_on = False
+
+    def connect(self) -> None:
+        self.buses = _connect_followers()
+
+    def observe(self) -> "tuple[np.ndarray, dict]":
+        images = _gather_images(self.frames, self._names)
+        return read_state(self.buses), images
+
+    def command(self, action12) -> None:
+        goals = policy_action_to_goals(action12)
+        for s in _SIDES:
+            self.buses[s].sync_write(
+                "Goal_Position", goals[s], normalize=True, num_retry=2
+            )
+
+    def enable(self, first_action12) -> None:
+        """Torque on, then ramp to the policy's first action. The one door."""
+        for bus in self.buses.values():
+            bus.enable_torque()
+        self.torque_on = True
+        print("🏁 ramping to the policy's first action ...")
+        _ramp_to(self.buses, policy_action_to_goals(first_action12), duration=RAMP_S)
+        time.sleep(0.5)
+
+    def shutdown(self) -> None:
+        if self.torque_on:
+            for bus in self.buses.values():
+                try:
+                    bus.disable_torque(num_retry=3)
+                except Exception as e:  # noqa: BLE001
+                    print(f"⚠️  could not disable torque on a follower: {e}")
+            self.torque_on = False
+        self.frames.request_shutdown()
+        for c in self.captures:
+            try:
+                c.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]"):
+    """The twin standing where the bench stands. Returns ``(rig, env)``.
+
+    A rehearsal, not an evaluation: one scenario, no resetting, no scoring.
+    ``tool/run_policy_sim.py`` is the harness that scores many of them.
+    """
+    from common.policy_rig import TwinRig
+    from sim_datagen.env import CAMERAS, PickPlaceTwinEnv
+    from tool.eval_sim_policy import _scenario_for_seed
+
+    env = PickPlaceTwinEnv(task)
+    env.reset(_scenario_for_seed(task, seed))
+    rig = TwinRig(env, cameras=list(CAMERAS), camera_map=camera_map)
+    return rig, env
+
+
 def stall_decision(
     have_action: bool, stalled_s: float, hold_s: float, abort_s: float
 ) -> str:
@@ -206,6 +295,22 @@ def stall_decision(
     if stalled_s >= hold_s:
         return "warn"
     return "hold"
+
+
+def _hold(rig, dry_run: bool) -> None:
+    """Let a held tick pass on a rig whose clock only moves when commanded.
+
+    The bench keeps ticking whatever anyone does -- its servos hold the last
+    goal and the world carries on. The twin does not: it advances one control
+    step per ``command``, so without this a paused rollout would freeze
+    simulated time, and the preview-then-step cycle would never show the arms
+    settling. ``hold`` is exactly that step with no new goal.
+    """
+    if dry_run:
+        return
+    holder = getattr(rig, "hold", None)
+    if holder is not None:
+        holder()
 
 
 def _ticks(budget: "int | None"):
@@ -235,7 +340,7 @@ def resolve_launch(
 ) -> "tuple[float, str, bool]":
     """Fill in what ``--web`` implies: duration, throttle, who consents. Pure.
 
-    ``run_policy_real.py --server URL --web`` is meant to be the whole command,
+    ``run_policy.py --server URL --web`` is meant to be the whole command,
     with everything else decided on the page, so under ``--web`` the defaults
     change to the ones that console needs:
 
@@ -378,6 +483,37 @@ def main() -> None:
     )
     parser.add_argument("--web-port", type=int, default=8767, help="Live view port")
     parser.add_argument(
+        "--twin-port",
+        type=int,
+        default=None,
+        help="Port for the live view's 3D twin, which is its own server and is "
+        "embedded in the page (default: --web-port + 1)",
+    )
+    parser.add_argument(
+        "--sim",
+        nargs="?",
+        const="handover",
+        choices=("single", "handover"),
+        default=None,
+        help="Rehearse against the digital twin instead of the arms: builds the "
+        "payload scene and runs the WHOLE procedure -- page, arming, throttle, "
+        "splice, run log -- with no motor anywhere. No cameras, no buses",
+    )
+    parser.add_argument(
+        "--sim-seed",
+        type=int,
+        default=None,
+        help="--sim: which scenario the twin starts in (default: the task's "
+        "simple-mode seed, 0 for single and 14 for handover)",
+    )
+    parser.add_argument(
+        "--camera-map",
+        default=None,
+        help="Remote: rename cameras on the way to the policy, e.g. "
+        "'wrist_camera_left=wrist_left'. A checkpoint asks for the names its "
+        "dataset used, which are not always the names the rig produces now",
+    )
+    parser.add_argument(
         "--arm-at-terminal",
         action="store_true",
         help="Take the 'the arms will move' consent at the terminal. Without "
@@ -413,6 +549,20 @@ def main() -> None:
         bool(args.yes),
         bool(args.dry_run),
     )
+    try:
+        camera_map = parse_camera_map(args.camera_map)
+    except ValueError as exc:
+        raise SystemExit(f"❌ {exc}")
+    if camera_map and not args.server:
+        # LocalActionSource builds its batch from the names it is handed; only
+        # the remote client renames on the way out.
+        raise SystemExit("❌ --camera-map needs --server (remote inference)")
+
+    if args.sim and not args.task:
+        # A rehearsal knows its own task, so --sim alone is a whole command.
+        from sim_datagen.env import TASKS
+
+        args.task = TASKS[args.sim]
     if not args.task and not args.web:
         raise SystemExit("❌ --task is required without --web (nothing can set it)")
     if bool(args.checkpoint) == bool(args.server):
@@ -448,6 +598,7 @@ def main() -> None:
             ramp_kind=args.ramp,
             new_weight=args.new_weight,
             execute_ratio=args.execute_ratio,
+            camera_map=camera_map,
         )
     else:
         import torch
@@ -457,24 +608,30 @@ def main() -> None:
         source = LocalActionSource(str(args.checkpoint), device, args.task or "")
     print(f"  ✓ {source.describe()}")
 
-    from common.data_manager_dual import DualDataManager
-
-    data_manager = DualDataManager()
-    captures = _start_cameras(data_manager)
-    image_names = [c.name for c in captures]
+    env = None
+    if args.sim:
+        seed = args.sim_seed
+        if seed is None:
+            seed = 0 if args.sim == "single" else 14
+        print(f"🧪 rehearsing in the twin: {args.sim}, scenario seed {seed}")
+        rig, env = build_sim_rig(args.sim, seed, camera_map)
+    else:
+        rig = BenchRig(camera_map=camera_map)
+    image_names = list(rig.cameras)
 
     # A camera set that does not match what the policy was trained on produces a
-    # shape error deep inside inference; catch it here, before any torque.
+    # shape error deep inside inference; catch it here, before any torque. The
+    # comparison is against the names AFTER --camera-map, because those are the
+    # ones the policy will actually be sent.
     if source.cameras is not None and sorted(image_names) != sorted(source.cameras):
-        for c in captures:
-            c.stop()
-        data_manager.request_shutdown()
+        rig.shutdown()
         raise SystemExit(
             f"❌ rig cameras {sorted(image_names)} do not match the policy's "
             f"{sorted(source.cameras)}"
         )
 
-    buses = _connect_followers()
+    if not args.sim:
+        rig.connect()
 
     # The throttle exists whether or not anyone is watching: the loop consults
     # it every tick, and only the view (if asked for) ever changes it.
@@ -497,22 +654,21 @@ def main() -> None:
         view = PolicyView(
             control,
             source,
-            data_manager,
+            rig.frames,
             image_names,
             port=args.web_port,
+            twin_port=args.twin_port,
             arm_from_view=arm_from_view,
         )
         if not view.start():
             # Almost always another rollout still holding the port. Carrying on
             # would put an older run's cameras and throttle on the screen while
             # THESE arms move, which is worse than no view at all.
-            for c in captures:
-                c.stop()
-            data_manager.request_shutdown()
+            rig.shutdown()
             raise SystemExit(
                 f"❌ the live view could not start on port {args.web_port}: "
                 f"{view.error}\n   Another rollout is probably still running "
-                f"(pgrep -af run_policy_real). Stop it, or pass a different "
+                f"(pgrep -af run_policy). Stop it, or pass a different "
                 f"--web-port."
             )
         print(f"🖥️  live view on http://127.0.0.1:{args.web_port}/")
@@ -525,8 +681,9 @@ def main() -> None:
         extra = (
             f"\n   The throttle starts in '{start_mode}'" if start_mode != "run" else ""
         )
+        which = "The SIMULATED arms" if args.sim else "The follower arms"
         print(
-            "\n⚠️  The follower arms will MOVE under policy control: ramp to the "
+            f"\n⚠️  {which} will MOVE under policy control: ramp to the "
             f"first action, then {start_mode}.{extra}\n   Clear the "
             "workspace. Press Enter to proceed (Ctrl+C to abort)..."
         )
@@ -537,8 +694,13 @@ def main() -> None:
 
     run_log = None
     dt = 1.0 / args.hz
-    torque_on = False
     task = args.task or ""
+    # Declared before the try, because the cleanup below reads them and a run
+    # that fails EARLY -- no server, no first action -- would otherwise die of
+    # an UnboundLocalError that hides the reason it actually stopped.
+    segments: "list[dict]" = []
+    close_segment = None
+    current = [getattr(source, "strategy", args.strategy)]
     try:
         if not task:
             # A run may be started with no task at all -- that is what makes the
@@ -576,22 +738,15 @@ def main() -> None:
             print("✅ armed from the live view")
 
         # Warm up the observation, then run one inference for the ramp target.
-        images = _gather_images(data_manager, image_names)
-        state = read_state(buses)
+        state, images = rig.observe()
         source.offer(state, images)
         action12 = _first_action(source, _FIRST_ACTION_TIMEOUT_S)
-        goals = policy_action_to_goals(action12)
 
         if args.dry_run:
             span = "until stopped" if n_ticks is None else f"for {seconds:.0f}s"
             print(f"🧪 dry-run: inferring at {args.hz:.0f} Hz {span}, NO motor writes")
         else:
-            for b in buses.values():
-                b.enable_torque()
-            torque_on = True
-            print("🏁 ramping to the policy's first action ...")
-            _ramp_to(buses, goals, duration=3.0)
-            time.sleep(0.5)
+            rig.enable(action12)
             print("🔴 running policy ...")
 
         stalled_since: "float | None" = None
@@ -603,13 +758,12 @@ def main() -> None:
         # the page closes the current segment and opens the next, so a session
         # spent comparing them ends with one row each rather than one average
         # over settings that were never in force at the same time.
-        segments: "list[dict]" = []
         executed: "list[np.ndarray]" = []
         seams: "list[int]" = []
         round_trips: "list[float]" = []
         last_seq = 0
 
-        def close_segment(name: str) -> None:
+        def _close_segment(name: str) -> None:
             if executed:
                 row = summarise(
                     np.asarray(executed),
@@ -626,12 +780,12 @@ def main() -> None:
             segment_holds[0] = 0
 
         segment_holds = [0]
-        current = [getattr(source, "strategy", args.strategy)]
+        close_segment = _close_segment
 
         if view is not None:
 
             def on_splice_change(settings, _current=current):
-                close_segment(_current[0])
+                _close_segment(_current[0])
                 _current[0] = settings["strategy"]
                 print(f"🔀 splice is now {settings['strategy']}")
 
@@ -648,8 +802,7 @@ def main() -> None:
                 source.drain()
             source.set_paused(control.mode == "hold")
 
-            images = _gather_images(data_manager, image_names)
-            state = read_state(buses)
+            state, images = rig.observe()
             source.offer(state, images)
             if source.fatal:
                 print(f"⛔ {source.fatal} — stopping")
@@ -676,20 +829,18 @@ def main() -> None:
                 stalled_since = None
                 warned = False
                 executed.append(np.asarray(action12, dtype=float))
-                goals = policy_action_to_goals(action12)
                 if not args.dry_run:
-                    for s in _SIDES:
-                        buses[s].sync_write(
-                            "Goal_Position", goals[s], normalize=True, num_retry=2
-                        )
+                    rig.command(action12)
             elif control.mode != "run":
                 # Held or stepping: the pause is the operator's, so neither the
                 # warning nor the abort applies -- the arms keep their last goal.
                 holds += 1
                 stalled_since = None
                 warned = False
+                _hold(rig, args.dry_run)
             else:
                 holds += 1
+                _hold(rig, args.dry_run)
                 # Only a hold while RUNNING is the splice's doing; a pause the
                 # operator asked for would otherwise swamp the measurement,
                 # since preview holds on every single tick.
@@ -712,8 +863,14 @@ def main() -> None:
             control.publish(
                 tick=tick,
                 t=tick / args.hz,
-                state=[round(v, 3) for v in state],
-                commanded=None if action12 is None else [round(v, 3) for v in action12],
+                # float(), not round() alone: the twin observes in float32 and
+                # numpy's round gives a numpy scalar back, which the view's JSON
+                # encoder refuses -- so every status poll 500s and the whole page
+                # goes blank. The bench happens to hand out float64.
+                state=[round(float(v), 3) for v in state],
+                commanded=(
+                    None if action12 is None else [round(float(v), 3) for v in action12]
+                ),
                 queue=source.depth,
                 round_trip_s=round(source.round_trip_s, 4),
                 server_infer_s=round(getattr(source, "server_infer_s", 0.0), 4),
@@ -737,6 +894,9 @@ def main() -> None:
                     if args.server
                     else ""
                 )
+                if env is not None:
+                    mark = "✓" if env.success() else "·"
+                    extra += f"  place={env.place_error() * 1e3:4.0f}mm {mark}"
                 print(
                     f"  t={tick / args.hz:5.1f}s  [{control.mode}]  "
                     f"action[:6]={action12[:6].round(2)}{extra}"
@@ -747,23 +907,12 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n⏹️  interrupted")
     finally:
-        if torque_on:
-            for b in buses.values():
-                try:
-                    b.disable_torque(num_retry=3)
-                except Exception as e:  # noqa: BLE001
-                    print(f"⚠️  could not disable torque on a follower: {e}")
-        data_manager.request_shutdown()
-        for c in captures:
-            try:
-                c.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        if args.server:
+        rig.shutdown()
+        if args.server and close_segment is not None:
             close_segment(current[0])
-            if segments:
-                print("\n📐 what each splice did on this scene:\n")
-                print(compare(segments))
+        if segments:
+            print("\n📐 what each splice did on this scene:\n")
+            print(compare(segments))
         if run_log is not None:
             run_log.close()
             print(f"📝 run log written: {run_log.root}")

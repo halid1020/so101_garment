@@ -1,6 +1,6 @@
 """What a rollout is doing, and the one switch that gates its motion.
 
-``tool/run_policy_real.py`` drives the arms from a policy's action chunks. Two
+``tool/run_policy.py`` drives the arms from a policy's action chunks. Two
 parties need to agree about that run: the control loop, which writes goals at
 the control rate, and a watcher (``common.web.policy_view``), which reads what
 is happening and may ask for less motion. This module is what they share, and

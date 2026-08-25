@@ -1,4 +1,4 @@
-"""A live view of one autonomous rollout, served by tool/run_policy_real.py.
+"""A live view of one autonomous rollout, served by tool/run_policy.py.
 
 A rollout that misbehaves gives an operator almost nothing to go on: the arms
 move, the grasp misses, and it is over. The four things that would explain it
@@ -20,6 +20,7 @@ Served on 127.0.0.1: it is unauthenticated, and it steers a robot.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,25 @@ from common.recording.monitor_server import (
 from common.web.util import revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _dumps(payload) -> str:
+    """JSON for the status poll, tolerant of numpy's scalar types.
+
+    Belt and braces. Everything published SHOULD already be plain Python -- the
+    control loop converts -- but a single numpy float leaking in makes the
+    encoder raise, the poll 500, and the whole page go blank in the middle of a
+    rollout. Losing the page is a far worse outcome than printing a number that
+    came in the wrong wrapper.
+    """
+    return json.dumps(payload, default=_plain)
+
+
+def _plain(value):
+    item = getattr(value, "item", None)
+    if item is not None:
+        return item()
+    raise TypeError(f"cannot serialise {type(value).__name__} for the status poll")
 
 
 def chunk_payload(source) -> "dict[str, Any] | None":
@@ -62,8 +82,8 @@ def pending_payload(source) -> "dict[str, Any] | None":
     Distinct from :func:`chunk_payload`, which is what the policy SAID. The two
     differ under every splice but ``append``: the queue has had the stale rows
     removed and, under ``blend``, its first few actions are a cross-fade that
-    appears in no chunk. The twin draws this one, because a preview that showed
-    the raw plan would show motion the arms are not going to make.
+    appears in no chunk -- so this is what the arms will really do, and the page
+    shows it beside the plan that was asked for.
     """
     getter = getattr(source, "pending", None)
     if getter is None:
@@ -95,6 +115,7 @@ class PolicyView:
         quality: int = DEFAULT_QUALITY,
         max_width: int = DEFAULT_MAX_WIDTH,
         arm_from_view: bool = False,
+        twin_port: "int | None" = None,
     ) -> None:
         #: Whether this run delegated its 'the arms will move' consent to the
         #: page. False means the terminal already took it and the page must
@@ -102,6 +123,9 @@ class PolicyView:
         self.arm_from_view = bool(arm_from_view)
         #: Why the view is not serving, if it is not. See :meth:`start`.
         self.error: "str | None" = None
+        #: Why the 3D twin is not there, if it is not. Unlike ``error`` this is
+        #: survivable: the rest of the page is still true without it.
+        self.twin_error: "str | None" = None
         #: Called with the new settings whenever the splice changes, so a run
         #: can close one measurement segment and open the next. Set by the
         #: caller; a no-op if nobody cares.
@@ -115,8 +139,13 @@ class PolicyView:
         self.view_fps = float(view_fps)
         self.quality = int(quality)
         self.max_width = int(max_width)
+        #: The 3D twin is a SECOND server, on its own port, because viser is a
+        #: server: the page embeds it rather than proxying it. Zero means do
+        #: not serve one at all -- which is what a test wants, and what a box
+        #: with no GPU to render on may want too.
+        self.twin_port = int(port + 1 if twin_port is None else twin_port)
 
-        self._twin = None
+        self._twin: "Any | None" = None
         self._twin_lock = threading.Lock()
         self._thread: "threading.Thread | None" = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
@@ -135,7 +164,7 @@ class PolicyView:
                 web.post("/api/task", self.handle_task),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
                 web.get("/shown/{name}.jpg", self.handle_shown),
-                web.get("/twin.jpg", self.handle_twin),
+                web.get("/twin/at", self.handle_twin),
                 web.static("/static", STATIC_DIR),
             ]
         )
@@ -151,6 +180,20 @@ class PolicyView:
         arms now moving. Everything on screen is plausible and none of it is
         true.
         """
+        # Eagerly, before the page exists: the twin is an <iframe>, and an
+        # iframe that loads before its server is listening shows a browser
+        # error page and never retries.
+        if self.twin_port > 0:
+            try:
+                from common.web.policy_ghost import GhostPair
+
+                self._twin = GhostPair(host=self.host, port=self.twin_port)
+            except Exception as exc:  # noqa: BLE001 - a missing twin is not fatal
+                # The numbers, the cameras and the throttle are all still worth
+                # having, so this degrades rather than refusing to serve.
+                self.twin_error = f"{type(exc).__name__}: {exc}"
+                self._twin = None
+
         self._thread = threading.Thread(
             target=self._serve, name="policy-view", daemon=True
         )
@@ -180,7 +223,7 @@ class PolicyView:
     def stop(self) -> None:
         with self._twin_lock:
             if self._twin is not None:
-                self._twin.close()
+                self._twin.stop()
                 self._twin = None
         if self._loop is None:
             return
@@ -205,6 +248,8 @@ class PolicyView:
             "strategies": list(STRATEGIES),
             "splice": (source.settings() if hasattr(source, "settings") else None),
             "arm_from_view": bool(self.arm_from_view),
+            "twin_url": (None if self._twin is None else self._twin.url),
+            "twin_error": self.twin_error,
         }
 
     async def handle_strategy(self, request: web.Request) -> web.Response:
@@ -229,7 +274,7 @@ class PolicyView:
         return web.json_response(settings)
 
     async def handle_task(self, request: web.Request) -> web.Response:
-        """Set the language task the policy is given. See run_policy_real.
+        """Set the language task the policy is given. See run_policy.
 
         A run may be started without one -- that is the point of a console you
         drive entirely from the browser -- and then it waits here before it
@@ -251,7 +296,7 @@ class PolicyView:
         return web.FileResponse(STATIC_DIR / "policy.html")
 
     async def handle_status(self, _request: web.Request) -> web.Response:
-        return web.json_response(self.status())
+        return web.json_response(self.status(), dumps=_dumps)
 
     async def handle_mode(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -303,20 +348,19 @@ class PolicyView:
         return web.Response(body=jpeg, content_type="image/jpeg")
 
     async def handle_twin(self, request: web.Request) -> web.Response:
-        """ONE frame of the twin: the arms now, and where action ``i`` sends them.
+        """Point the twin at one action: the arms now, and where it sends them.
 
-        Blue is the measured pose, orange is ``last_chunk[i]``, drawn together so
-        the gap between the ghosts is the motion still to come.
+        Blue is the measured pose, orange is ``last_chunk[i]``, shown together in
+        a 3D scene the viewer can turn, so the gap between the ghosts is the
+        motion still to come and can be looked at from the side.
+
+        Nothing is returned but ``204``: the picture is drawn in the browser, by
+        viser, over its own connection. This route only moves the two poses.
 
         The CALLER names the frame -- ``?seq=<n>&i=<k>`` -- and gets a 409 if
         that plan is no longer the current one. That is the whole point of this
-        route's shape. The previous twin was an endless MJPEG stream whose
-        subject the server picked afresh each frame out of payloads with
-        different lengths; between a plan being replaced underneath the
-        animation and a part arriving half-written into a live <img>, it
-        flickered, and no amount of anchoring inside the server could fix a
-        design that let the browser paint bytes it had not finished receiving.
-        A single still image cannot: the page only shows one that fully loaded.
+        route's shape: the page, not the server, decides which action is on
+        screen, so the subject can never be swapped underneath the animation.
         """
         try:
             want_seq = int(request.query.get("seq", "0"))
@@ -330,36 +374,18 @@ class PolicyView:
         have_seq = int(getattr(self.source, "last_chunk_seq", 0) or 0)
         if have_seq != want_seq:
             # Not an error: the page is one poll behind. It re-reads the status
-            # and asks again, and meanwhile keeps the frame it already has.
+            # and asks again, and meanwhile keeps the pose already on screen.
             raise web.HTTPConflict(text=f"plan #{want_seq} is gone; now #{have_seq}")
         actions = np.asarray(chunk, dtype=float)
         plan = actions[index % len(actions)] if len(actions) else None
         state = (self.control.snapshot().get("state")) or None
 
-        loop = asyncio.get_running_loop()
-        jpeg = await loop.run_in_executor(None, self._twin_jpeg, state, plan)
-        if jpeg is None:
-            raise web.HTTPNotFound(text="nothing to draw yet")
-        return web.Response(
-            body=jpeg,
-            content_type="image/jpeg",
-            headers={"Cache-Control": "no-store"},
-        )
-
-    def _twin_jpeg(self, state, plan) -> "bytes | None":
-        twin = self._ensure_twin()
+        twin = self._twin
         if twin is None:
-            return None
-        return encode_jpeg(twin.render_pair(state, plan), self.quality, self.max_width)
-
-    def _ensure_twin(self):
-        """Build the twin the first time somebody looks at it, never before."""
-        with self._twin_lock:
-            if self._twin is None:
-                from common.web.policy_twin import TwinPreview
-
-                self._twin = TwinPreview()
-            return self._twin
+            raise web.HTTPNotFound(text="the twin is not running")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, twin.show, state, plan)
+        return web.Response(status=204)
 
     async def _stream(self, request, frame_source, fps: float) -> web.StreamResponse:
         response = web.StreamResponse(

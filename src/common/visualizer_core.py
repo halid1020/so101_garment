@@ -18,19 +18,38 @@ class RobotVisualizerCore:
     robot used for previews or targets, UI camera streams, and spatial controllers.
     """
 
-    def __init__(self, urdf_path: str) -> None:
+    def __init__(
+        self,
+        urdf_path: str,
+        host: str = "0.0.0.0",
+        port: int = 8080,
+        robot_color: "tuple[float, float, float, float] | None" = None,
+        ghost_color: "tuple[float, float, float, float]" = (1.0, 0.65, 0.0, 0.25),
+    ) -> None:
         """
         Initializes the visualization server and loads the robot URDFs.
 
         Args:
             urdf_path (str): The file path to the robot's URDF model.
+            host (str): Interface to bind. The default serves the whole network,
+                which is what a hand-calibration tool wants; a view embedded in
+                another page should pass "127.0.0.1".
+            port (int): Port to serve on. Two visualizers cannot share one.
+            robot_color: RGBA override for the MAIN robot. None (the default)
+                keeps the URDF's own materials.
+            ghost_color: RGBA override for the ghost robot.
         """
-        self.server = viser.ViserServer()
+        self.server = viser.ViserServer(host=host, port=port, verbose=False)
         self.server.scene.add_grid("/ground", width=2, height=2, cell_size=0.1)
 
         # Load actual robot URDF
         urdf = yourdfpy.URDF.load(urdf_path)
-        self.urdf_vis = ViserUrdf(self.server, urdf, root_node_name="/robot_actual")
+        self.urdf_vis = ViserUrdf(
+            self.server,
+            urdf,
+            root_node_name="/robot_actual",
+            mesh_color_override=robot_color,
+        )
 
         # Load ghost robot URDF
         ghost_urdf = yourdfpy.URDF.load(urdf_path)
@@ -38,7 +57,7 @@ class RobotVisualizerCore:
             self.server,
             ghost_urdf,
             root_node_name="/robot_ghost",
-            mesh_color_override=(1.0, 0.65, 0.0, 0.25),
+            mesh_color_override=ghost_color,
         )
 
         self.controller_handle: Any = None

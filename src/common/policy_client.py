@@ -236,6 +236,8 @@ class RemoteActionSource:
         self.last_error: "str | None" = None
         self.round_trip_s = 0.0
         self.server_infer_s = 0.0
+        #: True when the last splice discarded the whole chunk it was handed.
+        self._stale_on_arrival = False
         #: Ticks of round trip the last splice compensated for, and how many
         #: actions it threw away because their moment had passed. Reported so a
         #: strategy can be judged without re-deriving it from the log.
@@ -435,6 +437,19 @@ class RemoteActionSource:
         #: boundary is not where the chunk landed, it is where it starts.
         self.boundary_offset = len(leftover) if self.strategy == "append" else 0
         self._queue = deque(np.asarray(row, dtype=float) for row in merged)
+        self._stale_on_arrival = bool(len(merged) == 0 and len(chunk))
+        if self._stale_on_arrival:
+            # An ALIGNING splice throws away the rows that were planned for
+            # ticks already executed; when the round trip is longer than the
+            # chunk itself, that is every row, and the arms get nothing at all
+            # -- for ever, since the next chunk will be just as late. Silence
+            # here reads as "the server is not answering", which it is not.
+            self.last_error = (
+                f"the whole chunk was stale on arrival: {self.strategy} aligns a "
+                f"plan to the present, and {delay} ticks of round trip is longer "
+                f"than its {len(chunk)} actions. Use 'append', or shorten the "
+                f"round trip"
+            )
 
     def _fetch(self, steps, seq: int) -> None:
         import urllib.error
@@ -474,7 +489,12 @@ class RemoteActionSource:
                 self.server_infer_s = float(
                     (header.get("timings") or {}).get("infer_s", 0.0)
                 )
-                self.last_error = None
+                if not self._stale_on_arrival:
+                    # The request succeeded; clear whatever the last one failed
+                    # with -- unless the splice just threw the whole chunk away,
+                    # which is the one thing the transport being fine does not
+                    # fix, and which nothing else would ever say out loud.
+                    self.last_error = None
         finally:
             with self._lock:
                 self._inflight = False

@@ -68,30 +68,31 @@ $('#p-task-form').onsubmit = async (ev) => {
 };
 
 // -- the twin ---------------------------------------------------------
-// ONE still image at a time, drawn to a canvas only once it has fully loaded.
-// That is the whole flicker fix: a frame that is slow, missing or answered 409
-// because the plan moved on never reaches the canvas, so the last good frame
-// simply stays. The previous twin was an endless MJPEG stream painted straight
-// into a live <img>, which cannot be made not to flicker -- a restarted stream
-// paints blank, and a part that arrives half-written paints half an image.
+// The picture is NOT drawn here. The <iframe> holds a viser scene rendered by
+// this browser's own GPU, which is what makes it something you can take hold of
+// and look at from the side. All this page does is aim it: one request per
+// frame naming the plan and the action, and viser moves the two ghosts.
+//
+// A request that is slow, refused, or answered 409 because the plan moved on
+// changes nothing, so the scene simply holds the pose it already has.
 const TWIN_PERIOD_MS = 100;
 let twinSeq = -1, twinN = 0, twinAt = 0, twinBusy = false, twinPlaying = true;
+let twinFramed = false;
+
+function twinFrame(url) {
+  // Set once: re-assigning src would reload the scene and throw away whatever
+  // angle the operator had turned it to.
+  if (twinFramed || !url) return;
+  twinFramed = true;
+  $('#p-twin').src = url;
+}
 
 function twinDraw(i) {
   if (twinBusy || twinSeq < 0) return;
   twinBusy = true;
-  const img = new Image();
-  img.onload = () => {
-    const cv = $('#p-twin');
-    if (cv.width !== img.naturalWidth || cv.height !== img.naturalHeight) {
-      cv.width = img.naturalWidth;
-      cv.height = img.naturalHeight;
-    }
-    cv.getContext('2d').drawImage(img, 0, 0);
-    twinBusy = false;
-  };
-  img.onerror = () => { twinBusy = false; };  // keep the frame already shown
-  img.src = `/twin.jpg?seq=${twinSeq}&i=${i}`;
+  fetch(`/twin/at?seq=${twinSeq}&i=${i}`)
+    .catch(() => {})
+    .finally(() => { twinBusy = false; });
 }
 
 function twinBar() {
@@ -480,6 +481,10 @@ function render(s) {
   grippers(s.state, s.commanded);
   vitals(s);
   timing(s);
+
+  twinFrame(s.twin_url);
+  $('#p-twin-err').textContent = s.twin_url ? '' : (s.twin_error || 'no 3D twin');
+  $('#p-twin-err').hidden = !!s.twin_url;
 
   // A new plan restarts the twin at its first action.
   if (s.chunk && s.chunk.seq !== twinSeq) {

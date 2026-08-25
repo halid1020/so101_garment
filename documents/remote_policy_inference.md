@@ -150,7 +150,7 @@ that.
 
 ```bash
 source setup.sh
-venv/bin/python tool/run_policy_real.py \
+venv/bin/python tool/run_policy.py \
     --server http://127.0.0.1:8765 --task "pick up the cube" \
     --dry-run --seconds 20
 ```
@@ -166,7 +166,7 @@ the round trip should be a small fraction of a chunk's wall time.
 Then, with the workspace clear:
 
 ```bash
-venv/bin/python tool/run_policy_real.py \
+venv/bin/python tool/run_policy.py \
     --server http://127.0.0.1:8765 --task "pick up the cube" --seconds 30
 ```
 
@@ -177,6 +177,60 @@ session spent stepping through plans and swapping splices cannot know in advance
 how long it wants, and a default that quietly ended one at 900 ticks was a
 worse guess than none.
 
+## Rehearse it in the twin — no robot required
+
+Everything above can be walked through with the digital twin standing where the
+arms stand. `--sim` swaps the rig behind the same seam
+(`src/common/policy_rig.py`) and changes nothing else: the same page, the same
+arming handshake, the same preview → step → run cycle, the same splice switch,
+the same stall ladder, the same run log. No camera is opened, no bus is touched,
+and there is no motor anywhere. It is how the procedure gets checked before it
+is trusted with torque.
+
+There is a policy to rehearse against. On **thanos**:
+
+```bash
+source setup.sh
+venv/bin/python tool/policy_server.py --port 8765 --checkpoint \
+  outputs/vla_sim_long/diffusion_handover_20260805_112423/\
+simple/handover/diffusion/checkpoints/030000/pretrained_model
+```
+
+That is the sim-trained `handover` diffusion policy — the bimanual relay of the
+2.2 cm cube — selected at step 30 000 on 100 % validation success and scoring
+73 % on the evaluation seeds with 37 mm mean place error. Then, on the laptop:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 thanos          # in its own terminal
+
+source setup.sh
+venv/bin/python tool/run_policy.py --sim handover --web \
+    --server http://127.0.0.1:8765 \
+    --camera-map wrist_camera_left=wrist_left,wrist_camera_right=wrist_right
+```
+
+**Why the `--camera-map`.** That checkpoint's dataset was collected before the
+wrist streams were renamed (`364dbf1`), so it asks for
+`scene` / `wrist_left` / `wrist_right` where the twin now produces
+`scene` / `wrist_camera_left` / `wrist_camera_right`. Renaming on the way out is
+the whole fix; retraining a policy because a stream changed name is not. Without
+it the run refuses to start and prints both camera sets, before anything moves.
+
+`--sim` alone means `handover`; `--sim single` is the one-arm task. `--sim-seed`
+picks the scenario (default 0 for `single`, 14 for `handover` — the seeds the
+`simple` collection mode uses). The per-second line gains the payload's distance
+from its target, so the terminal says whether the rehearsal is getting anywhere.
+
+The twin renders all three cameras in about 12 ms per tick on an RTX 3050, well
+inside a 30 Hz tick, so this runs comfortably on the rig laptop.
+
+**What this rehearses and what it does not.** It rehearses the procedure — every
+button, every wait, every refusal, in order. It does not rehearse the hardware:
+the arm-side mapping, the calibration, the workspace, and whether the blue ghost
+really tracks the measured joints are all still only checkable on the rig. For
+many scored episodes on chosen seeds instead of one interactive rollout, use
+`tool/run_policy_sim.py`, which is the batch harness.
+
 ## Watching a rollout
 
 A rollout that misbehaves is over in seconds and the terminal shows almost none
@@ -184,7 +238,7 @@ of it. `--web` serves a live view of the run itself on loopback, and it is meant
 to be the **whole interface** — this is the entire command:
 
 ```bash
-venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 --web
+venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 --web
 ```
 
 Everything else happens in the browser: the **task** is typed in the header (the
@@ -204,8 +258,8 @@ the four questions a failed grasp raises:
   are half a second old, and those are the ones that explain the plan.
 - **What it planned** — the returned chunk as twelve small trace plots, one per
   joint on its own scale, and the same chunk walked through in the rig's own
-  twin, where the arms as they are now (blue) are drawn inside where the plan
-  sends them (orange).
+  twin: a 3D scene you can turn, with the arms as they are now (blue) drawn
+  inside where the plan sends them (orange).
 - **What the arms did** — measured against commanded, per joint, with the two
   **grippers on their own panel**. That is deliberate: across the collected
   datasets the gripper channels span a few tenths of open fraction and never
@@ -233,34 +287,41 @@ Preview to inspect.
 
 ### The twin
 
-One picture, one subject: **the arms as they are now, in transparent blue,
-inside where the selected action of the plan sends them, in transparent
-orange**. The gap between the two ghosts is the motion still to come, which is
-the thing worth looking at and which neither pose shows on its own. It is
-forward kinematics with a camera — `qpos` plus `mj_forward`, no physics, no
-contact, nothing grasped.
+One scene, two ghosts: **the arms as they are now, in transparent blue, inside
+where the selected action of the plan sends them, in transparent orange**. The
+gap between them is the motion still to come, which is the thing worth looking
+at and which neither pose shows on its own. It is forward kinematics only — no
+physics, no contact, nothing grasped.
+
+**Drag it.** The scene is a [viser](https://viser.studio) view, the same one
+`tool/check_mirror.py` uses, rendered by your own browser: drag to orbit, scroll
+to zoom. That is the point of it. A gripper that clears the block from the front
+may be through it from the side, and a single fixed camera angle — which is what
+this panel used to be — cannot tell you which.
+
+It runs as its own small server, on `--web-port + 1` by default
+(`--twin-port` to move it), and the page embeds it. If it cannot start, the page
+says so in the panel and everything else carries on: the numbers, the cameras
+and the throttle are all still true without it.
 
 Underneath it is a transport: **play/pause, ◀ ▶ and a scrub bar** over the
-actions of the current plan. Pause and step to action 17 and look at it; the
-blue ghost keeps tracking the real arms while the orange one holds still, so a
-plan can be examined against the pose it will act from. A new plan restarts the
-walk at its first action.
+actions of the current plan. Pause and step to action 17 and look at it, from
+whatever angle you have turned to; the blue ghost keeps tracking the real arms
+while the orange one holds still, so a plan can be examined against the pose it
+will act from. A new plan restarts the walk at its first action.
 
 The upright line in the plan panel marks the action the twin is showing, so the
 two panels read as one picture.
 
-**On the flicker this used to have.** The twin was an endless MJPEG stream whose
-subject the server chose afresh each frame, out of three payloads with different
-lengths, painted straight into a live `<img>`. That arrangement cannot be made
-not to flicker: a restarted stream paints blank, a part that arrives
-half-written paints half an image, and a plan replaced underneath the animation
-paints a jump. It is now **one still image at a time**, named by the page
-(`/twin.jpg?seq=…&i=…`) and drawn to a canvas only once it has fully loaded — a
-frame that is slow, missing, or answered `409` because the plan moved on never
-reaches the screen, and the last good frame simply stays. Two consequences worth
-knowing: the twin no longer holds a permanent connection, and *what is still to
-execute* is no longer offered as a subject, because the queue drains every tick
-and a list that changes length underneath an animation is exactly the bug.
+**How the page keeps the two in step.** Every frame the page asks for one
+action by name — `/twin/at?seq=…&i=…` — and the server answers `204` and moves
+the ghosts, or `409` if that plan has been replaced, in which case nothing moves
+and the scene holds the pose it already has. The page, not the server, decides
+what is on screen; a subject the server chose afresh each frame is what made the
+old rendered twin flicker, and there is no longer a server-chosen subject to
+get wrong. *What is still to execute* is deliberately not offered as a subject
+either: the queue drains every tick, and a list that changes length underneath
+an animation is exactly that bug in its purest form.
 
 **If the twin looks erratic, check that only one rollout is running.** A second
 rollout cannot bind the view's port, and it used to carry on regardless, leaving
@@ -286,11 +347,11 @@ Arming is one-way either way: `Stop` is how a run ends, and it releases torque.
 
 **The live cameras are not connected until you ask.** Every MJPEG stream is a
 connection that never closes, and a browser allows about six per origin; with
-three cameras plus the twin, the short requests — the status poll, the frames
-the policy was shown — queue behind streams that never finish, get dropped and
-retried, and the twin visibly stutters. The twin is the panel that answers a
-question, so it keeps the clear channel. Press **connect** on the live panel
-when you want them.
+three cameras running, the short requests — the status poll, the frames the
+policy was shown, the twin's one-action-per-frame aim — queue behind streams
+that never finish, get dropped and retried. Press **connect** on the live panel
+when you want them. (The twin itself costs one websocket to a *different*
+origin, so it is outside that budget.)
 
 The strip under the buttons is the health of the rollout, and it stays on
 screen because a rollout is over in seconds and scrolling loses it: **queue**

@@ -1,6 +1,10 @@
 """Run a policy in the digital twin, with inference here or on another machine.
 
-This is ``tool/run_policy_real.py`` with the bench swapped for the twin. The
+This is the BATCH half of the twin: many episodes on chosen seeds, scored, with
+no operator in the loop. For one interactive rollout with the live view -- the
+deployment procedure itself, rehearsed -- use ``tool/run_policy.py --sim``.
+
+This is ``tool/run_policy.py`` with the bench swapped for the twin. The
 client, the wire, the observation window and the chunk splice are the same code,
 so a strategy measured here is the strategy the arms will execute -- and it can
 be measured a hundred times, on chosen seeds, without anyone standing by the
@@ -46,6 +50,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 from common.chunk_metrics import compare, summarise  # noqa: E402
 from common.chunking import STRATEGIES  # noqa: E402
 from common.policy_rig import TwinRig  # noqa: E402
+from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
 
 #: The twin renders 'scene' where the rig records 'central'; a checkpoint
 #: trained on rig data asks for the latter. Offered as the default so the
@@ -56,17 +61,10 @@ DEFAULT_CAMERA_MAP = {"scene": "central"}
 
 def parse_camera_map(text: "str | None") -> "dict[str, str]":
     """``scene=central,wrist_camera_left=left`` -> a rename map."""
-    if text is None:
-        return dict(DEFAULT_CAMERA_MAP)
-    if text.strip() in ("", "none"):
-        return {}
-    mapping = {}
-    for pair in text.split(","):
-        if "=" not in pair:
-            raise SystemExit(f"❌ --camera-map wants name=name pairs, got '{pair}'")
-        old, new = pair.split("=", 1)
-        mapping[old.strip()] = new.strip()
-    return mapping
+    try:
+        return _parse_camera_map(text, DEFAULT_CAMERA_MAP)
+    except ValueError as exc:
+        raise SystemExit(f"❌ {exc}")
 
 
 def make_source(args, strategy: str, hz: float):

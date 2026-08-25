@@ -8,16 +8,26 @@ the same wire and the same splice.
 
     ``observe() -> (state12, {camera: HWC uint8})``
     ``command(action12)``
+    ``enable(first_action12)``  -- authorise motion and reach the first goal
     ``shutdown()``
     ``cameras``  -- the names ``observe`` will produce
+    ``frames``   -- ``get_rgb_image(name)``, the one thing the live view asks
 
-The hardware implementation stays in ``tool/run_policy_real.py``, where the
+A DEPLOYMENT needs two things a benchmark does not, so they are in the protocol
+rather than in one implementation: ``enable``, which is where torque is turned
+on and the arms are ramped to the first action, and ``frames``, which is where
+the live view reads its pictures. The twin answers both -- with a ramp that
+takes the same three seconds, and a cache of its last render -- so a rehearsal
+in simulation walks the same path, in the same order, as the run it rehearses.
+
+The hardware implementation stays in ``tool/run_policy.py``, where the
 buses, the torque and the confirmation prompt already live and where they
 belong: this module deliberately imports nothing that can move a real motor.
 """
 
 from __future__ import annotations
 
+import threading
 from typing import Protocol
 
 import numpy as np
@@ -34,8 +44,65 @@ class Rig(Protocol):
     def command(self, action12: np.ndarray) -> None:
         """Execute a 12-D action, in the units the dataset recorded."""
 
+    def enable(self, first_action12: np.ndarray) -> None:
+        """Authorise motion and reach the first action. May enable torque."""
+
     def shutdown(self) -> None:
         """Stop safely. Called on every exit path, including a crash."""
+
+
+#: Seconds spent reaching the policy's first action. Slow on purpose: the arms
+#: may be a long way from wherever the policy decided to start.
+RAMP_S = 3.0
+
+
+def parse_camera_map(
+    text: "str | None", default: "dict[str, str] | None" = None
+) -> "dict[str, str]":
+    """``scene=central,wrist_camera_left=left`` -> a rename map. Pure.
+
+    A checkpoint asks for the camera names its dataset was collected under, and
+    those are not always the names the rig produces now -- a stream gets renamed
+    and every earlier checkpoint still wants the old one. Renaming on the way
+    out is the whole fix; retraining is not.
+    """
+    if text is None:
+        return dict(default or {})
+    if text.strip() in ("", "none"):
+        return {}
+    mapping = {}
+    for pair in text.split(","):
+        if "=" not in pair:
+            raise ValueError(f"--camera-map wants name=name pairs, got {pair!r}")
+        old, new = pair.split("=", 1)
+        mapping[old.strip()] = new.strip()
+    return mapping
+
+
+class FrameCache:
+    """The last frame per camera, for a view that has no camera thread to read.
+
+    On the bench the live view reads a ``DualDataManager`` the capture threads
+    are already publishing into. The twin has no threads: it renders inside
+    ``observe``, on the control thread. So the loop hands each tick's frames
+    here, and the view reads them exactly as it reads the real thing --
+    ``get_rgb_image(name)`` is the entire interface it uses.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._frames: "dict[str, np.ndarray]" = {}
+
+    def publish(self, images: "dict[str, np.ndarray]") -> None:
+        with self._lock:
+            self._frames.update(images)
+
+    def get_rgb_image(self, name: str) -> "np.ndarray | None":
+        with self._lock:
+            return self._frames.get(name)
+
+    def request_shutdown(self) -> None:
+        """Nothing runs in the background here; the name matches the bench."""
 
 
 class TwinRig:
@@ -70,9 +137,17 @@ class TwinRig:
         self.cameras = sorted(self.camera_map.get(name, name) for name in cameras)
         self.ticks = 0
         self.last_action: "np.ndarray | None" = None
+        #: What the live view reads. Filled by whoever calls :meth:`observe`.
+        self.frames = FrameCache()
 
     def observe(self) -> "tuple[np.ndarray, dict]":
-        return self.env.observe(self.camera_wh)
+        state, images = self.env.observe(self.camera_wh)
+        self.frames.publish(self.rename(images))
+        return state, images
+
+    def rename(self, images: "dict[str, np.ndarray]") -> "dict[str, np.ndarray]":
+        """The frames under the names :attr:`cameras` reports. Pure."""
+        return {self.camera_map.get(k, k): v for k, v in images.items()}
 
     def command(self, action12: np.ndarray) -> None:
         action = np.asarray(action12, dtype=float)
@@ -92,6 +167,21 @@ class TwinRig:
             state, _ = self.env.observe(self.camera_wh)
             self.last_action = np.asarray(state, dtype=float)
         self.command(self.last_action)
+
+    def enable(self, first_action12: np.ndarray) -> None:
+        """Reach the first action over :data:`RAMP_S`, as the bench does.
+
+        There is no torque to enable, but there IS a ramp: the twin starts at
+        its neutral pose and the policy's first action may be nowhere near it,
+        and a rehearsal that teleported there would hide the one part of a real
+        rollout most likely to surprise somebody.
+        """
+        target = np.asarray(first_action12, dtype=float)
+        state, _ = self.env.observe(self.camera_wh)
+        start = np.asarray(state, dtype=float)
+        steps = max(1, int(RAMP_S * 30.0))
+        for i in range(1, steps + 1):
+            self.command(start + (target - start) * (i / steps))
 
     def shutdown(self) -> None:
         """Nothing to release: no torque, no bus, no camera thread."""

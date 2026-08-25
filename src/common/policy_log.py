@@ -13,7 +13,7 @@ the sequence numbers tie it back to the ticks that executed it.
 
 Images are deliberately not stored: they are the largest part of an observation
 by far, the cameras were already recorded during collection, and the questions
-this log answers are about joints. Written by ``tool/run_policy_real.py``.
+this log answers are about joints. Written by ``tool/run_policy.py``.
 """
 
 from __future__ import annotations

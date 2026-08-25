@@ -211,7 +211,7 @@ Training policies on datasets **collected on the physical rig** reuses the same
 environment (`provision_create.sh` is unchanged) but a different job. There is
 no simulation here, so the job has no MuJoCo probe; and there is no in-loop
 evaluation, because a real policy is evaluated **on the robot** with
-`tool/run_policy_real.py` back at the rig, not on the cluster.
+`tool/run_policy.py` back at the rig, not on the cluster.
 
 The unit of work is one **(dataset, policy)** pair. They are listed in
 `hpc/runs.tsv`, and each becomes one Slurm array task. Nothing tracked has to be
@@ -362,7 +362,7 @@ bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new --dest ~/output
 bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new__wrist_left --dest ~/outputs/policies
 ```
 
-Then `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
+Then `tool/run_policy.py --checkpoint <ckpt> --task "<task>"` — start with
 `--dry-run`. A checkpoint too large for the rig's own machine can be served from
 a GPU box instead (`--dest <gpu-host>:...`, then `tool/policy_server.py` +
 `--server <url>`); see

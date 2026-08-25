@@ -6,7 +6,7 @@
 # A real policy is evaluated ON THE ROBOT, so a finished training run is of no
 # use where it was produced. This copies each run's FINAL checkpoint (and its
 # report) out of the cluster's scratch into the layout tool/policy_server.py
-# and tool/run_policy_real.py expect: one directory per (dataset, policy).
+# and tool/run_policy.py expect: one directory per (dataset, policy).
 #
 #   bash hpc/fetch_policies.sh --from k1234567@<create-login-host> --list
 #   bash hpc/fetch_policies.sh --from k1234567@<create-login-host> \
@@ -325,5 +325,5 @@ echo "  Serve one where it now lives${DEST_HOST:+ (on $DEST_HOST)}:"
 echo "      venv/bin/python tool/policy_server.py --checkpoint $DEST_PATH/$first_ds-$first_pol"
 echo "  then, on the rig (see documents/remote_policy_inference.md):"
 echo "      ssh -N -L 8765:127.0.0.1:8765 ${DEST_HOST:-<gpu-host>}"
-echo "      venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 \\"
+echo "      venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 \\"
 echo "          --task \"<the task it was trained on>\" --dry-run"

@@ -86,9 +86,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   twin; only verified successes are saved) / `eval_sim_policy.py` (policy
   rollouts in the same env — see `documents/long_vla_sim_guide.md`), plus
   policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
-  `send_middle_and_rest.py`), and the on-robot policy pair
-  `run_policy_real.py` (cameras + buses + safety; `--server` sends observation
-  windows out and executes the action chunks that come back) /
+  `send_middle_and_rest.py`), and the policy-deployment pair
+  `run_policy.py` (cameras + buses + safety; `--server` sends observation
+  windows out and executes the action chunks that come back; `--sim [task]`
+  puts the twin behind the same `common/policy_rig.py` seam so the WHOLE
+  procedure — page, arming, throttle, splice, log — can be rehearsed with no
+  robot. Not to be confused with `run_policy_sim.py`, which is the BATCH
+  chunking-strategy sweep over many scored seeds) /
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
@@ -136,11 +140,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   under `static/`
   (`index.html` + one script per tab, no build step). The same package also
   holds the ROLLOUT view, which is a separate page served by
-  `tool/run_policy_real.py --web` and not a console tab: `policy_view.py`
+  `tool/run_policy.py --web` and not a console tab: `policy_view.py`
   (what the policy was shown / planned / did, and the hold·step·run·stop
-  throttle; reads a snapshot, owns no device) + `policy_twin.py` (the
-  returned chunk drawn as the twin — `qpos` + `mj_forward`, no physics) +
-  `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
+  throttle; reads a snapshot, owns no device) + `policy_ghost.py` (the
+  returned chunk drawn as two URDF ghosts — measured blue inside planned
+  orange — in a viser scene the operator can orbit; served on its OWN port and
+  embedded in the page as an iframe, so the page only ever aims it,
+  `/twin/at?seq&i`) + `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
   (the throttle's pure state machine and the prefetch arithmetic, shared with
   the control loop) and `common/policy_log.py` (the per-run log under
   `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
@@ -174,7 +180,7 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `create_real_vla.sbatch` (one array task per dataset/policy/**camera set**;
   policies `act|diffusion|pi05`), `create_sim_vla.sbatch`, and
   `fetch_policies.sh` (the finished checkpoints back down, into the layout
-  `tool/policy_server.py` and `tool/run_policy_real.py` expect; `--datasets`
+  `tool/policy_server.py` and `tool/run_policy.py` expect; `--datasets`
   matches a run name or the dataset before its `__<cameras>` suffix). Runbook:
   `hpc/README.md`.
 - `Makefile` — test tiers (`test-unit`, `test-integration`, `test`,

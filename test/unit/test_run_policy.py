@@ -1,4 +1,4 @@
-"""Unit tests for tool/run_policy_real.py that need no hardware and no policy.
+"""Unit tests for tool/run_policy.py that need no hardware and no policy.
 
 Two things are checked here. First, that a 12-D policy action reaches per-side
 hardware goals through the same conversion a recorded action uses. Second, the
@@ -20,8 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 from common.policy_wire import decode_request, encode_chunk
-from tool.run_policy_real import (
+from tool.run_policy import (
     RemoteActionSource,
+    _hold,
+    parse_camera_map,
     policy_action_to_goals,
     resolve_launch,
     stall_decision,
@@ -275,3 +277,77 @@ class TestResolveLaunch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCameraMap(unittest.TestCase):
+    """A checkpoint asks for the names its dataset used. See policy_rig."""
+
+    def test_no_flag_renames_nothing(self):
+        self.assertEqual(parse_camera_map(None), {})
+
+    def test_the_word_none_also_renames_nothing(self):
+        self.assertEqual(parse_camera_map("none"), {})
+
+    def test_pairs_become_a_rename_map(self):
+        self.assertEqual(
+            parse_camera_map("wrist_camera_left=wrist_left,scene=central"),
+            {"wrist_camera_left": "wrist_left", "scene": "central"},
+        )
+
+    def test_something_that_is_not_a_pair_is_refused_with_what_it_saw(self):
+        with self.assertRaises(ValueError) as caught:
+            parse_camera_map("wrist_camera_left")
+        self.assertIn("wrist_camera_left", str(caught.exception))
+
+
+class TestSimTaskString(unittest.TestCase):
+    """--sim alone is a whole command: the twin knows its own task."""
+
+    def test_each_sim_task_has_a_language_string_to_condition_on(self):
+        from sim_datagen.env import TASKS
+
+        for name in ("single", "handover"):
+            self.assertTrue(TASKS[name].strip())
+        self.assertNotEqual(TASKS["single"], TASKS["handover"])
+
+
+class _RecordingRig:
+    """A rig that records what the loop did to it, and moves nothing."""
+
+    cameras = ["scene"]
+
+    def __init__(self):
+        self.commanded: list = []
+        self.holds = 0
+
+    def command(self, action12):
+        self.commanded.append(np.asarray(action12, dtype=float))
+
+    def hold(self):
+        self.holds += 1
+
+
+class TestHeldTicksOnAClockThatOnlyMovesWhenCommanded(unittest.TestCase):
+    """The twin advances one step per command; a pause must not stop time."""
+
+    def test_a_held_tick_still_steps_a_rig_that_can_hold(self):
+        rig = _RecordingRig()
+
+        _hold(rig, dry_run=False)
+
+        self.assertEqual(rig.holds, 1)
+        self.assertEqual(rig.commanded, [])
+
+    def test_a_dry_run_steps_nothing_at_all(self):
+        rig = _RecordingRig()
+
+        _hold(rig, dry_run=True)
+
+        self.assertEqual(rig.holds, 0)
+
+    def test_a_rig_with_no_hold_is_left_alone(self):
+        # The bench keeps ticking by itself: its servos hold the last goal.
+        class Bench:
+            pass
+
+        _hold(Bench(), dry_run=False)  # must not raise
