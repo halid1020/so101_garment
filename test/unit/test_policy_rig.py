@@ -38,6 +38,9 @@ class StubEnv:
     def tick(self, q_rad_10, grip_frac):
         self.commands.append((np.asarray(q_rad_10, dtype=float), dict(grip_frac)))
 
+    def reset(self, scenario):
+        self.commands.clear()
+
 
 class TestTwinRig(unittest.TestCase):
     def rig(self, **kwargs):
@@ -76,6 +79,25 @@ class TestTwinRig(unittest.TestCase):
     def test_the_reported_cameras_are_the_names_the_policy_will_be_sent(self):
         _, rig = self.rig(camera_map={"scene": "central"})
         self.assertEqual(rig.cameras, ["central", "wrist_camera_left"])
+
+    def test_a_release_leaves_the_pose_the_trial_ended_in(self):
+        # The bench's followers keep their measured pose when torque comes off,
+        # and a rehearsal of "stop, then look at where it ended up" has to show
+        # the same thing. Only a reset forgets an attempt.
+        _env, rig = self.rig()
+        rig.command(np.arange(12.0))
+        rig.release()
+
+        self.assertIsNotNone(rig.last_action)
+        self.assertEqual(rig.ticks, 1)
+
+    def test_and_a_reset_is_the_one_that_forgets_it(self):
+        _env, rig = self.rig()
+        rig.command(np.arange(12.0))
+        rig.reset(None)
+
+        self.assertIsNone(rig.last_action)
+        self.assertEqual(rig.ticks, 0)
 
     def test_shutdown_releases_nothing_and_raises_nothing(self):
         _, rig = self.rig()

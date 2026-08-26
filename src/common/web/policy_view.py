@@ -9,14 +9,17 @@ in TIME -- so this serves them, on loopback, while the run happens.
 It is a window onto a run, not a controller of the rig. It never touches a
 camera or a bus: frames come from the data manager the control loop already
 publishes into, numbers come from the snapshot that loop posts every tick, and
-the only thing it can change is the run's mode (``common.policy_run``). That
-mode can hold the arms, advance them one chunk, resume, or end the run -- every
-one of which asks for LESS motion than the terminal already authorised. Torque
-is enabled once, at the confirmation prompt, and nothing here can enable it.
+the only thing it can change is what the run is asked to do
+(``common.policy_run``). It can hold the arms, advance them one chunk, resume,
+end the trial, or end it and begin another -- every one of which asks for LESS
+motion than the terminal already authorised. Torque is enabled by the loop, at
+the confirmation prompt or at the arming button, and nothing here can enable it.
 
-Resetting for another attempt is the same kind of thing: the page raises a flag,
-the loop holds the arms and drops the plan, and where the scene is a data
-structure the loop puts it back. Nothing on this side commands a joint.
+Ending a trial and resetting for another are the same kind of thing: the page
+raises a flag, the loop holds the arms and RELEASES them, drops the plan, and --
+for a reset, where the scene is a data structure -- puts the scene back. Nothing
+on this side commands a joint, and nothing on this side takes torque off either;
+the loop does that, because the loop is what owns the rig.
 
 Served on 127.0.0.1: it is unauthenticated, and it steers a robot.
 """
@@ -252,9 +255,13 @@ class PolicyView:
     # -- what the page reads -------------------------------------------
     def status(self) -> "dict[str, Any]":
         source = self.source
+        snapshot = self.control.snapshot()
         sent = getattr(source, "last_sent", lambda: None)()
         return {
-            **self.control.snapshot(),
+            **snapshot,
+            # Always present, so the page can say whether the arms are live
+            # rather than leaving the last sentence somebody wrote on the screen.
+            "torque": bool(snapshot.get("torque")),
             "cameras": self.image_names,
             "chunk": chunk_payload(source),
             "sent_state": None
@@ -332,6 +339,15 @@ class PolicyView:
                 text="this run infers locally, one action at a time: it has no "
                 "chunk to preview or step through"
             )
+        if mode in ("run", "step") and self.arm_from_view and not self.control.armed:
+            # The trial that was armed has ended and the arms were let go. The
+            # loop would hold anyway, but silently: an operator pressing Run on
+            # a released rig deserves the reason rather than a page that appears
+            # to have ignored the click.
+            raise web.HTTPBadRequest(
+                text="the arms have been released: enable them again before "
+                "the policy may move them"
+            )
         try:
             now = self.control.request(mode)
         except ValueError as exc:
@@ -342,33 +358,31 @@ class PolicyView:
         """Begin the next attempt on this scene. Moves nothing, ever.
 
         All this does is raise a flag the control loop reads: the loop drops to
-        ``hold``, closes the measurement segment so two attempts are not
-        averaged into one, throws away the plan drawn from the scene as it was,
-        and -- in the twin, where a scene is a data structure -- puts it back.
-        On the bench nothing can be put back by a button, so the answer carries
-        the instruction instead and the arms simply stop where they are.
+        ``hold``, RELEASES the arms, closes the measurement segment so two
+        attempts are not averaged into one, throws away the plan drawn from the
+        scene as it was, and -- in the twin, where a scene is a data structure --
+        puts it back. On the bench nothing can be put back by a button, so the
+        answer carries the instruction instead, and the arms it names are free
+        by then rather than stiff.
 
-        Refused while the policy is RUNNING. Resetting under motion would mean
-        the world changing beneath a plan already being executed, which is worth
-        one deliberate click on Hold first.
+        Allowed while the policy is RUNNING, unlike before. The refusal existed
+        because resetting under motion meant the world changing beneath a plan
+        already being executed -- but a reset that takes torque off ends that
+        motion as part of what it does, and making the operator click Hold first
+        put a step in front of the button they press most.
         """
         if self.resettable is None:
             raise web.HTTPBadRequest(
                 text="this run has no scene it can begin again: reset it the "
                 "way it was started"
             )
-        mode = self.control.mode
-        if mode == "run":
-            raise web.HTTPBadRequest(
-                text="the policy is running: hold it first, then reset"
-            )
         self.control.request("reset")
         instruction = (
             ""
             if self.resettable == "sim"
             else (
-                "The run is held and its plan dropped. Put the scene back and "
-                "return the arms by hand, then press Run when you are ready."
+                "The arms are released and the plan is dropped. Put the scene "
+                "back and move them by hand, then enable and run when ready."
             )
         )
         return web.json_response(

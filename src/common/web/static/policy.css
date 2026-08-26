@@ -64,6 +64,9 @@
 .mode.preview { color:#7c3aed; border-color:#7c3aed88; }
 #p-preview.sel, #p-step.sel, #p-run.sel, #p-hold.sel { font-weight:600; }
 .bar.torque { color:#d97706; font-size:12px; margin:8px 12px 0; }
+/* Released between trials: a different colour, because the sentence is
+   read by somebody deciding whether to put their hands on the rig. */
+.bar.torque.free { color:#15803d; }
 .bar.err { margin:8px 12px 0; }
 
 #p-shown img, #p-live img { width:100%; border-radius:6px;

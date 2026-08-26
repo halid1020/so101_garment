@@ -36,21 +36,34 @@ authorised at the terminal, where torque is enabled after a confirmation, and
 nothing here can enable torque.
 
 A run may instead DELEGATE that consent to the view (``--arm-from-view``), and
-then :meth:`RunControl.arm` is what the terminal prompt was: a single,
-one-way, irreversible-by-the-page act, taken once, before any torque. It cannot
-be undone from the page because disarming a robot mid-motion is not a thing a
-button should imply -- ``stop`` is how a run ends, and it disables torque.
+then :meth:`RunControl.arm` is what the terminal prompt was: the question asked
+once, before any torque. Consent lasts as long as the trial does. Ending one
+takes the arms off torque, so :meth:`RunControl.disarm` withdraws it and the
+next trial has to ask again -- a rig somebody has just walked up to and moved by
+hand is exactly the rig whose next motion deserves a second look.
 
 Delegating it is a real change in who can start the arms: the view binds
 loopback and is unauthenticated, so anyone who can reach that port can begin the
 motion. That is why it is a flag and not the default.
 
-RESETTING. A rollout is usually run more than once on the same scene, and
-between the attempts the world has to be put back. ``reset`` is that request: a
-one-shot flag the loop picks up, exactly as it picks up ``queue_stale``. It is
-not a mode, because putting the scene back does not change what the throttle is
-allowed to serve afterwards -- the loop drops to ``hold`` on its own, and the
-operator decides when the next attempt begins.
+ENDING A TRIAL. A rollout is usually attempted more than once, and between the
+attempts somebody has to handle the rig -- put the cube back, straighten a
+garment, take hold of an arm that has folded itself into a corner. None of that
+is possible while the followers are stiff, so both requests that end a trial
+RELEASE them, and the loop that reads the request is what takes torque off:
+
+  * ``stop``  -- this trial is over, and no other is intended. The arms go free
+    and the run stays alive: the page, the run log, the host session and the
+    cameras are all still there, because the operator may well change their
+    mind. Nothing here ends the process; Ctrl+C at the terminal does that.
+  * ``reset`` -- this trial is over and the NEXT one begins. The same release,
+    plus the scene goes back where the scene is a data structure, and the log
+    starts counting a new trial.
+
+Both are one-shot flags the loop picks up, exactly as it picks up
+``queue_stale``, and both drop the throttle to ``hold``: an arm that has just
+been let go must not be sitting in ``run``, waiting to serve the instant torque
+comes back.
 """
 
 from __future__ import annotations
@@ -59,12 +72,11 @@ import math
 import threading
 import time
 
-#: What a rollout may be doing. ``stop`` is a request, not a mode: it ends the
-#: run through the same path Ctrl+C takes, which disables torque. ``arm`` is
-#: not a mode either: it is the one-way consent that lets torque be enabled at
-#: all, and only a run started with that consent DELEGATED to the view will
-#: wait for it -- see ``ARMING`` below. Nor is ``reset``, which asks for the
-#: next attempt on the same scene -- see ``RESETTING``.
+#: What a rollout may be doing. ``stop`` and ``reset`` are requests, not modes:
+#: they end a trial and release the arms, the second one beginning another --
+#: see ``ENDING A TRIAL`` above. ``arm`` is not a mode either: it is the consent
+#: that lets torque be enabled at all, and only a run started with that consent
+#: DELEGATED to the view will wait for it -- see ``ARMING``.
 MODES = ("run", "step", "hold", "preview")
 REQUESTS = MODES + ("stop", "arm", "reset")
 
@@ -151,17 +163,23 @@ class RunControl:
                 f"unknown mode: {mode} (want one of {', '.join(REQUESTS)})"
             )
         with self._lock:
-            if mode == "stop":
-                self._stop = True
+            if mode in ("stop", "reset"):
+                # Both end the trial and free the arms; only the second asks for
+                # the scene to be put back. Holding is part of the request
+                # rather than a courtesy the loop adds afterwards: between the
+                # flag being raised and the loop reading it there are ticks, and
+                # none of them may serve an action to a rig about to go limp.
+                if mode == "stop":
+                    self._stop = True
+                else:
+                    self._reset = True
+                self._budget = 0
+                self._step_from = "hold"
+                self._mode = "hold"
                 return self._mode
             if mode == "arm":
-                # One way: consent is given once and never taken back here.
+                # Consent for THIS trial; ending one withdraws it (see disarm).
                 self._armed = True
-                return self._mode
-            if mode == "reset":
-                # The mode is deliberately untouched: what the loop does after
-                # the scene is put back is the loop's decision, not this flag's.
-                self._reset = True
                 return self._mode
             if mode != self._mode:
                 if self._mode == "hold":
@@ -187,15 +205,21 @@ class RunControl:
             return self._mode
 
     @property
-    def stopping(self) -> bool:
-        with self._lock:
-            return self._stop
-
-    @property
     def armed(self) -> bool:
-        """True once consent to enable torque has been given."""
+        """True while consent to enable torque stands, for this trial."""
         with self._lock:
             return self._armed
+
+    def disarm(self) -> None:
+        """Withdraw that consent, because the arms have been let go.
+
+        Only a run that took its consent ON the page may be disarmed here: a run
+        armed at the terminal has no button to ask again with, and inventing one
+        would hand the unauthenticated view a door the flag exists to keep shut.
+        The caller knows which kind of run it is; this method does not.
+        """
+        with self._lock:
+            self._armed = False
 
     def queue_stale(self) -> bool:
         """True once, when the queue must be dropped before the next tick."""
@@ -207,6 +231,18 @@ class RunControl:
         """True once, when the next attempt on this scene has been asked for."""
         with self._lock:
             wanted, self._reset = self._reset, False
+            return wanted
+
+    def stop_requested(self) -> bool:
+        """True once, when this trial has been ended with no next one intended.
+
+        A one-shot like the others, and NOT a latch: the loop releases the arms
+        and carries on serving the page, so a second press some minutes later
+        has to be heard as a second request rather than as the same one still
+        being true.
+        """
+        with self._lock:
+            wanted, self._stop = self._stop, False
             return wanted
 
     def decide(self, depth: int) -> str:
@@ -221,6 +257,4 @@ class RunControl:
 
     def publish(self, **fields) -> None:
         with self._lock:
-            self._snapshot.update(
-                fields, mode=self._mode, stopping=self._stop, armed=self._armed
-            )
+            self._snapshot.update(fields, mode=self._mode, armed=self._armed)

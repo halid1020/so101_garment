@@ -119,24 +119,51 @@ class TestRunControl(unittest.TestCase):
         self.assertTrue(control.reset_requested())
         self.assertFalse(control.reset_requested())
 
-    def test_a_reset_leaves_the_throttle_where_it_was(self):
-        # What happens after the scene is back is the loop's decision, not this
-        # flag's: it holds, and the operator starts the next attempt.
-        control = RunControl(mode="preview")
-        self.assertEqual(control.request("reset"), "preview")
-        self.assertEqual(control.mode, "preview")
+    def test_a_reset_holds_the_throttle_before_the_loop_has_read_it(self):
+        # There are ticks between the flag going up and the loop seeing it, and
+        # none of them may serve an action to a rig about to be released.
+        control = RunControl(mode="run")
+        self.assertEqual(control.request("reset"), "hold")
+        self.assertEqual(control.mode, "hold")
 
     def test_a_reset_is_not_a_stop_and_does_not_invalidate_by_itself(self):
         control = RunControl()
         control.request("reset")
-        self.assertFalse(control.stopping)
+        self.assertFalse(control.stop_requested())
         self.assertFalse(control.queue_stale())
 
-    def test_stop_is_a_request_not_a_mode(self):
+    def test_stop_ends_a_trial_rather_than_latching(self):
+        # Not a latch: the run stays up, so a second press minutes later is a
+        # second request and not the first one still being true.
         control = RunControl()
-        self.assertEqual(control.request("stop"), "run")
-        self.assertTrue(control.stopping)
-        self.assertEqual(control.mode, "run")
+        self.assertEqual(control.request("stop"), "hold")
+        self.assertTrue(control.stop_requested())
+        self.assertFalse(control.stop_requested())
+        self.assertEqual(control.mode, "hold")
+
+    def test_a_stop_does_not_ask_for_the_scene_back(self):
+        control = RunControl()
+        control.request("stop")
+        self.assertFalse(control.reset_requested())
+
+    def test_a_step_after_a_release_starts_from_hold_not_from_preview(self):
+        # Otherwise one step of the NEXT trial would drop back into a preview
+        # belonging to the attempt that has just ended.
+        control = RunControl(mode="preview")
+        control.request("stop")
+        control.request("step")
+        control.decide(depth=1)
+        self.assertEqual(control.mode, "hold")
+
+    def test_consent_can_be_withdrawn_when_the_arms_are_let_go(self):
+        control = RunControl()
+        control.request("arm")
+        self.assertTrue(control.armed)
+        control.disarm()
+        self.assertFalse(control.armed)
+        # And given again, because the next trial asks the same question.
+        control.request("arm")
+        self.assertTrue(control.armed)
 
     def test_an_unknown_mode_is_refused(self):
         control = RunControl()

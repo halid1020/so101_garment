@@ -107,6 +107,8 @@ class ViewTestCase(AioHTTPTestCase):
     source_kwargs: dict = {}
     #: What the run can put back between attempts: None, "sim" or "manual".
     resettable: "str | None" = None
+    #: Whether this run delegated its 'the arms will move' consent to the page.
+    arm_from_view: bool = False
 
     async def get_application(self):
         warnings.filterwarnings("ignore", message=".*app\\[.*")
@@ -123,6 +125,7 @@ class ViewTestCase(AioHTTPTestCase):
             port=0,
             twin_port=0,
             resettable=self.resettable,
+            arm_from_view=self.arm_from_view,
         )
         return self.view.build_app()
 
@@ -166,12 +169,12 @@ class TestThrottle(ViewTestCase):
             self.assertEqual((await response.json())["mode"], mode)
             self.assertEqual(self.control.mode, mode)
 
-    async def test_stop_ends_the_run_without_changing_its_mode(self):
+    async def test_stop_ends_the_trial_and_holds_rather_than_ending_the_run(self):
         response = await self.mode("stop")
 
         self.assertEqual(response.status, 200)
-        self.assertTrue(self.control.stopping)
-        self.assertEqual(self.control.mode, "run")
+        self.assertTrue(self.control.stop_requested())
+        self.assertEqual(self.control.mode, "hold")
 
     async def test_an_unknown_mode_is_refused_with_the_ones_that_exist(self):
         response = await self.mode("faster")
@@ -302,16 +305,15 @@ class TestResetInTheTwin(ViewTestCase):
     async def test_the_page_is_told_the_scene_can_be_put_back(self):
         self.assertEqual((await self.status())["resettable"], "sim")
 
-    async def test_resetting_under_a_running_policy_is_refused(self):
-        # The world changing beneath a plan already executing is worth one
-        # deliberate click on Hold first.
+    async def test_resetting_under_a_running_policy_is_allowed_now(self):
+        # It releases the arms as part of what it does, so the motion it would
+        # have interrupted is over either way; a Hold click first was friction.
         response = await self.reset()
 
-        self.assertEqual(response.status, 400)
-        self.assertIn("hold", (await response.text()).lower())
-        self.assertFalse(self.control.reset_requested())
+        self.assertEqual(response.status, 200)
+        self.assertTrue(self.control.reset_requested())
 
-    async def test_a_held_run_may_begin_again_and_the_loop_hears_it_once(self):
+    async def test_a_run_may_begin_again_and_the_loop_hears_it_once(self):
         await self.mode("hold")
 
         response = await self.reset()
@@ -321,11 +323,12 @@ class TestResetInTheTwin(ViewTestCase):
         self.assertTrue(self.control.reset_requested())
         self.assertFalse(self.control.reset_requested())
 
-    async def test_and_the_throttle_is_left_exactly_where_it_was(self):
+    async def test_and_the_throttle_is_dropped_to_hold(self):
+        # Whatever it was doing, it is not doing it to arms about to go free.
         await self.mode("preview")
         await self.reset()
 
-        self.assertEqual(self.control.mode, "preview")
+        self.assertEqual(self.control.mode, "hold")
 
 
 class TestResetOnTheBench(ViewTestCase):
@@ -341,6 +344,36 @@ class TestResetOnTheBench(ViewTestCase):
         self.assertEqual(body["resettable"], "manual")
         self.assertIn("by hand", body["instruction"])
         self.assertTrue(self.control.reset_requested())
+
+
+class TestTheArmsHaveBeenReleased(ViewTestCase):
+    """After a trial ends, the page must ask for consent again before motion."""
+
+    arm_from_view = True
+
+    async def test_the_page_reports_whether_the_arms_are_live(self):
+        self.assertFalse((await self.status())["torque"])
+        self.control.publish(torque=True)
+        self.assertTrue((await self.status())["torque"])
+
+    async def test_running_a_disarmed_run_is_refused_with_the_reason(self):
+        response = await self.mode("run")
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("released", await response.text())
+        self.assertEqual(self.control.mode, "run")
+
+    async def test_and_so_is_stepping_one_chunk(self):
+        self.assertEqual((await self.mode("step")).status, 400)
+
+    async def test_but_holding_and_previewing_move_nothing_and_are_allowed(self):
+        for mode in ("hold", "preview"):
+            self.assertEqual((await self.mode(mode)).status, 200)
+
+    async def test_arming_again_lets_the_next_trial_run(self):
+        await self.mode("arm")
+
+        self.assertEqual((await self.mode("run")).status, 200)
 
 
 class TestPortAlreadyTaken(unittest.TestCase):

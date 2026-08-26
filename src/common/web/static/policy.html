@@ -22,7 +22,7 @@
     <button id="p-run">Run</button>
     <button id="p-hold">Hold</button>
     <button id="p-reset" class="danger" hidden>Reset scene</button>
-    <button id="p-stop" class="danger">Stop</button>
+    <button id="p-stop" class="danger">Stop</button><!-- ends the trial, not the run -->
   </header>
 
   <!-- The splice in force, changeable here so several strategies can be
@@ -62,10 +62,9 @@
     <div class="vital" id="v-progress"><b>—</b><span>progress</span></div>
   </div>
 
-  <p class="bar torque" id="p-torque">The arms are under torque. <b>Preview</b>
-    shows the queued plan in the twin without moving anything;
-    <b>Execute one chunk</b> runs exactly that plan and stops; <b>Hold</b>
-    freezes and drops the queue; <b>Stop</b> ends the run and releases torque.</p>
+  <!-- Written by the poll, in whichever of its two states the run is in:
+       under torque, or released between trials. See policy.js. -->
+  <p class="bar torque" id="p-torque">…</p>
   <p class="bar err" id="p-err" hidden></p>
 
   <main id="p-main">

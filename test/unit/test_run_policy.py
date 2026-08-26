@@ -164,8 +164,16 @@ class TestRemoteActionSource(unittest.TestCase):
         source = RemoteActionSource(self.url, "t", actions_per_chunk=999)
         self.assertEqual(source.actions, 4)
 
-    def test_a_chunk_is_consumed_in_order(self):
+    def test_the_default_splice_keeps_the_plan_young(self):
+        # A deployment runs 'receding' unless told otherwise: half of each chunk
+        # is executed and then the next is asked for.
         source = RemoteActionSource(self.url, "t")
+        self.assertEqual(source.strategy, "receding")
+
+    def test_a_chunk_is_consumed_in_order(self):
+        # 'append' on purpose: 'receding' executes only part of a chunk, which
+        # is a different question from whether a queue drains in order.
+        source = RemoteActionSource(self.url, "t", strategy="append")
         source.offer(*self._observation(1))
         first = self._drain(source)
         self.assertIsNotNone(first)

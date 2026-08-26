@@ -120,11 +120,16 @@ def summarise(
 
 
 def compare(rows: "list[dict]") -> str:
-    """A markdown table of one summary per strategy, best seam first. Pure.
+    """A markdown table of one summary per segment, best seam first. Pure.
 
     Sorted by the seam ratio because that is the question these strategies were
     written to answer; the columns beside it are there so a smooth-but-useless
     result cannot pass unnoticed.
+
+    A row also carries the TRIAL it was measured in, where the caller counts
+    them. Two attempts under one splice are two rows and not an average: they
+    were run against a scene that was put back by hand in between, and the
+    difference between them is often the whole of what was being looked at.
     """
     if not rows:
         return "_no runs_\n"
@@ -134,16 +139,19 @@ def compare(rows: "list[dict]") -> str:
         return (ratio is None, ratio if ratio is not None else 0.0)
 
     header = (
-        "| strategy | success | seam ratio | held | path | rtt median |\n"
-        "|---|---|---|---|---|---|\n"
+        "| trial | strategy | success | seam ratio | held | path | rtt median |\n"
+        "|---|---|---|---|---|---|---|\n"
     )
     lines = []
     for row in sorted(rows, key=key):
         ratio = row.get("seam_ratio")
         success = row.get("success")
         rtt = row.get("round_trip_ms_median")
+        trial = row.get("trial")
         lines.append(
-            "| {name} | {ok} | {ratio} | {held:.0%} | {path:.1f} | {rtt} |\n".format(
+            "| {trial} | {name} | {ok} | {ratio} | {held:.0%} | {path:.1f} "
+            "| {rtt} |\n".format(
+                trial="—" if trial is None else int(trial),
                 name=row.get("strategy", "?"),
                 ok="—" if success is None else ("yes" if success else "no"),
                 ratio="—" if ratio is None else f"{ratio:.2f}",

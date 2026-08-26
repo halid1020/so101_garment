@@ -9,6 +9,7 @@ the same wire and the same splice.
     ``observe() -> (state12, {camera: HWC uint8})``
     ``command(action12)``
     ``enable(first_action12)``  -- authorise motion and reach the first goal
+    ``release()``   -- take torque off, but keep everything else running
     ``shutdown()``
     ``cameras``  -- the names ``observe`` will produce
     ``frames``   -- ``get_rgb_image(name)``, the one thing the live view asks
@@ -20,12 +21,15 @@ attempt. Neither exists on the bench -- a bench tick passes whether anyone
 commands it, and no button can tidy a real table -- so they are not in the
 protocol, and the loop reaches them through ``getattr``.
 
-A DEPLOYMENT needs two things a benchmark does not, so they are in the protocol
-rather than in one implementation: ``enable``, which is where torque is turned
-on and the arms are ramped to the first action, and ``frames``, which is where
-the live view reads its pictures. The twin answers both -- with a ramp that
-takes the same three seconds, and a cache of its last render -- so a rehearsal
-in simulation walks the same path, in the same order, as the run it rehearses.
+A DEPLOYMENT needs three things a benchmark does not, so they are in the
+protocol rather than in one implementation: ``enable``, which is where torque is
+turned on and the arms are ramped to the first action; ``release``, which is
+where it comes off again between attempts, leaving the cameras, the buses and
+the page exactly where they were; and ``frames``, which is where the live view
+reads its pictures. The twin answers all three -- with a ramp that takes the
+same three seconds, a release that has nothing to release, and a cache of its
+last render -- so a rehearsal in simulation walks the same path, in the same
+order, as the run it rehearses.
 
 The hardware implementation stays in ``tool/run_policy.py``, where the
 buses, the torque and the confirmation prompt already live and where they
@@ -58,6 +62,14 @@ class Rig(Protocol):
 
     def enable(self, first_action12: np.ndarray) -> None:
         """Authorise motion and reach the first action. May enable torque."""
+
+    def release(self) -> None:
+        """End a trial: take torque off, and leave the run standing.
+
+        Distinct from :meth:`shutdown` in what SURVIVES it. The cameras, the
+        buses, the page and the host session all stay, because the operator is
+        handling the rig between attempts and will very likely want another one.
+        """
 
     def shutdown(self) -> None:
         """Stop safely. Called on every exit path, including a crash."""
@@ -215,6 +227,15 @@ class TwinRig:
         self.env.reset(scenario)
         self.last_action = None
         self.ticks = 0
+
+    def release(self) -> None:
+        """Nothing to let go of: there is no torque in a twin.
+
+        Deliberately NOT a reset. The simulated arms keep the pose the trial
+        left them in, and :attr:`last_action` with it, so a rehearsal of "stop,
+        then look at where it ended up" shows what the bench would show. Only
+        :meth:`reset` forgets an attempt.
+        """
 
     def shutdown(self) -> None:
         """Nothing to release: no torque, no bus, no camera thread."""

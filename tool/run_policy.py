@@ -36,10 +36,18 @@ and is meant to be the WHOLE interface: the observation the policy was last
 shown, the chunk it planned -- drawn in the URDF twin as the arms now (blue)
 beside where that plan sends them (orange) -- what the arms did with it, and
 whether it arrived in time. From there a rollout is given its task, armed,
-HELD, advanced ONE CHUNK at a time, resumed, re-spliced and stopped. That is how
-a failed grasp is examined: the plan that produced the motion is still on the
-screen beside the motion. Every rollout is also written to a run log for
-afterwards (``--no-log`` to skip).
+HELD, advanced ONE CHUNK at a time, resumed and re-spliced. That is how a failed
+grasp is examined: the plan that produced the motion is still on the screen
+beside the motion.
+
+ONE RUN, MANY TRIALS. Stop ends a trial and RELEASES the arms -- torque off, the
+rig free to be handled -- without ending the run: the page, the cameras, the
+host session and the log are all still there, because a rig is usually attempted
+more than once and re-launching between attempts costs a handshake, a ramp and
+the comparison of one splice against another on one scene. Reset scene does the
+same and begins the next trial, putting the scene back where the scene is a data
+structure. The process itself ends on Ctrl+C. Every rollout is written to a run
+log, one row per tick and numbered by trial (``--no-log`` to skip).
 
 SAFETY: the followers MOVE (unless ``--dry-run`` or ``--sim``). Consent is taken once, before
 any torque -- at the terminal by default, or ON THE PAGE when ``--web`` is used
@@ -47,9 +55,12 @@ any torque -- at the terminal by default, or ON THE PAGE when ``--web`` is used
 unauthenticated on loopback, so with ``--web`` anyone who can reach the port can
 begin the motion. The arms then ramp slowly to the policy's first action and run
 at ``--hz`` until ``--seconds`` elapse (by default they do not: a run lasts until
-it is stopped), Stop is pressed, or Ctrl+C. Torque is disabled again on exit,
-including on error. ``--dry-run`` reads sensors and prints the chosen actions but
-never enables torque or writes a goal. Keep the workspace clear.
+it is ended), Stop or Reset releases them, or Ctrl+C ends the run. Torque comes
+off at every one of those, and again on exit, including on error. Consent is
+taken per TRIAL: a run armed from the page is disarmed by a release and must be
+armed again, so the next motion is authorised by somebody looking at the rig as
+it is now. ``--dry-run`` reads sensors and prints the chosen actions but never
+enables torque or writes a goal. Keep the workspace clear.
 
 Usage:
 
@@ -244,14 +255,25 @@ class BenchRig:
         _ramp_to(self.buses, policy_action_to_goals(first_action12), duration=RAMP_S)
         time.sleep(0.5)
 
+    def release(self) -> None:
+        """Let the arms go, and leave everything else running.
+
+        The end of a TRIAL, not of the run: the buses stay open, the cameras
+        keep publishing and the page keeps serving, because the operator is
+        about to handle the rig and will very likely want another attempt. The
+        one thing that changes is that the followers can be moved by hand.
+        """
+        if not self.torque_on:
+            return
+        for bus in self.buses.values():
+            try:
+                bus.disable_torque(num_retry=3)
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠️  could not disable torque on a follower: {e}")
+        self.torque_on = False
+
     def shutdown(self) -> None:
-        if self.torque_on:
-            for bus in self.buses.values():
-                try:
-                    bus.disable_torque(num_retry=3)
-                except Exception as e:  # noqa: BLE001
-                    print(f"⚠️  could not disable torque on a follower: {e}")
-            self.torque_on = False
+        self.release()
         self.frames.request_shutdown()
         for c in self.captures:
             try:
@@ -414,8 +436,8 @@ def main() -> None:
         "--seconds",
         type=float,
         default=None,
-        help="Run duration before stopping (default: no limit; stop from the "
-        "page or with Ctrl+C)",
+        help="Run duration before the process ends (default: no limit; the "
+        "page ends TRIALS, Ctrl+C ends the run)",
     )
     parser.add_argument(
         "--device", default=None, help="cpu/cuda (default auto, local only)"
@@ -434,10 +456,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--strategy",
-        default="append",
+        default="receding",
         choices=STRATEGIES,
         help="Remote: how an arriving chunk joins the one already executing. "
-        "'append' is what this tool has always done; see common/chunking.py",
+        "The default executes half of each chunk and then asks again, which "
+        "keeps the plan young without a seam every tick; see common/chunking.py",
     )
     parser.add_argument(
         "--blend-window",
@@ -587,8 +610,8 @@ def main() -> None:
         # would ramp to the first action and then sit there until it timed out.
         raise SystemExit(f"❌ --start-mode {start_mode} needs --web to leave it")
 
-    if seconds == 0 and not args.web:
-        print("ℹ️  no --seconds: this run ends on Ctrl+C only (no --web to stop it)")
+    if seconds == 0:
+        print("ℹ️  no --seconds: this run ends on Ctrl+C (the page ends trials)")
 
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
@@ -655,6 +678,7 @@ def main() -> None:
         cameras=list(image_names),
         chunked=bool(source.chunked),
         ticks_total=int(n_ticks or 0),
+        torque=False,
     )
 
     view = None
@@ -714,6 +738,14 @@ def main() -> None:
     # an UnboundLocalError that hides the reason it actually stopped.
     segments: "list[dict]" = []
     close_segment = None
+    # Which attempt is being measured. A run outlives its trials, so a segment
+    # carries this: two attempts under one splice are two rows, and averaging
+    # them would hide the difference they were run to show.
+    trial = [0]
+    # Whether the arms are live: enabled, and not released since. Published
+    # every tick, because the one thing an operator standing beside the rig
+    # needs from the page is whether it is safe to take hold of it.
+    live = [False]
     current = [getattr(source, "strategy", args.strategy)]
     try:
         if not task:
@@ -725,8 +757,6 @@ def main() -> None:
                 f"(Ctrl+C to abort) ..."
             )
             while not task:
-                if control.stopping:
-                    raise SystemExit("aborted from the live view")
                 task = str(control.snapshot().get("task") or "")
                 time.sleep(0.05)
             print(f"📝 task: “{task}”")
@@ -746,8 +776,6 @@ def main() -> None:
                 f"http://127.0.0.1:{args.web_port}/ (Ctrl+C to abort) ..."
             )
             while not control.armed:
-                if control.stopping:
-                    raise SystemExit("aborted from the live view")
                 time.sleep(0.05)
             print("✅ armed from the live view")
 
@@ -761,6 +789,7 @@ def main() -> None:
             print(f"🧪 dry-run: inferring at {args.hz:.0f} Hz {span}, NO motor writes")
         else:
             rig.enable(action12)
+            live[0] = True
             print("🔴 running policy ...")
 
         # Set again by a reset: the next attempt's first action is reached at
@@ -793,6 +822,7 @@ def main() -> None:
                     round_trips_s=round_trips,
                 )
                 row["strategy"] = name
+                row["trial"] = trial[0]
                 segments.append(row)
             executed.clear()
             seams.clear()
@@ -801,6 +831,39 @@ def main() -> None:
 
         segment_holds = [0]
         close_segment = _close_segment
+
+        def _end_trial(restore: bool) -> None:
+            """End this trial: measure it, put the arms down, hold.
+
+            ``restore`` is the whole difference between the two things the page
+            can ask for. Both RELEASE the rig, because nothing about a trial's
+            end can be done to arms that are still stiff -- neither putting a
+            scene back nor lifting a gripper off whatever it has folded itself
+            around. Only a reset begins another attempt, which is what restoring
+            the scene and counting a new trial mean.
+
+            What deliberately survives: the cameras, the buses, the host
+            session's socket, the page and the run log. Ending the process is
+            Ctrl+C's job, and it is a different job.
+            """
+            nonlocal needs_ramp
+            _close_segment(current[0])
+            if restore and scenario is not None and hasattr(rig, "reset"):
+                rig.reset(scenario)
+            source.drain()
+            start_over = getattr(source, "reset", None)
+            if start_over is not None:
+                start_over()
+            if not args.dry_run:
+                rig.release()
+            live[0] = False
+            if arm_from_view:
+                # Consent was for the trial that has just ended. The button
+                # comes back, and nothing is served until it is pressed again.
+                control.disarm()
+            needs_ramp = True
+            if restore:
+                trial[0] = run_log.new_trial() if run_log is not None else trial[0] + 1
 
         if view is not None:
 
@@ -813,32 +876,30 @@ def main() -> None:
         started_at = time.time()
         for tick in _ticks(n_ticks):
             t0 = time.perf_counter()
-            if control.stopping:
-                print("⏹️  stopped from the live view")
-                break
             # A mode change invalidates whatever was planned before it; a paused
             # rollout keeps filling its window but asks for nothing.
             if control.queue_stale():
                 source.drain()
-            # Another attempt on the same scene. Everything drawn from the
-            # attempt just ended goes: the measurement segment is closed so two
-            # attempts are not averaged into one, the queue and the host's
-            # session are dropped, and the throttle falls back to hold so the
-            # operator decides when the next one begins.
-            if control.reset_requested():
-                _close_segment(current[0])
-                if scenario is not None and hasattr(rig, "reset"):
-                    rig.reset(scenario)
-                source.drain()
-                start_over = getattr(source, "reset", None)
-                if start_over is not None:
-                    start_over()
-                control.request("hold")
-                needs_ramp = True
+            # This trial is over, and no other is intended: the arms go free and
+            # the run stays up. Not a stop in the old sense -- the process ends
+            # on Ctrl+C, which is the only place that decision is now taken.
+            if control.stop_requested():
+                _end_trial(restore=False)
                 print(
-                    "↺ reset: scene restored, plan dropped, holding"
+                    "⏹️  trial ended: plan dropped, holding"
+                    if args.dry_run or args.sim
+                    else "⏹️  trial ended: torque off — the arms are free to move"
+                )
+            # And the same, plus the next attempt: everything drawn from the
+            # attempt just ended goes, the scene is put back where it can be,
+            # and the throttle stays in hold so the operator decides when the
+            # next one begins.
+            if control.reset_requested():
+                _end_trial(restore=True)
+                print(
+                    f"↺ trial {trial[0]}: scene restored, arms released, holding"
                     if scenario is not None
-                    else "↺ reset: plan dropped, holding — put the scene back by hand"
+                    else f"↺ trial {trial[0]}: arms released — put the scene back"
                 )
             source.set_paused(control.mode == "hold")
 
@@ -857,7 +918,13 @@ def main() -> None:
                 if source.round_trip_s:
                     round_trips.append(float(source.round_trip_s))
 
-            gated = control.decide(source.depth if source.chunked else 1)
+            if arm_from_view and not control.armed:
+                # Released and not taken up again. Held rather than served, and
+                # WITHOUT consulting the throttle: a step's budget must not be
+                # spent on a tick that was never going to move anything.
+                gated = "hold"
+            else:
+                gated = control.decide(source.depth if source.chunked else 1)
             action12 = None if gated == "hold" else source.take()
             what = stall_decision(
                 action12 is not None,
@@ -873,6 +940,7 @@ def main() -> None:
                     if not args.dry_run:
                         print("🏁 ramping to the new attempt's first action ...")
                         rig.enable(action12)
+                        live[0] = True
                 executed.append(np.asarray(action12, dtype=float))
                 if not args.dry_run:
                     rig.command(action12)
@@ -922,6 +990,7 @@ def main() -> None:
                 holds=holds,
                 last_error=source.last_error,
                 served=action12 is not None,
+                torque=live[0],
             )
             if run_log is not None:
                 run_log.tick(
@@ -956,7 +1025,7 @@ def main() -> None:
         if args.server and close_segment is not None:
             close_segment(current[0])
         if segments:
-            print("\n📐 what each splice did on this scene:\n")
+            print("\n📐 what each splice did, trial by trial:\n")
             print(compare(segments))
         if run_log is not None:
             run_log.close()

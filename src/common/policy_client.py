@@ -144,11 +144,13 @@ class RemoteActionSource:
     inside the control loop.
 
     THE SPLICE. A chunk lands after the world has moved on, and ``strategy``
-    decides what to do about it -- see :mod:`common.chunking`. ``append`` is what
-    this class used to do unconditionally and remains the default, so an
-    unflagged run behaves exactly as it did; every other strategy discards the
-    rows whose moment has passed, which is measured from this link's own round
-    trip rather than assumed.
+    decides what to do about it -- see :mod:`common.chunking`. The default is
+    ``receding``: half of each chunk is executed and then the next is asked for,
+    so the plan being followed is never much older than one round trip, and the
+    seams are as far apart as that allows. ``append`` is what this class used to
+    do unconditionally, and is now one choice among several; every strategy but
+    that one discards the rows whose moment has passed, which is measured from
+    this link's own round trip rather than assumed.
 
     ``sync`` is the exception to all of the above: it blocks in ``offer`` until
     the reply arrives, because its whole point is that nothing is executed from a
@@ -168,7 +170,7 @@ class RemoteActionSource:
         prefetch: "int | None" = None,
         timeout_s: float = 20.0,
         hz: float = 30.0,
-        strategy: str = "append",
+        strategy: str = "receding",
         blend_window: int = DEFAULT_BLEND_WINDOW,
         ramp_kind: str = "linear",
         new_weight: float = DEFAULT_ENSEMBLE_WEIGHT,

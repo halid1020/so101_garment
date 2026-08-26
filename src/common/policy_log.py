@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 RUNS_SUBDIR = "policy_runs"
-TICK_COLUMNS = ("t", "mode", "queue", "served", "state", "commanded")
+TICK_COLUMNS = ("t", "trial", "mode", "queue", "served", "state", "commanded")
 
 
 def runs_root() -> Path:
@@ -45,6 +45,11 @@ class RunLog:
         self._ticks: "list[dict]" = []
         self._chunks = open(self.root / "chunks.jsonl", "a", encoding="utf-8")
         self._last_seq = 0
+        #: Which attempt each tick belongs to. A run outlives its trials -- the
+        #: arms are released and taken up again between them -- so without this
+        #: column two attempts at the same scene read as one long series with an
+        #: unexplained pause in the middle.
+        self.trial = 0
 
     @classmethod
     def create(
@@ -70,6 +75,7 @@ class RunLog:
         self._ticks.append(
             {
                 "t": round(float(t), 4),
+                "trial": int(self.trial),
                 "mode": mode,
                 "queue": int(queue),
                 "served": commanded is not None,
@@ -79,6 +85,11 @@ class RunLog:
                 ),
             }
         )
+
+    def new_trial(self) -> int:
+        """Begin counting another attempt. Returns the trial now in force."""
+        self.trial += 1
+        return self.trial
 
     def note_chunk(self, source) -> bool:
         """Append the source's latest plan, if it is one this log has not seen."""

@@ -105,7 +105,7 @@ class TestCompare(unittest.TestCase):
                 {"strategy": "replace", "seam_ratio": 3.4, "success": True},
             ]
         )
-        order = [line.split("|")[1].strip() for line in table.splitlines()[2:]]
+        order = [line.split("|")[2].strip() for line in table.splitlines()[2:]]
         self.assertEqual(order, ["blend", "replace", "append"])
 
     def test_a_strategy_with_no_ratio_sorts_last_rather_than_first(self):
@@ -116,8 +116,21 @@ class TestCompare(unittest.TestCase):
                 {"strategy": "measured", "seam_ratio": 5.0},
             ]
         )
-        order = [line.split("|")[1].strip() for line in table.splitlines()[2:]]
+        order = [line.split("|")[2].strip() for line in table.splitlines()[2:]]
         self.assertEqual(order, ["measured", "unmeasured"])
+
+    def test_a_trial_that_was_counted_is_told_apart_from_one_that_was_not(self):
+        # Two attempts under one splice are two rows, not an average: the scene
+        # was put back by hand in between, and that is usually the whole point.
+        table = compare(
+            [
+                {"strategy": "blend", "seam_ratio": 2.0, "trial": 0},
+                {"strategy": "blend", "seam_ratio": 1.0, "trial": 1},
+                {"strategy": "blend", "seam_ratio": 3.0},
+            ]
+        )
+        trials = [line.split("|")[1].strip() for line in table.splitlines()[2:]]
+        self.assertEqual(trials, ["1", "0", "—"])
 
     def test_no_runs_says_so(self):
         self.assertIn("no runs", compare([]))

@@ -260,9 +260,10 @@ def main() -> int:
     parser.add_argument("--server", help="Remote inference at this base URL")
     parser.add_argument(
         "--strategy",
-        default="append",
+        default="receding",
         choices=STRATEGIES,
-        help="How an arriving chunk joins the one executing (default: append)",
+        help="How an arriving chunk joins the one executing (default: receding, "
+        "half of each chunk executed before the next is asked for)",
     )
     parser.add_argument(
         "--grid",

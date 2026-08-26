@@ -37,20 +37,30 @@ async function setMode(mode) {
   poll();
 }
 
-// Another attempt on the same scene. This asks for LESS motion, not more --
-// the run drops to hold and its plan is thrown away -- but it is still the end
-// of whatever was being watched, so it is confirmed like arming is.
+// Ending a trial. Both of these ask for LESS motion, not more — the run holds
+// and the arms are RELEASED — but letting go of a rig mid-grasp drops whatever
+// it was holding, so each is confirmed the way arming is.
+//
+// The two differ only in intent, and the dialogs say which: Stop ends the trial
+// with no next one in mind, Reset ends it and begins the next.
+async function endTrial() {
+  if (!confirm(status.dry_run
+      ? 'End this trial? The plan is dropped and the run holds.'
+      : 'End this trial and release the arms? Torque comes off — anything the '
+        + 'grippers are holding will be let go — and the run stays up.')) return;
+  await setMode('stop');
+}
+
 async function resetRun() {
   const sim = status.resettable === 'sim';
   if (!confirm(sim
-      ? 'Put the scene back for another attempt? The run holds and its plan '
-        + 'is dropped; nothing moves until you press Run.'
-      : 'Hold the run and drop its plan, ready for another attempt? Nothing '
-        + 'moves from here — you put the scene back yourself.')) return;
+      ? 'Put the scene back and begin the next trial? The plan is dropped and '
+        + 'nothing moves until you run again.'
+      : 'Release the arms and begin the next trial? Torque comes off — anything '
+        + 'the grippers are holding will be let go — and you put the scene back '
+        + 'yourself.')) return;
   try {
-    const answer = await j('/api/reset', {method: 'POST'});
-    // Only the bench has one: in the twin the scene is already back.
-    if (answer.instruction) $('#p-torque').textContent = answer.instruction;
+    await j('/api/reset', {method: 'POST'});
     $('#p-err').hidden = true;
   } catch (e) {
     fail(e);
@@ -69,7 +79,7 @@ $('#p-hold').onclick = () => setMode('hold');
 $('#p-preview').onclick = () => setMode('preview');
 $('#p-step').onclick = () => setMode('step');
 $('#p-run').onclick = () => setMode('run');
-$('#p-stop').onclick = () => setMode('stop');
+$('#p-stop').onclick = endTrial;
 $('#p-reset').onclick = resetRun;
 
 // -- the task ---------------------------------------------------------
@@ -474,11 +484,24 @@ function drawChunk(chunk, state, hz, at) {
 }
 
 // -- the loop ---------------------------------------------------------
+// The one sentence an operator beside the rig needs, in both of its states.
+const TORQUE_ON = 'The arms are under torque. <b>Preview</b> shows the queued '
+  + 'plan in the twin without moving anything; <b>Execute one chunk</b> runs '
+  + 'exactly that plan and stops; <b>Hold</b> freezes and drops the queue; '
+  + '<b>Stop</b> ends the trial and releases the arms.';
+const TORQUE_OFF = 'The arms are <b>released</b> and safe to move by hand. '
+  + 'Enable them again to begin the next trial; Ctrl+C at the terminal ends '
+  + 'the run.';
+
 function render(s) {
   const mode = s.mode || '…';
-  $('#p-mode').textContent = s.stopping ? 'stopping' : mode;
+  $('#p-mode').textContent = mode;
   $('#p-mode').className = `mode ${mode}`;
+  // Rendered from the run every poll, not written once and left: between trials
+  // the arms are free, and somebody is about to put their hands on them.
   $('#p-torque').hidden = !!s.dry_run;
+  $('#p-torque').classList.toggle('free', !s.torque);
+  $('#p-torque').innerHTML = s.torque ? TORQUE_ON : TORQUE_OFF;
   ['hold', 'preview', 'step', 'run'].forEach((m) => {
     $(`#p-${m}`).classList.toggle('sel', m === mode);
   });

@@ -88,7 +88,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
   `send_middle_and_rest.py`), and the policy-deployment pair
   `run_policy.py` (cameras + buses + safety; `--server` sends observation
-  windows out and executes the action chunks that come back; `--sim [task]`
+  windows out and executes the action chunks that come back, spliced by
+  `--strategy`, default `receding` at `--execute-ratio 0.5`; `--sim [task]`
   puts the twin behind the same `common/policy_rig.py` seam so the WHOLE
   procedure — page, arming, throttle, splice, log — can be rehearsed with no
   robot. Not to be confused with `run_policy_sim.py`, which is the BATCH
@@ -142,14 +143,18 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   (`index.html` + one script per tab, no build step). The same package also
   holds the ROLLOUT view, which is a separate page served by
   `tool/run_policy.py --web` and not a console tab: `policy_view.py`
-  (what the policy was shown / planned / did, and the hold·step·run·stop
-  throttle; reads a snapshot, owns no device) + `policy_ghost.py` (the
+  (what the policy was shown / planned / did, and the hold·step·run
+  throttle; reads a snapshot, owns no device. Stop and Reset scene end a
+  TRIAL and release the arms — torque off, run still up, page/cameras/buses/
+  session all kept; only Reset puts the scene back and numbers the next trial,
+  and only Ctrl+C ends the process. A page-armed run is disarmed by either, so
+  consent is asked again per trial) + `policy_ghost.py` (the
   returned chunk drawn as two URDF ghosts — measured blue inside planned
   orange — in a viser scene the operator can orbit; served on its OWN port and
   embedded in the page as an iframe, so the page only ever aims it,
   `/twin/at?seq&i`) + `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
-  (the throttle's pure state machine and the prefetch arithmetic, shared with
-  the control loop) and `common/policy_log.py` (the per-run log under
+  (the throttle's pure state machine, the per-trial consent and the prefetch
+  arithmetic, shared with the control loop) and `common/policy_log.py` (the per-run log under
   `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
   `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
   one asks in the browser first, and marking an episode (reversible) does

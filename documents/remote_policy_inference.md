@@ -171,7 +171,8 @@ venv/bin/python tool/run_policy.py \
 ```
 
 The arms ramp slowly to the policy's first action, then run at `--hz`. Ctrl+C,
-**Stop** on the page, and any error all disable torque on the way out. There is
+**Stop** or **Reset scene** on the page, and any error all disable torque —
+the first of those ends the run, the other two end a trial. There is
 **no default time limit** — pass `--seconds N` if you want one. A console
 session spent stepping through plans and swapping splices cannot know in advance
 how long it wants, and a default that quietly ended one at 900 ticks was a
@@ -244,7 +245,7 @@ venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 --web
 Everything else happens in the browser: the **task** is typed in the header (the
 run waits for one before it infers anything, so `--task` is optional with
 `--web`), the arms are armed there, the throttle and the splice are there, and
-the run lasts until **Stop**. `--web` therefore implies three things, each of
+the run lasts until Ctrl+C. `--web` therefore implies three things, each of
 which can still be overridden: no time limit (`--seconds N`), a throttle that
 starts in **preview** (`--start-mode run`), and consent taken on the page
 (`--arm-at-terminal`, or `--yes` to skip it).
@@ -271,7 +272,8 @@ the four questions a failed grasp raises:
 
 ### The throttle
 
-Five buttons: **Preview**, **Execute one chunk**, **Run**, **Hold**, **Stop**.
+Six buttons: **Preview**, **Execute one chunk**, **Run**, **Hold**, **Stop**,
+**Reset scene**.
 
 **Preview and Execute are a cycle**, and it is how a rollout is walked one plan
 at a time. Preview freezes the arms but KEEPS what is queued, so the twin shows
@@ -282,8 +284,36 @@ the two, so there is as long as you like to look.
 **Hold is not Preview**, and the difference is why both exist: leaving a Hold
 **drops whatever was queued**, because a plan made before a pause was drawn from
 a picture of the world that may now be minutes old. Preview keeps it, because a
-plan you are looking at is worth the same a moment later. Use Hold to stop; use
+plan you are looking at is worth the same a moment later. Use Hold to pause; use
 Preview to inspect.
+
+### One run, many trials
+
+**Stop does not end the run: it ends a TRIAL and releases the arms.** Torque
+comes off, the followers can be moved by hand, and everything else stays —
+the page, the cameras, the buses, the host session and the log. That is the
+whole point of it: between attempts somebody has to put the cube back, unfold a
+garment or lift a gripper off whatever it has closed around, and none of that
+can be done to arms that are still stiff. Re-launching to get there costs a
+handshake, a ramp, a new page and a new log, and loses the comparison of one
+splice against another on one scene.
+
+**Reset scene does the same, and begins the next trial.** It restores the scene
+where a scene is a data structure — the twin — and on the bench it says instead
+what you have to put back, with the arms already free by the time it says so.
+It also starts the next trial in the log. Use Stop when an attempt is over; use
+Reset when the next one is about to begin.
+
+**Ctrl+C at the terminal is what ends the run.** Nothing on the page does.
+
+**Consent is per trial.** A run armed from the page is disarmed by either
+release, the **Enable arms** button comes back, and Run and Execute are refused
+until it is pressed — a rig somebody has just walked up to and moved by hand is
+exactly the rig whose next motion deserves a second look. A run armed at the
+terminal (`--arm-at-terminal`, `--yes`) has no button to ask with, so its next
+Run re-enables torque and ramps, at the same three seconds as the first one.
+The bar under the throttle says which of the two states the arms are in, and it
+is written by the run rather than by the last button pressed.
 
 ### The twin
 
@@ -341,7 +371,9 @@ when you consent, not as it was while you were still clearing it.
 unauthenticated, so anyone who can reach it can begin the motion. Pass
 `--arm-at-terminal` to put the prompt back — the page then refuses an arm
 request rather than offering a second, unguarded door to the same torque.
-Arming is one-way either way: `Stop` is how a run ends, and it releases torque.
+Arming lasts for one trial: ending a trial releases the arms and withdraws the
+consent with them, so a page-armed run asks the question again before the next
+attempt moves anything.
 
 ### Reading the page
 
@@ -371,8 +403,11 @@ button says so.
 Every rollout writes `$SO101_OUTPUT_DIR/policy_runs/<stamp>/`: `chunks.jsonl`,
 one line per plan, appended as it lands, so a run that dies mid-episode still
 leaves its plans; and `ticks.parquet`, one row per control tick with the
-measured joints, the goal written, the mode and the queue depth. `--no-log`
-skips it.
+measured joints, the goal written, the mode, the queue depth and the **trial**
+it belongs to. A run outlives its trials, so without that last column two
+attempts at one scene read as a single long series with an unexplained pause in
+the middle. The end-of-run comparison table is numbered the same way: two
+attempts under one splice are two rows, never an average.
 
 ## What happens when the network misbehaves
 
@@ -403,8 +438,15 @@ here that changes what the arms do rather than merely when they ask.
 | `receding` | blocks, then executes only `--execute-ratio` of the chunk and throws the rest away | re-observe early; the classic receding horizon |
 | `rtc` | guidance inside the denoiser, on the host | nothing yet; the host refuses it |
 
-`append` is the default, so a run without the flag behaves exactly as it did
-before. It is also the one to beat: because it discards nothing, the arriving
+**`receding` at `--execute-ratio 0.5` is the default**, here and in
+`tool/run_policy_sim.py`: half of each chunk is executed and then the next is
+asked for, so the plan being followed is never much older than one round trip
+and the seams stay as far apart as that allows. It blocks for each reply, which
+is the price — see below.
+
+`append` is what this tool did unconditionally before there were strategies,
+and passing it reproduces every rollout recorded then. It is also the one to
+beat: because it discards nothing, the arriving
 chunk's first action waits for every leftover to drain, and the request fires
 when the queue falls to the prefetch threshold — which is sized to cover the
 round trip. Every plan is therefore executed a whole threshold behind the
@@ -471,8 +513,8 @@ splice that was actually in force, so a single session on a single scene fills
 the comparison table rather than producing one average over settings that were
 never in force at the same time.
 
-`--seconds 0` runs until you press **Stop** (or Ctrl+C), which is what that
-session wants: one ramp, one workspace, as long as it takes.
+`--seconds 0` runs until Ctrl+C, which is what that session wants: one
+workspace, as many trials as it takes.
 
 ### What the run tells you afterwards
 

@@ -100,17 +100,27 @@ class RemoteSourceCase(unittest.TestCase):
         self.fail("no chunk arrived")
 
 
-class TestDefaultIsUnchanged(RemoteSourceCase):
-    def test_an_unflagged_client_still_appends(self):
+class TestTheDefault(RemoteSourceCase):
+    def test_an_unflagged_client_executes_part_of_each_chunk(self):
+        # 'receding' is what a deployment runs: it keeps the plan being followed
+        # younger than a whole chunk without a seam on every tick.
         source = self.source()
-        self.assertEqual(source.strategy, "append")
+        self.assertEqual(source.strategy, "receding")
         self.fill(source)
-        # Nothing is discarded, so the whole chunk is queued.
+        self.assertEqual(source.depth, CHUNK // 2)
+
+
+class TestAppending(RemoteSourceCase):
+    """What this client did unconditionally before there were strategies."""
+
+    def test_nothing_is_discarded_so_the_whole_chunk_is_queued(self):
+        source = self.source(strategy="append")
+        self.fill(source)
         self.assertEqual(source.depth, CHUNK)
         self.assertEqual(source.dropped_stale, 0)
 
     def test_a_second_chunk_lands_behind_the_first(self):
-        source = self.source()
+        source = self.source(strategy="append")
         self.fill(source)
         first = source.take()
         source.drain()

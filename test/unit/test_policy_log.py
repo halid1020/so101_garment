@@ -64,6 +64,19 @@ class TestRunLog(unittest.TestCase):
         self.assertEqual(len(frame["state"][0]), 12)
         self.assertIsNone(frame["commanded"][1])
 
+    def test_every_tick_says_which_attempt_it_belongs_to(self):
+        import pandas as pd
+
+        self.log.tick(0.0, np.arange(12.0), np.arange(12.0), "run", 30)
+        self.assertEqual(self.log.new_trial(), 1)
+        self.log.tick(1.0, np.arange(12.0), np.arange(12.0), "run", 30)
+        root = self.log.close()
+
+        # Without this column two attempts at one scene read as a single long
+        # series with an unexplained pause in the middle of it.
+        frame = pd.read_parquet(root / "ticks.parquet")
+        self.assertEqual(list(frame["trial"]), [0, 1])
+
     def test_a_plan_is_written_once_however_often_it_is_offered(self):
         source = StubSource()
 
