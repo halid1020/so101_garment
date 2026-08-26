@@ -38,7 +38,7 @@ see documents/remote_policy_inference.md):
 Then, on the rig:
 
     ssh -N -L 8765:127.0.0.1:8765 <user>@<host>          # in another terminal
-    venv/bin/python tool/run_policy_real.py --server http://127.0.0.1:8765 \\
+    venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 \\
         --checkpoint <same-name-only-for-the-log> --task "..." --dry-run
 """
 

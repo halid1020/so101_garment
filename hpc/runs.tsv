@@ -16,6 +16,9 @@
 #             (central, wrist_camera_left, wrist_camera_right)
 #   steps   : optimiser steps          (default: act 80000, diffusion 100000, pi05 30000)
 #   batch   : batch size               (default: act 8, diffusion 32, pi05 8)
+#             pi05 MUST be 4 on a 40 GB A100: batch 8 OOMs at 39.22 GiB
+#             (MEASURED). LoRA shrinks optimiser state, not the activations
+#             of a 4.1B model reading three cameras; batch 4 sits at 34 GB.
 #   hours   : Slurm wall time, hours   (rows sharing a value share one array)
 #   extra   : raw lerobot-train flags, or `-`
 #
@@ -36,9 +39,9 @@ cube-pnp-new         act        wrist_camera_left                80000   8      
 cube-pnp-new         diffusion  all                              100000  32     36     -
 cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -
 cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -
-cube-pnp-new         pi05       all                              30000   8      36     -
-cube-pnp-new         pi05       central,wrist_camera_left        30000   8      36     -
-cube-pnp-new         pi05       wrist_camera_left                30000   8      36     -
+cube-pnp-new         pi05       all                              30000   4      36     -
+cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -
+cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -
 #
 # --- earlier datasets, trained on every camera
 cube-pnp             act        all                              80000   8      24     -

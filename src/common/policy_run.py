@@ -1,6 +1,6 @@
 """What a rollout is doing, and the one switch that gates its motion.
 
-``tool/run_policy_real.py`` drives the arms from a policy's action chunks. Two
+``tool/run_policy.py`` drives the arms from a policy's action chunks. Two
 parties need to agree about that run: the control loop, which writes goals at
 the control rate, and a watcher (``common.web.policy_view``), which reads what
 is happening and may ask for less motion. This module is what they share, and
@@ -44,6 +44,13 @@ button should imply -- ``stop`` is how a run ends, and it disables torque.
 Delegating it is a real change in who can start the arms: the view binds
 loopback and is unauthenticated, so anyone who can reach that port can begin the
 motion. That is why it is a flag and not the default.
+
+RESETTING. A rollout is usually run more than once on the same scene, and
+between the attempts the world has to be put back. ``reset`` is that request: a
+one-shot flag the loop picks up, exactly as it picks up ``queue_stale``. It is
+not a mode, because putting the scene back does not change what the throttle is
+allowed to serve afterwards -- the loop drops to ``hold`` on its own, and the
+operator decides when the next attempt begins.
 """
 
 from __future__ import annotations
@@ -56,9 +63,10 @@ import time
 #: run through the same path Ctrl+C takes, which disables torque. ``arm`` is
 #: not a mode either: it is the one-way consent that lets torque be enabled at
 #: all, and only a run started with that consent DELEGATED to the view will
-#: wait for it -- see ``ARMING`` below.
+#: wait for it -- see ``ARMING`` below. Nor is ``reset``, which asks for the
+#: next attempt on the same scene -- see ``RESETTING``.
 MODES = ("run", "step", "hold", "preview")
-REQUESTS = MODES + ("stop", "arm")
+REQUESTS = MODES + ("stop", "arm", "reset")
 
 
 def gate(mode: str, depth: int, budget: int) -> "tuple[str, int]":
@@ -128,6 +136,7 @@ class RunControl:
         self._stop = False
         self._armed = False
         self._queue_stale = False
+        self._reset = False
         self._snapshot: "dict" = {
             "mode": mode,
             "started": time.time(),
@@ -148,6 +157,11 @@ class RunControl:
             if mode == "arm":
                 # One way: consent is given once and never taken back here.
                 self._armed = True
+                return self._mode
+            if mode == "reset":
+                # The mode is deliberately untouched: what the loop does after
+                # the scene is put back is the loop's decision, not this flag's.
+                self._reset = True
                 return self._mode
             if mode != self._mode:
                 if self._mode == "hold":
@@ -188,6 +202,12 @@ class RunControl:
         with self._lock:
             stale, self._queue_stale = self._queue_stale, False
             return stale
+
+    def reset_requested(self) -> bool:
+        """True once, when the next attempt on this scene has been asked for."""
+        with self._lock:
+            wanted, self._reset = self._reset, False
+            return wanted
 
     def decide(self, depth: int) -> str:
         """``serve`` / ``hold`` / ``wait`` for this tick, advancing a step."""

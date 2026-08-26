@@ -1,7 +1,7 @@
 \section{Tasks and evaluation protocol}
 \label{sec:tasks}
 
-Two tasks share the cube, the scenario generator and one success notion.
+Three tasks share the cube, the scenario generator and one success notion.
 This section defines the tasks, how scenarios are generated and seeded,
 and the gating rule that keeps failed demonstrations out of every
 dataset.
@@ -31,12 +31,39 @@ the table restores a fully constrained object pose before the second
 grasp, decomposing the relay into two instances of the already-reliable
 single-arm grasp (Section~\ref{sec:difficulties}).
 
+\paragraph{Split-reach relay.}
+The relay above is bimanual by construction of its demonstration, not by
+construction of its scene: the generator checks only that the arm which
+must reach a keypose can reach it, and never that the other arm cannot.
+A target may therefore fall inside both arms' envelopes, and a policy
+that discovers one has learned a single-arm task wearing a relay's name.
+The split-reach variant closes that gap. Its target is drawn from a band
+the picking arm provably cannot serve, with a margin beyond the
+solver's own feasibility tolerance, so the hand-off is forced by the
+geometry. Its cube spawn varies across the sampled region, which the
+single-scenario mode described below does not provide.
+
+The same exclusion cannot be applied to the cube, and the reason is
+instructive. Pushing the cube beyond the placing arm's reach also pushes
+it to the edge of the picking arm's, where the demonstrator loses the
+grasp: a centimetre-scale cube at that extension exceeds the open-loop
+accuracy with which the scripted arm closes its jaws, and the
+demonstrator failed most attempts there while succeeding almost always
+inside the shipped band. Excluding the target costs nothing by
+comparison, because a release only has to land inside the success
+radius whereas a grasp has to close on the object itself. Placing is
+forgiving where picking is not, so the constraint is spent where it is
+affordable.
+
 \paragraph{Scenario generation.}
 A scenario fixes the cube spawn, the target, and (for the relay) the
 staging point, all sampled from seeded uniform ranges over the reachable
 table region. An analytic reachability check rejects samples either arm
 cannot serve; rejected samples are resampled deterministically, so a
-seed always denotes the same scenario.
+seed always denotes the same scenario. That check tests position alone.
+We measured the grasp attitude separately across the whole sampled
+region and found it neither limiting nor varying appreciably, so
+position feasibility is the binding constraint it is treated as.
 
 \paragraph{Seed protocol.}
 Three disjoint seed pools cover training (one thousand seeds, one

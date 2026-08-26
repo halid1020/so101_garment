@@ -19,7 +19,7 @@ The files:
 | `provision_create.sh` | CREATE **login** node, once | Builds the venv + LeRobot (pinned) + requirements; warms the vision-backbone cache. Sim-only subset of `../install.sh`. Serves both cells. |
 | `create_sim_vla.sbatch` | CREATE **compute** node, via `sbatch` | Sets scratch paths + `MUJOCO_GL=egl`, checks EGL + dataset, runs `test/system/long_vla_sim.sh`. |
 | `stage_datasets.sh` | the **collection box** | Checks and rsyncs collected datasets to the cluster's scratch. |
-| `runs.tsv` | — | The real-data run matrix: one row per (dataset, policy) run. |
+| `runs.tsv` | — | The real-data run matrix: one row per (dataset, policy, camera set) run. |
 | `submit_real.sh` | CREATE **login** node | Reads the matrix, checks staging, submits it as Slurm job arrays. |
 | `create_real_vla.sbatch` | CREATE **compute** node, via `sbatch` | One array task = one row: runs `test/system/long_vla_real.sh` for that dataset and policy. |
 | `fetch_policies.sh` | the **collection box** (or any machine) | Brings the finished checkpoints back out of scratch, into the layout the policy server and the on-robot runner expect. |
@@ -32,14 +32,32 @@ The files:
   `provision_create.sh` **warms** that cache on the login node
   (`~/.cache/torch/hub/checkpoints`, visible to compute nodes) so training
   never reaches for the network. The pre-staged dataset (below) means no
-  Hub download either. (pi0.5 is intentionally out of scope here — it
-  would need its licence-gated base pre-staged.)
+  Hub download either. pi0.5 trains here too, but needs **two** more things
+  pre-staged — its base weights and, separately, its tokenizer — and only the
+  first is a plain download; see [What a `pi05` row
+  needs](#what-a-pi05-row-needs).
 - **`install.sh` isn't cluster-safe.** Its later steps `sudo apt install`
   adb/openscad and clone `meta_quest_teleop`; none are needed for sim
   training/eval and they abort without sudo. `provision_create.sh` runs
   only the venv + LeRobot + requirements + cache steps.
 - **Storage.** `outputs/` runs to tens of GB; home quotas are small, so
-  the job points `SO101_OUTPUT_DIR` and `HF_LEROBOT_HOME` at scratch.
+  the job points `SO101_OUTPUT_DIR` and `HF_LEROBOT_HOME` at scratch. Scratch
+  is not unlimited either: on CREATE it is a **hard 200 GB** quota
+  (`getfattr -n ceph.quota.max_bytes /scratch/users/$USER`), enforced by
+  failing the *write*. `lerobot-train` checkpoints every `--save_freq` steps
+  and never deletes an old one, so a 100k-step diffusion run alone parks ten
+  ~3.3 GB copies. In August 2026 that filled the quota and killed four array
+  tasks 1.5–17 h in, inside `save_pretrained`, with `OSError: [Errno 122]
+  Disk quota exceeded`. `long_vla_real.sh` now prunes as it goes:
+  `--keep-checkpoints N` (**default 2**) keeps only the newest N step
+  directories per policy, plus whatever `last` points at. Nothing downstream
+  wants the intermediates — `fetch_policies.sh` copies only
+  `checkpoints/last/pretrained_model`. Check the headroom before a big
+  submission:
+
+  ```bash
+  getfattr -n ceph.quota.max_bytes -n ceph.dir.rbytes /scratch/users/$USER
+  ```
 
 ## Step-by-step
 
@@ -211,7 +229,7 @@ Training policies on datasets **collected on the physical rig** reuses the same
 environment (`provision_create.sh` is unchanged) but a different job. There is
 no simulation here, so the job has no MuJoCo probe; and there is no in-loop
 evaluation, because a real policy is evaluated **on the robot** with
-`tool/run_policy_real.py` back at the rig, not on the cluster.
+`tool/run_policy.py` back at the rig, not on the cluster.
 
 The unit of work is one **(dataset, policy)** pair. They are listed in
 `hpc/runs.tsv`, and each becomes one Slurm array task. Nothing tracked has to be
@@ -222,18 +240,64 @@ the command line.
 
 `bash hpc/provision_create.sh`, as for the sim cell. Both cells share the venv.
 
-**Training any `pi05` row needs one more thing.** pi0.5 is a finetune, so the
-base weights must be on disk before training starts, and a compute node cannot
-fetch them. Pull them once, on the login node:
+#### What a `pi05` row needs
+
+pi0.5 is a finetune, so everything it loads by name must already be in the shared
+HF cache: a compute node has no internet, and the job runs with
+`HF_HUB_OFFLINE=1`. Stage it once, on the login node:
 
 ```bash
 SO101_STAGE_PI05=1 bash hpc/provision_create.sh
 ```
 
-That caches `lerobot/pi05_base` (~14.5 GB) under the shared HF cache, which
-`HF_HUB_OFFLINE=1` then resolves by name. The repo is **not** licence-gated, so
-no token and no terms acceptance are involved. Skip this and a `pi05` row fails
-at startup; `act` and `diffusion` rows are unaffected either way.
+That covers **two separate repos**, and they are not equally easy:
+
+| Repo | What it is | Gated? |
+|------|-----------|--------|
+| `lerobot/pi05_base` | the ~14.5 GB base weights | **No** (checked 2026-08-24) |
+| `google/paligemma-3b-pt-224` | pi0.5's tokenizer/processor (~22 MB of it) | **Yes — `gated: manual`** |
+
+`lerobot/pi05_base` is a plain download needing no token — but it ships **no
+tokenizer**, and LeRobot builds pi0.5's tokenizer from the PaliGemma repo *by
+name*. That repo is manually gated: the Hub answers **401** for its files unless
+the request carries a token whose account has been granted access. A CREATE login
+node has internet but no token, so it cannot fetch it unaided. Two ways out:
+
+- **accept the terms** at <https://huggingface.co/google/paligemma-3b-pt-224>
+  with your HF account, then `hf auth login` on the login node and re-run; or
+- **copy the tokenizer files in** from a machine whose HF account already holds
+  the grant — only the non-weight files (~22 MB), preserving the hub cache
+  layout (`blobs/` real files, `snapshots/<rev>/` symlinks, `refs/main`). No
+  token travels, only the files. `provision_create.sh` prints the exact recipe
+  when it cannot stage the repo itself.
+
+`provision_create.sh` now **asserts** both before it exits: no `.incomplete`
+blobs and a full-size `model.safetensors` for the base, and — the only test that
+means anything — that `AutoProcessor.from_pretrained` for the tokenizer actually
+builds with `HF_HUB_OFFLINE=1`. Both checks exist because the failure is
+otherwise invisible until a GPU node hits it hours in. In August 2026 three
+`pi05` array tasks died at startup with
+
+```
+ValueError: Failed to instantiate processor step 'tokenizer_processor' ...
+tokenizer_name: 'google/paligemma-3b-pt-224' ... couldn't connect to
+https://huggingface.co
+```
+
+and a fourth staging attempt had silently left a 1.1 GB fragment of the 14.5 GB
+base behind: `huggingface_hub` picks a new temp filename per attempt, so a
+half-download never resumes and never complains.
+
+Verify by hand at any time, on the login node:
+
+```bash
+HF_HUB_OFFLINE=1 venv/bin/python -c \
+  "from transformers import AutoProcessor; \
+   AutoProcessor.from_pretrained('google/paligemma-3b-pt-224'); print('OK')"
+```
+
+Skip all this and a `pi05` row fails at startup; `act` and `diffusion` rows are
+unaffected either way.
 
 ### 2. Stage the datasets — *collection box (NOT CREATE)*
 
@@ -306,6 +370,27 @@ Three consequences of it being a finetune of a 4.1B-param base:
   is padded and masked by pi0.5 itself — which is exactly what an ablated camera
   should look like to the model.
 
+**It also needs a smaller batch than the other two.** MEASURED 2026-08-25 on
+this dataset: `pi05` at **batch 8** dies on the first forward pass of a 40 GB
+A100 (`torch.OutOfMemoryError`, 39.22 GiB already in use), LoRA and all —
+`--peft.r=16` shrinks the *optimiser state*, not the activations of a 4.1B-param
+model reading three camera streams. **Batch 4 fits**, at `mem_gb:34.02` and
+~0.49 s/step, so a 30k-step row takes about 4.5 h. Keep the `batch` column at 4
+for `pi05` rows on `a100_40g`, or ask for a bigger card:
+
+```bash
+# node features on CREATE: a100_40g, l40s (48 GB), h200 (141 GB), b200
+sinfo -p gpu -o "%25N %8t %12G %30f"
+SBATCH_CONSTRAINT=h200 bash hpc/submit_real.sh --only pi05   # then batch 8 is fine
+```
+
+Note that **ablating a camera does not buy the memory back**: pi0.5 pads and
+masks an empty slot rather than skipping it, so the one-camera row costs what
+the three-camera row costs.
+
+On the other hand `pi05` rows are nearly free on disk — a checkpoint is the LoRA
+adapter only, ~15 MB, against ~590 MB for ACT and ~3.3 GB for diffusion.
+
 ### 4. Submit — *login node → GPU nodes*
 
 ```bash
@@ -343,6 +428,25 @@ name is the **view**, not the job id. That is also what makes a resubmission
 cheap: a job that hit its wall time is simply submitted again, and every
 finished checkpoint is reused instead of retrained.
 
+> **Reused means SKIPPED, not resumed.** `long_vla_real.sh` treats the mere
+> existence of `train/<policy>/checkpoints/last/pretrained_model` as "this
+> policy is done" and returns without calling `lerobot-train` at all — it never
+> passes `--resume`. That is right for a run that finished, and wrong for one
+> that died mid-training: resubmitting it reports success at whatever partial
+> step its last checkpoint reached (say 30k of 100k), quietly, and writes a
+> `results.md` saying so. Before resubmitting a row that **crashed** rather than
+> merely queued, check what its `last` actually points at, and delete that one
+> policy's train directory if it is short of the target:
+>
+> ```bash
+> readlink -f <run>/train/<policy>/checkpoints/last   # 030000 of a 100000-step row?
+> rm -rf <run>/train/<policy>                         # then resubmit that row
+> ```
+>
+> Deleting `train/<policy>` costs the steps already spent; there is no resume
+> path today. A row that has no `train/<policy>` directory at all — one that
+> died before its first checkpoint — needs no such care.
+
 The camera ablation on `cube-pnp-new` therefore lands as three directories —
 `cube-pnp-new__all`, `cube-pnp-new__central+wrist_left`,
 `cube-pnp-new__wrist_left` — with three policies inside each.
@@ -360,17 +464,24 @@ bash hpc/fetch_policies.sh --from <user>@<create-login-host> --dest ~/outputs/po
 # the whole ablation, or one arm of it
 bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new --dest ~/outputs/policies
 bash hpc/fetch_policies.sh --from <host> --datasets cube-pnp-new__wrist_left --dest ~/outputs/policies
+
+# one policy
+bash hpc/fetch_policies.sh --from <host> --only pi05 --dest ~/outputs/policies
 ```
 
-Then `tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — start with
+`--only` takes **`act`, `diffusion` or `pi05`** (its own `--help` text still says
+only the first two — the filter is a plain match against the policy directories
+found on disk, so it has never been limited to them).
+
+Then `tool/run_policy.py --checkpoint <ckpt> --task "<task>"` — start with
 `--dry-run`. A checkpoint too large for the rig's own machine can be served from
 a GPU box instead (`--dest <gpu-host>:...`, then `tool/policy_server.py` +
 `--server <url>`); see
 [`../documents/remote_policy_inference.md`](../documents/remote_policy_inference.md).
 
-**pi0.5 trains here now** (`--only pi05`), provided its base was staged in
-step 1. It is not licence-gated, contrary to an earlier note here — checked
-2026-08-24, `gated: false` — so staging is a plain download.
+**pi0.5 trains here now** (`--only pi05`), provided both its base *and* its
+tokenizer were staged in step 1 — see [What a `pi05` row
+needs](#what-a-pi05-row-needs). The base is not gated; the tokenizer repo is.
 
 ## Scaling out later
 

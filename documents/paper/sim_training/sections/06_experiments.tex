@@ -45,6 +45,18 @@ The campaign runs per mode (simple, then full), per task, per policy:
     per episode. Success uses the collection criterion unchanged.
 \end{enumerate}
 
+\paragraph{What simple mode measures.}
+Simple mode is a weaker instrument than its success rates suggest, and
+the collected data say so directly: across every demonstration in a
+simple-mode dataset the first recorded state is identical, its spread
+zero on every channel. The mode also draws its validation and
+evaluation scenarios from the seed it trained on, so a simple-mode
+figure reports how completely a policy has fitted one scene and carries
+no evidence about generalisation. We therefore read simple mode only as
+the pipeline check it was introduced to be, and rely on full mode --- and
+on the split-reach relay, whose cube spawn varies by construction --- for
+any claim about generalisation.
+
 \paragraph{Results.}
 \textit{TODO: populate from the long-run report (success-rate table per
 mode\,$\times$\,task\,$\times$\,policy with placement-error statistics,

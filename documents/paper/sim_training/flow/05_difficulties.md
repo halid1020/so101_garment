@@ -51,3 +51,10 @@ symptom → diagnosis → fix → what remains unjustified.
    so eval inherits it).
 10. Close: what remains unjustified (contact constants, servo gains,
    dwell durations) — flagged, not hidden.
+
+Additional paragraph — control rate and the integrator: the control
+rate is now a parameter rather than a constant, and a rate is refused
+unless it divides the physics rate exactly. Explain the failure it
+prevents: a control period that is not a whole number of integrator
+steps puts recorded timestamps slightly out of step with the motion
+they label, a fraction of a step at a time, and nothing announces it.

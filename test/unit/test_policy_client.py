@@ -1,6 +1,6 @@
 """Unit tests for the splice strategies as the remote client applies them.
 
-``test_run_policy_real`` already covers the client's transport behaviour -- the
+``test_run_policy`` already covers the client's transport behaviour -- the
 handshake, the window, what is fatal. These are about the one thing that changed
 when the strategies arrived: what the queue holds after a chunk lands, and that
 an unflagged run still behaves exactly as it did.
@@ -38,6 +38,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         state = self.server.state
         if self.path == "/reset":
+            state["resets"] += 1
             self._send(
                 json.dumps(
                     {
@@ -63,7 +64,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 class RemoteSourceCase(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _StubHandler)
-        self.server.state = {"requests": []}
+        self.server.state = {"requests": [], "resets": 0}
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.addCleanup(self.server.server_close)
@@ -134,12 +135,33 @@ class TestAligningStrategies(RemoteSourceCase):
 
     def test_a_stale_round_trip_can_empty_the_queue(self):
         # Longer in flight than the chunk is long: everything planned was for a
-        # tick that has gone by, and the caller must see a stall, not an error.
+        # tick that has gone by, and the caller must see a stall, not a crash.
         source = self.source(strategy="replace")
         source.drain()
         source._splice_in(np.ones((CHUNK, 12)), delay=CHUNK + 5)
         self.assertEqual(source.depth, 0)
         self.assertIsNone(source.take())
+
+    def test_and_says_why_rather_than_looking_like_a_dead_server(self):
+        # MEASURED on a real link: 72 ticks of round trip against a 32-action
+        # diffusion chunk. Every aligning splice then discards every row of
+        # every chunk, for ever, and the rollout hangs for a minute before
+        # dying of "no action" -- which blames the wrong thing entirely.
+        source = self.source(strategy="blend")
+        source.drain()
+        source._splice_in(np.ones((CHUNK, 12)), delay=CHUNK + 5)
+
+        self.assertIn("stale on arrival", source.last_error or "")
+        self.assertIn("blend", source.last_error or "")
+        self.assertIn(str(CHUNK), source.last_error or "")
+
+    def test_a_splice_that_kept_something_says_nothing(self):
+        source = self.source(strategy="replace")
+        source.drain()
+        source._splice_in(np.ones((CHUNK, 12)), delay=1)
+
+        self.assertEqual(source.depth, CHUNK - 1)
+        self.assertIsNone(source.last_error)
 
 
 class TestBoundaryOffset(RemoteSourceCase):
@@ -246,6 +268,48 @@ class TestSwitchingStrategy(RemoteSourceCase):
                 source.set_strategy("receding", execute_ratio=bad)
 
 
+class TestStartingAnotherAttempt(RemoteSourceCase):
+    """A reset from the page has to reach the HOST, not only the local queue."""
+
+    def test_the_session_is_started_again(self):
+        # The host keeps per-session state -- a diffusion policy's own action
+        # queue, an RTC guide's previous plan -- and none of it describes the
+        # scene about to be attempted.
+        source = self.source()
+        self.assertEqual(self.server.state["resets"], 1)
+
+        source.reset()
+
+        self.assertEqual(self.server.state["resets"], 2)
+
+    def test_and_nothing_planned_for_the_old_episode_survives_it(self):
+        source = self.source()
+        self.fill(source)
+        self.assertGreater(source.depth, 0)
+
+        source.reset()
+
+        self.assertEqual(source.depth, 0)
+        self.assertIsNone(source.last_chunk)
+
+    def test_the_window_is_emptied_so_the_next_plan_sees_only_the_new_scene(self):
+        source = self.source()
+        self.fill(source)
+
+        source.reset()
+
+        self.assertFalse(source.window.ready)
+
+    def test_the_chunk_length_it_negotiated_is_kept(self):
+        # Re-deriving it from the fresh handshake must not quietly widen a run
+        # that was started with --actions-per-chunk.
+        source = self.source(actions_per_chunk=3)
+
+        source.reset()
+
+        self.assertEqual(source.actions, 3)
+
+
 class TestCameraMap(RemoteSourceCase):
     def test_a_camera_is_renamed_on_the_way_out(self):
         # The twin renders 'scene'; this checkpoint was trained on 'central'.
@@ -279,6 +343,24 @@ class TestRefusals(RemoteSourceCase):
         with self.assertRaises(ChunkingError) as caught:
             self.source(strategy="rtc")
         self.assertIn("RTC", str(caught.exception))
+
+
+class TestTaskCanBeSetLater(RemoteSourceCase):
+    """A run may be started with no task and given one from the live view."""
+
+    def test_the_next_request_carries_the_new_task(self):
+        source = self.source()
+        self.assertEqual(source.set_task("fold the towel"), "fold the towel")
+        self.fill(source)
+        sent = self.server.state["requests"][-1]
+        self.assertEqual(sent["task"], "fold the towel")
+
+    def test_a_source_may_start_with_no_task_at_all(self):
+        source = RemoteActionSource(self.url, "", hz=30.0)
+        self.assertEqual(source.task, "")
+        source.set_task("pick up the cube")
+        self.fill(source)
+        self.assertEqual(self.server.state["requests"][-1]["task"], "pick up the cube")
 
 
 if __name__ == "__main__":

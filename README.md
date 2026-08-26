@@ -284,7 +284,7 @@ Once you have teleoperated a real dataset on the rig (the 12-D dual-arm
 action + the recorded cameras — see the teleoperation quick start above),
 train the same LeRobot policies on it. There is no collect phase and no
 in-loop success metric here: a real policy's skill is measured **on the
-robot** with `tool/run_policy_real.py`, not on the training machine. The
+robot** with `tool/run_policy.py`, not on the training machine. The
 examples below use the `cube-pnp` dataset on the Seagate mount
 (`/mnt/seagate/so101/cube-pnp`); point `--dataset-root` at your own dataset
 directory (its basename becomes the repo id).
@@ -323,7 +323,7 @@ under Slurm on KCL CREATE, list them in `hpc/runs.tsv` and submit with
 real-data cell in [`hpc/README.md`](hpc/README.md).
 
 **Evaluate on the robot.** Copy a checkpoint back to the rig and run
-`python tool/run_policy_real.py --checkpoint <ckpt> --task "<task>"` — the
+`python tool/run_policy.py --checkpoint <ckpt> --task "<task>"` — the
 long run does no cluster-side evaluation on purpose. If the rig's machine is
 too small to hold the policy, put the checkpoint on a GPU box instead, serve it
 with `tool/policy_server.py`, and pass `--server <url>` here: the rig keeps the

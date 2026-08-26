@@ -116,27 +116,160 @@ m.resnet18(weights=m.ResNet18_Weights.DEFAULT)
 print("✓ ResNet18 weights cached under ~/.cache/torch/hub/checkpoints")
 PY
 
-# 5. Pre-stage the pi0.5 base (only if pi05 rows will be trained) ------
+# 5. Pre-stage the pi0.5 base + its tokenizer (only if pi05 rows are trained)-
 # pi0.5 is a FINETUNE: lerobot-train needs the base weights on disk before it
 # starts, and a compute node cannot fetch them. ~14.5 GB, so this is opt-in --
 # `SO101_STAGE_PI05=1 bash hpc/provision_create.sh` -- and it goes to the shared
-# HF cache the job reads with HF_HUB_OFFLINE=1. The repo is NOT licence-gated
-# (checked 2026-08-24), so no token or terms acceptance is needed.
+# HF cache the job reads with HF_HUB_OFFLINE=1.
+#
+# TWO repos are needed, and only one of them is easy:
+#   * lerobot/pi05_base is NOT licence-gated (checked 2026-08-24), so it is a
+#     plain download -- but a big one, and a login-node watchdog that kills it
+#     mid-flight leaves a `.incomplete` blob behind. huggingface_hub picks a new
+#     temp name each run, so a later attempt does NOT resume, and nothing
+#     complains: the half-download simply sits there until a compute node tries
+#     to use it. We therefore ASSERT the snapshot afterwards.
+#   * google/paligemma-3b-pt-224 IS licence-gated (`gated: manual`) and supplies
+#     pi0.5's tokenizer/processor, which LeRobot builds BY NAME. Without it the
+#     job dies at startup with "Failed to instantiate processor step
+#     'tokenizer_processor' ... couldn't connect to https://huggingface.co".
+#     It cost three array tasks in August 2026, hours in, on offline nodes.
 PI05_REPO="${SO101_PI05_REPO:-lerobot/pi05_base}"
+PI05_TOKENIZER="${SO101_PI05_TOKENIZER:-google/paligemma-3b-pt-224}"
 if [ "${SO101_STAGE_PI05:-0}" = "1" ]; then
     echo "=> Pre-staging ${PI05_REPO} (~14.5 GB) into the HF cache..."
-    python - "$PI05_REPO" <<'PY'
+    python - "$PI05_REPO" <<'PY' || exit 1
 import sys
+from pathlib import Path
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import get_hf_file_metadata, hf_hub_url, snapshot_download
 
-path = snapshot_download(repo_id=sys.argv[1])
-print(f"✓ pi0.5 base cached at {path}")
+repo = sys.argv[1]
+path = Path(snapshot_download(repo_id=repo))
+
+# --- assert the snapshot is WHOLE, every time -------------------------------
+# snapshot_download returning is not proof: a previous run killed mid-file
+# leaves the small JSONs plus a stale `.incomplete` blob, and this call is
+# happy to hand that back. Fail here, on a login node, rather than 17 hours
+# into a GPU job.
+repo_dir = path.parent.parent          # .../models--<org>--<name>
+stale = sorted(repo_dir.glob("blobs/*.incomplete"))
+if stale:
+    print(
+        f"❌ {repo} is only PART-downloaded: {len(stale)} unfinished blob(s)\n"
+        f"   under {repo_dir / 'blobs'}. Delete them and re-run this script;\n"
+        "   huggingface_hub renames its temp file each attempt, so it will NOT\n"
+        "   resume on its own.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+weights = path / "model.safetensors"
+if not weights.exists():
+    print(f"❌ {repo} cached at {path} but model.safetensors is missing.", file=sys.stderr)
+    sys.exit(1)
+have = weights.stat().st_size
+try:
+    want = get_hf_file_metadata(hf_hub_url(repo, "model.safetensors")).size
+except Exception:  # no network here is not this check's problem
+    want = None
+if want is not None and have != want:
+    print(
+        f"❌ {repo}: model.safetensors is {have} bytes, the Hub says {want}.\n"
+        "   Delete the blob and re-run; a truncated file only fails at train time.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+print(f"✓ pi0.5 base cached whole at {path} ({have / 1e9:.1f} GB)")
 print("  Train against it by name; HF_HUB_OFFLINE=1 resolves it from this cache.")
 PY
+
+    echo "=> Staging the pi0.5 tokenizer (${PI05_TOKENIZER}, ~22 MB)..."
+    python - "$PI05_TOKENIZER" <<'PY' || exit 1
+import os
+import sys
+
+repo = sys.argv[1]
+
+# Weights are NOT wanted: pi0.5 carries its own. Only the tokenizer/processor
+# JSONs and the sentencepiece model, which is why this is megabytes not 11 GB.
+WANTED = [
+    "added_tokens.json",
+    "config.json",
+    "generation_config.json",
+    "model.safetensors.index.json",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+]
+
+GATE_HELP = f"""❌ Could not stage {repo}, which supplies pi0.5's tokenizer.
+
+   This repo is licence-gated (`gated: manual`): the Hub answers 401 for its
+   files unless the request carries a token whose account has been GRANTED
+   access. A CREATE login node has internet but no token, so it cannot fetch
+   this on its own. Either:
+
+     (a) accept the terms at https://huggingface.co/{repo} with your HF
+         account, then `hf auth login` on this node and re-run; or
+
+     (b) copy the tokenizer from a machine that already has it (~22 MB) --
+         no token travels, only the files:
+
+           # on the machine that HAS it
+           H=~/.cache/huggingface/hub/models--google--paligemma-3b-pt-224
+           REV=$(cat $H/refs/main)
+           cd $H && tar -czf /tmp/pg_tok.tgz refs/main \\
+             $(for f in snapshots/$REV/*; do
+                 case "$f" in *.safetensors|*.gguf) continue;; esac
+                 echo "$f blobs/$(basename $(readlink -f $f))"
+               done)
+           # then, on this node
+           mkdir -p $H && tar -xzf pg_tok.tgz -C $H
+
+   Do NOT skip this: pi05 rows will queue, run for hours on an offline GPU
+   node, and only then fail building the policy."""
+
+
+def usable() -> bool:
+    """Can the processor actually be built with no network? The only test."""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    try:
+        from transformers import AutoProcessor
+
+        AutoProcessor.from_pretrained(repo)
+        return True
+    except Exception:
+        return False
+    finally:
+        os.environ.pop("HF_HUB_OFFLINE", None)
+
+
+if usable():
+    print(f"✓ {repo} tokenizer already staged and loads offline.")
+    sys.exit(0)
+
+try:
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(repo_id=repo, allow_patterns=WANTED)
+except Exception as exc:
+    print(GATE_HELP, file=sys.stderr)
+    print(f"\n   (underlying error: {type(exc).__name__}: {exc})", file=sys.stderr)
+    sys.exit(1)
+
+if not usable():
+    print(GATE_HELP, file=sys.stderr)
+    print("\n   (files downloaded, but the processor still will not build)", file=sys.stderr)
+    sys.exit(1)
+print(f"✓ {repo} tokenizer staged; builds offline.")
+PY
 else
-    echo "=> Skipping the pi0.5 base (${PI05_REPO}, ~14.5 GB)."
-    echo "   Training a pi05 row needs it: re-run with SO101_STAGE_PI05=1"
+    echo "=> Skipping the pi0.5 base (${PI05_REPO}, ~14.5 GB) and its tokenizer."
+    echo "   Training a pi05 row needs both: re-run with SO101_STAGE_PI05=1"
 fi
 
 echo "=================================================="

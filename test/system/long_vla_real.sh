@@ -5,7 +5,7 @@
 # the parts that only exist in simulation:
 #   * NO oracle gate / collection — the dataset was teleoperated on the rig;
 #   * NO in-loop evaluation — a real policy is evaluated ON THE ROBOT with
-#     tool/run_policy_real.py at the rig, not on the cluster.
+#     tool/run_policy.py at the rig, not on the cluster.
 # For each policy (act, diffusion by default) it trains a long run on the
 # staged real dataset, saves checkpoints, and writes a results.md pointing at
 # them and their final training loss.
@@ -28,10 +28,16 @@
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --act-steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only act --steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --extra "--policy.optimizer_lr=5e-5"
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --keep-checkpoints 3
 #
 # --steps/--batch/--save-freq apply to whichever policy --only selects, so one
 # cluster row per (dataset, policy) needs one column each; --extra is handed to
 # lerobot-train verbatim, so a flag this script does not name is still reachable.
+#
+# --keep-checkpoints N (default 2) bounds what a run leaves on disk: lerobot-train
+# writes a checkpoint every --save_freq steps and never removes one, so a 100k-step
+# diffusion run parks ten ~3.3 GB copies. That filled CREATE's 200 GB scratch quota
+# and killed four jobs mid-save; 0 disables the pruning.
 #
 # The script resumes: a finished checkpoint is reused, a partial train dir is
 # cleared. Several invocations may share one --run-name (that is how the cluster
@@ -63,6 +69,9 @@ STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
 # 4: reading a dataset over network scratch with too few workers is the likeliest
 # explanation for the cube-pnp ACT run that hit its 24 h wall time at ~10 s/step.
 WORKERS="${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || echo 4)}"
+# How many step checkpoints to keep per policy once training finishes (see
+# prune_checkpoints below for why this is not simply "all of them"). 0 => keep all.
+KEEP_CKPTS=2
 EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
@@ -85,9 +94,10 @@ while [ $# -gt 0 ]; do
         --batch) BATCH="$2"; shift 2;;
         --save-freq) SAVE_FREQ="$2"; shift 2;;
         --workers) WORKERS="$2"; shift 2;;
+        --keep-checkpoints) KEEP_CKPTS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
-        -h|--help) sed -n '2,32p' "$0"; exit 0;;
+        -h|--help) sed -n '2,38p' "$0"; exit 0;;
         *) echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
@@ -139,15 +149,58 @@ RUN_DIR="$OUT_ROOT/vla_real_long/$RUN_NAME"
 mkdir -p "$RUN_DIR/logs"
 
 if [ -z "$DEVICE" ]; then
-    DEVICE="$("$PY" - <<'PY'
+    # Reports WHY, not just what: "cpu unavailable" (torch cannot use any GPU)
+    # and "cpu small" (there is one, but it is under MIN_GB) need opposite
+    # responses, and the guard below can only tell them apart if we say so.
+    DEVICE_WHY="$("$PY" - <<'PY'
 import torch
+
 MIN_GB = 8.0
-if torch.cuda.is_available() and torch.cuda.get_device_properties(0).total_memory/1e9 >= MIN_GB:
-    print("cuda")
+if not torch.cuda.is_available():
+    print("cpu unavailable")
+elif torch.cuda.get_device_properties(0).total_memory / 1e9 < MIN_GB:
+    print("cpu small")
 else:
-    print("cpu")
+    print("cuda ok")
 PY
 )"
+    DEVICE="${DEVICE_WHY%% *}"
+    WHY="${DEVICE_WHY##* }"
+
+    # A batch job that quietly falls back to the CPU is the worst outcome
+    # available: a 4.1B-param finetune cannot finish on CPU, so the row burns
+    # its entire wall-time reservation, writes no checkpoint, and logs nothing
+    # that looks wrong. MEASURED 2026-08-25 on CREATE: three pi05 array tasks
+    # landed on a node that HAD allocated them a GPU (CUDA_VISIBLE_DEVICES=0,
+    # torch.cuda.device_count() == 1) which torch then could not use --
+    # is_available() False, torch.cuda.init() raising "No CUDA GPUs are
+    # available" -- and trained on CPU, reaching no steps in ten minutes where
+    # the same run on a healthy node did a hundred in fifty seconds. That is a
+    # sick node, not a configuration choice, so refuse it. Asking for CPU
+    # explicitly with --device cpu still works, and a GPU merely too SMALL
+    # still falls back quietly, which is what a laptop smoke test wants.
+    if [ "$DEVICE" = "cpu" ] && [ "$WHY" = "unavailable" ] \
+       && [ -n "${CUDA_VISIBLE_DEVICES:-}${SLURM_JOB_GPUS:-}" ]; then
+        echo "❌ A GPU was allocated to this job (CUDA_VISIBLE_DEVICES='${CUDA_VISIBLE_DEVICES:-}')," >&2
+        echo "   but torch cannot use it, so this run would train on the CPU:" >&2
+        "$PY" - >&2 <<'PY'
+import torch
+
+print(f"     torch {torch.__version__}   device_count={torch.cuda.device_count()}")
+try:
+    torch.cuda.init()
+except Exception as exc:
+    print(f"     torch.cuda.init(): {type(exc).__name__}: {exc}")
+PY
+        echo "   That usually means the NODE's GPU is unhealthy. Resubmit without it" >&2
+        echo "   -- CREATE's Slurm ignores SBATCH_EXCLUDE, so pass --exclude to sbatch" >&2
+        echo "   directly, reusing the snapshot submit_real.sh already wrote:" >&2
+        echo "     sbatch --exclude=${SLURMD_NODENAME:-<node>} --array=... --time=...:00:00 \\" >&2
+        echo "       --export=ALL,SO101_REPO_ROOT=...,SO101_SCRATCH=...,SO101_MANIFEST=<snapshot> \\" >&2
+        echo "       hpc/create_real_vla.sbatch" >&2
+        echo "   Or pass --device cpu if CPU training really is intended." >&2
+        exit 1
+    fi
 fi
 
 echo "======================================================================"
@@ -157,11 +210,53 @@ echo "   policies: $ONLY   device: $DEVICE   loader workers: $WORKERS"
 echo "   cameras : $("$PY" "$REPO_ROOT/tool/make_camera_view.py" --dataset "$DATASET_ROOT" --list \
                      | tail -n +2 | awk '{printf "%s ", $1}')"
 echo "   output  : $RUN_DIR"
-echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy_real.py)."
+echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy.py)."
 echo "======================================================================"
 
 fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 have() { case ",$ONLY," in *",$1,"*) return 0;; *) return 1;; esac; }
+
+# lerobot-train writes a checkpoint every --save_freq steps and never removes an
+# older one, so a 100k-step diffusion run parks ten ~3.3 GB copies and an 80k-step
+# ACT run eight ~590 MB ones. On CREATE that is fatal rather than merely untidy:
+# the scratch quota is a HARD 200 GB (ceph.quota.max_bytes), and in August 2026
+# four array tasks ran for 1.5-17 h and then died inside save_pretrained with
+# "OSError: [Errno 122] Disk quota exceeded" -- 182 GB of that scratch was
+# superseded intermediates. Nothing downstream wants them: hpc/fetch_policies.sh
+# only ever copies checkpoints/last/pretrained_model.
+#
+# Keeps the newest $KEEP_CKPTS step directories AND whatever `last` resolves to.
+# Those are normally the same directory, but a run whose save was interrupted
+# leaves a newest one that is a truncated stub while `last` still names the last
+# checkpoint written whole -- keeping both means pruning can never orphan `last`,
+# which is the only thing a resume or a fetch reads.
+prune_checkpoints() {
+    local policy="$1"
+    local ck="$RUN_DIR/train/${policy}/checkpoints"
+    [ "$KEEP_CKPTS" = "0" ] && return 0
+    [ -d "$ck" ] || return 0
+
+    local keep_last=""
+    [ -e "$ck/last" ] && keep_last="$(basename "$(readlink -f "$ck/last")")"
+
+    local steps=() d
+    for d in "$ck"/[0-9]*/; do
+        [ -d "$d" ] || continue          # an unmatched glob stays literal
+        steps+=("$(basename "$d")")
+    done
+    [ "${#steps[@]}" -le "$KEEP_CKPTS" ] && return 0
+
+    # Oldest first. `sort -n` rather than lexical, so a run whose --save-freq
+    # produced differently-padded names still orders correctly.
+    local drop=$(( ${#steps[@]} - KEEP_CKPTS )) s
+    while read -r s; do
+        [ -n "$s" ] || continue
+        [ "$s" = "$keep_last" ] && continue
+        echo "  ✂ pruning superseded checkpoint ${policy}/${s}"
+        rm -rf "${ck:?}/${s}"
+    done < <(printf '%s\n' "${steps[@]}" | sort -n | head -n "$drop")
+}
+
 
 train_cell() {
     local policy="$1"
@@ -228,9 +323,9 @@ train_cell() {
 }
 
 if [ "$SKIP_TRAIN" = "0" ]; then
-    have act && train_cell act
-    have diffusion && train_cell diffusion
-    have pi05 && train_cell pi05
+    have act && { train_cell act; prune_checkpoints act; }
+    have diffusion && { train_cell diffusion; prune_checkpoints diffusion; }
+    have pi05 && { train_cell pi05; prune_checkpoints pi05; }
 fi
 
 # ---- report ----------------------------------------------------------
@@ -283,7 +378,7 @@ REPORT="$RUN_DIR/results.md"
     done
     echo
     echo "On-robot evaluation is not run here. Copy a checkpoint back to the rig"
-    echo "and run \`tool/run_policy_real.py --checkpoint <ckpt> --task ...\`."
+    echo "and run \`tool/run_policy.py --checkpoint <ckpt> --task ...\`."
 } > "$REPORT.tmp"
 mv "$REPORT.tmp" "$REPORT"
 

@@ -24,12 +24,13 @@ for the held orientation ``R``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 from sim_benchmark.constants import SIDES
-from sim_benchmark.handover import _ReachChecker, _Track
+from sim_benchmark.handover import FEASIBILITY_TOL, _ReachChecker, _Track
 
 # ---------------------------------------------------------------------------
 # Grasp geometry (measured from the compiled twin at the neutral pose).
@@ -362,6 +363,102 @@ class RelayScenario:
     @property
     def place_side(self) -> str:
         return "right"
+
+
+#: Radial envelope room the ACTING arm must have at its own item, in metres.
+#: Deliberately radial-only: :meth:`ArmEnvelope.margin` also folds in the z
+#: floor, and every table-level grasp sits ~1 mm BELOW it because GRASP_DZ
+#: commands under the cube centre to beat IK undershoot -- so a full-margin
+#: test rejects the entire table (MEASURED: 0 of 609 swept cells pass).
+CONSERVATIVE_RADIAL_MARGIN = 0.03
+
+#: How far the LEFT arm must miss the plate by, on top of FEASIBILITY_TOL.
+#: This is what forces the hand-off: the picking arm physically cannot finish.
+EXCLUSION_MARGIN = 0.02
+
+#: Cube spawn box. Held to the band the oracle demonstrably grasps, which is
+#: the SAME box the plain relay uses. MEASURED, and the reason it is not
+#: widened: pushing the cube out to where the right arm cannot reach it either
+#: (|y| >= 0.20, or x >= 0.34 at |y| ~ 0.15) breaks the pick -- a 22 mm cube at
+#: that extension exceeds the open-loop grasp accuracy, and the direct oracle
+#: failed 3 of 4 probes there (only x=0.38, y=0.13 survived) against 100 % in
+#: this box. The cube still MOVES, which is the point: the plain simple mode
+#: repeated one spawn 100 times with a per-channel spread of exactly zero.
+SPLIT_CUBE_X_RANGE = (0.24, 0.31)
+SPLIT_CUBE_Y_RANGE = (0.09, 0.17)
+
+#: Plate box, pushed out of the left arm's reach. MEASURED: the right arm
+#: places here cleanly (3.8 mm) -- placing is forgiving where picking is not,
+#: because a release only has to land inside the 20 mm success radius.
+SPLIT_PLATE_X_RANGE = (0.24, 0.36)
+SPLIT_PLATE_Y_RANGE = (0.22, 0.30)
+
+
+def _radial_margin(envelope: Any, point: np.ndarray) -> float:
+    """Signed room to the annulus walls, ignoring the envelope's z floor."""
+    r = float(np.linalg.norm(point - envelope.pivot(point)))
+    return min(envelope.r_max - r, r - envelope.r_min)
+
+
+def generate_split_relay_scenarios(n: int = 30, seed: int = 0) -> list[RelayScenario]:
+    """Sample ``n`` relay scenarios the left arm cannot finish alone, seeded.
+
+    The plain relay generator checks only that the *acting* arm can reach each
+    keypose, so nothing stops a target both arms can serve -- and a policy that
+    finds one has learned a single-arm task wearing a relay's name. Here the
+    plate must additionally lie OUTSIDE the left arm's reach, so the hand-off
+    is forced by the geometry rather than merely demonstrated, while the cube
+    spawn varies across a box the oracle can actually pick from.
+    """
+    from common.workspace_envelope import build_envelopes
+
+    rng = np.random.default_rng(seed)
+    checker = _ReachChecker()
+    envelopes = build_envelopes(checker.model, z_floor=NOMINAL_TABLE_Z_IK + 0.005)
+    gz = NOMINAL_TABLE_Z_IK + GRASP_DZ
+    miss = FEASIBILITY_TOL + EXCLUSION_MARGIN
+
+    def ee(xy: np.ndarray, z: float) -> np.ndarray:
+        return np.array([xy[0], xy[1], z]) - GRASP_OFFSET_WORLD
+
+    scenarios: list[RelayScenario] = []
+    attempts = 0
+    while len(scenarios) < n:
+        attempts += 1
+        if attempts > 200 * n:
+            raise RuntimeError("Split relay scenario sampling failed to converge")
+        payload = np.array(
+            [rng.uniform(*SPLIT_CUBE_X_RANGE), rng.uniform(*SPLIT_CUBE_Y_RANGE)]
+        )
+        middle = np.array([RELAY_MIDDLE_X, rng.uniform(-0.02, 0.02)])
+        target = np.array(
+            [rng.uniform(*SPLIT_PLATE_X_RANGE), -rng.uniform(*SPLIT_PLATE_Y_RANGE)]
+        )
+        checks = [
+            ("left", ee(payload, gz)),
+            ("left", ee(payload, gz + HOVER_DZ)),
+            ("left", ee(payload, gz + LIFT_DZ)),
+            ("left", ee(middle, gz)),
+            ("left", ee(middle, gz + LIFT_DZ)),
+            ("right", ee(middle, gz)),
+            ("right", ee(middle, gz + HOVER_DZ)),
+            ("right", ee(middle, gz + LIFT_DZ)),
+            ("right", ee(target, gz)),
+            ("right", ee(target, gz + LIFT_DZ)),
+        ]
+        if not checker.keyposes_feasible(checks):
+            continue
+        pick_ee, place_ee = ee(payload, gz), ee(target, gz)
+        # Conservative: each acting arm has room off its own annulus walls.
+        if _radial_margin(envelopes["left"], pick_ee) < CONSERVATIVE_RADIAL_MARGIN:
+            continue
+        if _radial_margin(envelopes["right"], place_ee) < CONSERVATIVE_RADIAL_MARGIN:
+            continue
+        # Exclusive: the left arm cannot place on the plate, so it must relay.
+        if checker.reach_error("left", place_ee) < miss:
+            continue
+        scenarios.append(RelayScenario(len(scenarios), payload, middle, target))
+    return scenarios
 
 
 def generate_relay_scenarios(n: int = 30, seed: int = 0) -> list[RelayScenario]:

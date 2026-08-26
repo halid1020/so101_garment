@@ -13,7 +13,8 @@
           display:grid; gap:10px;
           grid-template-columns:repeat(4, minmax(0, 1fr));
           grid-template-areas:
-            "shown shown twin plan"
+            "shown shown twin twin"
+            "plan plan plan plan"
             "joints grip timing timing"
             "live live live live"; }
 #c-shown  { grid-area:shown; }
@@ -28,7 +29,7 @@
 @media (max-width:1100px) {
   #p-main { grid-template-columns:repeat(2, minmax(0, 1fr));
             grid-template-areas:
-              "shown shown" "twin plan" "joints grip"
+              "shown shown" "twin twin" "plan plan" "joints grip"
               "timing timing" "live live"; }
 }
 @media (max-width:700px) {
@@ -65,10 +66,25 @@
 .bar.torque { color:#d97706; font-size:12px; margin:8px 12px 0; }
 .bar.err { margin:8px 12px 0; }
 
-#p-shown img, #p-live img, #p-twin { width:100%; border-radius:6px;
-                                     background:#000; display:block; }
-#p-chunk { width:100%; height:200px; border:1px solid var(--bd);
-           border-radius:4px; }
+#p-shown img, #p-live img { width:100%; border-radius:6px;
+                            background:#000; display:block; }
+/* The twin is a viser scene in an iframe: it renders on the viewer's own GPU,
+   so it can be orbited at no cost to the rollout. Give it real height -- an
+   iframe has no intrinsic size, and a flat one looks like a broken image. */
+#p-twin { width:100%; height:380px; min-height:280px; border:0;
+          border-radius:6px; background:#000; display:block; }
+#p-twin-err { color:#e0730f; margin:6px 0 0; }
+/* The twin's transport. The page owns the frame index -- it aims the scene at
+   one action at a time -- so stepping through a plan costs nothing extra. */
+#p-twin-bar { display:flex; gap:6px; align-items:center; margin-top:6px;
+              font-size:12px; }
+#p-twin-bar button { font-size:12px; padding:2px 8px; }
+#p-twin-scrub { flex:1 1 auto; min-width:0; }
+#p-twin-at { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.k-now { color:#4080ff; }
+.k-plan { color:#e0730f; }
+/* Twelve small multiples, so each joint gets its own scale. */
+#p-chunk { width:100%; height:300px; display:block; }
 #p-joints { border-collapse:collapse; font-variant-numeric:tabular-nums;
             font-size:12px; width:100%; }
 #p-joints th, #p-joints td { padding:2px 6px; text-align:right;
@@ -88,9 +104,18 @@ button.link { border:0; background:none; padding:0; font-size:11px;
 
 /* The splice bar: one control per number the current strategy actually uses,
    so the row says what matters rather than everything that exists. */
-#p-splice { display:flex; gap:14px; align-items:center; flex-wrap:wrap;
-            padding:8px 12px 0; font-size:12px; }
+#p-splice { padding:8px 12px 0; font-size:12px; }
+#p-splice .row { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+#p-splice p { margin:4px 0 0; }
 #p-splice label { display:flex; gap:6px; align-items:center; }
 #p-splice select, #p-splice input[type=number] { font-size:12px; padding:2px 4px; }
 #p-splice input[type=range] { width:110px; }
 #p-splice output { font-variant-numeric:tabular-nums; min-width:2.4em; }
+
+/* The task, typed here rather than passed as a flag, so one command starts a
+   run and the browser decides what it is for. */
+#p-task-form { display:flex; gap:6px; align-items:center; }
+#p-task { font-size:12px; padding:3px 7px; border:1px solid var(--bd);
+          border-radius:6px; min-width:0; }
+#p-task-form button { font-size:12px; padding:3px 9px; }
+#p-task.unset { border-color:#d97706; }

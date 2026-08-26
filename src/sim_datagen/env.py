@@ -44,22 +44,48 @@ TABLE_TOP_WORLD_Z = 0.0
 SUCCESS_RADIUS = 0.02  # m XY payload-to-target distance that counts as placed
 SETTLE_VEL = 0.02  # m/s payload speed below which it counts as settled
 SETTLE_Z_TOL = 0.01  # m payload-z tolerance around its resting height
-N_SUBSTEPS = 20  # physics substeps per 30 Hz control tick (1/30 / (1/600))
+PHYSICS_HZ = 600  # twin integrator rate; one control tick is a whole number of these
+DEFAULT_FPS = 25.0  # control/recording rate every sim tool defaults to
 
-# The two task language strings the policy is conditioned on.
+# The task language strings the policy is conditioned on.
 TASKS = {
     "handover": "pick up the block, hand it over, and place it on the marked target",
+    "handover_split": (
+        "pick up the block, hand it over, and place it on the far target"
+    ),
     "single": "pick up the block and place it on the marked target",
 }
+
+
+def substeps_for(fps: float) -> int:
+    """Physics substeps in one control tick at ``fps``. Pure.
+
+    A control tick has to be a whole number of integrator steps, or recorded
+    time and simulated time drift apart by a fraction of a step every tick and
+    the dataset's timestamps quietly stop meaning anything. So a rate that does
+    not divide :data:`PHYSICS_HZ` is refused here rather than rounded.
+    """
+    if fps <= 0:
+        raise ValueError(f"fps must be positive, got {fps!r}")
+    exact = PHYSICS_HZ / float(fps)
+    n = int(round(exact))
+    if n < 1 or abs(exact - n) > 1e-9:
+        raise ValueError(
+            f"{fps} Hz does not divide the {PHYSICS_HZ} Hz physics rate "
+            f"({exact:.6f} substeps); pick a rate that does, e.g. 25 or 30"
+        )
+    return n
 
 
 class PickPlaceTwinEnv:
     """Twin payload scene with an IK<->world bridge and LeRobot observations."""
 
-    def __init__(self, task: str) -> None:
+    def __init__(self, task: str, fps: float = DEFAULT_FPS) -> None:
         if task not in TASKS:
             raise ValueError(f"Unknown task {task!r} (choose from {sorted(TASKS)})")
         self.task = task
+        self.fps = float(fps)
+        self.n_substeps = substeps_for(fps)
         self.sim = TwinSim(all_collisions=True, payload=True)
         self.sim.reset()
 
@@ -134,7 +160,7 @@ class PickPlaceTwinEnv:
         self.sim.set_target_zone(target_world)
         self._target_world_xy = target_world[:2].copy()
         # Let the prism settle onto the table before the episode starts.
-        for _ in range(N_SUBSTEPS * 3):
+        for _ in range(self.n_substeps * 3):
             self.sim.step(1)
 
     def tick(self, q_rad_10: np.ndarray, grip_frac: dict[str, float]) -> None:
@@ -149,7 +175,7 @@ class PickPlaceTwinEnv:
         self.sim.set_arm_targets(np.asarray(q_rad_10, dtype=float))
         for side in SIDES:
             self.sim.set_gripper_frac(side, grip_frac[side] * GRIPPER_OPEN_MAX_FRAC)
-        self.sim.step(N_SUBSTEPS)
+        self.sim.step(self.n_substeps)
 
     def observe(
         self, camera_wh: tuple[int, int]

@@ -12,6 +12,11 @@ did. :class:`RemoteActionSource` sends the observation window to a GPU host and
 splices the returned chunk into what is already queued, following one of the
 strategies in :mod:`common.chunking`.
 
+``reset()`` is on the remote source only, and a caller looks for it rather than
+assuming it: a second attempt on the same scene needs the host to forget the
+session it has been accumulating, and inference in this process has no such
+session to begin again.
+
 Neither touches a camera or a servo bus, which is what lets the same client
 drive the rig and the digital twin.
 """
@@ -90,6 +95,11 @@ class LocalActionSource:
     last_chunk_seq = 0
     last_chunk_at = 0.0
 
+    def set_task(self, task: str) -> str:
+        """Change the language task. Takes effect on the next inference."""
+        self.task = str(task)
+        return self.task
+
     def offer(self, state: np.ndarray, images: dict) -> None:
         self._latest = (state, images)
 
@@ -166,10 +176,6 @@ class RemoteActionSource:
         virtual_delay_ticks: "int | None" = None,
         execute_ratio: float = DEFAULT_EXECUTE_RATIO,
     ) -> None:
-        import json
-
-        from common.policy_wire import ObservationWindow
-
         if strategy not in STRATEGIES:
             raise ChunkingError(
                 f"unknown strategy: {strategy} (want one of {', '.join(STRATEGIES)})"
@@ -197,31 +203,12 @@ class RemoteActionSource:
         )
         self._pending: "tuple[np.ndarray, int, int] | None" = None
 
-        meta = json.loads(self._rpc("/reset", b""))
-        self.type = meta["policy_type"]
-        self.session = meta["session"]
-        self.cameras = sorted(meta["cameras"])
-        self.n_obs_steps = int(meta["n_obs_steps"])
-        self.server_actions = int(meta["n_action_steps"])
-        self.actions = min(
-            int(actions_per_chunk or self.server_actions), self.server_actions
-        )
-        self.host_guides = bool(meta.get("rtc"))
-        if self.guided and not self.host_guides:
-            # Refused rather than quietly downgraded: RTC's smoothing happens
-            # inside the denoiser on the host, so a host that does not do it
-            # gives exactly 'replace' -- and a run labelled 'rtc' that was
-            # really 'replace' is a result nobody can trust afterwards.
-            raise ChunkingError(
-                f"the host at {self.url} does not do RTC guidance "
-                f"(policy '{self.type}'); its answer would be plain 'replace'"
-            )
+        self._handshake(actions_per_chunk)
         # The static default covers a fast policy; the threshold below grows it
         # to cover whatever round trip this link turns out to have.
         self.prefetch = max(1, self.actions // 3)
         self.explicit_prefetch = None if prefetch is None else int(prefetch)
         self.hz = float(hz)
-        self.window = ObservationWindow(self.cameras, self.n_obs_steps)
 
         self._queue: "deque[np.ndarray]" = deque()
         self._lock = threading.Lock()
@@ -231,6 +218,8 @@ class RemoteActionSource:
         self.last_error: "str | None" = None
         self.round_trip_s = 0.0
         self.server_infer_s = 0.0
+        #: True when the last splice discarded the whole chunk it was handed.
+        self._stale_on_arrival = False
         #: Ticks of round trip the last splice compensated for, and how many
         #: actions it threw away because their moment had passed. Reported so a
         #: strategy can be judged without re-deriving it from the log.
@@ -267,6 +256,61 @@ class RemoteActionSource:
             self.hz,
             self.actions,
         )
+
+    def _handshake(self, actions_per_chunk: "int | None") -> None:
+        """Ask the host to start a session, and size the window and the chunk.
+
+        Also the whole of :meth:`reset`, which is why it is not inline in the
+        constructor: a second attempt needs a session the host has forgotten the
+        history of, and re-deriving the sizes from the same answer is what keeps
+        the two paths from drifting apart.
+        """
+        import json
+
+        from common.policy_wire import ObservationWindow
+
+        meta = json.loads(self._rpc("/reset", b""))
+        self.type = meta["policy_type"]
+        self.session = meta["session"]
+        self.cameras = sorted(meta["cameras"])
+        self.n_obs_steps = int(meta["n_obs_steps"])
+        self.server_actions = int(meta["n_action_steps"])
+        self.actions = min(
+            int(actions_per_chunk or self.server_actions), self.server_actions
+        )
+        self.host_guides = bool(meta.get("rtc"))
+        if self.guided and not self.host_guides:
+            # Refused rather than quietly downgraded: RTC's smoothing happens
+            # inside the denoiser on the host, so a host that does not do it
+            # gives exactly 'replace' -- and a run labelled 'rtc' that was
+            # really 'replace' is a result nobody can trust afterwards.
+            raise ChunkingError(
+                f"the host at {self.url} does not do RTC guidance "
+                f"(policy '{self.type}'); its answer would be plain 'replace'"
+            )
+        #: Rebuilt, not kept: the frames in it are of the scene as it was, and a
+        #: policy with several observation steps would plan the next attempt
+        #: partly from the last one.
+        self.window = ObservationWindow(self.cameras, self.n_obs_steps)
+
+    def reset(self, scenario=None) -> None:
+        """Begin a new attempt: a fresh session, and nothing carried into it.
+
+        The host keeps per-session state -- a diffusion policy's own action
+        queue, an RTC guide's previous plan -- and none of it describes the
+        scene that is about to be attempted. So the session is started again,
+        and everything this end had planned goes with it: a chunk queued for the
+        old episode would drive the arms at whatever is no longer there.
+
+        ``scenario`` is accepted and ignored, so a caller can hand the same
+        argument to the rig and the source without knowing which one uses it.
+        """
+        with self._lock:
+            self._queue.clear()
+            self._pending = None
+            self.last_chunk = None
+            self._stale_on_arrival = False
+        self._handshake(self.actions)
 
     def drain(self) -> None:
         """Forget what is queued: it was planned from an older observation."""
@@ -327,6 +371,18 @@ class RemoteActionSource:
             "ramp_kind": self.ramp_kind,
             "blocking": self.strategy in BLOCKING,
         }
+
+    def set_task(self, task: str) -> str:
+        """Change the language task the requests carry.
+
+        The task travels with every ``/act`` message rather than being fixed at
+        the handshake, so this needs no reset: the next chunk simply answers a
+        different question. A run may therefore be STARTED without a task and
+        given one from the live view.
+        """
+        with self._lock:
+            self.task = str(task)
+            return self.task
 
     def set_paused(self, paused: bool) -> None:
         """While paused the window keeps filling but no chunk is requested."""
@@ -418,6 +474,19 @@ class RemoteActionSource:
         #: boundary is not where the chunk landed, it is where it starts.
         self.boundary_offset = len(leftover) if self.strategy == "append" else 0
         self._queue = deque(np.asarray(row, dtype=float) for row in merged)
+        self._stale_on_arrival = bool(len(merged) == 0 and len(chunk))
+        if self._stale_on_arrival:
+            # An ALIGNING splice throws away the rows that were planned for
+            # ticks already executed; when the round trip is longer than the
+            # chunk itself, that is every row, and the arms get nothing at all
+            # -- for ever, since the next chunk will be just as late. Silence
+            # here reads as "the server is not answering", which it is not.
+            self.last_error = (
+                f"the whole chunk was stale on arrival: {self.strategy} aligns a "
+                f"plan to the present, and {delay} ticks of round trip is longer "
+                f"than its {len(chunk)} actions. Use 'append', or shorten the "
+                f"round trip"
+            )
 
     def _fetch(self, steps, seq: int) -> None:
         import urllib.error
@@ -457,7 +526,12 @@ class RemoteActionSource:
                 self.server_infer_s = float(
                     (header.get("timings") or {}).get("infer_s", 0.0)
                 )
-                self.last_error = None
+                if not self._stale_on_arrival:
+                    # The request succeeded; clear whatever the last one failed
+                    # with -- unless the splice just threw the whole chunk away,
+                    # which is the one thing the transport being fine does not
+                    # fix, and which nothing else would ever say out loud.
+                    self.last_error = None
         finally:
             with self._lock:
                 self._inflight = False

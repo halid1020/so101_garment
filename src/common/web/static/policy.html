@@ -9,34 +9,45 @@
   <header id="topbar">
     <span class="brand">SO-101 rollout</span>
     <span id="p-mode" class="mode">…</span>
-    <span id="p-clock" class="muted"></span>
+    <!-- The task is set here, so a run can be started with no flags at all. -->
+    <form id="p-task-form">
+      <input id="p-task" type="text" placeholder="what should the policy do?"
+             autocomplete="off" size="34">
+      <button id="p-task-set" type="submit">set task</button>
+    </form>
     <span class="grow"></span>
     <button id="p-arm" class="danger" hidden>⚠️ Enable arms</button>
     <button id="p-preview">Preview</button>
     <button id="p-step">Execute one chunk</button>
     <button id="p-run">Run</button>
     <button id="p-hold">Hold</button>
+    <button id="p-reset" class="danger" hidden>Reset scene</button>
     <button id="p-stop" class="danger">Stop</button>
   </header>
 
-  <!-- The splice in force, changeable here so four strategies can be compared
-       on ONE scene with one ramp, instead of four runs that drift apart. -->
+  <!-- The splice in force, changeable here so several strategies can be
+       compared on ONE scene with one ramp, instead of runs that drift apart.
+       Each control says what it does, because "cross-fade" and "new plan" mean
+       nothing to somebody who has not read common/chunking.py. -->
   <div id="p-splice">
-    <label>splice
-      <select id="p-strategy"></select>
-    </label>
-    <label id="p-ratio-wrap" hidden>execute
-      <input id="p-ratio" type="range" min="0.05" max="1" step="0.05">
-      <output id="p-ratio-out"></output> of each chunk
-    </label>
-    <label id="p-window-wrap" hidden>cross-fade
-      <input id="p-window" type="number" min="1" max="50" step="1"> ticks
-    </label>
-    <label id="p-weight-wrap" hidden>new plan
-      <input id="p-weight" type="range" min="0" max="1" step="0.05">
-      <output id="p-weight-out"></output>
-    </label>
-    <span class="muted" id="p-splice-note"></span>
+    <div class="row">
+      <label>splice
+        <select id="p-strategy"></select>
+      </label>
+      <label id="p-ratio-wrap" hidden>execute
+        <input id="p-ratio" type="range" min="0.05" max="1" step="0.05">
+        <output id="p-ratio-out"></output> of each chunk
+      </label>
+      <label id="p-window-wrap" hidden>ease in over
+        <input id="p-window" type="number" min="1" max="50" step="1">
+        <span id="p-window-secs" class="muted"></span>
+      </label>
+      <label id="p-weight-wrap" hidden>trust the new plan
+        <input id="p-weight" type="range" min="0" max="1" step="0.05">
+        <output id="p-weight-out"></output>
+      </label>
+    </div>
+    <p class="muted" id="p-splice-help"></p>
   </div>
 
   <!-- The numbers you look at while something is going wrong, always on
@@ -58,23 +69,34 @@
   <p class="bar err" id="p-err" hidden></p>
 
   <main id="p-main">
-    <!-- Left: what it saw. Right: what it decided and what happened.
-         Side by side, because every debugging question spans the two. -->
     <section class="card" id="c-shown">
       <h2>What the policy was shown
         <span class="muted" id="p-shown-note"></span></h2>
       <div class="tiles" id="p-shown"></div>
     </section>
 
+    <!-- One picture, one subject: the arms now and where this plan sends them.
+         Nothing switches underneath it. -->
     <section class="card" id="c-twin">
       <h2>What will move
-        <button id="p-twin-what" class="link">showing: the plan</button></h2>
-      <figure class="tile"><img id="p-twin" alt="the plan, in the twin"></figure>
+        <span class="muted"><b class="k-now">■</b> where the arms are now
+          · <b class="k-plan">■</b> where this action sends them
+          · drag to turn, scroll to zoom</span></h2>
+      <iframe id="p-twin" title="the arms now, and where this action sends them"
+              src="about:blank"></iframe>
+      <p id="p-twin-err" class="muted" hidden></p>
+      <div id="p-twin-bar">
+        <button id="p-twin-play">⏸ pause</button>
+        <button id="p-twin-prev">◀</button>
+        <button id="p-twin-next">▶</button>
+        <input id="p-twin-scrub" type="range" min="0" max="0" step="1" value="0">
+        <span class="muted" id="p-twin-at">—</span>
+      </div>
     </section>
 
     <section class="card" id="c-plan">
       <h2>The plan <span class="muted" id="p-chunk-note"></span></h2>
-      <canvas id="p-chunk" width="560" height="200"></canvas>
+      <canvas id="p-chunk"></canvas>
     </section>
 
     <section class="card" id="c-joints">
@@ -92,9 +114,8 @@
       <table id="p-timing" class="checks"></table>
     </section>
 
-    <!-- Off until asked for. Four never-ending streams against a browser
-         limit of about six connections starves the twin, and the twin is the
-         one panel here that answers a question. -->
+    <!-- Off until asked for: each live stream is a connection that never
+         closes, and the browser allows only about six per origin. -->
     <section class="card" id="c-live">
       <h2>Live cameras
         <span class="muted">now — not what any plan was drawn from</span>

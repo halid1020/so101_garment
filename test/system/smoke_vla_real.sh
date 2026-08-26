@@ -9,7 +9,7 @@
 # the WIRING, not task skill: a few optimiser steps, no success assertion.
 #
 # Unlike the sim smoke there is NO collect phase (the real dataset already
-# exists) and NO on-robot eval (that needs the rig — see tool/run_policy_real.py).
+# exists) and NO on-robot eval (that needs the rig — see tool/run_policy.py).
 # The eval step here just loads the trained checkpoint back, which is the same
 # load the on-robot runner performs, so a green run means the checkpoint is
 # usable for inference.
@@ -135,7 +135,7 @@ cat <<BANNER
  output  : $RUN_DIR
 ----------------------------------------------------------------------
  On-robot evaluation is NOT part of this smoke (needs the rig); use
- tool/run_policy_real.py at the rig for that.
+ tool/run_policy.py at the rig for that.
 ======================================================================
 
 BANNER

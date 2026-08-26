@@ -15,3 +15,13 @@
 4. Results: TODO — tables and per-seed heat-maps land here from the
    long-run report and analysis notebook once the full run completes on
    the training machine. (Stub with the table skeleton.)
+
+Additional paragraph — what simple mode does and does not measure:
+state, from a direct measurement of the collected dataset, that every
+demonstration in simple mode begins from an identical state: the spread
+of the first recorded state across episodes is zero on every channel.
+Simple mode also draws its validation and evaluation scenarios from the
+same seed as its training data, so a simple-mode success rate reports
+how completely a policy has fitted one scene and says nothing about
+generalisation. Full mode, and the split-reach relay in particular,
+carry the initial-state variation the question actually needs.

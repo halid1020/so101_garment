@@ -44,8 +44,14 @@ class StubSource:
         self.last_chunk = np.tile(np.arange(12.0), (32, 1)) if chunk else None
         self._sent = (np.arange(12.0), {c: frame() for c in CAMERAS}) if sent else None
 
+        self.task = "pick up the cube"
+
     def last_sent(self):
         return self._sent
+
+    def set_task(self, task):
+        self.task = task
+        return task
 
 
 class _SpliceSource(StubSource):
@@ -77,6 +83,21 @@ class _SpliceSource(StubSource):
         }
 
 
+class StubTwin:
+    """Stands in for the viser scene: records the pair it was pointed at."""
+
+    url = "http://127.0.0.1:8768/"
+
+    def __init__(self):
+        self.calls: list = []
+
+    def show(self, now12, plan12):
+        self.calls.append((now12, plan12))
+
+    def stop(self):
+        pass
+
+
 class StubDataManager:
     def get_rgb_image(self, name):
         return frame(200)
@@ -84,14 +105,24 @@ class StubDataManager:
 
 class ViewTestCase(AioHTTPTestCase):
     source_kwargs: dict = {}
+    #: What the run can put back between attempts: None, "sim" or "manual".
+    resettable: "str | None" = None
 
     async def get_application(self):
         warnings.filterwarnings("ignore", message=".*app\\[.*")
         self.control = RunControl()
         self.control.publish(hz=30.0, task="pick up the cube", ticks_total=900)
         self.source = StubSource(**self.source_kwargs)
+        # twin_port=0: no viser server in a unit test. The twin is stubbed in
+        # the cases that care about it.
         self.view = PolicyView(
-            self.control, self.source, StubDataManager(), CAMERAS, port=0
+            self.control,
+            self.source,
+            StubDataManager(),
+            CAMERAS,
+            port=0,
+            twin_port=0,
+            resettable=self.resettable,
         )
         return self.view.build_app()
 
@@ -100,6 +131,9 @@ class ViewTestCase(AioHTTPTestCase):
 
     async def mode(self, mode: str):
         return await self.client.post("/api/mode", json={"mode": mode})
+
+    async def reset(self):
+        return await self.client.post("/api/reset")
 
 
 class TestStatus(ViewTestCase):
@@ -247,6 +281,68 @@ class TestArmingRefused(ViewTestCase):
         self.assertFalse(body["arm_from_view"])
 
 
+class TestResetNotOffered(ViewTestCase):
+    """A run with no scene it can begin again does not pretend it has one."""
+
+    async def test_the_page_is_told_there_is_nothing_to_reset(self):
+        self.assertIsNone((await self.status())["resettable"])
+
+    async def test_and_asking_anyway_is_refused_rather_than_ignored(self):
+        response = await self.reset()
+
+        self.assertEqual(response.status, 400)
+        self.assertFalse(self.control.reset_requested())
+
+
+class TestResetInTheTwin(ViewTestCase):
+    """A rehearsal can put its own scene back, so the loop is simply told."""
+
+    resettable = "sim"
+
+    async def test_the_page_is_told_the_scene_can_be_put_back(self):
+        self.assertEqual((await self.status())["resettable"], "sim")
+
+    async def test_resetting_under_a_running_policy_is_refused(self):
+        # The world changing beneath a plan already executing is worth one
+        # deliberate click on Hold first.
+        response = await self.reset()
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("hold", (await response.text()).lower())
+        self.assertFalse(self.control.reset_requested())
+
+    async def test_a_held_run_may_begin_again_and_the_loop_hears_it_once(self):
+        await self.mode("hold")
+
+        response = await self.reset()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["instruction"], "")
+        self.assertTrue(self.control.reset_requested())
+        self.assertFalse(self.control.reset_requested())
+
+    async def test_and_the_throttle_is_left_exactly_where_it_was(self):
+        await self.mode("preview")
+        await self.reset()
+
+        self.assertEqual(self.control.mode, "preview")
+
+
+class TestResetOnTheBench(ViewTestCase):
+    """No button tidies a real table, so the answer says who has to."""
+
+    resettable = "manual"
+
+    async def test_the_answer_carries_the_instruction_rather_than_moving_anything(self):
+        await self.mode("hold")
+
+        body = await (await self.reset()).json()
+
+        self.assertEqual(body["resettable"], "manual")
+        self.assertIn("by hand", body["instruction"])
+        self.assertTrue(self.control.reset_requested())
+
+
 class TestPortAlreadyTaken(unittest.TestCase):
     """A view that cannot bind must say so, not serve somebody else's run."""
 
@@ -260,7 +356,12 @@ class TestPortAlreadyTaken(unittest.TestCase):
         port = taken.getsockname()[1]
 
         view = PolicyView(
-            RunControl(), StubSource(), StubDataManager(), CAMERAS, port=port
+            RunControl(),
+            StubSource(),
+            StubDataManager(),
+            CAMERAS,
+            port=port,
+            twin_port=0,
         )
         self.addCleanup(view.stop)
         self.assertFalse(view.start())
@@ -268,28 +369,122 @@ class TestPortAlreadyTaken(unittest.TestCase):
 
     def test_a_free_port_starts_cleanly(self):
         view = PolicyView(
-            RunControl(), StubSource(), StubDataManager(), CAMERAS, port=0
+            RunControl(),
+            StubSource(),
+            StubDataManager(),
+            CAMERAS,
+            port=0,
+            twin_port=0,
         )
         self.addCleanup(view.stop)
         self.assertTrue(view.start())
         self.assertIsNone(view.error)
 
 
-class TestTwinAnchoring(unittest.TestCase):
-    """The twin must animate ONE sequence, not alternate between two."""
+class TestPendingPayload(unittest.TestCase):
+    """What is still going to be executed, which is not what the policy said."""
 
-    def test_the_two_payloads_are_distinguishable(self):
-        # They share a seq -- they describe the same plan -- so 'kind' is the
-        # only thing that stops the animation swapping lists mid-walk.
+    def test_the_queue_is_reported_separately_from_the_plan(self):
         source = StubSource()
         source.pending = lambda: np.zeros((4, 12))
         plan = chunk_payload(source)
         queued = pending_payload(source)
-        self.assertEqual(plan["seq"], queued["seq"])
+        self.assertEqual(plan["n"], 32)
+        self.assertEqual(queued["n"], 4)
         self.assertNotEqual(plan["kind"], queued["kind"])
 
     def test_a_source_with_nothing_queued_has_no_pending_payload(self):
         self.assertIsNone(pending_payload(StubSource()))
+
+
+class TestTwinFrame(ViewTestCase):
+    """One action, named by the caller. See policy_view.handle_twin."""
+
+    async def get_application(self):
+        app = await super().get_application()
+        self.twin = StubTwin()
+        self.view._twin = self.twin
+        self.control.publish(state=[7.0] * 12)
+        return app
+
+    async def test_the_named_action_is_what_the_twin_is_pointed_at(self):
+        response = await self.client.get("/twin/at?seq=3&i=5")
+
+        # Nothing comes back: the picture is drawn by viser, in the browser.
+        self.assertEqual(response.status, 204)
+        now, plan = self.twin.calls[-1]
+        self.assertEqual(list(now), [7.0] * 12)
+        np.testing.assert_allclose(plan, self.source.last_chunk[5])
+
+    async def test_an_index_past_the_end_wraps_rather_than_failing(self):
+        self.assertEqual((await self.client.get("/twin/at?seq=3&i=99")).status, 204)
+        np.testing.assert_allclose(
+            self.twin.calls[-1][1], self.source.last_chunk[99 % 32]
+        )
+
+    async def test_a_plan_that_has_been_replaced_is_a_conflict_not_a_pose(self):
+        # The page is one poll behind. It must be told so it can re-read the
+        # status -- and meanwhile keep the pose it already has, rather than
+        # having the scene moved to an action of a different plan.
+        response = await self.client.get("/twin/at?seq=2&i=0")
+
+        self.assertEqual(response.status, 409)
+        self.assertIn("#3", await response.text())
+        self.assertEqual(self.twin.calls, [])
+
+    async def test_a_seq_that_is_not_a_number_is_refused(self):
+        self.assertEqual((await self.client.get("/twin/at?seq=soon")).status, 400)
+
+    async def test_the_rendered_twin_is_gone(self):
+        # A single fixed camera angle could not answer the question; see
+        # policy_ghost. Both the stream and the still image are retired.
+        self.assertEqual((await self.client.get("/twin.jpg?seq=3&i=0")).status, 404)
+        self.assertEqual((await self.client.get("/twin.mjpg")).status, 404)
+
+    async def test_the_page_is_told_where_to_point_the_iframe(self):
+        self.assertEqual((await self.status())["twin_url"], StubTwin.url)
+
+
+class TestTwinBeforeAnyPlan(ViewTestCase):
+    source_kwargs = {"sent": False, "chunk": False}
+
+    async def test_there_is_nothing_to_point_at_yet(self):
+        self.view._twin = StubTwin()
+
+        self.assertEqual((await self.client.get("/twin/at?seq=0")).status, 404)
+
+
+class TestTwinThatWouldNotStart(ViewTestCase):
+    """A missing 3D view is survivable; a missing PAGE is not."""
+
+    async def test_the_page_is_told_why_rather_than_pointed_at_nothing(self):
+        self.view.twin_error = "OSError: address already in use"
+
+        status = await self.status()
+
+        self.assertIsNone(status["twin_url"])
+        self.assertIn("address already in use", status["twin_error"])
+
+    async def test_and_the_route_says_so_instead_of_failing_obscurely(self):
+        self.assertEqual((await self.client.get("/twin/at?seq=3&i=0")).status, 404)
+
+
+class TestTaskRoute(ViewTestCase):
+    """A run may be started with no task and given one here."""
+
+    async def test_setting_it_reaches_the_source_and_the_snapshot(self):
+        response = await self.client.post("/api/task", json={"task": "fold it"})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["task"], "fold it")
+        self.assertEqual(self.source.task, "fold it")
+        self.assertEqual(self.control.snapshot()["task"], "fold it")
+
+    async def test_surrounding_space_is_not_a_task(self):
+        response = await self.client.post("/api/task", json={"task": "   "})
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(self.source.task, "pick up the cube")
 
 
 class TestStrategyRoute(ViewTestCase):
@@ -299,8 +494,15 @@ class TestStrategyRoute(ViewTestCase):
         warnings.filterwarnings("ignore", message=".*app\\[.*")
         self.control = RunControl()
         self.source = _SpliceSource()
+        # twin_port=0: no viser server in a unit test. The twin is stubbed in
+        # the cases that care about it.
         self.view = PolicyView(
-            self.control, self.source, StubDataManager(), CAMERAS, port=0
+            self.control,
+            self.source,
+            StubDataManager(),
+            CAMERAS,
+            port=0,
+            twin_port=0,
         )
         return self.view.build_app()
 

@@ -67,17 +67,32 @@ from common.recording.features import (  # noqa: E402
 )
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack  # noqa: E402
 from sim_benchmark.constants import SIDES  # noqa: E402
-from sim_datagen.env import CAMERAS, TASKS, PickPlaceTwinEnv  # noqa: E402
+from sim_datagen.env import (  # noqa: E402
+    CAMERAS,
+    DEFAULT_FPS,
+    PHYSICS_HZ,
+    TASKS,
+    PickPlaceTwinEnv,
+    substeps_for,
+)
 from sim_datagen.oracle import (  # noqa: E402
     NOMINAL_TABLE_Z_IK,
     HandoverContactScript,
     SinglePickPlaceScript,
     generate_relay_scenarios,
     generate_single_scenarios,
+    generate_split_relay_scenarios,
 )
 from sim_datagen.seeds import TRAIN_SEEDS  # noqa: E402
 
-FPS_SUBSTEPS_NOTE = "30 Hz control, 1/600 s physics -> 20 substeps per tick"
+
+def fps_substeps_note(fps: float) -> str:
+    """The rate banner, told by the env rather than asserted by a constant."""
+    return (
+        f"{fps:g} Hz control, 1/{PHYSICS_HZ} s physics -> "
+        f"{substeps_for(fps)} substeps per tick"
+    )
+
 
 # Orientation-task cost used while collecting (unless --orientation-cost is
 # given). pink_relaxed's benchmark value (0.05) is near position-only, which
@@ -427,6 +442,8 @@ def _scenario_for_seed(task: str, seed: int) -> Any:
     """One deterministic scenario for a single seed (per-seed protocol)."""
     if task == "single":
         return generate_single_scenarios(1, seed=seed)[0]
+    if task == "handover_split":
+        return generate_split_relay_scenarios(1, seed=seed)[0]
     return generate_relay_scenarios(1, seed=seed)[0]
 
 
@@ -465,7 +482,12 @@ def main() -> int:
     )
     parser.add_argument("--repo-id", type=str, default=None)
     parser.add_argument("--root", type=str, default=None)
-    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=int(DEFAULT_FPS),
+        help="control and dataset rate; must divide the twin physics rate",
+    )
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--max-attempts-factor", type=int, default=3)
@@ -496,7 +518,7 @@ def main() -> int:
     # the asynchronous teleop mode can differ run to run, so it retries.
     per_seed_attempts = args.max_attempts_factor if args.oracle == "teleop" else 1
 
-    env = PickPlaceTwinEnv(args.task)
+    env = PickPlaceTwinEnv(args.task, fps=args.fps)
     print(
         f"📐 IK→twin offset {np.round(env.scene_offset, 4)} m; table top at "
         f"IK z={env.table_z:.4f} (nominal {NOMINAL_TABLE_Z_IK:.4f})"
@@ -616,7 +638,7 @@ def main() -> int:
     per_seed_outcomes: list[dict[str, Any]] = []
     print(
         f"🎬 Collecting {n} '{args.task}' demos via the {args.oracle} oracle, "
-        f"{args.seeds} seeds ({FPS_SUBSTEPS_NOTE})"
+        f"{args.seeds} seeds ({fps_substeps_note(args.fps)})"
     )
     try:
         for seed in seed_walk():
