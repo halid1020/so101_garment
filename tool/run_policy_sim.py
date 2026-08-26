@@ -45,6 +45,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 import numpy as np
@@ -167,25 +168,50 @@ def is_session_conflict(message: str) -> bool:
     return "409" in lowered or "session is not the one" in lowered
 
 
-def _episode_with_retry(env, source, scenario, args, label, composer) -> dict:
-    """One scored episode, re-handshaking once if the host's session moved on.
+#: How many times an episode is re-attempted, and how long we wait between.
+#: A tunnel that drops takes a human or a keep-alive loop some seconds to come
+#: back, so the waits are long enough to cover that and few enough to give up
+#: on a host that is genuinely gone.
+EPISODE_ATTEMPTS = 5
+RETRY_WAIT_S = 30.0
 
-    Any other refusal is still fatal: repeating a request the host called bad
-    would only produce the same answer more slowly.
+
+def _episode_with_retry(env, source, scenario, args, label, composer) -> dict:
+    """One scored episode, re-attempted when the failure is not about us.
+
+    Two failures are worth retrying and one is not. A stolen session slot is
+    recoverable by handshaking again. A transport failure -- the link dropped,
+    the tunnel died, the host was restarted -- says nothing about the request
+    either, and over a run of hours it WILL happen; the observed one was an
+    ssh tunnel dying under a sweep whose host stayed up and healthy throughout.
+    A refusal that names our request is different: repeating it would only
+    produce the same answer more slowly, so it still ends the run.
     """
-    try:
-        return run_episode(env, source, scenario, args, label, composer)
-    except HostRefused as exc:
-        if not is_session_conflict(str(exc)):
-            raise SystemExit(f"❌ the host refused the request: {exc}") from exc
-        print(f"  ⚠️  {exc} — re-handshaking and retrying this episode")
-        rehandshake(source)
+    last = ""
+    for attempt in range(1, EPISODE_ATTEMPTS + 1):
         try:
             return run_episode(env, source, scenario, args, label, composer)
-        except HostRefused as again:
-            raise SystemExit(
-                f"❌ the host refused the request twice: {again}"
-            ) from again
+        except HostRefused as exc:
+            if not is_session_conflict(str(exc)):
+                raise SystemExit(f"❌ the host refused the request: {exc}") from exc
+            last = str(exc)
+            print(f"  ⚠️  {last} — re-handshaking (attempt {attempt})")
+        except (urllib.error.URLError, OSError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            print(
+                f"  ⚠️  the link to the host failed ({last}) — "
+                f"waiting {RETRY_WAIT_S:.0f}s (attempt {attempt})"
+            )
+            time.sleep(RETRY_WAIT_S)
+        if attempt < EPISODE_ATTEMPTS:
+            try:
+                rehandshake(source)
+            except (urllib.error.URLError, OSError) as exc:
+                print(f"  ⚠️  the host is still unreachable ({exc})")
+    raise SystemExit(
+        f"❌ gave up on this episode after {EPISODE_ATTEMPTS} attempts: {last}\n"
+        f"   Finished episodes are in the journal; re-run with --resume."
+    )
 
 
 def rehandshake(source) -> None:
