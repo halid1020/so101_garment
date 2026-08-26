@@ -51,6 +51,35 @@ _FONT = cv2.FONT_HERSHEY_SIMPLEX
 # Rasterise the plot at this fraction of its final pixel size, then upscale.
 _PLOT_SCALE = 0.5
 
+# GIF defaults. A rollout is ~2000 ticks of a 1280-wide composite, which as a
+# GIF would be unusable; keeping every 3rd frame of the camera row at 640 px
+# gives a few tens of megabytes and still reads as motion.
+GIF_STRIDE = 3
+GIF_WIDTH = 640
+
+
+def gif_frames(
+    frames: Sequence[np.ndarray],
+    tile_h: int,
+    stride: int = GIF_STRIDE,
+    width: int = GIF_WIDTH,
+) -> "list[np.ndarray]":
+    """Camera row only, every ``stride``-th frame, downscaled to ``width``. Pure.
+
+    ``frames`` are whole composites (camera row stacked over the signal panel),
+    so the row is the first ``tile_h`` scanlines. Aspect ratio is preserved and
+    a frame already narrower than ``width`` is left alone rather than upscaled.
+    """
+    stride = max(1, int(stride))
+    out = []
+    for frame in list(frames)[::stride]:
+        row = np.asarray(frame)[:tile_h]
+        if row.shape[1] > width:
+            height = max(1, round(row.shape[0] * width / row.shape[1]))
+            row = cv2.resize(row, (width, height), interpolation=cv2.INTER_AREA)
+        out.append(np.ascontiguousarray(row))
+    return out
+
 
 class EvalVideoComposer:
     """Accumulate composite RGB frames for one episode, then write an mp4."""
@@ -184,6 +213,29 @@ class EvalVideoComposer:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         imageio.mimsave(p, self._frames, fps=self.fps)
+
+    def save_gif(
+        self,
+        path: str | Path,
+        stride: int = GIF_STRIDE,
+        width: int = GIF_WIDTH,
+    ) -> None:
+        """Write a small looping GIF of the camera row, for eyeballing a rollout.
+
+        The mp4 is the full record; this is the thing you scrub through to see
+        what the arms did. A GIF of every composite frame would be hundreds of
+        megabytes, so drop the signal panel, keep every ``stride``-th frame and
+        downscale to ``width``. The playback rate is divided to match, so the
+        clip still runs at wall-clock speed.
+        """
+        import imageio.v2 as imageio
+
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        frames = gif_frames(self._frames, self.tile_h, stride=stride, width=width)
+        if not frames:
+            return
+        imageio.mimsave(p, frames, fps=max(1.0, self.fps / max(1, stride)), loop=0)
 
     def close(self) -> None:
         import matplotlib.pyplot as plt

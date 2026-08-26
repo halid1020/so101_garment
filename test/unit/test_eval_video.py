@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from common.eval_video import CAMERA_ORDER, EvalVideoComposer
+from common.eval_video import CAMERA_ORDER, EvalVideoComposer, gif_frames
 
 
 def _cameras(rng):
@@ -49,3 +49,38 @@ class TestEvalVideoComposer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGifFrames(unittest.TestCase):
+    """The GIF is the skimmable artefact: camera row only, thinned, smaller."""
+
+    @staticmethod
+    def frames(n, w=1280, tile_h=240, plot_h=368):
+        rng = np.random.default_rng(1)
+        return [
+            rng.integers(0, 255, (tile_h + plot_h, w, 3), dtype=np.uint8)
+            for _ in range(n)
+        ]
+
+    def test_the_signal_panel_is_dropped(self):
+        out = gif_frames(self.frames(1), tile_h=240, stride=1, width=1280)
+        self.assertEqual(out[0].shape[0], 240)
+
+    def test_every_stride_th_frame_survives(self):
+        out = gif_frames(self.frames(10), tile_h=240, stride=3)
+        self.assertEqual(len(out), 4)  # 0, 3, 6, 9
+
+    def test_the_aspect_ratio_is_preserved_when_downscaling(self):
+        out = gif_frames(self.frames(1), tile_h=240, stride=1, width=640)
+        self.assertEqual(out[0].shape[:2], (120, 640))
+
+    def test_a_frame_already_small_enough_is_not_upscaled(self):
+        out = gif_frames(self.frames(1, w=320), tile_h=240, stride=1, width=640)
+        self.assertEqual(out[0].shape[:2], (240, 320))
+
+    def test_a_stride_below_one_is_treated_as_one(self):
+        out = gif_frames(self.frames(4), tile_h=240, stride=0)
+        self.assertEqual(len(out), 4)
+
+    def test_no_frames_means_no_gif_rather_than_a_crash(self):
+        self.assertEqual(gif_frames([], tile_h=240), [])

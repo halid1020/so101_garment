@@ -61,6 +61,13 @@ from common.chunk_sweep import SPEC_HELP, SweepSpecError, cell_label  # noqa: E4
 from common.chunking import STRATEGIES  # noqa: E402
 from common.policy_rig import TwinRig  # noqa: E402
 from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
+from common.sweep_journal import (  # noqa: E402
+    append_row,
+    done_keys,
+    journal_for,
+    load_rows,
+    row_key,
+)
 
 #: The twin renders 'scene' where the rig records 'central'; a checkpoint
 #: trained on rig data asks for the latter. Offered as the default so the
@@ -143,6 +150,44 @@ def make_source(args, cell: dict, hz: float):
     return LocalActionSource(args.checkpoint, args.device, args.task_string)
 
 
+class HostRefused(RuntimeError):
+    """The inference host rejected a request outright (a 4xx)."""
+
+
+def is_session_conflict(message: str) -> bool:
+    """Did the host refuse because someone else claimed its session slot?
+
+    The host keeps ONE session, handed out by the last reset, and answers any
+    other with 409. That happens when a second client -- another sweep, a
+    rollout page, a stray probe -- resets the server while this one is running.
+    Unlike a malformed observation, it says nothing about our request, and a
+    fresh handshake fixes it, so it is the one refusal worth retrying.
+    """
+    lowered = message.lower()
+    return "409" in lowered or "session is not the one" in lowered
+
+
+def _episode_with_retry(env, source, scenario, args, label, composer) -> dict:
+    """One scored episode, re-handshaking once if the host's session moved on.
+
+    Any other refusal is still fatal: repeating a request the host called bad
+    would only produce the same answer more slowly.
+    """
+    try:
+        return run_episode(env, source, scenario, args, label, composer)
+    except HostRefused as exc:
+        if not is_session_conflict(str(exc)):
+            raise SystemExit(f"❌ the host refused the request: {exc}") from exc
+        print(f"  ⚠️  {exc} — re-handshaking and retrying this episode")
+        rehandshake(source)
+        try:
+            return run_episode(env, source, scenario, args, label, composer)
+        except HostRefused as again:
+            raise SystemExit(
+                f"❌ the host refused the request twice: {again}"
+            ) from again
+
+
 def rehandshake(source) -> None:
     """Put a source back to how it started, between two episodes.
 
@@ -195,7 +240,7 @@ def run_episode(env, source, scenario, args, label: str, composer=None) -> dict:
         state, images = rig.observe()
         source.offer(state, images)
         if getattr(source, "fatal", None):
-            raise SystemExit(f"❌ the host refused the request: {source.fatal}")
+            raise HostRefused(str(source.fatal))
 
         seq = int(getattr(source, "last_chunk_seq", 0) or 0)
         if seq != last_seq:
@@ -324,6 +369,12 @@ def main() -> int:
     )
     parser.add_argument("--out", help="Write the metrics table here")
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Carry on a sweep that was interrupted: skip every episode already "
+        "recorded in the journal beside --out, and fold them into the report",
+    )
+    parser.add_argument(
         "--video-dir",
         help="Write one composite rollout video per episode here, named for the "
         "cell and the seed (slow: it renders an extra overview per tick)",
@@ -392,13 +443,26 @@ def main() -> int:
     print(f"  cameras: {', '.join(args.camera_names)}   pace: {args.pace}")
     print(f"  grid: {', '.join(cell_label(c) for c in cells)}")
 
+    journal = journal_for(args.out) if args.out else None
     rows: "list[dict]" = []
+    done: "set[str]" = set()
+    if journal is not None and args.resume:
+        rows = load_rows(journal)
+        done = done_keys(rows)
+        if done:
+            print(f"  resuming: {len(done)} episode(s) already scored in {journal}")
+
     for cell in cells:
         label = cell_label(cell)
+        if all(row_key(label, i) in done for i in range(len(seeds))):
+            print(f"\n== {label} — already complete, skipped")
+            continue
         source = make_source(args, cell, args.fps)
         _refuse_mismatched_cameras(args, source)
         print(f"\n== {label} — {source.describe()}")
         for i, seed in enumerate(seeds):
+            if row_key(label, i) in done:
+                continue
             scenario = _scenario_for_seed(args.task, seed)
             script = _make_script(args.task, scenario, env)
             args.max_ticks = int(
@@ -409,9 +473,12 @@ def main() -> int:
                 )
             )
             composer = _make_composer(args) if video_dir is not None else None
-            row = run_episode(env, source, scenario, args, label, composer)
+            row = _episode_with_retry(env, source, scenario, args, label, composer)
             row["seed"] = seed
+            row["trial"] = i
             rows.append(row)
+            if journal is not None:
+                append_row(journal, row)
             if composer is not None and video_dir is not None:
                 composer.save(video_dir / _video_name(label, seed, i))
                 composer.close()
@@ -431,7 +498,7 @@ def main() -> int:
         Path(args.out).write_text(
             f"# Chunking strategies — {args.task}\n\n"
             f"grid: `{spec or args.strategy}` · {len(seeds)} episode(s) per cell · "
-            f"seeds `{args.seeds}` · pace `{args.pace}`"
+            f"seeds `{args.seeds}` · fps `{args.fps:g}` · pace `{args.pace}`"
             + (
                 f" · latency {args.latency_ticks} ticks\n\n"
                 if args.pace == "virtual"

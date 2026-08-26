@@ -16,7 +16,7 @@ None of this needs a twin, a policy or a network: it is arithmetic over rows.
 
 import unittest
 
-from tool.run_policy_sim import _fold, _rank, _table, _video_name
+from tool.run_policy_sim import _fold, _rank, _table, _video_name, is_session_conflict
 
 
 def episode(
@@ -215,3 +215,24 @@ class TestVideoName(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSessionConflict(unittest.TestCase):
+    """Which refusals a long sweep may retry, and which end it."""
+
+    def test_a_stolen_session_slot_is_recognised(self):
+        self.assertTrue(
+            is_session_conflict(
+                "HTTP 409: session is not the one that reset this server"
+            )
+        )
+
+    def test_the_status_code_alone_is_enough(self):
+        self.assertTrue(is_session_conflict("HTTP 409: conflict"))
+
+    def test_a_bad_observation_is_not_retried(self):
+        # Repeating a request the host called malformed only wastes the hours.
+        self.assertFalse(is_session_conflict("HTTP 400: observation carries cameras"))
+
+    def test_nor_is_a_missing_route(self):
+        self.assertFalse(is_session_conflict("HTTP 404: not found"))

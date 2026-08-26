@@ -232,6 +232,17 @@ really tracks the measured joints are all still only checkable on the rig. For
 many scored episodes on chosen seeds instead of one interactive rollout, use
 `tool/run_policy_sim.py`, which is the batch harness.
 
+**A grid takes hours, so it is built to survive them.** Every scored episode is
+appended to a journal beside `--out` (`<out>.episodes.jsonl`) the moment it
+finishes, and the report is folded from that file. `--resume` re-reads the
+journal, skips the episodes it names and carries on, so a sweep that dies in its
+ninth cell does not throw away the first eight. Give the sweep its **own port**:
+the host keeps one session, handed out by the last reset, and answers every
+other request with `409`. A second client — a rollout page, another sweep, a
+stray probe — claiming that slot is now survivable (the sweep re-handshakes and
+re-runs the episode), but it still costs the episode, and a busy port costs one
+per interruption.
+
 ## Watching a rollout
 
 A rollout that misbehaves is over in seconds and the terminal shows almost none
