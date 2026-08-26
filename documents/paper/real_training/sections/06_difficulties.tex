@@ -43,6 +43,38 @@ platform made exactly this inference. \unjustified{} the number of simultaneous
 streams a given host and hub can sustain remains machine-specific; we measure it
 per rig rather than derive it.
 
+Attaching the fingertip cameras took the suite past that ceiling for the first
+time and showed us what exceeding it actually looks like, which is not what the
+first difficulty above would lead one to expect. Contention here does not
+degrade a stream; it refuses one. Past the ceiling a camera opens exactly as a
+working camera does and then delivers nothing at all, indefinitely, while every
+stream that was admitted keeps its full rate. The two failures therefore look
+nothing alike, which is what makes the correction above safe to state: a stream
+running slow is still not evidence of contention, because contention does not
+produce slow streams. Two further properties decide how this must be handled.
+Which stream is refused is arbitrary --- repeated runs of one configuration
+denied different cameras --- so the symptom presents as an unreliable camera
+rather than as a budget, and looking for the fault in the camera is the natural
+and wrong response. Asking for less does not help either: neither a lower
+requested rate nor a smaller frame admitted a single extra stream, because these
+cameras reserve their bandwidth by declaration rather than by what they send.
+
+The design consequence follows from the first property. A refusal that stays
+silent is indistinguishable from a broken camera, so a stream that opens must be
+required to prove it delivers before it is treated as open; a camera that opens
+and yields nothing is a failed open, not a working one to be retried. Enforcing
+that turns an unbounded retry loop --- which punishes the very bus the remaining
+cameras are sharing --- into a question answered before recording starts, and
+lets the operator be told which controller is over-subscribed and which streams
+are competing on it. The host driver does offer a setting that makes it compute a
+stream's true bandwidth need rather than trust the camera's declaration, and it
+is the natural remedy to reach for; we tried it, reloading the driver so that
+every device was enumerated under the new setting, and it admitted no additional
+stream. We report it because the ceiling is easier to accept once the obvious
+escape from it has been measured and found not to help. What remains is a
+decision rather than a repair: record a set of views that fits the buses, or
+distribute the cameras across more of them.
+
 The third is the one that actually costs a session: a hub failing as a unit and
 taking every device behind it. Losing one stream is recoverable, because the
 recorder holds the episode and resumes it when the stream returns

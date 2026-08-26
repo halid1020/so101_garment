@@ -62,7 +62,9 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   untouched) let either a joint- or EE-space policy train from the same
   episodes (quest mode only; `--no-record-ee` opts out), with the
   action-definition constants in `<root>/meta/action_space.json`; the
-  `--sensor-view` monitor shows live per-stream drift + drop counts;
+  `--sensor-view` monitor shows live per-stream drift + drop counts (the
+  streams the recorder actually opened, whatever those are — it reuses the
+  recorder's captures rather than opening a device twice);
   `monitor_server.py` serves the same frames + recorder status + both
   arms' measured-vs-last-sent joints over loopback for the rig console
   when the recorder is given `--monitor-port` (off by default; its
@@ -99,6 +101,18 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
   console — see below).
+- `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
+  controller, and which selection does not. Pure string work over the by-path
+  aliases in `sensor_map.yaml` (no device is opened), so the console and the
+  preflight can both warn before a session starts. MEASURED: every camera on the
+  rig is USB 2.0, each 480 Mbit/s bus admits about **three** 640x480 MJPG
+  streams, and the rig's seven cameras do NOT all fit — past the ceiling a camera
+  opens and then delivers nothing at all, which stream loses is **random**, and
+  neither a lower fps nor a smaller frame buys another stream (both measured).
+  The four tactile cameras alone always fit. The uvcvideo FIX_BANDWIDTH quirk
+  (`quirks=128`) is the obvious remedy and was MEASURED not to help — module
+  reloaded, devices re-enumerated, same two streams refused — so don't spend time
+  on it; `quirks_active()` only reports its state.
 - `src/common/recording/dataset_check.py` — is a dataset whole? The counted
   episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
   offset invariant, and the repair for an episode nobody wrote. Pure parquet +

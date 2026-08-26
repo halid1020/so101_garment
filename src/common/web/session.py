@@ -90,6 +90,22 @@ def session_refusals(
     return reasons
 
 
+def usb_budget_warnings(selected: "set[str]") -> "list[str]":
+    """Warn when a stream selection over-subscribes one USB controller.
+
+    Reads the assignments rather than any device, so a session can be warned
+    about before it opens anything. An unassigned stream contributes nothing --
+    its bus is unknowable from a bare device index.
+    """
+    from common.recording.usb_budget import selection_warnings
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if not SENSOR_MAP_PATH.exists():
+        return []
+    nodes = (load_sensor_map(SENSOR_MAP_PATH) or {}).get("cameras") or {}
+    return selection_warnings(selected, nodes)
+
+
 def resolve_plan(
     root: Path,
     name: str,
@@ -147,6 +163,12 @@ def resolve_plan(
             )
     except SelectionError as exc:
         refusals.append(str(exc))
+
+    # A warning, never a refusal: the per-bus figure is measured rather than
+    # guaranteed, and the uvcvideo FIX_BANDWIDTH quirk can lift it, so the
+    # operator is told what to expect and left to decide. The authority on
+    # whether a stream really got its bandwidth is the camera open itself.
+    warnings += usb_budget_warnings(set(selection["cameras"]))
 
     return {
         "resuming": resuming,
@@ -327,6 +349,21 @@ class SessionSupervisor:
         return action
 
 
+def _device_present(device: "str | int") -> bool:
+    """Whether the device node is still there. Tells two failures apart.
+
+    A camera that is gone and a camera that is present but was refused its share
+    of the USB bandwidth both fail to open, and they want opposite fixes -- plug
+    it back in, or record fewer streams. The node answers which it is.
+    """
+    if isinstance(device, int):
+        return True
+    try:
+        return Path(str(device)).exists()
+    except OSError:
+        return False
+
+
 class PreviewCameras:
     """The console's own camera threads, for a look while nothing is recording.
 
@@ -338,9 +375,55 @@ class PreviewCameras:
     def __init__(self) -> None:
         self.data_manager: Any = None
         self.captures: list = []
+        # What was ASKED for, which is not what opened: a camera the USB bus
+        # refused is skipped, so comparing the running captures against a repeat
+        # request would see a difference every time and restart the preview on
+        # every poll. The request is the identity of a preview, not its result.
+        self.requested: "list[tuple[str, str]]" = []
+        # Streams that were asked for and could not be opened, with the reason,
+        # so the page can say which camera is missing instead of quietly
+        # showing one tile fewer than the rig has cameras.
+        self.skipped: "list[dict[str, str]]" = []
 
     def running(self) -> bool:
         return bool(self.captures)
+
+    @staticmethod
+    def _capture_settings(name: str) -> "dict[str, Any]":
+        """How this stream is configured for recording, or preview defaults.
+
+        A preview exists to answer "is this camera pointing where I think, and
+        does it look right" before a session. It can only answer the second half
+        if it opens the camera the way the recorder will -- same size, same
+        pixel format, same exposure -- so the settings come from recording.yaml
+        rather than from a hard-coded guess. A device with no entry there is the
+        Signals tab identifying an unassigned camera, and gets the defaults.
+        """
+        defaults: "dict[str, Any]" = {
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+            "rotate180": False,
+            "fourcc": "MJPG",
+            "controls": {},
+        }
+        try:
+            from common.camera_controls import CONTROL_NAMES
+            from common.config_parser import load_recording_config
+
+            cfg = (load_recording_config()["cameras"] or {}).get(name)
+        except Exception:  # noqa: BLE001 — a broken config must not stop a preview
+            return defaults
+        if not cfg:
+            return defaults
+        return {
+            "width": cfg["width"],
+            "height": cfg["height"],
+            "fps": cfg["fps"],
+            "rotate180": cfg["rotate180"],
+            "fourcc": cfg.get("fourcc") or "MJPG",
+            "controls": {k: cfg.get(k) for k in CONTROL_NAMES},
+        }
 
     def start(self, specs: "list[tuple[str, str]] | None" = None) -> "list[str]":
         """Open the given ``(name, device)`` cameras, or the assigned ones.
@@ -350,13 +433,6 @@ class PreviewCameras:
         are the console's own captures, and they are released before a session
         starts.
         """
-        if self.running():
-            if specs is not None and sorted(specs) != sorted(
-                (c.name, str(c.device)) for c in self.captures
-            ):
-                self.stop()
-            else:
-                return [c.name for c in self.captures]
         from common.data_manager_dual import DualDataManager
         from common.recording.cameras import CameraCapture
         from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
@@ -372,32 +448,43 @@ class PreviewCameras:
                 "no cameras are assigned yet — assign them on the Signals tab "
                 "(or with the sensor-assignment tool) first"
             )
+        wanted = sorted((str(n), str(d)) for n, d in specs)
+        if self.running():
+            # Resolve the request BEFORE comparing: asking for the assigned set
+            # while a single Signals camera is up used to fall through to
+            # "already running" and hand the Collect tab that one camera.
+            if wanted == sorted(self.requested):
+                return [c.name for c in self.captures]
+            self.stop()
+
+        self.requested = wanted
+        self.skipped = []
         self.data_manager = DualDataManager()
         for name, device in specs:
-            cam = CameraCapture(
-                name=name,
-                device=device,
-                width=640,
-                height=480,
-                fps=30,
-                rotate180=False,
-                fourcc="MJPG",
-            )
+            settings = self._capture_settings(str(name))
+            cam = CameraCapture(name=str(name), device=device, **settings)
             if not cam.open():
-                print(
-                    f"⚠️  preview camera '{name}' ({device}) failed to open — skipped"
+                reason = (
+                    "opened but delivered no frames — most likely the USB "
+                    "bandwidth budget (see the Signals tab)"
+                    if _device_present(device)
+                    else "could not be opened — unplugged, or in another socket"
                 )
+                print(f"⚠️  preview camera '{name}' ({device}) skipped: {reason}")
+                self.skipped.append({"name": str(name), "reason": reason})
                 continue
             cam.start(self.data_manager)
             self.captures.append(cam)
         if not self.captures:
             self.data_manager = None
+            self.requested = []
             if asked:
                 devices = ", ".join(str(d) for _n, d in specs)
                 raise RuntimeError(f"{devices} could not be opened")
             raise RuntimeError(
-                "no assigned camera could be opened — they may be unplugged, or "
-                "in a different socket than when they were assigned"
+                "no assigned camera could be opened — they may be unplugged, in "
+                "a different socket than when they were assigned, or refused "
+                "their share of the USB bandwidth (try fewer cameras)"
             )
         return [c.name for c in self.captures]
 
@@ -408,6 +495,8 @@ class PreviewCameras:
             except Exception:
                 pass
         self.captures = []
+        self.requested = []
+        self.skipped = []
         self.data_manager = None
 
     def frame(self, name: str):
@@ -417,6 +506,24 @@ class PreviewCameras:
 
     def stream_names(self) -> "list[str]":
         return [c.name for c in self.captures]
+
+    def missing(self) -> "list[dict[str, str]]":
+        """Asked-for streams that are not delivering, with why. For the page.
+
+        Two ways in: a camera that never opened (recorded at start), and one
+        that opened, worked, and was later given up on as starved. Both leave
+        the operator a tile short, so both belong in the same list.
+        """
+        starved = [
+            {
+                "name": cam.name,
+                "reason": "stopped delivering and was given up on — most likely "
+                "the USB bandwidth budget",
+            }
+            for cam in self.captures
+            if getattr(cam, "starved", False)
+        ]
+        return [*self.skipped, *starved]
 
 
 class PreviewArms:

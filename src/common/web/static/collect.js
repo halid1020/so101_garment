@@ -282,7 +282,17 @@ async function refreshTiles() {
   try { body = await j('/api/live/streams'); }
   catch (e) { return; }
   const names = body.streams || [];
+  const missing = body.missing || [];
   const preview = body.source === 'preview';
+  // Say which camera is absent and why. A missing tile on its own looks like a
+  // console fault; named, it is a camera to replug or a bus to unload.
+  const note = $('#live-missing');
+  if (note) {
+    note.textContent = missing.length
+      ? missing.map(m => `${m.name}: ${m.reason}`).join(' · ')
+      : '';
+    note.hidden = !missing.length;
+  }
   $('#c-preview').dataset.on = (preview && names.length) ? '1' : '0';
   $('#c-preview').textContent = (preview && names.length)
     ? 'Stop preview' : 'Start preview';

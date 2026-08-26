@@ -294,6 +294,61 @@ def check_usb_topology(dataset_dir: "Path | None") -> CheckResult:
     return classify_usb_topology(storage, sensors)
 
 
+def check_usb_budget() -> CheckResult:
+    """Do the enabled camera streams fit the buses they are assigned to?
+
+    The bandwidth ceiling is per USB controller, so this is a property of the
+    wiring plus the selection, knowable before anything is opened. A camera
+    refused its share opens and then delivers nothing for ever, and which one
+    loses is random -- so an operator who learns this at collection time learns
+    it as a flaky camera instead of a budget.
+    """
+    from common.config_parser import load_recording_config
+    from common.recording.usb_budget import DEFAULT_PER_BUS_LIMIT, selection_warnings
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if not SENSOR_MAP_PATH.exists():
+        return CheckResult("usb camera budget", WARN, "no sensor map to check")
+    nodes = (load_sensor_map(SENSOR_MAP_PATH) or {}).get("cameras") or {}
+    enabled = {n for n, c in load_recording_config()["cameras"].items() if c["enabled"]}
+    warnings = selection_warnings(enabled, nodes)
+    if warnings:
+        return CheckResult("usb camera budget", WARN, "; ".join(warnings))
+    return CheckResult(
+        "usb camera budget",
+        OK,
+        f"{len(enabled)} enabled streams, no bus over ~{DEFAULT_PER_BUS_LIMIT}",
+    )
+
+
+def check_uvc_quirks() -> CheckResult:
+    """Whether uvcvideo computes real bandwidth or trusts what cameras claim.
+
+    Informational, not actionable: the quirk was measured on this rig with the
+    module reloaded and made no difference to how many streams fit. It is
+    reported because it is the first thing anyone meeting the budget above
+    reaches for, and seeing it already on saves trying it again.
+    """
+    from common.recording.usb_budget import quirks_active
+
+    active = quirks_active()
+    if active is None:
+        return CheckResult("uvcvideo quirks", WARN, "cannot read the quirk mask")
+    if active:
+        return CheckResult(
+            "uvcvideo quirks",
+            OK,
+            "FIX_BANDWIDTH on — measured to make no difference here, so the "
+            "per-bus ceiling still applies",
+        )
+    return CheckResult(
+        "uvcvideo quirks",
+        OK,
+        "FIX_BANDWIDTH off (default) — turning it on was measured to make no "
+        "difference on this rig",
+    )
+
+
 def check_load_advisory() -> CheckResult:
     import os
 
@@ -402,6 +457,8 @@ def run_checks(hardware: bool, dataset_dir: "Path | None" = None) -> list[CheckR
         check_cpu_governor,
         check_usb_autosuspend,
         partial(check_usb_topology, dataset_dir),
+        check_usb_budget,
+        check_uvc_quirks,
         check_load_advisory,
     ]
     for fn in file_checks:
@@ -413,14 +470,6 @@ def run_checks(hardware: bool, dataset_dir: "Path | None" = None) -> list[CheckR
                 getattr(fn, "func", None), "__name__", ""
             )
             results.append(CheckResult(label or "check", FAIL, f"check error: {e}"))
-    results.append(
-        CheckResult(
-            "wrist-roll limits",
-            WARN,
-            "not auto-checked — run tool/set_wrist_roll_limits.py if tactile "
-            "cameras are mounted",
-        )
-    )
     if hardware:
         try:
             results.extend(check_cameras())

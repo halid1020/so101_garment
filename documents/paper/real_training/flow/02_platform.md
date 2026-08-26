@@ -14,7 +14,12 @@ P4  Sensing: per side two visual-tactile fingertip cameras and one wrist
 P5  Host and buses: everything reaches one laptop over two powered hubs, with
     the head-mounted controller on a direct link; a note that shared-bus
     bandwidth is a real constraint on simultaneous compressed streams, handled
-    later by the drift monitor rather than assumed away.
+    later by the drift monitor rather than assumed away. Now also state the
+    ceiling itself, because with the fingertip cameras attached the suite
+    exceeds it: each controller admits only a few compressed streams, and the
+    readiness check counts a selection against its buses before a session opens
+    anything. Cross-reference the difficulties section for the failure MODE,
+    which is refusal rather than degradation.
 P6  Final-state readiness: before collection the rig must be at a fixed, known
     state (calibrated arms on stable port aliases, protected cables, home
     poses, opened cameras); a preflight check confirms this and the platform is

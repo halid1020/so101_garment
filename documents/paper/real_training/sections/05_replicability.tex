@@ -64,6 +64,19 @@ cannot be recovered. The operator is therefore given the grouping itself
 rather than a bare warning, because the remedy is to choose a different
 socket, and that requires knowing which devices presently share one.
 
+The same grouping answers a second question, once the fingertip cameras take
+the sensor suite past what its controllers can carry
+(Section~\ref{sec:difficulties}). Because a controller admits only a few
+compressed streams and refuses the rest outright, whether a chosen set of
+cameras can be recorded at all is decided by how that set is distributed across
+controllers --- which the check already knows. It therefore counts the streams a
+session has selected against each controller they sit on and says which one is
+over-subscribed and which streams are competing there, before anything is
+opened. This matters because the alternative diagnosis is so much worse: since
+the refused stream varies between runs, an operator who meets the ceiling during
+collection meets it as an intermittently faulty camera, and will look for the
+fault in the camera.
+
 A single guided pass calibrates all four
 arms in turn, so bringing the rig to its calibrated state is one step
 rather than four, and each arm's calibration is bound to its side rather

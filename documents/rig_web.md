@@ -101,7 +101,13 @@ calibrations, poses, cameras, the depth device, disk headroom, and the
 host-tuning items that reduce timing jitter. The device checks are skipped
 while a session or a preview holds them; the file checks always answer.
 With nothing running, **Start preview** opens the assigned cameras so you
-can see where they point, and **Read the arms** opens the two follower buses
+can see where they point — with the same size, pixel format and exposure the
+recorder will use, so the preview answers "does this look right", not only
+"is this pointing right". A camera that cannot be opened is named under the
+tiles with the reason, rather than leaving you to count the tiles: an absent
+camera wants replugging, one refused its share of the USB bandwidth wants
+fewer cameras (see **The USB budget** below). **Read the arms** opens the two
+follower buses
 to fill the joint table — calibrated, torque disabled, nothing commanded, so
 the arms stay limp and you can push them by hand and watch the numbers move.
 Both are released before a session launches, and before the Signals tab
@@ -290,6 +296,34 @@ frames. Show one, press a gel or wave in front of it to see which camera it
 is, then press the name it should have. Binding a device to a name first
 clears it from whatever name it had before, so swapping two names is done
 by reassigning, not by hunting for the stale entry.
+
+**The USB budget.** Every camera on the rig is a USB 2.0 device, so each one
+lands on a 480 Mbit/s bus whatever socket it is in, and each bus has one
+bandwidth budget shared by everything on it. About **three** streams fit per
+bus, and the rig has seven cameras across two buses — so the full set does not
+fit, and the four tactile cameras on their own always do.
+
+Past the ceiling a camera does not run slowly; it opens normally and then
+delivers nothing at all. **Which** camera loses is random, so the same
+selection fails differently on consecutive runs and looks like a flaky camera
+rather than a budget. Asking for less does not help: a lower frame rate and a
+smaller frame were both measured, and neither admits another stream.
+
+Three things surface this. The readiness check counts the enabled streams
+against the bus each sits on and names the over-subscribed one; the Collect
+form repeats that warning for the streams you actually selected; and a camera
+that opens without delivering is treated as a failed open, so the session
+refuses to start rather than looping on it.
+
+The obvious lever is the uvcvideo `FIX_BANDWIDTH` quirk, which makes the driver
+compute the real bandwidth need instead of trusting what the camera declares.
+**It was tried on this rig and made no difference** — module reloaded, every
+device re-enumerated, and the same two streams were still refused. The readiness
+check reports whether it is on, so nobody spends an afternoon rediscovering that.
+
+What does work is choosing a set that fits: the four tactile cameras together,
+or a mix that keeps each bus at or under three streams. The readiness check's
+hub grouping tells you which camera sits on which bus.
 
 **Arms.** Open a port and wiggle ONE arm by hand: the joints that move are
 shown live, so the port belonging to that arm is obvious. The bus is opened

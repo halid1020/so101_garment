@@ -21,6 +21,25 @@ P5  Sharing a peripheral bus: separate the THREE things this conflates, because
         ours measured the same rate alone as under full load, and the cause was
         exposure (P6), not the bus. State this as a correction — the earlier
         account of this platform attributed it to bandwidth.
+    (b2) NEW, measured once the fingertip cameras were attached and the suite
+        first exceeded one bus: contention here does not degrade a stream, it
+        REFUSES it. Past the ceiling a camera opens normally and then delivers
+        nothing at all, for ever; the streams that are admitted keep their full
+        rate. This is what makes (b) safe to state and (a) still true — the two
+        failures look nothing alike. Two further properties matter and both are
+        measured: WHICH stream is refused is arbitrary, differing between runs
+        of the same configuration, so the symptom presents as an unreliable
+        camera rather than a budget; and asking for less does not help, because
+        a lower rate or a smaller frame buys no extra stream. Draw the design
+        consequence: a refusal that is silent is indistinguishable from a broken
+        camera, so the recorder must treat an opened-but-empty stream as a
+        failed open, refuse to start, and name the bus — which is what turned an
+        unbounded retry loop into a readiness question. Then close the obvious
+        escape: the driver setting that computes true bandwidth need instead of
+        trusting the camera was tried, with the driver reloaded so every device
+        enumerated under it, and admitted no extra stream. Report it because the
+        ceiling is easier to accept once the obvious remedy has been measured
+        and found not to help. What is left is a decision, not a repair.
     (c) The failure that actually costs a session is a whole hub going, which
         takes every device behind it at once. Argue the asymmetry: a stream lost
         is recoverable, because the recorder holds the episode and resumes it,

@@ -299,4 +299,14 @@ def load_recording_config(path: str | None = None) -> dict:
         )
         for key, default in _CAMERA_DEFAULTS.items():
             cam_cfg.setdefault(key, default)
+        # A -1 device is the file's own marker for "nothing wired here", so it is
+        # only meaningful on a disabled stream. Enabled, it used to be accepted
+        # and then failed much later as an opaque camera-open error at session
+        # start; the config is the place that knows it is wrong.
+        if cam_cfg.get("enabled") and cam_cfg.get("device") == -1:
+            raise ValueError(
+                f"{cfg_path}: camera '{cam_name}' is enabled but has device -1 "
+                "— set its /dev/videoN index (or assign it a stable node in "
+                "src/conf/sensor_map.yaml), or disable the stream"
+            )
     return data

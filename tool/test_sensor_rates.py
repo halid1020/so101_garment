@@ -45,6 +45,8 @@ retry with ``--fourcc MJPG``. ``v4l2-ctl --list-formats-ext -d
 
 import argparse
 import glob
+import os
+import struct
 import sys
 import threading
 import time
@@ -75,6 +77,16 @@ ASSIGNABLE_CAMERA_NAMES = [
     "wrist_camera_right",
     "central",
 ]
+# Which of the assignable streams are the tactile gel cameras. One list, so that
+# --tactile, the recorder and the console cannot disagree about what "tactile"
+# means; the names also carry the wiring (which arm, which finger), which is what
+# an operator needs when one of four identical-looking streams looks wrong.
+TACTILE_CAMERA_NAMES = (
+    "left_arm_left_gripper",
+    "left_arm_right_gripper",
+    "right_arm_left_gripper",
+    "right_arm_right_gripper",
+)
 SENSOR_MAP_PATH = _root / "src/conf/sensor_map.yaml"
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -339,10 +351,64 @@ def _video_sort_key(dev: str) -> int:
     return int(digits) if digits else 0
 
 
+# VIDIOC_QUERYCAP, and the capability bit that says "this node produces video".
+# Every UVC camera exposes a second, adjacent node carrying only per-frame
+# metadata: it opens like a camera and then never grabs. Asking the driver what a
+# node IS costs one ioctl and no stream negotiation, where opening every node to
+# find out costs a capture attempt on each -- roughly half of them doomed -- and
+# a line of OpenCV warning output apiece.
+_VIDIOC_QUERYCAP = 0x80685600
+_V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+# struct v4l2_capability: driver[16] card[32] bus_info[32] version[u32]
+# capabilities[u32] device_caps[u32] reserved[3*u32].
+_QUERYCAP_STRUCT = "16s32s32sIII3I"
+
+
+def is_capture_node(dev: str) -> bool:
+    """Whether a /dev/video node can capture video at all. No stream opened.
+
+    ``device_caps`` describes this node specifically, where ``capabilities``
+    describes the whole physical device -- so a metadata node of a camera that
+    can capture reports the capture bit in the second and not the first, and only
+    the second answers the question being asked here.
+    """
+    import fcntl
+
+    buf = bytearray(struct.calcsize(_QUERYCAP_STRUCT))
+    try:
+        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        fcntl.ioctl(fd, _VIDIOC_QUERYCAP, buf)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    _driver, _card, _bus, _ver, caps, device_caps, *_ = struct.unpack(
+        _QUERYCAP_STRUCT, bytes(buf)
+    )
+    return bool((device_caps or caps) & _V4L2_CAP_VIDEO_CAPTURE)
+
+
+def capture_nodes() -> list[str]:
+    """Every /dev/video node the driver calls a capture device. Opens nothing."""
+    return [
+        dev
+        for dev in sorted(glob.glob("/dev/video*"), key=_video_sort_key)
+        if is_capture_node(dev)
+    ]
+
+
 def discover_capture_devices() -> list[str]:
-    """The /dev/video nodes that actually deliver frames (V4L2 + grab)."""
+    """The /dev/video nodes that actually deliver frames (V4L2 + grab).
+
+    Two stages, cheap first: ask the driver which nodes are capture devices at
+    all, then actually grab from those to weed out the ones that are busy or
+    broken. Only the second stage opens a stream.
+    """
     devices = []
-    for dev in sorted(glob.glob("/dev/video*"), key=_video_sort_key):
+    for dev in capture_nodes():
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if cap.isOpened() and cap.grab():
             devices.append(dev)
@@ -395,13 +461,16 @@ def list_cameras() -> None:
     if not devices:
         print("no /dev/video* devices found")
     for dev in devices:
+        if not is_capture_node(dev):
+            print(f"  {dev}: not a capture device (metadata node)")
+            continue
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if cap.isOpened() and cap.grab():
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"  {dev}: capture device ({w}x{h} default)")
         else:
-            print(f"  {dev}: not a capture device (metadata node or busy)")
+            print(f"  {dev}: capture device, but busy or not delivering")
         cap.release()
     rs_devices = discover_realsense_devices()
     if rs_devices:

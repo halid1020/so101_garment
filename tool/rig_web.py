@@ -38,6 +38,12 @@ from aiohttp import web  # type: ignore[import]
 # which says nothing about the real problem. Set before any LeRobot import.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+# OpenCV logs a WARNING for every capture node it opens by name ("backend is
+# generally available but can't be used to capture by name"), which on a rig with
+# seven cameras and their metadata nodes buries the console's own output at every
+# device scan. The message says nothing an operator can act on -- the open either
+# works or is reported by us. Must be set before cv2 is first imported.
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
 from common.web.datasets_api import add_dataset_routes
 from common.web.jobs import add_job_routes
@@ -65,19 +71,31 @@ async def _open_client(app: web.Application) -> None:
     app["http"] = aiohttp.ClientSession()
 
 
-async def _close_session(app: web.Application) -> None:
-    """Release the devices the previews hold; leave a collection session alone.
+async def _release_devices(app: web.Application) -> None:
+    """Let go of every camera and bus, first thing in the shutdown.
 
-    A session is a separate process with the dataset open: closing the console
-    must not end it, or an operator would lose a recording by restarting a web
-    page. It is stopped from the Collect tab, or with its own quit key.
+    This runs on ``on_shutdown``, before aiohttp closes its connections, rather
+    than in the cleanup that follows: a capture thread sits inside a blocking
+    V4L2 read, so releasing early is what lets the in-flight frame requests
+    finish promptly instead of being torn down mid-handler -- which is where
+    Ctrl+C used to produce a wall of aiohttp InvalidStateError tracebacks.
 
-    A remote directory the console mounted IS released: it exists only for this
-    console, and leaving it behind would strand a dead FUSE mount.
+    A collection session is left alone: it is a separate process with the
+    dataset open, and closing the console must not end it, or an operator would
+    lose a recording by restarting a web page. It is stopped from the Collect
+    tab, or with its own quit key.
     """
     app["preview"].stop()
     app["arms"].stop()
     app["sensors_probe"].close()
+
+
+async def _close_session(app: web.Application) -> None:
+    """Close the client session and release a directory the console mounted.
+
+    A remote directory the console mounted IS released: it exists only for this
+    console, and leaving it behind would strand a dead FUSE mount.
+    """
     await app["http"].close()
     unmount_own(app)
 
@@ -123,6 +141,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     app["preview"] = PreviewCameras()
     app["arms"] = PreviewArms()
     app.on_startup.append(_open_client)
+    app.on_shutdown.append(_release_devices)
     app.on_cleanup.append(_close_session)
     app["cache_dir"] = outputs / "rig_web_cache"
     app.add_routes(

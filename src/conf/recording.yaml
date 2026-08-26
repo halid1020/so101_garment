@@ -67,6 +67,27 @@ realsense:
 # ~18 MB/s, so a few of them exceed what the shared USB controllers can carry —
 # the cameras then run well under their requested fps, lag tens of milliseconds
 # behind the rest of the frame, and can drop off the bus mid-episode.
+#
+# USB BUDGET — the hard ceiling on how many of these streams can run at once.
+# Every camera on this rig is a USB 2.0 device, so each one lands on a 480 Mbit/s
+# bus no matter which socket it is in, and each bus has a single isochronous
+# bandwidth budget shared by everything on it. MEASURED with the seven streams
+# below: any camera alone is fine, but with all seven open exactly two are
+# refused, and WHICH two is random — it is whichever loses the race to reserve
+# bandwidth. A refused stream opens and then never delivers a frame.
+#
+# Requesting a lower rate or a smaller frame does NOT help (15 fps and 320x240
+# were both measured, and both still lost two streams): these cameras declare a
+# fixed bandwidth need regardless of the format negotiated. The per-bus ceiling
+# measured here is 3 streams. The four tactile cameras alone fit comfortably
+# (28.6 fps each), so a tactile-only session is always safe.
+#
+# The obvious lever is the uvcvideo FIX_BANDWIDTH quirk (quirks=128), which makes
+# the driver compute the real bandwidth need rather than trust what the camera
+# declares. It was tried here, with the module reloaded and every device
+# re-enumerated: it changed NOTHING — the same two streams were refused. Do not
+# spend time on it again. tool/collect_preflight.py reports whether it is on, and
+# warns when a selection puts more streams on one bus than the ceiling allows.
 cameras:
   # Optional per-camera keys (either may be omitted; the defaults apply):
   #   fourcc:   capture pixel format, default MJPG. Compressed on the wire is
@@ -136,32 +157,42 @@ cameras:
     fps: 30
     exposure: 180        # this wrist sits in more light than the left one
     rotate180: false
-  # Tactile cameras 0..3 — HARDWARE NOT ATTACHED YET, disabled by default.
-  # --tactile enables all four; set real device indices before enabling.
-  tactile_0:
-    enabled: false
-    device: -1           # PLACEHOLDER: no device wired yet
+  # Tactile gel cameras — one per gripper finger, four in total. The name says
+  # which arm and which finger, because that is what an operator needs when a
+  # stream looks wrong: left_arm_right_gripper is the RIGHT finger of the LEFT
+  # arm (follower_1). These names are the same ones src/conf/sensor_map.yaml
+  # binds to stable by-path nodes, so the device index below is only a fallback
+  # for an unassigned rig — the by-path node wins whenever one is assigned.
+  # --tactile enables all four at once.
+  #
+  # MEASURED on the Sunplus gel cameras: 28.6 fps each at 640x480 MJPG with all
+  # four running together, so 30 is the requested rate and ~28.6 the real one.
+  # But see the USB budget note at the top of this section: four tactile streams
+  # plus the three RGB ones do NOT fit on two USB 2.0 controllers.
+  left_arm_left_gripper:
+    enabled: true
+    device: 10           # fallback only: sensor_map.yaml by-path node wins
     width: 640
     height: 480
     fps: 30
     rotate180: false
-  tactile_1:
-    enabled: false
-    device: -1           # PLACEHOLDER: no device wired yet
+  left_arm_right_gripper:
+    enabled: true
+    device: 8            # fallback only: sensor_map.yaml by-path node wins
     width: 640
     height: 480
     fps: 30
     rotate180: false
-  tactile_2:
-    enabled: false
-    device: -1           # PLACEHOLDER: no device wired yet
+  right_arm_left_gripper:
+    enabled: true
+    device: 14           # fallback only: sensor_map.yaml by-path node wins
     width: 640
     height: 480
     fps: 30
     rotate180: false
-  tactile_3:
-    enabled: false
-    device: -1           # PLACEHOLDER: no device wired yet
+  right_arm_right_gripper:
+    enabled: true
+    device: 12           # fallback only: sensor_map.yaml by-path node wins
     width: 640
     height: 480
     fps: 30

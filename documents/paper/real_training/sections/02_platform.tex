@@ -39,6 +39,17 @@ do not assume the bus copes; instead the recorder measures each stream's
 rate and dropped frames, so a saturated bus is visible rather than silent
 (Section~\ref{sec:collection}).
 
+That constraint is a ceiling rather than a tax, and with the fingertip cameras
+attached the full sensor suite exceeds it: each controller admits only a few
+compressed streams at the resolution and rate we record, and the rig carries
+more cameras than its two controllers can admit together. The consequence is
+not a slower stream but a missing one, which Section~\ref{sec:difficulties}
+takes up. Because the ceiling is a property of the wiring rather than of any
+one session, the readiness check counts a stream selection against the
+controllers it is spread across and reports the shortfall before a session
+opens a single camera; recording a subset that fits is then a decision the
+operator makes deliberately, rather than a camera that fails for them.
+
 \paragraph{Final-state readiness.} Collection is only meaningful when the
 rig starts from a fixed, known state: every arm calibrated and bound to a
 stable port alias, the wrist joints limited so the fingertip cables cannot

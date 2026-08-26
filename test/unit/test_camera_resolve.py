@@ -15,9 +15,10 @@ from common.recording.cameras import CameraCapture
 from tool.meta_quest_teleopration import (
     build_realsense_capture,
     overlay_sensor_map_devices,
+    resolve_camera_streams,
     resolve_realsense_serial,
 )
-from tool.test_sensor_rates import ASSIGNABLE_CAMERA_NAMES
+from tool.test_sensor_rates import ASSIGNABLE_CAMERA_NAMES, TACTILE_CAMERA_NAMES
 
 
 class TestAssignableCameraNames(unittest.TestCase):
@@ -28,13 +29,61 @@ class TestAssignableCameraNames(unittest.TestCase):
         self.assertIn("wrist_camera_right", ASSIGNABLE_CAMERA_NAMES)
 
     def test_tactile_gripper_names_retained(self):
-        for name in (
-            "left_arm_left_gripper",
-            "left_arm_right_gripper",
-            "right_arm_left_gripper",
-            "right_arm_right_gripper",
-        ):
+        for name in TACTILE_CAMERA_NAMES:
             self.assertIn(name, ASSIGNABLE_CAMERA_NAMES)
+
+    def test_the_tactile_names_say_which_arm_and_finger(self):
+        # Four identical-looking cameras: the name is the only thing that tells
+        # an operator which one a bad stream belongs to.
+        self.assertEqual(len(TACTILE_CAMERA_NAMES), 4)
+        for name in TACTILE_CAMERA_NAMES:
+            self.assertRegex(name, r"^(left|right)_arm_(left|right)_gripper$")
+
+
+class TestResolveCameraStreams(unittest.TestCase):
+    """--tactile, --enable-camera and --disable-camera over the seven streams."""
+
+    def _cfg(self):
+        cams = {
+            name: {"enabled": False, "device": i}
+            for i, name in enumerate(ASSIGNABLE_CAMERA_NAMES)
+        }
+        cams["central"]["enabled"] = True
+        return {"cameras": cams}
+
+    def _args(self, **kw):
+        base = {"tactile": False, "enable_camera": [], "disable_camera": []}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_tactile_enables_exactly_the_four_gripper_streams(self):
+        out = resolve_camera_streams(self._cfg(), self._args(tactile=True))
+        self.assertEqual(
+            set(out), {*TACTILE_CAMERA_NAMES, "central"}  # central was already on
+        )
+
+    def test_without_tactile_only_the_yaml_defaults_are_on(self):
+        out = resolve_camera_streams(self._cfg(), self._args())
+        self.assertEqual(set(out), {"central"})
+
+    def test_disable_beats_tactile(self):
+        out = resolve_camera_streams(
+            self._cfg(),
+            self._args(tactile=True, disable_camera=["left_arm_left_gripper"]),
+        )
+        self.assertNotIn("left_arm_left_gripper", out)
+
+    def test_a_gripper_name_can_be_enabled_on_its_own(self):
+        # It used to be rejected as unknown: the name existed in sensor_map.yaml
+        # but not in recording.yaml, so nothing could enable it.
+        out = resolve_camera_streams(
+            self._cfg(), self._args(enable_camera=["right_arm_left_gripper"])
+        )
+        self.assertIn("right_arm_left_gripper", out)
+
+    def test_an_unknown_camera_is_still_refused_by_name(self):
+        with self.assertRaises(SystemExit):
+            resolve_camera_streams(self._cfg(), self._args(enable_camera=["tactile_0"]))
 
     def test_central_camera_is_assignable(self):
         # The central overhead camera is now a plain UVC stream bound by-path in

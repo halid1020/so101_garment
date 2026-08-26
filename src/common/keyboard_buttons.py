@@ -45,10 +45,16 @@ class KeyboardButtons:
             cb()
 
     def _loop(self) -> None:
+        # Read the descriptor once: start() sets it before the thread runs, and
+        # stop() clears it, so re-reading the attribute mid-loop can hand os.read
+        # a None on the way out.
+        fd = self._fd
+        if fd is None:
+            return
         while not self._stop_event.is_set():
-            readable, _, _ = select.select([self._fd], [], [], 0.2)
+            readable, _, _ = select.select([fd], [], [], 0.2)
             if readable:
-                ch = os.read(self._fd, 1).decode(errors="ignore")
+                ch = os.read(fd, 1).decode(errors="ignore")
                 if ch:
                     self._dispatch(ch)
 

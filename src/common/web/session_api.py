@@ -244,7 +244,14 @@ async def handle_live_streams(request: web.Request) -> web.Response:
             {"source": "session", "streams": (body or {}).get("streams", [])}
         )
     return web.json_response(
-        {"source": "preview", "streams": app["preview"].stream_names()}
+        {
+            "source": "preview",
+            "streams": app["preview"].stream_names(),
+            # Cameras that were asked for and are not delivering. Without this
+            # the page just shows fewer tiles than the rig has cameras, which
+            # reads as a bug in the console rather than a camera to fix.
+            "missing": app["preview"].missing(),
+        }
     )
 
 

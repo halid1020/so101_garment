@@ -190,3 +190,14 @@ button.link:hover { opacity:1; }
 #jobdock-list li:hover { background:none; }
 .jobmsg { display:block; opacity:.6; }
 .job-running { color:var(--sel); } .job-failed { color:#dc2626; }
+
+/* Cameras that were asked for and are not delivering. Amber, not red: the rig
+   is still usable, but one of its streams is not being recorded. */
+.stream-missing {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #f59e0b22;
+  color: #f59e0b;
+  font-size: 12px;
+}

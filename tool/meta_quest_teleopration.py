@@ -170,7 +170,7 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--tactile",
         action="store_true",
-        help="Enable the tactile_0..3 camera streams (hardware required)",
+        help="Enable all four tactile gripper camera streams at once",
     )
     group.add_argument(
         "--central-depth",
@@ -217,6 +217,8 @@ def add_recording_cli_args(parser: argparse.ArgumentParser) -> None:
 
 def resolve_camera_streams(rec_cfg: dict, args: argparse.Namespace) -> dict:
     """Return {name: camera-config} for the streams enabled after overrides."""
+    from tool.test_sensor_rates import TACTILE_CAMERA_NAMES
+
     cameras = rec_cfg["cameras"]
     known = set(cameras)
     for name in [*args.enable_camera, *args.disable_camera]:
@@ -228,7 +230,7 @@ def resolve_camera_streams(rec_cfg: dict, args: argparse.Namespace) -> dict:
     enabled = {}
     for name, cfg in cameras.items():
         on = bool(cfg["enabled"])
-        if args.tactile and name.startswith("tactile_"):
+        if args.tactile and name in TACTILE_CAMERA_NAMES:
             on = True
         if name in args.enable_camera:
             on = True
@@ -436,8 +438,13 @@ def build_recording_stack(
                 opened.stop()
             raise SystemExit(
                 f"❌ Camera '{name}' failed to open on device {cfg['device']} "
-                "— fix the device index in src/conf/recording.yaml or pass "
-                f"--disable-camera {name}"
+                "— it is unplugged, in another socket, or was refused its share "
+                "of the USB bandwidth.\n"
+                f"   Recording {len(streams)} cameras at once: about three fit "
+                "one USB 2.0 bus, so try --disable-camera on one sharing its "
+                "controller (tool/collect_preflight.py names them), fix the "
+                "device index in src/conf/recording.yaml, or "
+                f"pass --disable-camera {name}"
             )
         captures.append(cam)
 

@@ -28,6 +28,7 @@ from common.web.session import (
     INTERRUPT_GRACE_S,
     QUIT_GRACE_S,
     PreviewArms,
+    PreviewCameras,
     SessionSupervisor,
     resolve_plan,
     session_refusals,
@@ -379,6 +380,131 @@ class TestPreviewArms(unittest.TestCase):
             with self.assertRaises(RuntimeError) as caught:
                 PreviewArms().start(empty)
         self.assertIn("Signals", str(caught.exception))
+
+
+class _FakeCapture:
+    """A CameraCapture that opens (or refuses to) without touching a device."""
+
+    opened: "set[str]" = set()
+
+    def __init__(self, name, device, **_settings):
+        self.name = name
+        self.device = device
+        self.starved = False
+        self.settings = _settings
+
+    def open(self):
+        return self.name in type(self).opened
+
+    def start(self, _dm):
+        pass
+
+    def stop(self):
+        pass
+
+
+class TestPreviewCameras(unittest.TestCase):
+    """What the console previews, and what it says about what it could not."""
+
+    def setUp(self):
+        self.map_path = Path(tempfile.mkdtemp()) / "sensor_map.yaml"
+        self.map_path.write_text(
+            "cameras:\n"
+            "  central: /dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-video-index0\n"
+            "  wrist_camera_left: /dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.1.4:1.0"
+            "-video-index0\n"
+            "  left_arm_left_gripper: /dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.1.2:1.0"
+            "-video-index0\n"
+        )
+        self.names = {"central", "wrist_camera_left", "left_arm_left_gripper"}
+
+    def _preview(self, opens):
+        _FakeCapture.opened = set(opens)
+        preview = PreviewCameras()
+        patches = mock.patch.multiple(
+            "tool.test_sensor_rates",
+            SENSOR_MAP_PATH=self.map_path,
+        )
+        return preview, patches
+
+    def _start(self, preview, specs=None):
+        with mock.patch(
+            "common.recording.cameras.CameraCapture", _FakeCapture
+        ), mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path):
+            return preview.start(specs)
+
+    def test_the_assigned_set_is_previewed(self):
+        preview, _ = self._preview(self.names)
+        self.assertEqual(set(self._start(preview)), self.names)
+
+    def test_a_repeat_request_does_not_restart_a_partial_preview(self):
+        # The bus refuses one camera, so the captures are a SUBSET of what was
+        # asked for. Comparing captures against the request would see a
+        # difference every poll and tear the preview down each time.
+        preview, _ = self._preview(self.names - {"left_arm_left_gripper"})
+        first = self._start(preview)
+        captures_before = preview.captures
+        second = self._start(preview)
+        self.assertEqual(first, second)
+        self.assertIs(preview.captures, captures_before)
+
+    def test_asking_for_the_assigned_set_replaces_a_single_camera_preview(self):
+        # The Signals tab shows one camera to identify it; the Collect tab then
+        # asks for the assigned set and must get the assigned set, not that one.
+        preview, _ = self._preview(self.names)
+        one = "/dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-video-index0"
+        self.assertEqual(self._start(preview, [("central", one)]), ["central"])
+        self.assertEqual(set(self._start(preview)), self.names)
+
+    def test_a_camera_that_would_not_open_is_named_with_a_reason(self):
+        preview, _ = self._preview(self.names - {"left_arm_left_gripper"})
+        self._start(preview)
+        (missing,) = preview.missing()
+        self.assertEqual(missing["name"], "left_arm_left_gripper")
+        self.assertTrue(missing["reason"])
+
+    def test_a_starved_capture_is_reported_as_missing_too(self):
+        # It opened, worked, and was given up on later. Same consequence for the
+        # operator as one that never opened: a tile short.
+        preview, _ = self._preview(self.names)
+        self._start(preview)
+        preview.captures[0].starved = True
+        starved = preview.captures[0].name
+        self.assertIn(starved, [m["name"] for m in preview.missing()])
+
+    def test_no_camera_opening_is_an_error_that_says_what_to_try(self):
+        preview, _ = self._preview(set())
+        with self.assertRaises(RuntimeError) as caught:
+            self._start(preview)
+        self.assertIn("fewer cameras", str(caught.exception))
+
+    def test_stop_forgets_the_request(self):
+        preview, _ = self._preview(self.names)
+        self._start(preview)
+        preview.stop()
+        self.assertEqual(preview.requested, [])
+        self.assertEqual(preview.missing(), [])
+
+
+class TestUsbBudgetInThePlan(unittest.TestCase):
+    def test_an_over_subscribed_selection_warns_but_is_not_refused(self):
+        # The measured ceiling is not a guarantee and the uvcvideo quirk can
+        # lift it, so the operator is told and left to decide.
+        from common.web.session import usb_budget_warnings
+
+        nodes = {
+            f"cam_{i}": (
+                f"/dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.{i}:1.0-video-index0"
+            )
+            for i in range(5)
+        }
+        path = Path(tempfile.mkdtemp()) / "sensor_map.yaml"
+        path.write_text(
+            "cameras:\n" + "".join(f"  {k}: {v}\n" for k, v in nodes.items())
+        )
+        with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", path):
+            self.assertTrue(usb_budget_warnings(set(nodes)))
+            self.assertEqual(usb_budget_warnings({"cam_0", "cam_1"}), [])
 
 
 if __name__ == "__main__":

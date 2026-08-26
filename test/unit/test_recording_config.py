@@ -23,6 +23,7 @@ import yaml
 
 from common.camera_controls import CONTROL_NAMES
 from common.config_parser import load_recording_config
+from tool.test_sensor_rates import ASSIGNABLE_CAMERA_NAMES, TACTILE_CAMERA_NAMES
 
 _VALID: dict = {
     "dataset": {
@@ -171,15 +172,47 @@ class TestRecordingConfig(unittest.TestCase):
         self.assertIn("realsense", cfg)
         self.assertFalse(cfg["realsense"]["enabled"])  # default off
 
-    def test_tactile_default_disabled(self) -> None:
+    def test_tactile_streams_are_the_gripper_names(self) -> None:
+        # The four tactile cameras are named for the finger they sit on, and
+        # those are the SAME names sensor_map.yaml binds to by-path nodes. The
+        # recorder joins the two files by name, so a stream that appears in only
+        # one of them is assigned-but-unrecordable (or configured with no
+        # device) -- which is exactly what the old tactile_0..3 slots were.
         cfg = load_recording_config()
-        for i in range(4):
-            name = f"tactile_{i}"
+        for name in TACTILE_CAMERA_NAMES:
             self.assertIn(name, cfg["cameras"])
-            self.assertFalse(
-                cfg["cameras"][name]["enabled"],
-                f"{name} must default to disabled (hardware not attached)",
-            )
+            self.assertTrue(cfg["cameras"][name]["enabled"], f"{name} enabled")
+        for i in range(4):
+            self.assertNotIn(f"tactile_{i}", cfg["cameras"])
+
+    def test_every_assignable_name_is_a_configured_stream(self) -> None:
+        # The guard on the split above, for all seven streams rather than the
+        # four that caused it: a name the Signals tab can bind must be one the
+        # recorder can actually open.
+        cfg = load_recording_config()
+        for name in ASSIGNABLE_CAMERA_NAMES:
+            self.assertIn(name, cfg["cameras"], f"{name} missing from recording.yaml")
+
+    def test_enabled_stream_may_not_have_device_minus_one(self) -> None:
+        # -1 is the file's marker for "nothing wired here". Enabled, it used to
+        # be accepted and then fail much later as an opaque camera-open error.
+        bad = copy.deepcopy(_VALID)
+        bad["cameras"]["scene"]["enabled"] = True
+        bad["cameras"]["scene"]["device"] = -1
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "device -1"):
+                load_recording_config(str(_write_yaml(bad, d)))
+
+    def test_disabled_stream_may_have_device_minus_one(self) -> None:
+        cfg = copy.deepcopy(_VALID)
+        cfg["cameras"]["off"] = {
+            **cfg["cameras"]["scene"],
+            "enabled": False,
+            "device": -1,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            loaded = load_recording_config(str(_write_yaml(cfg, d)))
+        self.assertEqual(loaded["cameras"]["off"]["device"], -1)
 
     def test_checked_in_yaml_scene_off_central_on(self) -> None:
         # Current rig: no scene camera; the central overhead camera is a plain
