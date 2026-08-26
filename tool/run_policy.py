@@ -276,7 +276,10 @@ def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]", hz: float 
     from tool.eval_sim_policy import _scenario_for_seed
 
     scenario = _scenario_for_seed(task, seed)
-    env = PickPlaceTwinEnv(task)
+    # Stepped at the rate it is driven at: the control tick is a whole number of
+    # integrator substeps, so an env left at the default while the loop runs at
+    # another rate advances a different amount of simulated time per action.
+    env = PickPlaceTwinEnv(task, fps=hz)
     env.reset(scenario)
     rig = TwinRig(env, cameras=list(CAMERAS), camera_map=camera_map, fps=hz)
     return rig, env, scenario
@@ -499,7 +502,7 @@ def main() -> None:
         "--sim",
         nargs="?",
         const="handover",
-        choices=("single", "handover"),
+        choices=("single", "handover", "handover_split"),
         default=None,
         help="Rehearse against the digital twin instead of the arms: builds the "
         "payload scene and runs the WHOLE procedure -- page, arming, throttle, "

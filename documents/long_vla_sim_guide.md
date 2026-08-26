@@ -267,6 +267,24 @@ into the run directory.
 
 ## 5. Troubleshooting
 
+**The teleop oracle misses every grasp (`❌ grasp`, place error ~260 mm)**
+— BISECTED, and it is not the scenario. The wrist-camera framing offset
+`handle.roll_offset_deg` (`src/ik_conf/teleop_shared.yaml`, default `-90`)
+rolls the gripper 90 degrees about its tip in the Quest *armplane* mapping,
+which is the path the oracle device drives. The scripted grasp attitude was
+never taught about that roll, so the jaws close across the wrong axis and
+slide off a 22 mm cube. MEASURED on `handover` seed 14, the reference
+scenario: 2/2 successes at 4.5 mm before the offset landed, 2/2 at 5.0 mm
+with the offset forced to zero at HEAD, and 0/2 failing at `grasp` with the
+shipped `-90`. The rate is not involved — 25 Hz and 30 Hz fail identically.
+
+The real rig genuinely wants that offset (it is what puts the wrist camera
+on top), so the fix belongs in the oracle rather than in the config: the
+demonstrator's target rotation has to carry the same roll the teleop stack
+applies. Until it does, collect with `--oracle direct`, which bypasses the
+teleop stack entirely and is unaffected.
+
+
 - **Headless render fails** — `MUJOCO_GL=egl` must be set
   (`setup.sh` does this); on a driverless node try `osmesa` (slow).
 - **`--output_dir` exists** — lerobot-train refuses to overwrite; the

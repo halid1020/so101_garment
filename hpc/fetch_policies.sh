@@ -156,9 +156,17 @@ for run in "$root"/*/; do
         ckpt="${pol_dir}checkpoints/last/pretrained_model"
         report="no"
         [ -f "${run}results_${pol}.md" ] && report="yes"
+        # A LoRA run (pi0.5 here) writes an ADAPTER, never a whole model, so
+        # looking only for model.safetensors calls a finished run unfinished.
         if [ -f "$ckpt/model.safetensors" ]; then
             printf "%s\t%s\tready\t%s\t%s\n" "$ds" "$pol" \
                 "$(du -sh "$ckpt" | cut -f1)" "$report"
+        elif [ -f "$ckpt/adapter_model.safetensors" ]; then
+            # State stays the single token the selector below matches on; the
+            # LoRA note rides in the size column, where it also explains why an
+            # adapter is five megabytes rather than several gigabytes.
+            printf "%s\t%s\tready\t%s\t%s\n" "$ds" "$pol" \
+                "$(du -sh "$ckpt" | cut -f1) LoRA" "$report"
         else
             printf "%s\t%s\tunfinished\t-\t%s\n" "$ds" "$pol" "$report"
         fi
@@ -308,8 +316,10 @@ for entry in "${FETCH[@]}"; do
     ds="${entry%%:*}"; rest="${entry#*:}"; pol="${rest%%:*}"
     out="$DEST_PATH/${AS:-$ds}-$pol"
     echo "-- ${AS:-$ds}-$pol"
-    if ! run_dest '[ -f "$1/config.json" ] && [ -f "$1/model.safetensors" ]' "$out"; then
-        echo "   ❌ incomplete: config.json or model.safetensors is missing" >&2
+    if ! run_dest '[ -f "$1/config.json" ] && { [ -f "$1/model.safetensors" ] ||
+            [ -f "$1/adapter_model.safetensors" ]; }' "$out"; then
+        echo "   ❌ incomplete: config.json, and neither model.safetensors nor" >&2
+        echo "      adapter_model.safetensors (a LoRA run writes the latter)" >&2
         FAILED=1
         continue
     fi

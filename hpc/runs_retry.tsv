@@ -1,0 +1,21 @@
+# Retry manifest -- the cube-pnp-new rows that had no checkpoint after array
+# 36767528/36767641. Kept as a record of what was resubmitted, and as the
+# pattern for the next retry: a manifest of exactly the outstanding rows beats
+# --datasets/--only filters, which cannot express "these five and no others".
+#
+# Why each failed (MEASURED, not inferred):
+#   diffusion x3  erc-hpc-comp035 allocated a GPU torch cannot open. The driver
+#                 refuses that rather than training on the CPU, so they died in
+#                 seconds. comp035 joins comp037 and comp040 in --exclude.
+#   pi05 x2       erc-hpc-comp247, OOM behind a CO-TENANT holding 120 GB of a
+#                 140 GB card while ours had 19.68 GB and needed 242 MiB more.
+#                 Not batch size: batch 4 was already in force. Nothing here can
+#                 reserve a card, so the sbatch now asks the allocator not to
+#                 fragment what is left.
+#
+# dataset            policy     cameras                          steps   batch  hours  extra
+cube-pnp-new         diffusion  all                              100000  32     36     -
+cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -
+cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -
+cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -
+cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -

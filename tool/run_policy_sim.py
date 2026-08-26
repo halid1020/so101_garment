@@ -77,6 +77,33 @@ def parse_camera_map(text: "str | None") -> "dict[str, str]":
         raise SystemExit(f"❌ {exc}")
 
 
+def _refuse_mismatched_cameras(args, source) -> None:
+    """Stop now if the twin's cameras are not the ones the policy asks for.
+
+    The names are known before the first tick -- the host reports them at the
+    handshake -- so a sweep that would fail on every episode of every cell can
+    say so in its first second instead of raising a WireError partway through.
+    The default rename bridges a RIG-trained checkpoint to the twin; a policy
+    trained IN the twin wants no rename at all, and the two look identical on
+    the command line.
+    """
+    wanted = getattr(source, "cameras", None)
+    if wanted is None:
+        return
+    sent = sorted(
+        _parse_camera_map(args.camera_map, DEFAULT_CAMERA_MAP).get(name, name)
+        for name in args.camera_names
+    )
+    if sent == sorted(wanted):
+        return
+    raise SystemExit(
+        f"❌ the twin would send {sent}, but the policy asks for "
+        f"{sorted(wanted)}.\n"
+        f"   Rename them with --camera-map, or pass --camera-map none if this "
+        f"checkpoint was trained in the twin."
+    )
+
+
 def make_source(args, cell: dict, hz: float):
     """A local or remote action source, configured for one sweep cell.
 
@@ -226,7 +253,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--task", choices=("single", "handover"), default="handover")
+    parser.add_argument(
+        "--task", choices=("single", "handover", "handover_split"), default="handover"
+    )
     parser.add_argument("--checkpoint", help="Local inference from this directory")
     parser.add_argument("--server", help="Remote inference at this base URL")
     parser.add_argument(
@@ -266,9 +295,10 @@ def main() -> int:
         type=float,
         default=30.0,
         help="Control rate, driven into the twin as well as the client. PIN "
-        "this to the rate the checkpoint under test was trained at (30 for the "
-        "existing handover checkpoint) — a sweep run at another rate compares "
-        "the strategies on a policy that is being stepped wrong",
+        "this to the rate the checkpoint under test was trained at — 30 for the "
+        "original handover checkpoints, 25 for anything collected since — as a "
+        "sweep run at another rate compares the strategies on a policy that is "
+        "being stepped wrong",
     )
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
@@ -344,6 +374,8 @@ def main() -> int:
 
     if args.seeds == "simple":
         default_seed = 0 if args.task == "single" else 14
+        # `simple` repeats ONE scenario, so it measures a strategy against a
+        # policy that has already seen it. `full` is the held-out pool.
         seed = default_seed if args.simple_seed is None else args.simple_seed
         seeds = [seed] * (args.episodes or 5)
     else:
@@ -363,6 +395,7 @@ def main() -> int:
     for cell in cells:
         label = cell_label(cell)
         source = make_source(args, cell, args.fps)
+        _refuse_mismatched_cameras(args, source)
         print(f"\n== {label} — {source.describe()}")
         for i, seed in enumerate(seeds):
             scenario = _scenario_for_seed(args.task, seed)

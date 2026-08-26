@@ -192,12 +192,9 @@ try:
 except Exception as exc:
     print(f"     torch.cuda.init(): {type(exc).__name__}: {exc}")
 PY
-        echo "   That usually means the NODE's GPU is unhealthy. Resubmit without it" >&2
-        echo "   -- CREATE's Slurm ignores SBATCH_EXCLUDE, so pass --exclude to sbatch" >&2
-        echo "   directly, reusing the snapshot submit_real.sh already wrote:" >&2
-        echo "     sbatch --exclude=${SLURMD_NODENAME:-<node>} --array=... --time=...:00:00 \\" >&2
-        echo "       --export=ALL,SO101_REPO_ROOT=...,SO101_SCRATCH=...,SO101_MANIFEST=<snapshot> \\" >&2
-        echo "       hpc/create_real_vla.sbatch" >&2
+        echo "   That usually means the NODE's GPU is unhealthy. Resubmit without it:" >&2
+        echo "     bash hpc/submit_real.sh --exclude ${SLURMD_NODENAME:-<node>} ..." >&2
+        echo "   (--exclude, NOT \$SBATCH_EXCLUDE: CREATE's Slurm ignores that.)" >&2
         echo "   Or pass --device cpu if CPU training really is intended." >&2
         exit 1
     fi
