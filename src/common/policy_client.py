@@ -325,6 +325,13 @@ class RemoteActionSource:
             # the new attempt would find the source already busy.
             self._inflight = False
         self._handshake(self.actions)
+        # A handshake that returned is a session this host will answer, so
+        # whatever it refused before no longer describes the client. Clearing
+        # the latch here is what lets a caller recover from another client
+        # taking the server's single session slot out from under it: without
+        # it, `offer` refuses forever and the only cure is a new process.
+        with self._lock:
+            self.fatal = None
 
     def drain(self) -> None:
         """Forget what is queued: it was planned from an older observation."""

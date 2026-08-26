@@ -43,7 +43,7 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
         sys.path.insert(0, _p)
 
 from common.configs import GRIPPER_OPEN_MAX_FRAC  # noqa: E402
-from common.eval_video import EvalVideoComposer  # noqa: E402
+from common.eval_video import GIF_STRIDE, GIF_WIDTH, EvalVideoComposer  # noqa: E402
 from sim_benchmark.constants import SIDES  # noqa: E402
 from sim_datagen.env import DEFAULT_FPS, TASKS, PickPlaceTwinEnv  # noqa: E402
 from sim_datagen.oracle import (  # noqa: E402
@@ -244,6 +244,16 @@ def main() -> int:
     )
     parser.add_argument("--out", type=str, default=None, metavar="PATH")
     parser.add_argument("--video-dir", type=str, default=None, metavar="DIR")
+    parser.add_argument(
+        "--gif-dir",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="also write a small looping GIF per episode here: the camera row "
+        "only, subsampled and downscaled, for skimming what went wrong",
+    )
+    parser.add_argument("--gif-stride", type=int, default=GIF_STRIDE)
+    parser.add_argument("--gif-width", type=int, default=GIF_WIDTH)
     args = parser.parse_args()
 
     device = _pick_device(args.device)
@@ -272,6 +282,9 @@ def main() -> int:
     video_dir = Path(args.video_dir) if args.video_dir else None
     if video_dir is not None:
         video_dir.mkdir(parents=True, exist_ok=True)
+    gif_dir = Path(args.gif_dir) if args.gif_dir else None
+    if gif_dir is not None:
+        gif_dir.mkdir(parents=True, exist_ok=True)
 
     episodes: list[dict[str, Any]] = []
     for i, seed in enumerate(seeds):
@@ -281,7 +294,8 @@ def main() -> int:
             max_ticks = int(np.ceil(args.max_seconds * args.fps))
         else:
             max_ticks = int(np.ceil(1.5 * script.duration * args.fps))
-        composer = EvalVideoComposer(args.fps) if video_dir is not None else None
+        want_frames = video_dir is not None or gif_dir is not None
+        composer = EvalVideoComposer(args.fps) if want_frames else None
         rec = run_episode(
             env,
             policy,
@@ -300,13 +314,16 @@ def main() -> int:
         if args.seeds == "simple":
             rec["trial"] = i
         episodes.append(rec)
-        if composer is not None and video_dir is not None:
-            name = (
-                f"ep_seed{seed}_{i}.mp4"
-                if args.seeds == "simple"
-                else f"ep_seed{seed}.mp4"
-            )
-            composer.save(video_dir / name)
+        if composer is not None:
+            stem = f"ep_seed{seed}_{i}" if args.seeds == "simple" else f"ep_seed{seed}"
+            if video_dir is not None:
+                composer.save(video_dir / f"{stem}.mp4")
+            if gif_dir is not None:
+                composer.save_gif(
+                    gif_dir / f"{stem}.gif",
+                    stride=args.gif_stride,
+                    width=args.gif_width,
+                )
             composer.close()
         tag = "✅" if rec["success"] else "❌"
         n_ok = sum(e["success"] for e in episodes)

@@ -445,3 +445,71 @@ class TestAChunkThatOUTLIVESItsAttempt(RemoteSourceCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRecoveringAStolenSession(RemoteSourceCase):
+    """Another client resetting the host must not end this one permanently.
+
+    The host keeps one session slot. A second client -- a rollout page, a stray
+    probe, another sweep -- claims it with a reset, and from then on every
+    request of ours is answered 409. That used to latch: nothing cleared the
+    flag, so the only cure was a new process, and a multi-hour grid died in its
+    second cell. A fresh handshake is a valid session again, so it clears.
+    """
+
+    def steal_the_session(self):
+        """What a second client does to us, without a second client."""
+        import urllib.request
+
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{self.url}/reset",
+                data=json.dumps({"task": "someone else"}).encode(),
+                headers={"Content-Type": "application/json"},
+            ),
+            timeout=5,
+        ).read()
+
+    def test_the_host_refuses_once_the_slot_is_taken(self):
+        source = self.source()
+        self.fill(source)
+        self.steal_the_session()
+        for _ in range(200):
+            source.drain()
+            source.offer(*self.observation())
+            if source.fatal:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(source.fatal)
+        self.assertIn("409", source.fatal)
+
+    def test_and_a_new_handshake_clears_the_refusal(self):
+        source = self.source()
+        self.fill(source)
+        self.steal_the_session()
+        for _ in range(200):
+            source.drain()
+            source.offer(*self.observation())
+            if source.fatal:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(source.fatal)
+
+        source.reset()
+
+        self.assertIsNone(source.fatal)
+
+    def test_and_chunks_flow_again_afterwards(self):
+        source = self.source()
+        self.fill(source)
+        self.steal_the_session()
+        for _ in range(200):
+            source.drain()
+            source.offer(*self.observation())
+            if source.fatal:
+                break
+            time.sleep(0.01)
+        source.reset()
+
+        self.fill(source)  # fails the test if nothing arrives
+        self.assertIsNotNone(source.take())
