@@ -18,10 +18,15 @@
 #   --manifest F      run matrix to read           (default hpc/runs.tsv)
 #   --datasets a,b    only these datasets
 #   --only a,b        only these policies          (act, diffusion, pi05)
-#   --cameras SET     only rows with this exact cameras column
+#   --cameras SET     only rows whose cameras column is EXACTLY this
+#                     (`all`, or the row's own comma list -- not a list of sets)
 #   --scratch DIR     node-visible scratch root    (default /scratch/users/$USER)
 #   --partition P     Slurm partition              (default: the sbatch's own)
 #   --account A       Slurm account, if enforced
+#   --exclude NODES   Slurm nodes to keep off, comma-separated. Use it when a
+#                     node has an unhealthy GPU: the driver refuses one that
+#                     allocated a GPU torch cannot open, and names the node.
+#                     NOT $SBATCH_EXCLUDE -- CREATE's Slurm ignores that.
 #   --concurrency N   cap simultaneously running array tasks
 #   --job-name N      Slurm job name               (default real_vla)
 #   --dry-run         prepare everything, print the sbatch commands, submit none
@@ -40,6 +45,7 @@ MANIFEST="$REPO_ROOT/hpc/runs.tsv"
 FILTER_DATASETS=""
 FILTER_POLICIES=""
 FILTER_CAMERAS=""
+EXCLUDE=""
 SCRATCH="${SO101_SCRATCH:-/scratch/users/${USER:-$(id -un)}}"
 PARTITION=""
 ACCOUNT=""
@@ -53,6 +59,7 @@ while [ $# -gt 0 ]; do
         --datasets) FILTER_DATASETS="$2"; shift 2;;
         --only) FILTER_POLICIES="$2"; shift 2;;
         --cameras) FILTER_CAMERAS="$2"; shift 2;;
+        --exclude) EXCLUDE="$2"; shift 2;;
         --scratch) SCRATCH="$2"; shift 2;;
         --partition) PARTITION="$2"; shift 2;;
         --account) ACCOUNT="$2"; shift 2;;
@@ -123,7 +130,13 @@ while IFS= read -r line || [ -n "$line" ]; do
     done
     in_list "$ds" "$FILTER_DATASETS" || continue
     in_list "$policy" "$FILTER_POLICIES" || continue
-    in_list "$cameras" "$FILTER_CAMERAS" || continue
+    # NOT in_list: a cameras value is ITSELF a comma list, so `central,wrist_x`
+    # would be read as two alternatives and match both rows. Exact match only.
+    # An `if`, not an && chain: this file runs under `set -e`, where a chain
+    # whose last evaluated test is false takes the script down with it.
+    if [ -n "$FILTER_CAMERAS" ] && [ "$cameras" != "$FILTER_CAMERAS" ]; then
+        continue
+    fi
     ROWS+=("$ds	$policy	$cameras	${steps:--}	${batch:--}	$hours	${extra:--}")
 done < "$MANIFEST"
 
@@ -196,6 +209,7 @@ for hours in $HOURS_SET; do
         --time="${hours}:00:00")
     [ -n "$PARTITION" ] && cmd+=(--partition="$PARTITION")
     [ -n "$ACCOUNT" ] && cmd+=(--account="$ACCOUNT")
+    [ -n "$EXCLUDE" ] && cmd+=(--exclude="$EXCLUDE")
     cmd+=(--export="ALL,SO101_REPO_ROOT=$REPO_ROOT,SO101_SCRATCH=$SCRATCH,SO101_MANIFEST=$group_file"
         "$REPO_ROOT/hpc/create_real_vla.sbatch")
 

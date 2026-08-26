@@ -202,6 +202,12 @@ class RemoteActionSource:
             None if virtual_delay_ticks is None else max(0, int(virtual_delay_ticks))
         )
         self._pending: "tuple[np.ndarray, int, int] | None" = None
+        #: Which attempt the source is on. A request is built against the
+        #: session of the attempt that asked for it, so a reply that arrives
+        #: after :meth:`reset` has moved on answers a question about a scene
+        #: that is gone. Bumped by reset, captured by every fetch, and checked
+        #: before that fetch is allowed to touch anything.
+        self._generation = 0
 
         self._handshake(actions_per_chunk)
         # The static default covers a fast policy; the threshold below grows it
@@ -306,10 +312,16 @@ class RemoteActionSource:
         argument to the rig and the source without knowing which one uses it.
         """
         with self._lock:
+            self._generation += 1
             self._queue.clear()
             self._pending = None
             self.last_chunk = None
             self._stale_on_arrival = False
+            # A fetch for the previous attempt may still be on the socket. It is
+            # abandoned here rather than waited for -- its answer is void either
+            # way -- so the slot it holds is released now, or the first tick of
+            # the new attempt would find the source already busy.
+            self._inflight = False
         self._handshake(self.actions)
 
     def drain(self) -> None:
@@ -494,6 +506,9 @@ class RemoteActionSource:
         from common.policy_wire import decode_chunk, encode_request
 
         started = time.perf_counter()
+        # The attempt this request belongs to. Everything below is conditional
+        # on it still being the current one: see _obsolete.
+        generation = self._generation
         try:
             message = encode_request(
                 steps, self.task, session=self.session, seq=seq, actions=self.actions
@@ -501,14 +516,20 @@ class RemoteActionSource:
             chunk, header = decode_chunk(self._rpc("/act", message))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace").strip()[:200]
+            if self._obsolete(generation):
+                return
             self.last_error = f"HTTP {exc.code}: {body}"
             if 400 <= exc.code < 500:
                 self.fatal = self.last_error
         except (
             Exception
         ) as exc:  # noqa: BLE001 - a transport hiccup must not kill the loop
+            if self._obsolete(generation):
+                return
             self.last_error = f"{type(exc).__name__}: {exc}"
         else:
+            if self._obsolete(generation):
+                return
             round_trip = time.perf_counter() - started
             arrived = np.asarray(chunk, dtype=float)
             with self._lock:
@@ -534,7 +555,31 @@ class RemoteActionSource:
                     self.last_error = None
         finally:
             with self._lock:
-                self._inflight = False
+                # Only if this fetch is still the current one: reset() already
+                # released the slot, and a newer request may hold it by now.
+                if generation == self._generation:
+                    self._inflight = False
+
+    def _obsolete(self, generation: int) -> bool:
+        """Has :meth:`reset` moved on since this fetch asked its question?
+
+        A fetch runs on its own thread for every non-blocking strategy, so one
+        outlives the episode that started it whenever an attempt ends while a
+        chunk is in the air. Its answer describes a scene that has since been
+        rebuilt, and its session is one the host has replaced -- so neither of
+        its outcomes may be acted on.
+
+        In practice it is the REFUSAL that arrives: tool/policy_server.py
+        answers a superseded session with 409, and a 4xx is otherwise fatal, so
+        a sweep ended at an episode boundary it was right to cross. That check
+        is also what stops the other outcome, a chunk planned for the previous
+        scene being spliced into this one and driving the arms at objects that
+        have since been put back. Dropping both here makes that true of the
+        client rather than only of the one host, which matters for a host with
+        no session of its own to check.
+        """
+        with self._lock:
+            return generation != self._generation
 
     def _release_due(self) -> None:
         """Count a withheld chunk down one tick, splicing it when due.

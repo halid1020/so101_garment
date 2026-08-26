@@ -70,6 +70,11 @@ cd "$REPO_ROOT"
 source setup.sh
 export HF_LEROBOT_HOME="${SCRATCH}/hf_lerobot"   # staged dataset: <here>/local/<DATASET>
 export SO101_OUTPUT_DIR="${SCRATCH}/so101_outputs"
+# A GPU here can be SHARED with another tenant's job (MEASURED on comp247: a
+# co-tenant held 120 GB of a 140 GB card and pi0.5 died 242 MiB short of the
+# rest). Nothing on this side can reserve the card, but not fragmenting what is
+# left is free, and the failure was that marginal.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 mkdir -p "$SO101_OUTPUT_DIR" "${HF_LEROBOT_HOME}/local"

@@ -39,10 +39,11 @@ class _StubHandler(BaseHTTPRequestHandler):
         state = self.server.state
         if self.path == "/reset":
             state["resets"] += 1
+            state["session"] = f"session-{state['resets']}"
             self._send(
                 json.dumps(
                     {
-                        "session": "session-1",
+                        "session": state["session"],
                         "policy_type": "act",
                         "cameras": ["central"],
                         "n_obs_steps": 1,
@@ -54,7 +55,17 @@ class _StubHandler(BaseHTTPRequestHandler):
             )
             return
 
-        state["requests"].append(decode_request(body))
+        request = decode_request(body)
+        gate = state.get("gate")
+        if gate is not None:
+            # Held open so a test can reset the source while this request is
+            # still on the socket -- the race, made repeatable.
+            gate.wait(5)
+        if request.get("session") != state["session"]:
+            # What tool/policy_server.py answers a session it has replaced.
+            self.send_error(409, "session is not the one that reset this server")
+            return
+        state["requests"].append(request)
         served = len(state["requests"])
         # Row k of request n is (n * 100 + k), in every channel.
         rows = np.arange(CHUNK, dtype=np.float32)[:, None] + served * 100
@@ -64,7 +75,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 class RemoteSourceCase(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _StubHandler)
-        self.server.state = {"requests": [], "resets": 0}
+        self.server.state = {"requests": [], "resets": 0, "session": ""}
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.addCleanup(self.server.server_close)
@@ -361,6 +372,65 @@ class TestTaskCanBeSetLater(RemoteSourceCase):
         source.set_task("pick up the cube")
         self.fill(source)
         self.assertEqual(self.server.state["requests"][-1]["task"], "pick up the cube")
+
+
+class TestAChunkThatOUTLIVESItsAttempt(RemoteSourceCase):
+    """Every non-blocking strategy fetches on its own thread, so a request can
+    still be on the socket when the episode that asked for it ends. Both of its
+    outcomes belong to a scene that no longer exists.
+    """
+
+    def gated(self):
+        """A source with one request held open on the host."""
+        gate = threading.Event()
+        self.server.state["gate"] = gate
+        self.addCleanup(gate.set)
+        source = self.source(strategy="append")
+        source.offer(*self.observation())
+        for _ in range(200):  # let the fetch thread reach the socket
+            if self.server.state.get("session"):
+                break
+            time.sleep(0.005)
+        return source, gate
+
+    def test_its_chunk_is_not_spliced_into_the_next_one(self):
+        # Held by the client, not only by the host: our own server refuses the
+        # superseded session before it plans anything, but a host without one
+        # would answer, and those actions were planned for objects that have
+        # since been put back.
+        source, gate = self.gated()
+
+        source.reset()
+        gate.set()
+        time.sleep(0.3)
+
+        self.assertEqual(source.depth, 0)
+        self.assertIsNone(source.last_chunk)
+
+    def test_and_its_refusal_does_not_end_the_run(self):
+        # The visible half: the host answers a superseded session with 409, and
+        # a 4xx is otherwise fatal -- which ends a sweep at an episode boundary
+        # it was right to cross.
+        source, gate = self.gated()
+
+        source.reset()
+        gate.set()
+        time.sleep(0.3)
+
+        self.assertIsNone(source.fatal)
+
+    def test_so_the_next_attempt_can_still_ask_for_a_plan(self):
+        # The abandoned fetch held the one request slot; reset frees it, or the
+        # new attempt would never send anything.
+        source, gate = self.gated()
+
+        source.reset()
+        gate.set()
+        self.server.state["gate"] = None
+        self.fill(source)
+
+        self.assertGreater(source.depth, 0)
+        self.assertIsNone(source.fatal)
 
 
 if __name__ == "__main__":

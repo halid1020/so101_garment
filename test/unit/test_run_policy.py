@@ -307,8 +307,9 @@ class TestCameraMap(unittest.TestCase):
 class _FakeTwinEnv:
     """As much of the twin as ``build_sim_rig`` touches, and no MuJoCo."""
 
-    def __init__(self, task):
+    def __init__(self, task, fps=None):
         self.task = task
+        self.fps = fps
         self.scenarios: list = []
 
     def reset(self, scenario):
@@ -345,6 +346,14 @@ class TestBuildSimRig(unittest.TestCase):
 
         self.assertEqual(rig.fps, 25.0)
 
+    def test_and_the_twin_is_STEPPED_at_that_rate_too(self):
+        # A control tick is a whole number of integrator substeps, so an env
+        # left at the default while the loop runs at another rate advances a
+        # different amount of simulated time per action than the policy expects.
+        _, env, _ = self.build(hz=25.0)
+
+        self.assertEqual(env.fps, 25.0)
+
 
 class TestSimTaskString(unittest.TestCase):
     """--sim alone is a whole command: the twin knows its own task."""
@@ -352,9 +361,10 @@ class TestSimTaskString(unittest.TestCase):
     def test_each_sim_task_has_a_language_string_to_condition_on(self):
         from sim_datagen.env import TASKS
 
-        for name in ("single", "handover"):
+        for name in ("single", "handover", "handover_split"):
             self.assertTrue(TASKS[name].strip())
         self.assertNotEqual(TASKS["single"], TASKS["handover"])
+        self.assertNotEqual(TASKS["handover"], TASKS["handover_split"])
 
 
 class _RecordingRig:
