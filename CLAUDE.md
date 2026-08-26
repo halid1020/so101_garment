@@ -104,15 +104,19 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 - `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
   controller, and which selection does not. Pure string work over the by-path
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
-  preflight can both warn before a session starts. MEASURED: every camera on the
-  rig is USB 2.0, each 480 Mbit/s bus admits about **three** 640x480 MJPG
-  streams, and the rig's seven cameras do NOT all fit — past the ceiling a camera
-  opens and then delivers nothing at all, which stream loses is **random**, and
-  neither a lower fps nor a smaller frame buys another stream (both measured).
-  The four tactile cameras alone always fit. The uvcvideo FIX_BANDWIDTH quirk
-  (`quirks=128`) is the obvious remedy and was MEASURED not to help — module
-  reloaded, devices re-enumerated, same two streams refused — so don't spend time
-  on it; `quirks_active()` only reports its state.
+  preflight can both warn before a session starts. MEASURED: every camera is USB
+  2.0, so bandwidth is allocated per HOST CONTROLLER (a hub adds none — these
+  hubs are already USB 3.0 and it changes nothing), and the rig's seven cameras
+  do NOT all fit: **five** do. Capacity is not uniform — one controller took
+  three streams, the other two, because the tactile cameras cost more than the
+  RGB ones. Which stream is refused is **random**, and a refused one opens and
+  then delivers nothing for ever. Neither a lower rate nor a smaller frame helps:
+  each camera reports exactly ONE frame interval per format+size (tactile: 60 fps
+  at 640x480, 30 fps at 320x240; wrists: 30 fps), so there is no slower mode to
+  ask for — which is also why `fps:` in `recording.yaml` cannot slow a camera.
+  The uvcvideo FIX_BANDWIDTH quirk was MEASURED not to help (uvcvideo appears to
+  skip it for compressed formats); `quirks_active()` only reports its state. The
+  fix is a third controller — see `documents/rig_web.md`.
 - `src/common/recording/dataset_check.py` — is a dataset whole? The counted
   episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
   offset invariant, and the repair for an episode nobody wrote. Pure parquet +

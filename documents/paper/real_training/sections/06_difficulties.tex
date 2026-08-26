@@ -55,9 +55,12 @@ produce slow streams. Two further properties decide how this must be handled.
 Which stream is refused is arbitrary --- repeated runs of one configuration
 denied different cameras --- so the symptom presents as an unreliable camera
 rather than as a budget, and looking for the fault in the camera is the natural
-and wrong response. Asking for less does not help either: neither a lower
-requested rate nor a smaller frame admitted a single extra stream, because these
-cameras reserve their bandwidth by declaration rather than by what they send.
+and wrong response. Asking for less does not help either, and the reason is
+structural rather than incidental: each of these cameras offers exactly one frame
+rate for a given image format and size, so there is no slower mode to request.
+Halving the frame size does move the fingertip cameras into their slower mode,
+and even that admitted no additional stream, because the reservation follows what
+a camera declares rather than what it sends.
 
 The design consequence follows from the first property. A refusal that stays
 silent is indistinguishable from a broken camera, so a stream that opens must be
@@ -70,10 +73,19 @@ are competing on it. The host driver does offer a setting that makes it compute 
 stream's true bandwidth need rather than trust the camera's declaration, and it
 is the natural remedy to reach for; we tried it, reloading the driver so that
 every device was enumerated under the new setting, and it admitted no additional
-stream. We report it because the ceiling is easier to accept once the obvious
-escape from it has been measured and found not to help. What remains is a
-decision rather than a repair: record a set of views that fits the buses, or
-distribute the cameras across more of them.
+stream --- the fixup appears not to apply to the compressed transport this
+platform requires. We report it because the ceiling is easier to accept once the
+obvious escape from it has been measured and found not to help.
+
+What remains is not a repair but a wiring decision, and one more measurement
+settles how to make it. Capacity is not uniform across controllers, because the
+views do not cost the same: one controller carried the overhead camera, a wrist
+camera and one fingertip camera, while another could not carry a wrist camera and
+two fingertip cameras. The fingertip views are the expensive ones. Since a hub
+only fans out a controller's bus rather than adding to it, the remedy is to
+spread the cameras over more controllers than the two the hubs occupy, in groups
+the measurement above has shown to fit --- or, until then, to record a subset
+that fits and say so.
 
 The third is the one that actually costs a session: a hub failing as a unit and
 taking every device behind it. Losing one stream is recoverable, because the

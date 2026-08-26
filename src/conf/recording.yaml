@@ -70,24 +70,36 @@ realsense:
 #
 # USB BUDGET — the hard ceiling on how many of these streams can run at once.
 # Every camera on this rig is a USB 2.0 device, so each one lands on a 480 Mbit/s
-# bus no matter which socket it is in, and each bus has a single isochronous
-# bandwidth budget shared by everything on it. MEASURED with the seven streams
-# below: any camera alone is fine, but with all seven open exactly two are
-# refused, and WHICH two is random — it is whichever loses the race to reserve
-# bandwidth. A refused stream opens and then never delivers a frame.
+# bus no matter which socket it is in, and that bandwidth is allocated by the
+# HOST CONTROLLER across the whole bus. A hub is a repeater, not extra capacity:
+# these hubs are already USB 3.0 and it makes no difference, because the cameras
+# are USB 2.0 and enumerate on the controller's 480 Mbit/s side regardless.
 #
-# Requesting a lower rate or a smaller frame does NOT help (15 fps and 320x240
-# were both measured, and both still lost two streams): these cameras declare a
-# fixed bandwidth need regardless of the format negotiated. The per-bus ceiling
-# measured here is 3 streams. The four tactile cameras alone fit comfortably
-# (28.6 fps each), so a tactile-only session is always safe.
+# MEASURED with the seven streams below: any camera alone is fine, but with all
+# seven open exactly two are refused, and WHICH two is random — it is whichever
+# loses the race to reserve bandwidth. A refused stream opens and then never
+# delivers a frame. The per-controller capacity is NOT uniform, because the
+# cameras do not cost the same: one controller carried the overhead camera plus
+# a wrist plus one tactile (three), while the other could not carry a wrist plus
+# two tactile (two). The tactile cameras are the expensive ones. Total: five.
 #
-# The obvious lever is the uvcvideo FIX_BANDWIDTH quirk (quirks=128), which makes
-# the driver compute the real bandwidth need rather than trust what the camera
-# declares. It was tried here, with the module reloaded and every device
-# re-enumerated: it changed NOTHING — the same two streams were refused. Do not
-# spend time on it again. tool/collect_preflight.py reports whether it is on, and
-# warns when a selection puts more streams on one bus than the ceiling allows.
+# Asking for less does not help, and here is why, so nobody tries it twice.
+# Each camera reports exactly ONE frame rate per format and size: the tactile
+# cameras offer 60 fps at 640x480 MJPG and 30 fps at 320x240 and nothing else;
+# the wrist cameras offer 30 fps and nothing else. There is no lower rate to
+# select — which is also why the fps key below cannot slow a camera down.
+# Halving the frame size, which does move a tactile camera to its 30 fps mode,
+# was measured and still bought no extra stream.
+#
+# The uvcvideo FIX_BANDWIDTH quirk (quirks=128) is the obvious lever and was
+# tried, with the module reloaded and every device re-enumerated: it changed
+# NOTHING. uvcvideo appears to skip that fixup for compressed formats, and
+# everything here is MJPEG.
+#
+# What remains is physical: seven cameras need a third host controller. See
+# documents/rig_web.md for the measured split that fits.
+# tool/collect_preflight.py reports the grouping and warns when a selection puts
+# more streams on one controller than it can carry.
 cameras:
   # Optional per-camera keys (either may be omitted; the defaults apply):
   #   fourcc:   capture pixel format, default MJPG. Compressed on the wire is

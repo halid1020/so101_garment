@@ -25,7 +25,7 @@ import aiohttp  # type: ignore[import]
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.controls import control_steps
-from common.recording.monitor_server import encode_jpeg, mjpeg_part
+from common.recording.monitor_server import encode_frame_batch, encode_jpeg, mjpeg_part
 from common.web.session import resolve_plan
 from common.web.util import in_executor
 
@@ -255,6 +255,42 @@ async def handle_live_streams(request: web.Request) -> web.Response:
     )
 
 
+async def handle_live_frames(request: web.Request) -> web.Response:
+    """Every live stream's latest frame, plus who they are, in ONE response.
+
+    A superset of ``/api/live/streams`` on purpose: the live pane needs the
+    names, the source and the missing list alongside the pixels, and asking for
+    them separately would spend a second connection to save nothing. See
+    ``encode_frame_batch`` for why one response per tick rather than one endless
+    stream per camera.
+    """
+    app = request.app
+    if app["session"].running():
+        body = await monitor_get(app, "/frames") or {}
+        return web.json_response(
+            {
+                "source": "session",
+                "streams": body.get("streams", []),
+                # The session names its own streams and reports staleness through
+                # the status route; nothing here can be absent-but-expected.
+                "missing": [],
+                "frames": body.get("frames", {}),
+            }
+        )
+    preview = app["preview"]
+    names = preview.stream_names()
+    frames = {n: preview.frame(n) for n in names}
+    encoded = await in_executor(app, encode_frame_batch, frames)
+    return web.json_response(
+        {
+            "source": "preview",
+            "streams": names,
+            "missing": preview.missing(),
+            "frames": encoded,
+        }
+    )
+
+
 async def handle_live_stream(request: web.Request) -> web.StreamResponse:
     name = request.match_info["name"]
     app = request.app
@@ -369,6 +405,7 @@ def add_session_routes(app: web.Application) -> None:
             web.post("/api/session/key", handle_session_key),
             web.post("/api/session/stop", handle_session_stop),
             web.get("/api/live/streams", handle_live_streams),
+            web.get("/api/live/frames", handle_live_frames),
             web.get("/api/live/{name}.mjpg", handle_live_stream),
             web.post("/api/preview/start", handle_preview_start),
             web.post("/api/preview/stop", handle_preview_stop),

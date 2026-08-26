@@ -29,8 +29,10 @@ P5  Sharing a peripheral bus: separate the THREE things this conflates, because
         failures look nothing alike. Two further properties matter and both are
         measured: WHICH stream is refused is arbitrary, differing between runs
         of the same configuration, so the symptom presents as an unreliable
-        camera rather than a budget; and asking for less does not help, because
-        a lower rate or a smaller frame buys no extra stream. Draw the design
+        camera rather than a budget; and asking for less does not help, for a
+        structural reason — each camera offers exactly ONE rate per format and
+        size, so there is no slower mode to request, and even halving the frame
+        size (which does select the slower mode) admits no extra stream. Draw the design
         consequence: a refusal that is silent is indistinguishable from a broken
         camera, so the recorder must treat an opened-but-empty stream as a
         failed open, refuse to start, and name the bus — which is what turned an
@@ -39,7 +41,13 @@ P5  Sharing a peripheral bus: separate the THREE things this conflates, because
         trusting the camera was tried, with the driver reloaded so every device
         enumerated under it, and admitted no extra stream. Report it because the
         ceiling is easier to accept once the obvious remedy has been measured
-        and found not to help. What is left is a decision, not a repair.
+        and found not to help (it appears not to apply to compressed transport,
+        which this platform requires). What is left is a wiring decision, not a
+        repair, and one more measurement guides it: capacity differs per
+        controller because the views cost differently — the fingertip cameras
+        are the expensive ones. A hub only fans out a controller's bus rather
+        than adding to it, so the remedy is more controllers, in groups measured
+        to fit; until then, record a subset that fits and say so.
     (c) The failure that actually costs a session is a whole hub going, which
         takes every device behind it at once. Argue the asymmetry: a stream lost
         is recoverable, because the recorder holds the episode and resumes it,

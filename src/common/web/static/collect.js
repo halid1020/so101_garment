@@ -4,8 +4,15 @@
 
 let sessionState = null;
 let liveStreams = [];
+let liveTiles = {};
 let controlsByMode = {};
 let collectTimer = null;
+let tileTimer = null;
+let tileBusy = false;
+
+// The tiles are moving pictures, so they refresh far more often than the
+// session status does. They can afford to: one request carries every camera.
+const TILE_PERIOD_MS = 100;
 
 function collectVisible() {
   return !document.querySelector('#pane-collect').hidden;
@@ -279,7 +286,7 @@ function renderJoints(monitor) {
 
 async function refreshTiles() {
   let body;
-  try { body = await j('/api/live/streams'); }
+  try { body = await j('/api/live/frames'); }
   catch (e) { return; }
   const names = body.streams || [];
   const missing = body.missing || [];
@@ -300,18 +307,45 @@ async function refreshTiles() {
   $('#live-source').textContent = names.length
     ? (preview ? 'preview (no session running)' : 'live from the session')
     : 'no live view';
-  if (names.join() === liveStreams.join()) return;
-  liveStreams = names;
-  const tiles = $('#live-tiles'); tiles.innerHTML = '';
-  for (const name of names) {
-    const fig = document.createElement('figure');
-    fig.className = 'tile';
-    // The query parameter is a cache-buster: an <img> pointed at a multipart
-    // stream keeps the connection open, so a stale one must not be reused.
-    fig.innerHTML = `<img src="/api/live/${encodeURIComponent(name)}.mjpg?t=${Date.now()}">
-                     <figcaption>${name}</figcaption>`;
-    tiles.appendChild(fig);
+  // Rebuild the tile elements only when the stream SET changes; the pictures
+  // themselves are repainted every tick below.
+  if (names.join() !== liveStreams.join()) {
+    liveStreams = names;
+    liveTiles = {};
+    const tiles = $('#live-tiles'); tiles.innerHTML = '';
+    for (const name of names) {
+      const fig = document.createElement('figure');
+      fig.className = 'tile';
+      const img = document.createElement('img');
+      img.alt = name;
+      const cap = document.createElement('figcaption');
+      cap.textContent = name;
+      fig.append(img, cap);
+      tiles.appendChild(fig);
+      liveTiles[name] = img;
+    }
   }
+  // A name absent from the batch keeps whatever its tile last showed: a camera
+  // merely between frames should not make its tile flicker.
+  const frames = body.frames || {};
+  for (const name in frames) {
+    const img = liveTiles[name];
+    if (img) img.src = 'data:image/jpeg;base64,' + frames[name];
+  }
+}
+
+// One request in flight at a time, and none at all while the tab is off screen
+// — the same discipline as collectTick, for the same reason: a slow tick must
+// never be allowed to queue up behind itself.
+async function tileTick() {
+  if (collectVisible() && !tileBusy) {
+    tileBusy = true;
+    try { await refreshTiles(); }
+    catch (e) { /* the next tick tries again */ }
+    finally { tileBusy = false; }
+  }
+  clearTimeout(tileTimer);
+  tileTimer = setTimeout(tileTick, TILE_PERIOD_MS);
 }
 
 // ── Session polling ─────────────────────────────────────────────────────────
@@ -380,7 +414,6 @@ async function pollSession() {
   if (s.running) renderControls(s.controls);
   $('#session-log').textContent = (s.tail || []).slice(-200).join('\n');
   $('#session-log').scrollTop = $('#session-log').scrollHeight;
-  await refreshTiles();
 }
 
 async function loadPreflight() {
@@ -420,6 +453,7 @@ async function collectTick() {
 window.addEventListener('load', () => {
   loadCollectConfig().catch(e => { $('#c-err').textContent = e.message; });
   collectTimer = setTimeout(collectTick, 300);
+  tileTimer = setTimeout(tileTick, 300);
   // app.js chooses the pane before this file is parsed, so a console opened
   // straight on #collect has to be told once, here.
   if (collectVisible()) window.onPaneShown('collect');

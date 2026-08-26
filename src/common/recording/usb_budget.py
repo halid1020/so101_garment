@@ -8,32 +8,46 @@ the code, is what limits how many streams can record at once.
 MEASURED with the rig's seven streams at 640x480 MJPG, two controllers
 (``pci-0000:05:00.4`` carrying four cameras, ``pci-0000:06:00.4`` carrying three):
 
-===================================  ==========================================
-trial                                result
-===================================  ==========================================
-each camera alone                    all seven fine, 15.9-26.4 fps
-all seven together                   exactly two refused, five at 21-27 fps
-all seven together at 15 fps         still two refused
-all seven together at 320x240        still two refused
-one bus alone, its four cameras      three run, one refused
-one bus alone, its three cameras     two run, one refused
-the four tactile cameras alone       all four fine, 28.4-28.7 fps
-===================================  ==========================================
+=========================================  ====================================
+trial                                      result
+=========================================  ====================================
+each camera alone                          all seven fine, 15.9-26.4 fps
+all seven together                         exactly two refused, five at full rate
+all seven, tactile at 320x240              still two refused
+first bus alone, its four cameras          three run, one refused
+second bus alone, its three cameras        two run, one refused
+the four tactile cameras alone             all four fine, 28.4-28.7 fps
+=========================================  ====================================
 
 Two things in that table matter more than the counts. First, WHICH streams are
 refused is random -- it is whichever loses the race to reserve bandwidth, so the
 same configuration fails differently on consecutive runs and looks like a flaky
-camera rather than a budget. Second, asking for less does not help: these cameras
-declare a fixed bandwidth need regardless of the format negotiated, so neither a
-lower frame rate nor a smaller frame buys a single extra stream.
+camera rather than a budget. Second, the per-bus capacity is NOT uniform: one
+bus took three streams and the other only two, because the cameras do not cost
+the same. The tactile cameras are the expensive ones -- a bus carried the
+overhead camera plus a wrist plus one tactile, but could not carry a wrist plus
+two tactile.
+
+Asking for less does not help, and the reason is worth recording so nobody
+tries it twice. ``VIDIOC_ENUM_FRAMEINTERVALS`` reports exactly ONE frame
+interval per format and size on every camera here -- the tactile cameras offer
+60 fps at 640x480 MJPG and 30 fps at 320x240, nothing else; the wrist cameras
+offer 30 fps and nothing else. There is no lower rate to select, which is also
+why OpenCV's ``CAP_PROP_FPS`` appears to be ignored: the request has nowhere to
+go. And halving the frame SIZE, which does move the camera to its 30 fps mode,
+still bought no extra stream.
 
 The obvious software lever is the uvcvideo FIX_BANDWIDTH quirk, which makes the
 driver compute the real need instead of trusting the camera's declaration.
 MEASURED on this rig, with the module reloaded and every device re-enumerated
 under ``quirks=128``: it changes nothing at all -- the same two streams are
-refused and the rest keep the same rates. So it is not a remedy here, and
-:func:`quirks_active` exists to report the state rather than to promise one. The
-ceiling above is what holds with the quirk on or off.
+refused and the rest keep the same rates. The likely reason is that uvcvideo
+skips that fixup for compressed formats, and everything here is captured as
+MJPEG. So it is not a remedy, and :func:`quirks_active` exists to report the
+state rather than to promise one.
+
+What remains is physical: a stream needs a controller with room, so seven
+cameras need a third one. The counts above say which cameras can share.
 
 The grouping here is deliberately pure and string-only: it reads the stable
 by-path aliases already stored in ``sensor_map.yaml`` and never opens a device,

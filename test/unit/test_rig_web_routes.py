@@ -244,6 +244,36 @@ class TestCollectTab(ConsoleTestCase):
         resp = await self.client.get("/api/live/central.mjpg")
         self.assertEqual(resp.status, 409)
 
+    async def test_the_batched_frames_route_answers_an_idle_console(self):
+        # It must ANSWER rather than refuse: the live pane polls it continuously
+        # and an idle console is the normal state, not an error.
+        body = await (await self.client.get("/api/live/frames")).json()
+        self.assertEqual(body["source"], "preview")
+        self.assertEqual(body["streams"], [])
+        self.assertEqual(body["frames"], {})
+        self.assertEqual(body["missing"], [])
+
+    async def test_the_batched_frames_route_carries_every_preview_camera(self):
+        # One response for N cameras. Each tile used to hold its own endless
+        # multipart stream, which spends one of the browser's ~6 connections per
+        # origin, so past four tiles the rest never loaded.
+        import numpy as np
+
+        names = ["central", "left_arm_left_gripper", "wrist_camera_left"]
+        frames = {n: np.full((8, 8, 3), 9, dtype=np.uint8) for n in names}
+        frames["left_arm_left_gripper"] = None  # published nothing yet
+        preview = self.app["preview"]
+        preview.stream_names = lambda: names
+        preview.frame = lambda n: frames[n]
+        preview.missing = lambda: [{"name": "wrist_camera_right", "reason": "x"}]
+
+        body = await (await self.client.get("/api/live/frames")).json()
+        self.assertEqual(body["streams"], names)
+        # A camera between frames keeps its tile rather than blanking it.
+        self.assertEqual(sorted(body["frames"]), ["central", "wrist_camera_left"])
+        self.assertTrue(body["frames"]["central"])
+        self.assertEqual(body["missing"][0]["name"], "wrist_camera_right")
+
     async def test_pressing_the_episode_key_without_a_session_is_refused(self):
         resp = await self.post("/api/session/episode", {})
         self.assertEqual(resp.status, 409)

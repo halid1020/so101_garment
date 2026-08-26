@@ -95,6 +95,39 @@ def key_refusal(key: str, allowed: "Iterable[str]", known: "Iterable[str]") -> s
     return ""
 
 
+def encode_frame_batch(
+    frames: "dict[str, Any]",
+    quality: int = DEFAULT_QUALITY,
+    max_width: int = DEFAULT_MAX_WIDTH,
+    encoder: "Callable | None" = None,
+) -> "dict[str, str]":
+    """Named frames as base64 JPEGs, for one batched response. Unit-tested.
+
+    Why a batch exists at all: a ``multipart/x-mixed-replace`` stream never
+    completes, so a page that gives each camera its own stream spends one of the
+    browser's ~6 connections per origin on each tile, for as long as the tile is
+    on screen. Add the page's own pollers and only four tiles ever load -- the
+    rest queue behind the limit and stay black, however healthy the cameras are.
+    One response carrying every frame costs one connection whatever the camera
+    count, which is the only property that scales.
+
+    A stream with nothing published yet is LEFT OUT rather than sent as null, so
+    the viewer keeps whatever that tile last showed. A camera between frames
+    should not make its tile flicker.
+    """
+    import base64
+
+    enc = encoder or encode_jpeg
+    out: "dict[str, str]" = {}
+    for name, rgb in frames.items():
+        if rgb is None:
+            continue
+        jpeg = enc(rgb, quality, max_width)
+        if jpeg is not None:
+            out[name] = base64.b64encode(jpeg).decode("ascii")
+    return out
+
+
 def encode_jpeg(
     rgb, quality: int = DEFAULT_QUALITY, max_width: int = DEFAULT_MAX_WIDTH
 ):
@@ -200,6 +233,7 @@ class MonitorServer:
                 web.get("/streams", self.handle_streams),
                 web.get("/status", self.handle_status),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
+                web.get("/frames", self.handle_frames),
                 web.post("/key", self.handle_key),
             ]
         )
@@ -325,6 +359,20 @@ class MonitorServer:
             target=self.key_callbacks[key], name=f"monitor-key-{key}", daemon=True
         ).start()
         return web.json_response({"pressed": key})
+
+    async def handle_frames(self, request: web.Request) -> web.Response:
+        """Every stream's latest frame in one response. See encode_frame_batch.
+
+        The console polls this for its live tiles instead of opening one endless
+        stream per camera, which is what let a seven-camera rig show four tiles.
+        """
+        names = self.stream_names()
+        frames = {n: self.data_manager.get_rgb_image(n) for n in names}
+        loop = asyncio.get_running_loop()
+        encoded = await loop.run_in_executor(
+            None, encode_frame_batch, frames, self.quality, self.max_width
+        )
+        return web.json_response({"streams": names, "frames": encoded})
 
     async def handle_mjpeg(self, request: web.Request) -> web.StreamResponse:
         name = request.match_info["name"]

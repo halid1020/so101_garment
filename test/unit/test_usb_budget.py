@@ -1,10 +1,13 @@
 """Unit tests for the per-USB-controller camera budget.
 
-The rule these encode is measured, not theoretical: every camera on the rig is a
-USB 2.0 device, each 480 Mbit/s bus has one isochronous bandwidth budget, and
-about three 640x480 MJPG streams fit in it. A stream refused that bandwidth opens
-and then delivers nothing for ever, and WHICH one loses is random -- so the point
-of this module is to warn about the wiring before anything is opened.
+The rule these encode is measured, not theoretical. Every camera on the rig
+reports bcdUSB 2.00 and no SuperSpeed capability, so each lands on a 480 Mbit/s
+bus whose isochronous bandwidth the HOST CONTROLLER allocates across everything
+on it -- a hub fans that bus out rather than adding to it. About three 640x480
+MJPG streams fit, fewer when the expensive tactile cameras are among them. A
+stream refused that bandwidth opens and then delivers nothing for ever, and WHICH
+one loses is random -- so the point of this module is to warn about the wiring
+before anything is opened.
 """
 
 import unittest

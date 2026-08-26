@@ -298,32 +298,57 @@ clears it from whatever name it had before, so swapping two names is done
 by reassigning, not by hunting for the stale entry.
 
 **The USB budget.** Every camera on the rig is a USB 2.0 device, so each one
-lands on a 480 Mbit/s bus whatever socket it is in, and each bus has one
-bandwidth budget shared by everything on it. About **three** streams fit per
-bus, and the rig has seven cameras across two buses — so the full set does not
-fit, and the four tactile cameras on their own always do.
+lands on a 480 Mbit/s bus whatever socket it is in — and that bandwidth is
+allocated by the **host controller**, across the whole bus. This is the single
+most important thing to know about it: **a hub does not add capacity.** These
+hubs are already USB 3.0 and it makes no difference, because the cameras are
+USB 2.0 and enumerate on the controller's 480 Mbit/s side regardless. Buying a
+better hub will not fix it.
 
-Past the ceiling a camera does not run slowly; it opens normally and then
-delivers nothing at all. **Which** camera loses is random, so the same
-selection fails differently on consecutive runs and looks like a flaky camera
-rather than a budget. Asking for less does not help: a lower frame rate and a
-smaller frame were both measured, and neither admits another stream.
+MEASURED with all seven: exactly **two are refused**, and which two is *random*,
+so the same selection fails differently on consecutive runs and looks like a
+flaky camera rather than a budget. Past the ceiling a camera does not run
+slowly — it opens normally and then delivers nothing at all. Capacity is not
+even per controller, because the cameras do not cost the same:
 
-Three things surface this. The readiness check counts the enabled streams
-against the bus each sits on and names the over-subscribed one; the Collect
-form repeats that warning for the streams you actually selected; and a camera
-that opens without delivering is treated as a failed open, so the session
-refuses to start rather than looping on it.
+| controller | cameras attached | actually run |
+|---|---|---|
+| `pci-0000:05:00.4` | central, wrist_camera_left, both left grippers | **3** |
+| `pci-0000:06:00.4` | wrist_camera_right, both right grippers | **2** |
 
-The obvious lever is the uvcvideo `FIX_BANDWIDTH` quirk, which makes the driver
-compute the real bandwidth need instead of trusting what the camera declares.
-**It was tried on this rig and made no difference** — module reloaded, every
-device re-enumerated, and the same two streams were still refused. The readiness
-check reports whether it is on, so nobody spends an afternoon rediscovering that.
+The tactile cameras are the expensive ones: a controller carried the overhead
+camera plus a wrist plus one tactile, but could not carry a wrist plus two.
 
-What does work is choosing a set that fits: the four tactile cameras together,
-or a mix that keeps each bus at or under three streams. The readiness check's
-hub grouping tells you which camera sits on which bus.
+**Asking for less does not help, and it cannot.** Each camera reports exactly one
+frame rate per format and size — the tactile cameras offer 60 fps at 640×480
+MJPG and 30 fps at 320×240, the wrist cameras offer 30 fps, and that is the whole
+list. There is no slower mode to select, which is also why the `fps:` key in
+`recording.yaml` cannot slow a camera down. Halving the frame size (which does
+move a tactile camera to its 30 fps mode) was measured and still bought nothing.
+The uvcvideo `FIX_BANDWIDTH` quirk was tried with the module reloaded and every
+device re-enumerated, and changed nothing either; uvcvideo appears to skip that
+fixup for compressed formats, and everything here is MJPEG.
+
+### Making all seven fit
+
+The answer is a **third host controller**, not a better hub. This laptop is an
+AMD Rembrandt with five xHCI controllers and at least one entirely free, so the
+cameras only need spreading further. Plug a third hub into a physical port that
+lands on an unused controller — check with `lsusb -t`, where each `/: Bus NNN`
+line is one controller — and split the cameras like this. Every group below is
+one that was measured to work:
+
+| controller | cameras |
+|---|---|
+| first (existing hub) | `central`, `wrist_camera_left`, `left_arm_left_gripper` |
+| second (existing hub) | `wrist_camera_right`, `right_arm_right_gripper` |
+| third (new) | `left_arm_right_gripper`, `right_arm_left_gripper` |
+
+Then re-run `tool/test_sensor_rates.py --assign` (or the Signals tab) so the
+by-path aliases follow the cameras to their new sockets, and check the readiness
+check's grouping. Until then, a set that fits is a deliberate choice: the four
+tactile cameras together always work, as does any split respecting the table
+above.
 
 **Arms.** Open a port and wiggle ONE arm by hand: the joints that move are
 shown live, so the port belonging to that arm is obvious. The bus is opened

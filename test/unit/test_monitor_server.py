@@ -19,6 +19,7 @@ from common.recording.monitor_server import (
     BOUNDARY,
     MonitorServer,
     allowed_keys_for,
+    encode_frame_batch,
     encode_jpeg,
     joint_snapshot,
     key_refusal,
@@ -152,6 +153,57 @@ class TestPureHelpers(unittest.TestCase):
 
     def test_a_missing_frame_encodes_to_nothing(self):
         self.assertIsNone(encode_jpeg(None))
+
+
+class TestEncodeFrameBatch(unittest.TestCase):
+    """One response for every camera, instead of one endless stream each.
+
+    The batch exists because a multipart stream never completes: a page giving
+    each camera its own stream spends one of the browser's ~6 connections per
+    origin on every tile, and past four of them the rest never load at all.
+    """
+
+    def _frames(self):
+        return {n: np.full((8, 8, 3), 7, dtype=np.uint8) for n in ("a", "b")}
+
+    def test_every_frame_comes_back_base64(self):
+        import base64
+
+        out = encode_frame_batch(self._frames(), encoder=lambda *_a: b"JPEGBYTES")
+        self.assertEqual(sorted(out), ["a", "b"])
+        self.assertEqual(base64.b64decode(out["a"]), b"JPEGBYTES")
+
+    def test_a_stream_with_no_frame_yet_is_omitted_not_null(self):
+        # The viewer keeps whatever that tile last showed; a camera merely
+        # between frames must not make its tile flicker.
+        frames = {**self._frames(), "c": None}
+        out = encode_frame_batch(frames, encoder=lambda *_a: b"J")
+        self.assertNotIn("c", out)
+        self.assertEqual(sorted(out), ["a", "b"])
+
+    def test_a_frame_the_encoder_refuses_is_omitted_too(self):
+        out = encode_frame_batch(self._frames(), encoder=lambda *_a: None)
+        self.assertEqual(out, {})
+
+    def test_quality_and_width_reach_the_encoder(self):
+        seen = []
+
+        def enc(rgb, quality, max_width):
+            seen.append((quality, max_width))
+            return b"J"
+
+        encode_frame_batch({"a": self._frames()["a"]}, 55, 320, encoder=enc)
+        self.assertEqual(seen, [(55, 320)])
+
+    def test_it_really_encodes_a_frame_with_the_default_encoder(self):
+        import base64
+
+        out = encode_frame_batch(self._frames())
+        self.assertEqual(sorted(out), ["a", "b"])
+        self.assertTrue(base64.b64decode(out["a"]).startswith(b"\xff\xd8\xff"))
+
+    def test_no_streams_is_an_empty_batch_not_an_error(self):
+        self.assertEqual(encode_frame_batch({}), {})
 
 
 class TestJointSnapshot(unittest.TestCase):
@@ -347,6 +399,20 @@ class TestMonitorRoutes(AioHTTPTestCase):
     async def test_an_unknown_stream_is_a_404(self):
         resp = await self.client.get("/stream/nope.mjpg")
         self.assertEqual(resp.status, 404)
+
+    async def test_the_frames_route_carries_every_stream_at_once(self):
+        # One connection for N cameras: this is the route the console's live
+        # tiles poll, instead of opening one endless stream per camera.
+        body = await (await self.client.get("/frames")).json()
+        self.assertEqual(sorted(body["streams"]), ["central", "wrist_camera_left"])
+        self.assertEqual(sorted(body["frames"]), ["central", "wrist_camera_left"])
+        self.assertTrue(body["frames"]["central"])
+
+    async def test_the_frames_route_omits_a_stream_with_no_frame(self):
+        self.dm.frames["central"] = None
+        body = await (await self.client.get("/frames")).json()
+        self.assertNotIn("central", body["frames"])
+        self.assertIn("wrist_camera_left", body["frames"])
 
     async def test_the_live_view_delivers_multipart_jpeg(self):
         resp = await self.client.get("/stream/central.mjpg")
