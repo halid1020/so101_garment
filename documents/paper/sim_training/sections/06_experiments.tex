@@ -58,10 +58,93 @@ on the split-reach relay, whose cube spawn varies by construction --- for
 any claim about generalisation.
 
 \paragraph{Results.}
-\textit{TODO: populate from the long-run report (success-rate table per
-mode\,$\times$\,task\,$\times$\,policy with placement-error statistics,
-per-seed success maps, validation curves, and head-to-head episode
-renders) once the full campaign completes on the training machine. The
-plumbing of every cell of this protocol --- collection, training,
-checkpoint selection, evaluation, reporting --- has been verified end to
-end at smoke scale.}
+Table~\ref{tab:sim-results} reports the campaign so far. The
+overfit-one-scenario cell behaves as its name promises, and we read it only
+as the pipeline check Section~\ref{sec:experiments} argues it is. The
+split-reach relay is the first cell that asks for generalisation, and both
+policies find it hard.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llccc}
+\toprule
+Mode & Task & ACT & Diffusion & $\pi_{0.5}$ \\
+\midrule
+Overfit-one-scenario & Relay          & --- & 73\% (\SI{37}{\mm}) & --- \\
+Full                 & Split-reach relay & 23\% (\SI{93}{\mm}) & 0\% (\SI{347}{\mm}) & --- \\
+\bottomrule
+\end{tabular}
+\caption{Success rate over thirty held-out evaluation scenarios, with mean
+placement error in parentheses. Each policy is its validation-selected
+checkpoint. The vision-language-action cell is absent because adapting it
+exhausted the training machine's memory (Section~\ref{sec:diff-tooling}).}
+\label{tab:sim-results}
+\end{table}
+
+\paragraph{Checkpoint selection is not a formality.}
+We had treated the validation pass as bookkeeping. It is not. Table~\ref{tab:val-curve}
+gives the transformer policy's validation success against training step. It
+peaks at sixty thousand steps and falls to a fifth of that peak by eighty
+thousand, its final checkpoint, while mean placement error more than triples
+over the same span. Read off its last checkpoint the policy scores
+\SI{13}{\percent} on the evaluation seeds; read off its validation-selected
+checkpoint it scores \SI{23}{\percent}. A campaign that skips this step does
+not merely lose accuracy, it reports a number that is wrong in a direction it
+cannot detect.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccccccc}
+\toprule
+Step (thousands) & 10 & 20 & 30 & 40 & 50 & 60 & 70 & 80 \\
+\midrule
+Validation success & 10\% & 0\% & 10\% & 10\% & 0\% & \textbf{50\%} & 20\% & 10\% \\
+Placement error (\si{\mm}) & 246 & 157 & 117 & 49 & 81 & \textbf{43} & 154 & 148 \\
+\bottomrule
+\end{tabular}
+\caption{The transformer policy over-trains on the split-reach relay. Ten
+validation scenarios per checkpoint, disjoint from both the training and the
+evaluation pools.}
+\label{tab:val-curve}
+\end{table}
+
+We also record what the selected figure is worth. Selecting the best of eight
+checkpoints on ten scenarios is optimistic by construction, and the gap
+measures it: \SI{50}{\percent} on the scenarios we selected on against
+\SI{23}{\percent} on the thirty we did not. We therefore quote only the
+latter, and we would widen the validation pool before drawing any conclusion
+that rests on the difference between two nearby checkpoints.
+
+\paragraph{The diffusion policy does not learn this task at all.}
+It succeeds on no evaluation scenario, and, unlike the transformer, no
+checkpoint rescues it: every one of ten scored zero on validation, and its
+mean placement error never fell below a quarter of a metre at any step. So
+this is not over-training and there is no checkpoint to select. The rollouts
+say what it does instead. It reaches the object and grasps it, and it carries
+it to the midline where the hand-off belongs --- the receiving arm's wrist
+camera shows the object in its gripper --- and then it releases and abandons
+it. It has learned the first half of the relay and nothing about delivery.
+
+\paragraph{What separates the two collection modes.}
+The contrast in Table~\ref{tab:sim-results} is not explained by task horizon.
+The two datasets are almost the same length per demonstration, a little under
+fifty seconds each. Nor is it explained by coverage of the object's starting
+region: across the evaluation scenarios, the distance from each starting pose
+to its nearest training pose is the same for the successes as for the
+failures, so the region is densely sampled and the failures are not the
+scenarios that fell in its gaps. What differs is how often each scene is
+demonstrated. The overfit-one-scenario dataset shows one scene a hundred
+times; the full dataset shows two hundred scenes once each. A single
+demonstration of a fifty-second bimanual relay is a thin signal from which to
+learn that scene, and this is the strongest evidence we have that the full
+mode needs repeated demonstrations per scenario rather than more scenarios.
+We have not yet tested that directly, and say so rather than implying the
+experiment exists.
+
+\paragraph{A ceiling worth remembering.}
+The demonstrator itself completes this task on \SI{87}{\percent} of attempts,
+and every one of its failures occurs at placement rather than at the grasp or
+the hand-off. No policy trained on its output should be expected to exceed
+that, and a policy's placement failures may be inherited rather than its own.

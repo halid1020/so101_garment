@@ -12,9 +12,20 @@
 3. Policies and sizing: ACT and Diffusion from scratch; pi0.5 adapted
    from its published base with low-rank adapters (full finetuning does
    not fit the target GPU).
-4. Results: TODO — tables and per-seed heat-maps land here from the
-   long-run report and analysis notebook once the full run completes on
-   the training machine. (Stub with the table skeleton.)
+4. Results: the campaign's first full-mode cell, the split-reach relay.
+   Lead with the headline table (mode x task x policy, success with mean
+   placement error). Then the finding that matters more than the numbers:
+   checkpoint selection is not a formality. Give the validation curve for
+   the transformer policy, which peaks at three quarters of training and
+   falls to a fifth of its peak by the end, and say plainly that a run
+   read off its last checkpoint would have reported the wrong thing.
+   Then the diffusion policy, which never succeeds at any checkpoint, and
+   what the rollouts show it doing instead — it grasps and stages the
+   object, then abandons it. Close by contrasting the two collection
+   modes at equal horizon: a hundred repeats of one scene against one
+   demonstration each of two hundred scenes, which is the comparison that
+   explains the gap. Note the vision-language-action cell is missing
+   because it exhausted the training machine's memory.
 
 Additional paragraph — what simple mode does and does not measure:
 state, from a direct measurement of the collected dataset, that every
