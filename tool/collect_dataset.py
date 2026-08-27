@@ -18,10 +18,13 @@ Usage:
     venv/bin/python tool/collect_dataset.py \\
         --dir /media/hdd/so101 --name towel_fold --task "fold the towel"
 
-    # Choose streams explicitly:
+    # Choose streams explicitly (this does not depend on recording.yaml's
+    # defaults at all, which is what makes it safe to paste into a runbook):
     venv/bin/python tool/collect_dataset.py --dir /media/hdd/so101 \\
         --name towel_fold --task "fold the towel" \\
-        --stream scene --stream wrist_camera_left --central-depth
+        --stream central \\
+        --stream left_arm_left_gripper --stream left_arm_right_gripper \\
+        --stream right_arm_left_gripper --stream right_arm_right_gripper
 
     # Resume: streams follow the existing dataset, flags below are ignored:
     venv/bin/python tool/collect_dataset.py --dir /media/hdd/so101 \\

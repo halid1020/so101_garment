@@ -5,28 +5,40 @@ bus whatever socket it is plugged into, and each bus has ONE isochronous
 bandwidth budget shared by everything on it. That budget, not the cameras and not
 the code, is what limits how many streams can record at once.
 
-MEASURED with the rig's seven streams at 640x480 MJPG, two controllers
-(``pci-0000:05:00.4`` carrying four cameras, ``pci-0000:06:00.4`` carrying three):
+MEASURED at 640x480 MJPG, across every trial run on this rig so far:
 
 =========================================  ====================================
 trial                                      result
 =========================================  ====================================
 each camera alone                          all seven fine, 15.9-26.4 fps
-all seven together                         exactly two refused, five at full rate
+all seven together, two controllers        exactly two refused, five at full rate
 all seven, tactile at 320x240              still two refused
-first bus alone, its four cameras          three run, one refused
-second bus alone, its three cameras        two run, one refused
+one controller, its four cameras           three run, one refused
+the other controller, its three cameras    two run, one refused
 the four tactile cameras alone             all four fine, 28.4-28.7 fps
+central + two tactile, one controller      one refused
+five streams over THREE controllers        all five deliver
 =========================================  ====================================
 
-Two things in that table matter more than the counts. First, WHICH streams are
+Two things in that table matter more than the counts. First, WHICH stream is
 refused is random -- it is whichever loses the race to reserve bandwidth, so the
 same configuration fails differently on consecutive runs and looks like a flaky
-camera rather than a budget. Second, the per-bus capacity is NOT uniform: one
-bus took three streams and the other only two, because the cameras do not cost
-the same. The tactile cameras are the expensive ones -- a bus carried the
-overhead camera plus a wrist plus one tactile, but could not carry a wrist plus
-two tactile.
+camera rather than a budget. A refused stream opens normally and then delivers
+nothing at all. Second, the per-controller capacity is NOT a stream count,
+because the cameras do not cost the same.
+
+ONE cost model reproduces every row above: a TACTILE camera costs TWO units, a
+plain RGB camera costs ONE, and a controller carries FOUR.
+
+===================================  =====  =========  =====================
+selection on one controller          units  predicted  observed
+===================================  =====  =========  =====================
+central + wrist + 1 tactile          4      fits       three ran
+wrist + 2 tactile                    5      over       two ran
+2 tactile                            4      fits       both ran
+central + 2 tactile                  5      over       one refused
+central + wrist + 2 tactile          6      over       three ran
+===================================  =====  =========  =====================
 
 Asking for less does not help, and the reason is worth recording so nobody
 tries it twice. ``VIDIOC_ENUM_FRAMEINTERVALS`` reports exactly ONE frame
@@ -46,8 +58,10 @@ skips that fixup for compressed formats, and everything here is captured as
 MJPEG. So it is not a remedy, and :func:`quirks_active` exists to report the
 state rather than to promise one.
 
-What remains is physical: a stream needs a controller with room, so seven
-cameras need a third one. The counts above say which cameras can share.
+What remains is physical: a stream needs a controller with room. That is what
+this rig now does -- the overhead camera on a controller of its own and a pair
+of tactile cameras on each of two others, which is four units, four units and
+one, and all five deliver together.
 
 The grouping here is deliberately pure and string-only: it reads the stable
 by-path aliases already stored in ``sensor_map.yaml`` and never opens a device,
@@ -59,14 +73,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Streams per 480 Mbit/s bus, measured (see the table above) with the uvcvideo
-# FIX_BANDWIDTH quirk both off and on -- it made no difference. An upper bound,
-# not a promise: one of the two buses fitted three streams and the other managed
-# only two, so a selection at exactly this limit can still lose one. Do not raise
-# it to make a warning go away -- the authority on whether a stream actually got
-# its bandwidth is the runtime check in ``cameras.CameraCapture``, which fails an
-# open that delivers no frame. This number only buys the operator a warning first.
-DEFAULT_PER_BUS_LIMIT = 3
+# What one 480 Mbit/s bus carries, in the units of the cost model above. Upper
+# bounds, not promises: a selection at exactly the capacity is the largest that
+# was measured to work, not one the bus guarantees. Do not raise them to make a
+# warning go away -- the authority on whether a stream actually got its
+# bandwidth is the runtime check in ``cameras.CameraCapture``, which fails an
+# open that delivers no frame. These numbers only buy the operator a warning
+# first, before a session rather than during one.
+BUS_CAPACITY_UNITS = 4
+TACTILE_STREAM_UNITS = 2
+RGB_STREAM_UNITS = 1
+
+# How a stream name says which it is. The tactile cameras are named for the
+# gripper finger they sit on (left_arm_right_gripper and the other three), and
+# that suffix is the whole rule -- kept here as string work so this module stays
+# free of the camera stack. ``test_usb_budget`` pins it against the real list in
+# ``tool.test_sensor_rates`` so the two cannot drift apart.
+_TACTILE_SUFFIX = "_gripper"
 
 # Where the kernel reports the uvcvideo quirk mask.
 QUIRKS_PATH = "/sys/module/uvcvideo/parameters/quirks"
@@ -118,24 +141,48 @@ def group_by_controller(
     return groups
 
 
+def is_tactile_stream(name: str) -> bool:
+    """Whether this stream is a fingertip (tactile) camera. Pure."""
+    return str(name).endswith(_TACTILE_SUFFIX)
+
+
+def stream_units(name: str) -> int:
+    """What one stream costs its controller, in the model above. Pure."""
+    return TACTILE_STREAM_UNITS if is_tactile_stream(name) else RGB_STREAM_UNITS
+
+
+def bus_units(names: "list[str]") -> int:
+    """What a set of streams costs the controller they share. Pure."""
+    return sum(stream_units(n) for n in names)
+
+
+def _describe(names: "list[str]") -> str:
+    """The selection priced out, so the operator can see where it went over."""
+    return ", ".join(f"{n} ({stream_units(n)})" for n in names)
+
+
 def budget_warnings(
     groups: "dict[str, list[str]]",
-    per_bus_limit: int = DEFAULT_PER_BUS_LIMIT,
+    capacity: int = BUS_CAPACITY_UNITS,
 ) -> "list[str]":
     """One operator-readable line per over-subscribed bus. Pure -- unit-tested.
 
-    Named streams, not just a count: when the bus refuses one of them at random,
-    the operator needs to know which set was competing.
+    Named streams and their cost, not just a count: when the bus refuses one of
+    them at random, the operator needs to know which set was competing and
+    which of them are the expensive ones to move.
     """
     warnings = []
     for controller, names in sorted(groups.items()):
-        if len(names) <= per_bus_limit:
+        units = bus_units(names)
+        if units <= capacity:
             continue
         warnings.append(
-            f"{len(names)} camera streams share USB controller {controller} "
-            f"({', '.join(names)}) but only about {per_bus_limit} fit its "
-            "bandwidth — expect some of them to open and then deliver nothing, "
-            "and which ones is random"
+            f"USB controller {controller} is over-subscribed: {_describe(names)} "
+            f"— {units} units against about {capacity} it carries (a fingertip "
+            f"camera costs {TACTILE_STREAM_UNITS}, a colour camera "
+            f"{RGB_STREAM_UNITS}, so two fingertip views fill a controller). "
+            "Expect some of them to open and then deliver nothing, and which "
+            "ones is random"
         )
     return warnings
 
@@ -143,11 +190,11 @@ def budget_warnings(
 def selection_warnings(
     selected: "set[str]",
     camera_nodes: "dict[str, str | int | None]",
-    per_bus_limit: int = DEFAULT_PER_BUS_LIMIT,
+    capacity: int = BUS_CAPACITY_UNITS,
 ) -> "list[str]":
     """The warnings for just the streams a session is about to record. Pure."""
     chosen = {n: d for n, d in camera_nodes.items() if n in selected}
-    return budget_warnings(group_by_controller(chosen), per_bus_limit)
+    return budget_warnings(group_by_controller(chosen), capacity)
 
 
 def quirks_active(path: "str | Path" = QUIRKS_PATH) -> "bool | None":

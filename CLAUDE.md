@@ -106,17 +106,21 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
   preflight can both warn before a session starts. MEASURED: every camera is USB
   2.0, so bandwidth is allocated per HOST CONTROLLER (a hub adds none — these
-  hubs are already USB 3.0 and it changes nothing), and the rig's seven cameras
-  do NOT all fit: **five** do. Capacity is not uniform — one controller took
-  three streams, the other two, because the tactile cameras cost more than the
-  RGB ones. Which stream is refused is **random**, and a refused one opens and
-  then delivers nothing for ever. Neither a lower rate nor a smaller frame helps:
+  hubs are already USB 3.0 and it changes nothing). What a controller carries is
+  NOT a stream count: one cost model fits every trial — a **tactile camera costs
+  2 units, an RGB camera 1, a controller carries 4** (so `central` + 2 tactile is
+  refused, but 2 tactile alone, or `central` + a wrist + 1 tactile, both fit).
+  Which stream is refused is **random**, and a refused one opens and then
+  delivers nothing for ever. Neither a lower rate nor a smaller frame helps:
   each camera reports exactly ONE frame interval per format+size (tactile: 60 fps
   at 640x480, 30 fps at 320x240; wrists: 30 fps), so there is no slower mode to
   ask for — which is also why `fps:` in `recording.yaml` cannot slow a camera.
   The uvcvideo FIX_BANDWIDTH quirk was MEASURED not to help (uvcvideo appears to
   skip it for compressed formats); `quirks_active()` only reports its state. The
-  fix is a third controller — see `documents/rig_web.md`.
+  fix was a third host controller, and it worked: the rig's current five cameras
+  (both wrist cameras unplugged and disabled) run as `central` alone on
+  `pci-0000:06:00.3` plus a tactile pair on each of `05:00.4` and `06:00.4` —
+  see `documents/rig_web.md`.
 - `src/common/recording/dataset_check.py` — is a dataset whole? The counted
   episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
   offset invariant, and the repair for an episode nobody wrote. Pure parquet +

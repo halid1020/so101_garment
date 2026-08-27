@@ -90,6 +90,21 @@ def session_refusals(
     return reasons
 
 
+def _device_present(device: "str | int") -> bool:
+    """Whether the device node is still there. Tells two failures apart.
+
+    A camera that is gone and a camera that is present but was refused its share
+    of the USB bandwidth both fail to open, and they want opposite fixes -- plug
+    it back in, or record fewer streams. The node answers which it is.
+    """
+    if isinstance(device, int):
+        return True
+    try:
+        return Path(str(device)).exists()
+    except OSError:
+        return False
+
+
 def usb_budget_warnings(selected: "set[str]") -> "list[str]":
     """Warn when a stream selection over-subscribes one USB controller.
 
@@ -104,6 +119,33 @@ def usb_budget_warnings(selected: "set[str]") -> "list[str]":
         return []
     nodes = (load_sensor_map(SENSOR_MAP_PATH) or {}).get("cameras") or {}
     return selection_warnings(selected, nodes)
+
+
+def absent_stream_refusals(selected: "set[str]") -> "list[str]":
+    """Refuse a selected stream whose assigned device node is not there.
+
+    A camera that has been unplugged, or moved to a socket it was not assigned
+    from, cannot be recorded: the recorder opens every camera before it creates
+    the dataset, so the session would exit seconds after Start with its reason
+    buried in the output tail. Said here instead, it is a sentence beside the
+    form. This is a refusal rather than a warning because the outcome is
+    certain, not likely.
+
+    Reads the assignments and the filesystem only -- no device is opened. A
+    stream with no assignment contributes nothing: a bare device index says
+    nothing about whether its camera is plugged in.
+    """
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if not SENSOR_MAP_PATH.exists():
+        return []
+    nodes = (load_sensor_map(SENSOR_MAP_PATH) or {}).get("cameras") or {}
+    return [
+        f"camera '{name}' is assigned to {nodes[name]}, which is not there — "
+        "plug it back in, untick it, or clear its assignment on the Signals tab"
+        for name in sorted(selected)
+        if name in nodes and not _device_present(nodes[name])
+    ]
 
 
 def resolve_plan(
@@ -169,6 +211,10 @@ def resolve_plan(
     # operator is told what to expect and left to decide. The authority on
     # whether a stream really got its bandwidth is the camera open itself.
     warnings += usb_budget_warnings(set(selection["cameras"]))
+
+    # A refusal, unlike the budget above: an absent camera is not a risk the
+    # operator can weigh, it is a session that will exit as soon as it starts.
+    refusals += absent_stream_refusals(set(selection["cameras"]))
 
     return {
         "resuming": resuming,
@@ -349,21 +395,6 @@ class SessionSupervisor:
         return action
 
 
-def _device_present(device: "str | int") -> bool:
-    """Whether the device node is still there. Tells two failures apart.
-
-    A camera that is gone and a camera that is present but was refused its share
-    of the USB bandwidth both fail to open, and they want opposite fixes -- plug
-    it back in, or record fewer streams. The node answers which it is.
-    """
-    if isinstance(device, int):
-        return True
-    try:
-        return Path(str(device)).exists()
-    except OSError:
-        return False
-
-
 class PreviewCameras:
     """The console's own camera threads, for a look while nothing is recording.
 
@@ -425,6 +456,24 @@ class PreviewCameras:
             "controls": {k: cfg.get(k) for k in CONTROL_NAMES},
         }
 
+    @staticmethod
+    def _disabled_streams() -> "set[str]":
+        """Stream names ``recording.yaml`` knows about and turns off.
+
+        A camera the rig no longer carries stays in the map -- clearing the
+        assignment would throw away which socket it was measured in -- and is
+        switched off in the recording config instead. The preview follows that,
+        so an unplugged camera is not opened, not reported missing on every
+        poll, and not offered as a tile no session would record.
+        """
+        try:
+            from common.config_parser import load_recording_config
+
+            cameras = load_recording_config()["cameras"] or {}
+        except Exception:  # noqa: BLE001 — a broken config must not stop a preview
+            return set()
+        return {name for name, cfg in cameras.items() if not cfg["enabled"]}
+
     def start(self, specs: "list[tuple[str, str]] | None" = None) -> "list[str]":
         """Open the given ``(name, device)`` cameras, or the assigned ones.
 
@@ -442,11 +491,17 @@ class PreviewCameras:
             sensor_map = (
                 load_sensor_map(SENSOR_MAP_PATH) if SENSOR_MAP_PATH.exists() else {}
             )
-            specs = sorted((sensor_map.get("cameras") or {}).items())
+            off = self._disabled_streams()
+            specs = sorted(
+                (n, d)
+                for n, d in (sensor_map.get("cameras") or {}).items()
+                if n not in off
+            )
         if not specs:
             raise RuntimeError(
-                "no cameras are assigned yet — assign them on the Signals tab "
-                "(or with the sensor-assignment tool) first"
+                "no camera to preview — none is assigned on the Signals tab "
+                "(or with the sensor-assignment tool), or every assigned one is "
+                "disabled in src/conf/recording.yaml"
             )
         wanted = sorted((str(n), str(d)) for n, d in specs)
         if self.running():

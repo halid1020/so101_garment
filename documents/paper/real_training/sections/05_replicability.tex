@@ -69,8 +69,9 @@ the sensor suite past what its controllers can carry
 (Section~\ref{sec:difficulties}). Because a controller admits only a few
 compressed streams and refuses the rest outright, whether a chosen set of
 cameras can be recorded at all is decided by how that set is distributed across
-controllers --- which the check already knows. It therefore counts the streams a
-session has selected against each controller they sit on and says which one is
+controllers --- which the check already knows. It therefore prices the streams a
+session has selected against each controller they sit on, at the measured cost
+of each kind of view rather than as a bare count, and says which controller is
 over-subscribed and which streams are competing there, before anything is
 opened. This matters because the alternative diagnosis is so much worse: since
 the refused stream varies between runs, an operator who meets the ceiling during

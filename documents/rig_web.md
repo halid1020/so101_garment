@@ -120,6 +120,16 @@ are shown ticked and locked, because a resumed dataset must not drift from
 how it began, and anything you asked for that disagrees is reported rather
 than silently ignored. **Check** resolves the request without running it.
 
+A camera whose assigned device node is gone is offered **unticked and marked
+*not connected***, and ticking it anyway is refused rather than started: the
+recorder opens every selected camera before it creates the dataset, so a session
+started on an absent one exits at once, with its reason buried in the output
+tail. Plug it back in and press **Check** again — no reload needed — or clear
+its assignment on the Signals tab. The idle preview follows the same rule from
+the other side: it opens the assigned cameras that `recording.yaml` still
+enables, so a camera the rig no longer carries is neither previewed nor reported
+missing on every poll.
+
 **Driving the session.** *Driving the session* lists the steps in order —
 what enables the arms, what makes them follow, what closes the grippers,
 what records an episode and what ends the session — and, for each, the
@@ -305,19 +315,22 @@ hubs are already USB 3.0 and it makes no difference, because the cameras are
 USB 2.0 and enumerate on the controller's 480 Mbit/s side regardless. Buying a
 better hub will not fix it.
 
-MEASURED with all seven: exactly **two are refused**, and which two is *random*,
-so the same selection fails differently on consecutive runs and looks like a
-flaky camera rather than a budget. Past the ceiling a camera does not run
-slowly — it opens normally and then delivers nothing at all. Capacity is not
-even per controller, because the cameras do not cost the same:
+A stream refused its share does not run slowly — it opens normally and then
+delivers nothing at all, and WHICH one loses is random, so the same selection
+fails differently on consecutive runs and looks like a flaky camera rather than
+a budget.
 
-| controller | cameras attached | actually run |
-|---|---|---|
-| `pci-0000:05:00.4` | central, wrist_camera_left, both left grippers | **3** |
-| `pci-0000:06:00.4` | wrist_camera_right, both right grippers | **2** |
+What a controller carries is **not a stream count**, because the cameras do not
+cost the same. One model reproduces every trial run on this rig: a **tactile
+camera costs 2 units, a colour camera 1, and a controller carries 4**.
 
-The tactile cameras are the expensive ones: a controller carried the overhead
-camera plus a wrist plus one tactile, but could not carry a wrist plus two.
+| selection on one controller | units | fits? | measured |
+|---|---|---|---|
+| `central` + a wrist + 1 tactile | 4 | yes | three ran |
+| a wrist + 2 tactile | 5 | no | two ran |
+| 2 tactile | 4 | yes | both ran |
+| `central` + 2 tactile | 5 | no | one refused |
+| `central` + a wrist + 2 tactile | 6 | no | three ran |
 
 **Asking for less does not help, and it cannot.** Each camera reports exactly one
 frame rate per format and size — the tactile cameras offer 60 fps at 640×480
@@ -329,26 +342,27 @@ The uvcvideo `FIX_BANDWIDTH` quirk was tried with the module reloaded and every
 device re-enumerated, and changed nothing either; uvcvideo appears to skip that
 fixup for compressed formats, and everything here is MJPEG.
 
-### Making all seven fit
+### Three controllers, five cameras
 
-The answer is a **third host controller**, not a better hub. This laptop is an
-AMD Rembrandt with five xHCI controllers and at least one entirely free, so the
-cameras only need spreading further. Plug a third hub into a physical port that
-lands on an unused controller — check with `lsusb -t`, where each `/: Bus NNN`
-line is one controller — and split the cameras like this. Every group below is
-one that was measured to work:
+The remedy was never a better hub — it was **another host controller**, and this
+laptop is an AMD Rembrandt with five of them. The rig now spreads its cameras
+over three, and all five deliver together:
 
-| controller | cameras |
-|---|---|
-| first (existing hub) | `central`, `wrist_camera_left`, `left_arm_left_gripper` |
-| second (existing hub) | `wrist_camera_right`, `right_arm_right_gripper` |
-| third (new) | `left_arm_right_gripper`, `right_arm_left_gripper` |
+| controller | cameras | units |
+|---|---|---|
+| `pci-0000:06:00.3` | `central` | 1 |
+| `pci-0000:05:00.4` | `left_arm_left_gripper`, `left_arm_right_gripper` | 4 |
+| `pci-0000:06:00.4` | `right_arm_left_gripper`, `right_arm_right_gripper` | 4 |
 
-Then re-run `tool/test_sensor_rates.py --assign` (or the Signals tab) so the
-by-path aliases follow the cameras to their new sockets, and check the readiness
-check's grouping. Until then, a set that fits is a deliberate choice: the four
-tactile cameras together always work, as does any split respecting the table
-above.
+Both wrist cameras are currently unplugged and disabled in `recording.yaml`;
+re-attaching one means a free controller, not a free socket — a fourth port on
+either gripper controller has no room in it.
+
+Find the controllers with `lsusb -t`, where each `/: Bus NNN` line is one, and
+after any replug re-run `tool/test_sensor_rates.py --assign` (or the Signals
+tab) so the by-path aliases follow the cameras to their new sockets. Then check
+the readiness table's `usb camera budget` row, which prints the units on each
+controller.
 
 **Arms.** Open a port and wiggle ONE arm by hand: the joints that move are
 shown live, so the port belonging to that arm is obvious. The bus is opened

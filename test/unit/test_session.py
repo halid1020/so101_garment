@@ -162,6 +162,15 @@ class TestPlanAndCommand(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # No assignment file: the plan's two wiring checks -- the USB budget and
+        # the absent-camera refusal -- both read one, and neither this machine's
+        # sockets nor what is plugged into them belongs in these cases. They are
+        # covered on their own below.
+        self._no_map = mock.patch(
+            "tool.test_sensor_rates.SENSOR_MAP_PATH", self.root / "no-sensor-map.yaml"
+        )
+        self._no_map.start()
+        self.addCleanup(self._no_map.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -417,6 +426,23 @@ class TestPreviewCameras(unittest.TestCase):
             "-video-index0\n"
         )
         self.names = {"central", "wrist_camera_left", "left_arm_left_gripper"}
+        self.disabled: "set[str]" = set()
+
+    def _config(self):
+        """A recording config over the assigned names, honouring ``disabled``."""
+        return {
+            "cameras": {
+                name: {
+                    "enabled": name not in self.disabled,
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30,
+                    "rotate180": False,
+                    "fourcc": "MJPG",
+                }
+                for name in sorted(self.names)
+            }
+        }
 
     def _preview(self, opens):
         _FakeCapture.opened = set(opens)
@@ -430,7 +456,11 @@ class TestPreviewCameras(unittest.TestCase):
     def _start(self, preview, specs=None):
         with mock.patch(
             "common.recording.cameras.CameraCapture", _FakeCapture
-        ), mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path):
+        ), mock.patch(
+            "tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path
+        ), mock.patch(
+            "common.config_parser.load_recording_config", self._config
+        ):
             return preview.start(specs)
 
     def test_the_assigned_set_is_previewed(self):
@@ -478,6 +508,24 @@ class TestPreviewCameras(unittest.TestCase):
             self._start(preview)
         self.assertIn("fewer cameras", str(caught.exception))
 
+    def test_a_camera_disabled_for_recording_is_not_previewed(self):
+        # The rig no longer carries it, so the assignment stays (it records the
+        # socket it was measured in) and recording.yaml turns it off. Previewing
+        # it would open a device no session will use and report it missing on
+        # every poll.
+        self.disabled = {"wrist_camera_left"}
+        preview, _ = self._preview(self.names)
+        self.assertEqual(set(self._start(preview)), self.names - {"wrist_camera_left"})
+        self.assertEqual(preview.missing(), [])
+
+    def test_the_signals_tab_may_still_ask_for_a_disabled_camera(self):
+        # Identifying an unassigned or unplugged camera is exactly what that tab
+        # is for, so an explicit request is not filtered.
+        self.disabled = {"central"}
+        preview, _ = self._preview(self.names)
+        one = "/dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-video-index0"
+        self.assertEqual(self._start(preview, [("central", one)]), ["central"])
+
     def test_stop_forgets_the_request(self):
         preview, _ = self._preview(self.names)
         self._start(preview)
@@ -505,6 +553,42 @@ class TestUsbBudgetInThePlan(unittest.TestCase):
         with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", path):
             self.assertTrue(usb_budget_warnings(set(nodes)))
             self.assertEqual(usb_budget_warnings({"cam_0", "cam_1"}), [])
+
+
+class TestAbsentStreamsInThePlan(unittest.TestCase):
+    """A camera that is not plugged in is refused, not merely warned about."""
+
+    def _map(self, present_node):
+        root = Path(tempfile.mkdtemp())
+        present_node.parent.mkdir(parents=True, exist_ok=True)
+        present_node.write_text("")
+        path = root / "sensor_map.yaml"
+        path.write_text(
+            "cameras:\n"
+            f"  here: {present_node}\n"
+            f"  gone: {present_node.parent / 'not-there'}\n"
+        )
+        return path
+
+    def test_an_absent_camera_is_refused_and_named(self):
+        from common.web.session import absent_stream_refusals
+
+        node = Path(tempfile.mkdtemp()) / "by-path" / "pci-0000:05:00.4-usb-0:1.2:1.0"
+        path = self._map(node)
+        with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", path):
+            (refusal,) = absent_stream_refusals({"here", "gone"})
+            self.assertIn("gone", refusal)
+            self.assertIn("not-there", refusal)
+            self.assertEqual(absent_stream_refusals({"here"}), [])
+
+    def test_an_unassigned_stream_is_not_judged(self):
+        # A bare device index says nothing about whether its camera is there.
+        from common.web.session import absent_stream_refusals
+
+        node = Path(tempfile.mkdtemp()) / "by-path" / "pci-0000:05:00.4-usb-0:1.2:1.0"
+        path = self._map(node)
+        with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", path):
+            self.assertEqual(absent_stream_refusals({"unassigned"}), [])
 
 
 if __name__ == "__main__":

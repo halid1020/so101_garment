@@ -77,15 +77,21 @@ stream --- the fixup appears not to apply to the compressed transport this
 platform requires. We report it because the ceiling is easier to accept once the
 obvious escape from it has been measured and found not to help.
 
-What remains is not a repair but a wiring decision, and one more measurement
-settles how to make it. Capacity is not uniform across controllers, because the
-views do not cost the same: one controller carried the overhead camera, a wrist
-camera and one fingertip camera, while another could not carry a wrist camera and
-two fingertip cameras. The fingertip views are the expensive ones. Since a hub
-only fans out a controller's bus rather than adding to it, the remedy is to
-spread the cameras over more controllers than the two the hubs occupy, in groups
-the measurement above has shown to fit --- or, until then, to record a subset
-that fits and say so.
+What remains is not a repair but a wiring decision, and it is settled by
+noticing that a controller's capacity is not a number of streams. The views do
+not cost the same, and one weighting reproduces every selection we placed on a
+controller: a fingertip view costs twice what a colour view does, and a
+controller carries four such units. It admits the overhead camera, a wrist camera
+and one fingertip camera; it admits two fingertip cameras alone; it refuses the
+overhead camera with two fingertip cameras, a selection a plain count of three
+streams would have passed. Since a hub only fans out a controller's bus rather
+than adding to it, the remedy is to spread the cameras over more controllers than
+the hubs occupy, in groups this weighting admits. We carried that out: moving the
+overhead camera onto a third controller, and leaving a fingertip pair on each of
+the other two, admits the whole suite the rig now carries. The readiness check
+prices a selection this way before a session starts, which turns a wiring
+decision into something an operator is told rather than something they discover
+one refused stream at a time.
 
 The third is the one that actually costs a session: a hub failing as a unit and
 taking every device behind it. Losing one stream is recoverable, because the

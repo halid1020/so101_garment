@@ -59,6 +59,23 @@ def _recording_config() -> "dict[str, Any]":
 # ── Readiness and the collection form ────────────────────────────────────────
 
 
+def _assigned_and_present() -> "dict[str, bool]":
+    """For each assigned camera, whether its device node is still there.
+
+    A camera the rig does not have must not be offered ticked: the recorder
+    opens every selected camera before it creates the dataset, so a session
+    started on one exits at once. Unassigned cameras are absent from this map
+    and default to present -- a bare device index says nothing either way.
+    """
+    from common.web.session import _device_present
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if not SENSOR_MAP_PATH.exists():
+        return {}
+    nodes = (load_sensor_map(SENSOR_MAP_PATH) or {}).get("cameras") or {}
+    return {name: _device_present(node) for name, node in nodes.items()}
+
+
 async def handle_collect_config(request: web.Request) -> web.Response:
     """What the new-dataset form offers: this machine's cameras and defaults.
 
@@ -69,10 +86,15 @@ async def handle_collect_config(request: web.Request) -> web.Response:
     app = request.app
     config = await in_executor(app, _recording_config)
     cameras = config.get("cameras") or {}
+    present = await in_executor(app, _assigned_and_present)
     return web.json_response(
         {
             "cameras": [
-                {"name": name, "enabled": bool(cam["enabled"])}
+                {
+                    "name": name,
+                    "enabled": bool(cam["enabled"]),
+                    "present": present.get(name, True),
+                }
                 for name, cam in sorted(cameras.items())
             ],
             "realsense_rgb_name": (config.get("realsense") or {}).get("rgb_name"),

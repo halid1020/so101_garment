@@ -73,15 +73,24 @@ realsense:
 # bus no matter which socket it is in, and that bandwidth is allocated by the
 # HOST CONTROLLER across the whole bus. A hub is a repeater, not extra capacity:
 # these hubs are already USB 3.0 and it makes no difference, because the cameras
-# are USB 2.0 and enumerate on the controller's 480 Mbit/s side regardless.
+# are USB 2.0 and enumerate on the controller's 480 Mbit/s side regardless. A
+# stream that is refused its share opens normally and then delivers nothing at
+# all, and WHICH stream loses is random, so over-subscription looks like a flaky
+# camera rather than a budget.
 #
-# MEASURED with the seven streams below: any camera alone is fine, but with all
-# seven open exactly two are refused, and WHICH two is random — it is whichever
-# loses the race to reserve bandwidth. A refused stream opens and then never
-# delivers a frame. The per-controller capacity is NOT uniform, because the
-# cameras do not cost the same: one controller carried the overhead camera plus
-# a wrist plus one tactile (three), while the other could not carry a wrist plus
-# two tactile (two). The tactile cameras are the expensive ones. Total: five.
+# The controllers do not all cost the same, and neither do the cameras. MEASURED
+# over every trial so far, one model fits all of them: a TACTILE camera costs
+# TWO units, a plain RGB camera costs ONE, and a controller carries FOUR.
+#
+#   central + wrist + 1 tactile   = 4  fits      (measured: three ran)
+#   wrist + 2 tactile             = 5  over      (measured: two ran)
+#   2 tactile                     = 4  fits      (measured: both ran)
+#   central + 2 tactile           = 5  over      (measured: one refused)
+#
+# That last trial is why this rig now spreads its cameras over THREE host
+# controllers rather than two: central on its own controller, one pair of
+# tactile cameras on each of the others. All five deliver together. See
+# documents/rig_web.md for the layout and how to re-assign after a replug.
 #
 # Asking for less does not help, and here is why, so nobody tries it twice.
 # Each camera reports exactly ONE frame rate per format and size: the tactile
@@ -96,8 +105,6 @@ realsense:
 # NOTHING. uvcvideo appears to skip that fixup for compressed formats, and
 # everything here is MJPEG.
 #
-# What remains is physical: seven cameras need a third host controller. See
-# documents/rig_web.md for the measured split that fits.
 # tool/collect_preflight.py reports the grouping and warns when a selection puts
 # more streams on one controller than it can carry.
 cameras:
@@ -151,8 +158,12 @@ cameras:
   # fallback: once this stream is assigned in src/conf/sensor_map.yaml
   # (tool/test_sensor_rates.py --assign) the recorder resolves it to that
   # stable /dev/v4l/by-path node instead, so replugging cannot reorder it.
+  #
+  # CURRENTLY UNPLUGGED: both wrist cameras are off the rig, so they are
+  # disabled here. Re-attaching one is this flag and nothing else — its exposure
+  # tuning below and its sensor_map.yaml assignment are kept exactly as measured.
   wrist_camera_left:
-    enabled: true
+    enabled: false
     device: 2            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480
@@ -162,7 +173,7 @@ cameras:
   # Right wrist RGB camera (follower_0 = RIGHT arm). By-path resolved from
   # sensor_map.yaml when assigned (see wrist_camera_left).
   wrist_camera_right:
-    enabled: true
+    enabled: false       # see wrist_camera_left: currently unplugged
     device: 4            # PLACEHOLDER fallback: set for your machine
     width: 640
     height: 480

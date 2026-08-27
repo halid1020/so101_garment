@@ -43,11 +43,17 @@ P5  Sharing a peripheral bus: separate the THREE things this conflates, because
         ceiling is easier to accept once the obvious remedy has been measured
         and found not to help (it appears not to apply to compressed transport,
         which this platform requires). What is left is a wiring decision, not a
-        repair, and one more measurement guides it: capacity differs per
-        controller because the views cost differently — the fingertip cameras
-        are the expensive ones. A hub only fans out a controller's bus rather
-        than adding to it, so the remedy is more controllers, in groups measured
-        to fit; until then, record a subset that fits and say so.
+        repair, and it is settled by seeing that a controller's capacity is not
+        a stream COUNT: one weighting reproduces every selection measured — a
+        fingertip view costs twice a colour view, a controller carries four
+        units. Give the three selections that pin it, including the one a plain
+        count of three would have passed and the bus refused. A hub only fans
+        out a controller's bus rather than adding to it, so the remedy is more
+        controllers — and say we carried it out: the overhead camera onto a
+        third controller, a fingertip pair on each of the other two, whole suite
+        admitted. Close on the readiness check pricing a selection before a
+        session, so the operator is told rather than discovering it one refused
+        stream at a time.
     (c) The failure that actually costs a session is a whole hub going, which
         takes every device behind it at once. Argue the asymmetry: a stream lost
         is recoverable, because the recorder holds the episode and resumes it,

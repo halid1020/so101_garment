@@ -304,7 +304,12 @@ def check_usb_budget() -> CheckResult:
     it as a flaky camera instead of a budget.
     """
     from common.config_parser import load_recording_config
-    from common.recording.usb_budget import DEFAULT_PER_BUS_LIMIT, selection_warnings
+    from common.recording.usb_budget import (
+        BUS_CAPACITY_UNITS,
+        bus_units,
+        group_by_controller,
+        selection_warnings,
+    )
     from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
     if not SENSOR_MAP_PATH.exists():
@@ -314,10 +319,16 @@ def check_usb_budget() -> CheckResult:
     warnings = selection_warnings(enabled, nodes)
     if warnings:
         return CheckResult("usb camera budget", WARN, "; ".join(warnings))
+    groups = group_by_controller({n: d for n, d in nodes.items() if n in enabled})
+    spread = ", ".join(
+        f"{c.removeprefix('pci-0000:')}={bus_units(names)}"
+        for c, names in sorted(groups.items())
+    )
     return CheckResult(
         "usb camera budget",
         OK,
-        f"{len(enabled)} enabled streams, no bus over ~{DEFAULT_PER_BUS_LIMIT}",
+        f"{len(enabled)} enabled streams, no controller over ~"
+        f"{BUS_CAPACITY_UNITS} units" + (f" ({spread})" if spread else ""),
     )
 
 

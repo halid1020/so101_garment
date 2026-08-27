@@ -201,3 +201,10 @@ button.link:hover { opacity:1; }
   color: #f59e0b;
   font-size: 12px;
 }
+
+/* The same fact said inline, beside a camera in the stream picker: this one is
+   not plugged in, so it is offered unticked. No box -- it sits in a label. */
+.stream-absent {
+  color: #f59e0b;
+  font-size: 12px;
+}

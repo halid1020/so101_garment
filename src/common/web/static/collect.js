@@ -26,10 +26,16 @@ async function loadCollectConfig() {
   box.innerHTML = '<legend>Camera streams</legend>';
   for (const cam of cfg.cameras) {
     const id = 'cam-' + cam.name;
+    const absent = cam.present === false;
     const label = document.createElement('label');
     label.className = 'row';
+    // A camera whose assigned device node is gone is shown, but never ticked:
+    // the recorder opens every selected camera before it creates the dataset,
+    // so a session started on one exits at once. The box stays enabled, so
+    // plugging it back in and pressing Check is all it takes.
     label.innerHTML = `<input type="checkbox" id="${id}" value="${cam.name}"`
-      + `${cam.enabled ? ' checked' : ''}> ${cam.name}`;
+      + `${cam.enabled && !absent ? ' checked' : ''}> ${cam.name}`
+      + (absent ? ' <span class="stream-absent">— not connected</span>' : '');
     box.appendChild(label);
   }
 }

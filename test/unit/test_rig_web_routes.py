@@ -368,6 +368,23 @@ class TestCollectTab(ConsoleTestCase):
         self.assertTrue(body["cameras"])
         self.assertIn("name", body["cameras"][0])
 
+    async def test_the_form_says_which_cameras_are_actually_plugged_in(self):
+        # The page must not pre-tick a camera that is not there: the recorder
+        # opens every selected one before it creates the dataset, so a session
+        # started on it exits at once.
+        from unittest import mock
+
+        real = "/dev/v4l/by-path/pci-0000:05:00.4-usb-0:1.2:1.0-video-index0"
+        path = Path(self.root) / "sensor_map.yaml"
+        path.write_text(f"cameras:\n  central: {real}\n  scene: {path}/gone\n")
+        with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", path):
+            body = await (await self.client.get("/api/collect/config")).json()
+        by_name = {c["name"]: c for c in body["cameras"]}
+        self.assertFalse(by_name["scene"]["present"])
+        # A camera with no assignment is not judged: a bare device index says
+        # nothing about whether it is plugged in.
+        self.assertTrue(by_name["wrist_camera_left"]["present"])
+
 
 class TestSensorsTab(ConsoleTestCase):
     """Assignment writes a real per-machine file, so these point it at a copy."""
