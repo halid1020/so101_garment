@@ -131,9 +131,30 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `LeRobotDatasetMetadata.video_keys`, so an unnamed camera is never decoded AND
   never reaches the policy — no `--policy.input_features` override to keep in
   step. Also collapses a dataset's task strings onto the one covering the most
-  frames (position is no guide: on `cube-pnp-new` the typo is registered first),
-  and maps cameras onto pi0.5's pretrained slots (`PI05_SLOTS`). Built by
+  frames (position is no guide: on `cube-pnp-new` the typo is registered first).
+  Two policies here take a FIXED number of views, and this rig has five cameras,
+  so both get an answer here. **pi0.5** has three slots: a camera whose viewpoint
+  it knows takes that slot by name (`PI05_SLOTS`), one it has never seen — every
+  tactile camera — takes the next free slot in `PI05_SLOT_ORDER`, more cameras
+  than slots is refused, and the `slots` column of `runs.tsv` pins it outright.
+  **FastWAM** concatenates its cameras into one frame, so `COMPOSITES` tiles the
+  four fingertip cameras 2x2 into ONE 224x224 feature (`tactile_quad`); `all`
+  never includes a composite, and a composite is the one thing a view cannot
+  symlink — it decodes its parts in lockstep and encodes one video with PyAV
+  (not the ffmpeg CLI: a compute node has neither). Built by
   `tool/make_camera_view.py`; the cluster job builds one per `cameras` row.
+- `src/common/training/` — where a training run may be sent and whether it can
+  work there. `destinations.py` (pure: `src/conf/train_destinations.yaml`
+  validated, the ssh/rsync argv, and what an unreachable machine should be told
+  — its paths reach the REMOTE shell unquoted so `~`/`$USER` mean the remote
+  home and user, which is why what may appear in them is checked at load) +
+  `matrix.py` (the `runs.tsv` row model in Python, and `row_refusals`, the ONE
+  place a run is judged: unknown policy, a camera the dataset lacks, more
+  cameras than the policy has slots, a batch over a MEASURED ceiling, a policy
+  this LeRobot has never heard of). Two front ends: `tool/train_launch.py` and
+  the console's Training tab, so a run started in the browser is the same run.
+  A `-` in the steps/batch column means "whatever fits here" and takes the
+  destination's measured ceiling; an explicit number is refused if it is over.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -146,6 +167,11 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   one worker thread and the records the page's dock polls: merge,
   compaction and the freeing of a deleted dataset all outlive their
   request),
+  `training_api.py` (the Training tab's routes; the rules are
+  `common.training` and the launch is `tool/train_launch.py`, so the page
+  cannot start a run the terminal would refuse — refusals come back at 200
+  inside the plan, and a launch is a `jobs.py` record because staging is
+  minutes),
   `roots.py` (which collection directory the console works on: name/target
   rules, the sshfs command, `/proc/mounts` parsing, the remembered list —
   pure, unit-tested) + `roots_api.py` (its routes, the `root_required`
@@ -181,7 +207,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
   one asks in the browser first, and marking an episode (reversible) does
   not. The third tab is called **Signals** in the UI while the module,
-  routes and `sensor_map.yaml` keep the older `sensor` name.
+  routes and `sensor_map.yaml` keep the older `sensor` name; the fourth is
+  **Training**.
 - `src/sim_datagen/` — the simulated tasks and their scripted demonstrators.
   `env.py` holds `TASKS` (`single`, `handover`, and `handover_split`) and the
   tick rate: `PHYSICS_HZ` 600, `DEFAULT_FPS` **25**, and `substeps_for(fps)`,
@@ -217,7 +244,11 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 - `documents/` — design docs & worklogs (teleop benchmark results, user
   study protocol, telegrip-native, remote policy inference, rig console)
   plus the living paper under `documents/paper/`.
-- `hpc/` — the Slurm cell on KCL CREATE and the traffic in both directions:
+- `hpc/` — the Slurm cell on KCL CREATE, the plain-GPU-box path, and the traffic
+  in both directions. `tool/train_launch.py` is the ONE front door over both
+  (stage → write the manifest → submit → record); `gpu_box_run.sh` is the
+  non-Slurm executor, which holds a `flock` because that card is single-tenant
+  and detaches under `setsid` so a closing SSH cannot end a 36-hour run. Then:
   `provision_create.sh` (login node, once; `SO101_STAGE_PI05=1` also caches the
   ~14.5 GB `lerobot/pi05_base`, which is NOT licence-gated), `stage_datasets.sh`
   (collected datasets up), `runs.tsv` + `submit_real.sh` +
@@ -263,6 +294,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     for the `diffusion` policy the smoke test uses, the `diffusion` extra
     (`diffusers`) — neither is pulled in by `feetech,dataset,pi,libero,pusht`
     alone. `install.sh`'s `LEROBOT_EXTRAS` includes both now.
+  - **FastWAM is not in the pinned LeRobot.** `3dd19d04` (2026-06-27) has no
+    `src/lerobot/policies/fastwam`; it exists upstream. `matrix.policy_available`
+    probes for the module rather than comparing versions, so a `fastwam` row is
+    refused at submit time and the gate opens by itself when `LEROBOT_COMMIT`
+    moves. `install.sh`/`provision_create.sh` already name the `fastwam` extra
+    (MEASURED: pip ignores an extra the checkout does not define).
   - **A merged dataset cannot be curated again, unrepaired:**
     `aggregate_datasets` copies each source's episode-metadata rows and
     merely OFFSETS their `meta/episodes/file_index`, while writing every

@@ -104,6 +104,43 @@ def run(argv: "list[str]", dry_run: bool, capture: bool = False) -> str:
     return (proc.stdout or "") if capture else ""
 
 
+def rsync(argv: "list[str]", dry_run: bool, progress) -> None:
+    """Run rsync, reporting each file as it goes.
+
+    A dataset is hundreds of megabytes over a home uplink, so a launch spends
+    minutes here. Without this the console's job message stands still for all
+    of them, which is indistinguishable from a launch that has hung -- and the
+    first thing it hid was a bug that was copying the wrong directory.
+    """
+    if dry_run:
+        print(f"    $ {show(argv)}")
+        return
+    proc = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
+    assert proc.stdout is not None
+    total, name, last = 0, "", ""
+    # rsync -P rewrites its progress with \r, so one "line" can carry a file
+    # name and then many percentages. Both are wanted: the name says what is
+    # being copied and the percentage says a big file is still moving.
+    for chunk in proc.stdout:
+        for piece in chunk.replace("\r", "\n").split("\n"):
+            piece = piece.strip()
+            if not piece or piece.startswith(("sending", "sent", "total")):
+                continue
+            if "%" in piece:
+                last = next((w for w in piece.split() if w.endswith("%")), last)
+            else:
+                total += 1
+                last = ""
+                name = piece[-56:]
+        if total:
+            progress(f"staging : {total} file(s) — {name} {last}".rstrip())
+    proc.wait()
+    if proc.returncode != 0:
+        raise SystemExit(f"❌ rsync failed (exit {proc.returncode}): {show(argv)}")
+
+
 # ── the dataset ──────────────────────────────────────────────────────────────
 
 
@@ -221,7 +258,7 @@ def push_manifest(
 
 
 def dispatch_slurm(
-    dest: dict, remote_manifest: str, args: argparse.Namespace
+    dest: dict, remote_manifest: str, dry_run: bool = False
 ) -> "dict[str, Any]":
     submit = [
         f"cd {dest['repo']}",
@@ -241,12 +278,10 @@ def dispatch_slurm(
                 if dest.get("account")
                 else []
             )
-            + (["--dry-run"] if args.dry_run else [])
+            + (["--dry-run"] if dry_run else [])
         ),
     ]
-    out = run(
-        ssh_argv(dest, " && ".join(submit)), args.dry_run, capture=not args.dry_run
-    )
+    out = run(ssh_argv(dest, " && ".join(submit)), dry_run, capture=not dry_run)
     if out:
         print(out.rstrip())
     # submit_real.sh prints sbatch's own "Submitted batch job N" lines.
@@ -260,7 +295,7 @@ def dispatch_slurm(
 
 
 def dispatch_ssh(
-    dest: dict, remote_manifest: str, args: argparse.Namespace
+    dest: dict, remote_manifest: str, dry_run: bool = False
 ) -> "dict[str, Any]":
     cmd = " ".join(
         [
@@ -269,10 +304,10 @@ def dispatch_ssh(
             # NOT shlex.quote — see dispatch_slurm.
             f"--manifest {remote_manifest}",
             f"--scratch {dest['scratch']}",
-            "--dry-run" if args.dry_run else "--detach",
+            "--dry-run" if dry_run else "--detach",
         ]
     )
-    out = run(ssh_argv(dest, cmd), args.dry_run, capture=not args.dry_run)
+    out = run(ssh_argv(dest, cmd), dry_run, capture=not dry_run)
     if out:
         print(out.rstrip())
     pid = next((w.split("=", 1)[1] for w in out.split() if w.startswith("pid=")), None)
@@ -334,6 +369,105 @@ def do_stop(args: argparse.Namespace) -> None:
     else:
         cmd = f"cd {dest['repo']} && bash hpc/gpu_box_run.sh --stop"
     print(run(ssh_argv(dest, cmd), args.dry_run, capture=True).rstrip())
+
+
+# ── the launch itself, which both the terminal and the console use ───────────
+
+
+def run_id_for(dataset: str) -> str:
+    """A run's name, which also becomes a remote FILENAME."""
+    slug = "".join(c if (c.isalnum() or c in "-_") else "-" for c in dataset)
+    return f"{slug[:24]}-{uuid.uuid4().hex[:6]}"
+
+
+def stage(
+    dest: dict,
+    collection_dir: Path,
+    dataset: str,
+    info: dict,
+    dry_run: bool = False,
+    restage: bool = False,
+    no_stage: bool = False,
+    progress=lambda message: None,
+) -> None:
+    """Copy the dataset up, unless it is already there.
+
+    ``collection_dir`` is the DIRECTORY THE DATASETS LIVE IN, not the dataset:
+    what is copied is ``collection_dir/dataset``. Taking the parent and joining
+    the name here rather than accepting either is deliberate -- passing the
+    collection directory to something expecting a dataset root uploads every
+    dataset on the drive, under a directory named after the drive, and the only
+    symptom is a transfer that takes far too long.
+
+    The count that is shipped is REPORTED, because a collection that is still
+    growing means a run trains on a snapshot -- and a result is only traceable
+    back to a dataset if somebody wrote down which version of it.
+    """
+    source = Path(collection_dir) / dataset
+    if not (source / "meta" / "info.json").is_file():
+        raise SystemExit(f"❌ no dataset at {source}")
+    remote = dataset_dir(dest, dataset)
+    if no_stage:
+        progress(f"staging : skipped; assuming {remote}")
+        return
+    there = (
+        not dry_run
+        and subprocess.run(
+            ssh_argv(dest, f"test -f {remote}/meta/info.json"), capture_output=True
+        ).returncode
+        == 0
+    )
+    if there and not restage:
+        progress(f"staging : already at {remote} (restage to copy again)")
+        return
+    progress(f"staging : {info.get('total_episodes')} episodes -> {remote}")
+    run(ssh_argv(dest, f"mkdir -p {stage_dir(dest)}"), dry_run)
+    rsync(rsync_argv(source, dest, dry_run=dry_run), dry_run, progress)
+
+
+def launch(
+    dest: dict,
+    collection_dir: Path,
+    dataset: str,
+    rows: "list[dict[str, str]]",
+    info: dict,
+    dry_run: bool = False,
+    restage: bool = False,
+    no_stage: bool = False,
+    progress=lambda message: None,
+) -> "dict[str, Any] | None":
+    """Stage, write the manifest and submit. ``None`` for a dry run.
+
+    The one implementation of a launch: the Training tab and the command line
+    are two front ends over this, so a run started from the browser is the same
+    run, recorded the same way.
+    """
+    stage(dest, collection_dir, dataset, info, dry_run, restage, no_stage, progress)
+
+    run_id = run_id_for(dataset)
+    progress(f"submit  : {dest['name']} ({dest['kind']})")
+    remote_manifest = push_manifest(dest, rows, run_id, dry_run)
+    launched = (
+        dispatch_slurm(dest, remote_manifest, dry_run)
+        if dest["kind"] == "slurm"
+        else dispatch_ssh(dest, remote_manifest, dry_run)
+    )
+    if dry_run:
+        return None
+
+    record = {
+        "id": run_id,
+        "dest": dest["name"],
+        "dataset": dataset,
+        "policies": [r["policy"] for r in rows],
+        "cameras": sorted({r["cameras"] for r in rows}),
+        "episodes": info.get("total_episodes"),
+        "manifest": remote_manifest,
+        "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        **launched,
+    }
+    save_runs(runs_file(), remember_run(load_runs(runs_file()), record))
+    return record
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -401,10 +535,10 @@ def main() -> None:
             raise SystemExit(f"❌ --{required} is required (or use --status)")
 
     dest = destination(args.dest, args.destinations)
-    root = Path(args.dir or ".").expanduser() / args.dataset
-    info = read_dataset(root)
+    collection_dir = Path(args.dir or ".").expanduser()
+    info = read_dataset(collection_dir / args.dataset)
 
-    print(f"dataset  : {root}")
+    print(f"dataset  : {collection_dir / args.dataset}")
     print(
         f"           {info.get('total_episodes')} episodes, "
         f"{info.get('total_frames')} frames, {info.get('fps')} fps"
@@ -424,59 +558,23 @@ def main() -> None:
     if problem:
         raise SystemExit(f"\n❌ {problem}")
 
-    # ---- stage ----------------------------------------------------------
-    if args.no_stage:
-        print(
-            f"\nstaging : skipped (--no-stage); assuming {dataset_dir(dest, args.dataset)}"
-        )
-    else:
-        remote = dataset_dir(dest, args.dataset)
-        there = (
-            subprocess.run(
-                ssh_argv(dest, f"test -f {remote}/meta/info.json"),
-                capture_output=True,
-            ).returncode
-            == 0
-            if not args.dry_run
-            else False
-        )
-        if there and not args.restage:
-            print(f"\nstaging : already at {remote} (--restage to copy again)")
-        else:
-            print(f"\nstaging : {info.get('total_episodes')} episodes -> {remote}")
-            run(ssh_argv(dest, f"mkdir -p {stage_dir(dest)}"), args.dry_run)
-            run(rsync_argv(root, dest, dry_run=args.dry_run), args.dry_run)
-
-    # ---- submit ---------------------------------------------------------
-    slug = "".join(c if (c.isalnum() or c in "-_") else "-" for c in args.dataset)
-    run_id = f"{slug[:24]}-{uuid.uuid4().hex[:6]}"
-    print(f"\nsubmit  : {dest['name']} ({dest['kind']})")
-    remote_manifest = push_manifest(dest, rows, run_id, args.dry_run)
-    launched = (
-        dispatch_slurm(dest, remote_manifest, args)
-        if dest["kind"] == "slurm"
-        else dispatch_ssh(dest, remote_manifest, args)
+    record = launch(
+        dest,
+        collection_dir,
+        args.dataset,
+        rows,
+        info,
+        dry_run=args.dry_run,
+        restage=args.restage,
+        no_stage=args.no_stage,
+        progress=print,
     )
-
-    if args.dry_run:
+    if record is None:
         print("\n(dry run — nothing was staged, written or submitted)")
         return
-
-    record = {
-        "id": run_id,
-        "dest": dest["name"],
-        "dataset": args.dataset,
-        "policies": [r["policy"] for r in rows],
-        "cameras": sorted({r["cameras"] for r in rows}),
-        "episodes": info.get("total_episodes"),
-        "manifest": remote_manifest,
-        "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-        **launched,
-    }
-    save_runs(runs_file(), remember_run(load_runs(runs_file()), record))
-    print(f"\n✅ launched {run_id} on {dest['name']}")
+    print(f"\n✅ launched {record['id']} on {dest['name']}")
     print("   watch it: venv/bin/python tool/train_launch.py --status")
-    print(f"   stop it : venv/bin/python tool/train_launch.py --stop {run_id}")
+    print(f"   stop it : venv/bin/python tool/train_launch.py --stop {record['id']}")
 
 
 if __name__ == "__main__":

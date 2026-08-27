@@ -83,6 +83,37 @@ itself, and the base handles it as absent evidence rather than as an error.
 This keeps one dataset, and one contract, serving policies that derive
 their interface from the data and policies that impose their own.
 
+\paragraph{When there is no slot that means the same thing.} That mapping
+presumes a correspondence, and a tactile platform breaks the presumption
+twice. The bases available to us were pretrained on exterior and wrist
+viewpoints, so no slot has ever been shown a deformable-contact image; and we
+record more cameras than the slots number, so some camera must go unseen
+whatever we do. We take both as platform decisions to be recorded rather than
+hidden. A camera whose viewpoint the base does know keeps that slot by name,
+so what the base learned about it is not discarded; a camera with no
+counterpart is assigned the next free slot in a fixed order, which we state
+plainly is an arbitrary placement rather than a correspondence; and a request
+naming more cameras than there are slots is refused rather than silently
+trained on fewer, because a run that quietly drops an input reports as a
+result about the inputs it did not have. The assignment is recorded per run,
+so it can be varied deliberately: which of the recorded views reaches a
+pretrained slot is then an experimental factor of the study rather than a
+property of the code.
+
+\paragraph{Fitting more views than a policy accepts.} A stricter case admits
+no assignment at all. Some recent policies concatenate their visual inputs
+into a single frame of fixed size, so the number of views is not merely
+bounded but exactly determined --- two, for the model we tried. Choosing two
+of our cameras would discard every fingertip but one. Instead we compose: the
+four fingertip streams are tiled into one image feature, frame for frame, and
+that feature occupies a single view beside the exterior camera. The policy
+receives every tactile signal at the cost of resolution rather than at the
+cost of three of the four contacts, and the tiling is part of the dataset
+presented to the learner rather than a step inside it, so it is visible,
+reproducible and available to any policy on the same terms. \unjustified{}
+that trading resolution for coverage helps is a design judgement here; we have
+not measured a composed input against a chosen-subset one.
+
 \paragraph{Training parity with simulation.} Because a collected dataset is
 an ordinary dataset in the standard format, a policy trains on it through
 exactly the pipeline the simulated study uses --- the same learner, the same
@@ -111,3 +142,19 @@ rather than as a delay: the controller holds the last commanded target, warns
 the operator, and then releases the arms. \unjustified{} the tolerable holding
 period follows from the control rate and the chunk length, not from any
 measurement of how a policy's behaviour degrades across an interruption.
+
+\paragraph{Where the training runs.} The same separation applies before
+deployment. A collection lives on the platform, and the accelerators do not:
+they are a shared cluster or a single remote workstation, reached over the
+operator's existing credentials. We therefore treat a training destination as
+configuration rather than as code --- how work is queued there, where its
+scratch lies, and what its accelerator has been \emph{measured} to carry ---
+and everything downstream of choosing a run is identical wherever it lands.
+What this buys is not convenience but the ability to refuse early. A request
+is resolved against the dataset and the destination before anything is
+copied, so a camera the recording does not contain, a view count the policy
+cannot accept, or a batch size that machine has been measured to exhaust is
+reported in seconds rather than discovered hours into a reservation. The
+destination's ceilings are recorded only where they were measured, and a
+machine with none simply refuses nothing --- which we prefer to a plausible
+number that would refuse runs that fit and admit runs that do not.

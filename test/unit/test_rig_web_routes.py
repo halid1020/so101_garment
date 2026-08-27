@@ -110,7 +110,12 @@ class ConsoleTestCase(AioHTTPTestCase):
 
 class TestListing(ConsoleTestCase):
     async def test_index_and_static_are_served(self):
-        for url in ("/", "/static/app.css", "/static/datasets.js"):
+        for url in (
+            "/",
+            "/static/app.css",
+            "/static/datasets.js",
+            "/static/training.js",
+        ):
             resp = await self.client.get(url)
             self.assertEqual(resp.status, 200, url)
 
@@ -118,7 +123,7 @@ class TestListing(ConsoleTestCase):
         # A browser given a validator but no freshness rule may guess one and
         # keep a script from cache: the page then runs against a script written
         # for an older one. MEASURED as exactly that, so both must say no-cache.
-        for url in ("/", "/static/app.js", "/static/app.css"):
+        for url in ("/", "/static/app.js", "/static/app.css", "/static/training.js"):
             resp = await self.client.get(url)
             self.assertEqual(resp.headers["Cache-Control"], "no-cache", url)
 
@@ -767,3 +772,193 @@ class TestWithoutADirectory(ConsoleTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTrainingTab(ConsoleTestCase):
+    """Sending a dataset to a GPU machine, without a GPU machine.
+
+    Every refusal here is the SAME rule tool/train_launch.py applies, so a run
+    started in the browser cannot be one the terminal would have refused. What
+    these check is that the routes carry it faithfully -- and that nothing
+    reaches for a machine while the operator is still choosing.
+    """
+
+    def _dest_file(self):
+        path = Path(self.tmp.name) / "destinations.yaml"
+        path.write_text(
+            "box:\n"
+            "  ssh: box\n"
+            "  kind: ssh\n"
+            "  repo: ~/repo\n"
+            "  scratch: ~/scratch\n"
+            "  stage: '{scratch}/local'\n"
+            "  limits: {pi05: {batch: 2}}\n"
+        )
+        self.app["destinations_file"] = path
+        return path
+
+    async def _plan(self, **over):
+        self._dest_file()
+        body = {"dataset": "cube-pnp", "dest": "box", "policies": ["act"]}
+        body.update(over)
+        response = await self.post("/api/training/plan", body)
+        # A refusal comes back as JSON at 200; a bad request is plain text, the
+        # way the rest of the console reports one.
+        if response.status != 200:
+            return response.status, await response.text()
+        return response.status, await response.json()
+
+    async def test_the_form_offers_the_datasets_on_this_drive(self):
+        self._dest_file()
+        body = await (await self.client.get("/api/training/config")).json()
+        self.assertIn("cube-pnp", [d["name"] for d in body["datasets"]])
+
+    async def test_the_form_says_which_policies_this_lerobot_can_train(self):
+        # A gated policy is listed rather than hidden: hiding it would make the
+        # pin look like a missing feature instead of a one-line change.
+        self._dest_file()
+        body = await (await self.client.get("/api/training/config")).json()
+        names = {p["name"] for p in body["policies"]}
+        self.assertIn("act", names)
+        self.assertIn("fastwam", names)
+        for policy in body["policies"]:
+            self.assertEqual(policy["available"], policy["problem"] is None)
+
+    async def test_the_form_offers_the_machines_the_config_names(self):
+        self._dest_file()
+        body = await (await self.client.get("/api/training/config")).json()
+        self.assertEqual([d["name"] for d in body["destinations"]], ["box"])
+
+    async def test_a_workable_plan_has_no_refusals(self):
+        status, plan = await self._plan()
+        self.assertEqual(status, 200)
+        self.assertEqual(plan["refusals"], [])
+
+    async def test_a_plan_says_what_a_default_will_become(self):
+        # The page shows the number the run will actually use, which for a
+        # machine with a measured ceiling is not the policy's default.
+        status, plan = await self._plan(policies=["pi05"], cameras="central")
+        self.assertEqual(plan["rows"][0]["resolved_batch"], 2)
+
+    async def test_a_refusal_comes_back_at_200_so_the_page_can_show_it(self):
+        # Not a 400: the operator is still choosing, and a failed request would
+        # empty the form rather than annotate it.
+        status, plan = await self._plan(cameras="nosuchcamera")
+        self.assertEqual(status, 200)
+        self.assertTrue(any("nosuchcamera" in r for r in plan["refusals"]))
+
+    async def test_a_plan_touches_no_machine(self):
+        # 'box' does not exist. Planning must still answer, because refusing a
+        # row is a local decision and asking an unreachable machine about it
+        # would make the form unusable off the VPN.
+        status, plan = await self._plan()
+        self.assertEqual(status, 200)
+
+    async def test_starting_a_refused_run_is_refused(self):
+        self._dest_file()
+        response = await self.post(
+            "/api/training/start",
+            {
+                "dataset": "cube-pnp",
+                "dest": "box",
+                "policies": ["act"],
+                "cameras": "nosuchcamera",
+            },
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("nosuchcamera", await response.text())
+
+    async def test_a_dataset_that_is_not_here_is_a_404(self):
+        status, _ = await self._plan(dataset="never-collected")
+        self.assertEqual(status, 404)
+
+    async def test_a_machine_that_is_not_configured_lists_the_ones_that_are(self):
+        self._dest_file()
+        response = await self.post(
+            "/api/training/plan",
+            {"dataset": "cube-pnp", "dest": "hal9000", "policies": ["act"]},
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("box", await response.text())
+
+    async def test_choosing_no_policy_is_refused(self):
+        self._dest_file()
+        response = await self.post(
+            "/api/training/plan", {"dataset": "cube-pnp", "dest": "box", "policies": []}
+        )
+        self.assertEqual(response.status, 400)
+
+    async def test_nothing_launched_yet_is_an_empty_list(self):
+        body = await (await self.client.get("/api/training/runs")).json()
+        self.assertEqual(body, [])
+
+    async def test_a_launch_is_handed_the_collection_directory_and_the_name(self):
+        # THE bug this class exists for. Handed the dataset's own directory as
+        # the collection directory, rsync copied every dataset on the drive
+        # into a folder named after the drive.
+        self._dest_file()
+        seen = {}
+
+        def fake_launch(dest, collection_dir, dataset, rows, info, **kw):
+            seen.update(collection_dir=collection_dir, dataset=dataset, rows=rows)
+            return {"id": "run-1", "dest": dest["name"], "dataset": dataset}
+
+        with mock.patch("tool.train_launch.launch", fake_launch), mock.patch(
+            "common.web.training_api.reachable", return_value=None
+        ):
+            response = await self.post(
+                "/api/training/start",
+                {"dataset": "cube-pnp", "dest": "box", "policies": ["act"]},
+            )
+            self.assertEqual(response.status, 200, await response.text())
+            job_id = (await response.json())["id"]
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                job = await (
+                    await self.client.get(f"/api/datasets/jobs/{job_id}")
+                ).json()
+                if job["state"] != "running":
+                    break
+
+        self.assertEqual(job["state"], "done", job["message"])
+        self.assertEqual(seen["collection_dir"], self.root)
+        self.assertEqual(seen["dataset"], "cube-pnp")
+        self.assertEqual(seen["rows"][0]["policy"], "act")
+
+    async def test_a_launch_that_fails_is_reported_in_the_dock(self):
+        # It happens on a worker thread, so the request has long since answered
+        # 200 -- the record is the only place a failure can be seen.
+        self._dest_file()
+
+        def boom(*a, **k):
+            raise OSError("the machine said no")
+
+        with mock.patch("tool.train_launch.launch", boom), mock.patch(
+            "common.web.training_api.reachable", return_value=None
+        ):
+            response = await self.post(
+                "/api/training/start",
+                {"dataset": "cube-pnp", "dest": "box", "policies": ["act"]},
+            )
+            job_id = (await response.json())["id"]
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+                job = await (
+                    await self.client.get(f"/api/datasets/jobs/{job_id}")
+                ).json()
+                if job["state"] != "running":
+                    break
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("the machine said no", job["message"])
+
+    async def test_an_unreachable_machine_stops_a_launch_before_it_stages(self):
+        self._dest_file()
+        with mock.patch(
+            "common.web.training_api.reachable", return_value="are you on the VPN?"
+        ):
+            response = await self.post(
+                "/api/training/start",
+                {"dataset": "cube-pnp", "dest": "box", "policies": ["act"]},
+            )
+        self.assertEqual(response.status, 502)
+        self.assertIn("VPN", await response.text())

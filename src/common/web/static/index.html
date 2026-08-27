@@ -10,6 +10,7 @@
     <button class="tab sel" data-pane="datasets">Datasets</button>
     <button class="tab" data-pane="collect">Collect</button>
     <button class="tab" data-pane="signals">Signals</button>
+    <button class="tab" data-pane="training">Training</button>
     <span class="grow"></span>
     <button id="rootdir" title="the collection directory — click to change it">…</button>
   </header>
@@ -171,6 +172,62 @@
         </div>
       </div>
     </section>
+
+    <section class="pane" id="pane-training" hidden>
+      <div class="col" id="training">
+        <h2>Training</h2>
+        <div class="bar"><span class="grow" id="t-state">nothing launched</span></div>
+
+        <div class="pad">
+          <label>Dataset
+            <select id="t-dataset"></select>
+          </label>
+          <p class="muted" id="t-dataset-detail"></p>
+
+          <fieldset id="t-policies"><legend>Policies</legend></fieldset>
+
+          <label>Cameras
+            <input id="t-cameras" value="all" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="muted" id="t-cameras-help"></p>
+
+          <label>Slot map (pi0.5 only)
+            <input id="t-slots" placeholder="- (derive it)" autocomplete="off"
+                   spellcheck="false">
+          </label>
+
+          <div class="bar wrap">
+            <label>Steps <input id="t-steps" size="8" placeholder="default"></label>
+            <label>Batch <input id="t-batch" size="6" placeholder="default"></label>
+            <label>Hours <input id="t-hours" size="4" placeholder="36"></label>
+          </div>
+
+          <label>Machine
+            <select id="t-dest"></select>
+          </label>
+          <p class="muted" id="t-dest-detail"></p>
+          <label class="row"><input type="checkbox" id="t-restage">
+            copy the dataset up again even if it is already there</label>
+
+          <table class="checks" id="t-rows"></table>
+          <p class="err" id="t-err"></p>
+          <div class="bar">
+            <button id="t-check">Check</button>
+            <button id="t-reach">Test connection</button>
+            <button id="t-start">Start training</button>
+          </div>
+          <p class="muted">The dataset is copied as it stands, so a collection
+          still being recorded trains on a snapshot — the episode count that
+          went up is shown above and kept with the run.</p>
+        </div>
+      </div>
+
+      <div class="col grow" id="training-runs">
+        <h2>Runs</h2>
+        <div class="bar"><button id="t-refresh">Refresh</button></div>
+        <div class="pad" id="t-runs"></div>
+      </div>
+    </section>
   </main>
   <dialog id="dlg-root">
     <h3>Collection directory</h3>
@@ -281,4 +338,5 @@
   <script src="/static/roots.js"></script>
   <script src="/static/collect.js"></script>
   <script src="/static/signals.js"></script>
+  <script src="/static/training.js"></script>
 </body></html>

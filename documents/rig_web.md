@@ -15,9 +15,10 @@ interface only, like every other tool here; from another machine, reach it
 through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <rig>`), exactly as
 `documents/remote_policy_inference.md` describes for the policy server.
 
-The page has three tabs: **Datasets** (review and manage), **Collect**
-(readiness, live view, and one collection session), and **Signals**
-(binding devices to stream names).
+The page has four tabs: **Datasets** (review and manage), **Collect**
+(readiness, live view, and one collection session), **Signals** (binding
+devices to stream names), and **Training** (sending a finished dataset to a
+GPU machine, and watching what it does there).
 
 ## The collection directory
 
@@ -387,6 +388,91 @@ by its serial: pick the connected device.
 *Release* lets go of whatever the tab is holding, and so does leaving the
 tab — a camera or a bus held open here is one a collection session cannot
 have.
+
+## Training
+
+The last thing a collection is for. Pick a dataset, some policies and a
+machine; the console stages the dataset there, writes a run matrix, and
+starts it. Nothing here decides whether a run can work — the rules are
+`src/common/training/`, the same ones `tool/train_launch.py` applies from a
+terminal, so the page cannot start a run the command line would refuse.
+
+**Machines** come from `src/conf/train_destinations.yaml`, and adding one is
+an entry there rather than a code change:
+
+| Key | Meaning |
+|---|---|
+| `ssh` | `[user@]host` as SSH reads it — an `~/.ssh/config` alias keeps the key, port and jump host in one place |
+| `kind` | `slurm` (submit an array, ask `squeue`) or `ssh` (start the driver under `nohup`, watch a pid) |
+| `repo` | the `so101_garment` checkout on that machine |
+| `scratch` | where its `HF_LEROBOT_HOME` and `SO101_OUTPUT_DIR` live |
+| `stage` | where staged datasets go; `{scratch}` is substituted |
+| `partition` | `slurm` only: the GPU partition (`sinfo -s`) |
+| `limits` | per-policy ceilings **measured** on that machine |
+
+`~` and `$USER` in those paths are left alone and expand on the far side, in
+the remote login shell — which is the point of writing them. They therefore
+reach that shell unquoted, so what may appear in them is checked when the
+file is read: a path with a space, a backtick or a `;` is refused there
+rather than run.
+
+**Check** resolves the run and lists every refusal without touching the
+machine, so the form is usable off the VPN. The refusals are the reason this
+exists, and each one has been paid for at least once:
+
+- a camera the dataset does not record (a typo trains on fewer inputs than
+  the experiment meant, and the result looks like a finding);
+- **more cameras than the policy has slots** — pi0.5 has exactly three, and
+  this rig records five;
+- a batch size over what that machine has been *measured* to carry
+  (pi0.5 at batch 8 raised `OutOfMemoryError` at 39.22 GiB on a 40 GB A100);
+- a policy this LeRobot cannot train — `fastwam` today, refused with the two
+  files to change rather than hidden from the list.
+
+A blank steps or batch box means *whatever fits here*: it takes the
+machine's measured ceiling when there is one, the policy's default when
+there is not. A number you type is used as typed, and refused if it is over
+— training something other than what was asked for would make the run matrix
+a record of the request rather than of the run.
+
+**Test connection** is the one button that reaches out, because SSH is
+seconds and the form should not wait for it. An unreachable machine comes
+back as an instruction: `ssh-copy-id`, accept the host key in a terminal,
+or — for KCL CREATE from outside its network — *are you on the VPN?*
+
+**Start** asks first, then stages and submits on the job dock's worker, so
+it outlives the request and cannot race a merge. Staging is minutes for a
+few hundred megabytes over a home uplink; the dock names each file as it
+goes, because a message that stands still for ten minutes is
+indistinguishable from a launch that has hung.
+
+The dataset is copied **as it stands**. A collection still being recorded
+therefore trains on a snapshot, so the episode count that went up is shown
+before the launch and kept with the run.
+
+**Runs** lists what this console has launched. *Status* asks the machine
+(`squeue` on a cluster, the pid on a plain box); *Stop* cancels it, and asks
+first. The record is a convenience — the run lives on the machine, and
+`tool/train_launch.py --status` reads the same file.
+
+### pi0.5's three slots, and the tiled fingertips
+
+Two policies here have a fixed number of views, and this rig has five
+cameras, so both need an answer.
+
+pi0.5 was pretrained with three image slots. A camera whose viewpoint it
+knows — the overhead one — takes that slot by name; a camera it has never
+seen, which is every tactile one, takes the next free slot in order. The
+driver prints the map it resolved, and the **Slot map** box pins it outright
+(`central=base,left_arm_left_gripper=left_wrist`) when the assignment is the
+experiment rather than a detail.
+
+FastWAM concatenates its cameras into a single frame, so it takes exactly
+two square views. Hence the **composite**: `tactile_quad` tiles the four
+fingertip cameras 2x2 into one 224x224 feature, which sits beside the
+overhead view inside FastWAM's 224x448. Name it in the Cameras box like any
+camera; `all` never includes it, because spending one view on four cameras
+is a choice about what the model sees.
 
 ## Options
 

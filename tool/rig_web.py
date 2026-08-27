@@ -1,6 +1,6 @@
 """One browser console for the rig: browse datasets, collect, bind signals.
 
-Serves a small single-page app on ``127.0.0.1:<port>`` with three tabs.
+Serves a small single-page app on ``127.0.0.1:<port>`` with four tabs.
 
 DATASETS is the episode browser that used to live in ``tool/dataset_web.py``:
 the datasets under ``--dir``, the recordings inside the selected one, and a
@@ -9,7 +9,8 @@ Whole datasets can also be created, renamed, merged and deleted here, so the
 collection drive is managed from the same place it is reviewed.
 
 COLLECT starts and watches one collection session; SIGNALS binds the rig's
-devices to the stream names the recorder writes.
+devices to the stream names the recorder writes; TRAINING sends a collected
+dataset to a GPU machine and watches what it does there.
 
 Deleting is always available -- see ``common.web.datasets_api`` for what marking
 and compaction mean -- and every irreversible one asks first in the browser.
@@ -57,6 +58,7 @@ from common.web.roots_api import (
 from common.web.sensors_api import add_sensor_routes
 from common.web.session import PreviewArms, PreviewCameras, SessionSupervisor
 from common.web.session_api import add_session_routes
+from common.web.training_api import add_training_routes
 from common.web.util import preinit_tqdm_lock, revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "static"
@@ -144,6 +146,10 @@ def build_app(args: argparse.Namespace) -> web.Application:
     app.on_shutdown.append(_release_devices)
     app.on_cleanup.append(_close_session)
     app["cache_dir"] = outputs / "rig_web_cache"
+    # What this console has launched on a training machine. The runs themselves
+    # live on that machine; this is only the list of them, so a corrupt or
+    # missing file costs the page its history and nothing else.
+    app["training_file"] = outputs / "training_runs.yaml"
     app.add_routes(
         [
             web.get("/", handle_index),
@@ -157,6 +163,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     add_lifecycle_routes(app)
     add_session_routes(app)
     add_sensor_routes(app)
+    add_training_routes(app)
     return app
 
 

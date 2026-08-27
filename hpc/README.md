@@ -1,7 +1,27 @@
-# Running VLA training on KCL CREATE (Slurm)
+# Running VLA training
+
+Most of this directory is about the [KCL CREATE](https://docs.er.kcl.ac.uk/)
+Slurm cluster, which is where the long runs go. **A plain GPU box with an SSH
+login is also a destination** — see [On a machine with no
+queue](#on-a-machine-with-no-queue) — and either can be driven from one
+command, `tool/train_launch.py`, or from the rig console's Training tab:
+
+```bash
+source setup.sh
+venv/bin/python tool/train_launch.py --list-destinations
+venv/bin/python tool/train_launch.py --dir /mnt/seagate/so101 \
+    --dataset fold-short-from-flattend-tactile --dest create \
+    --policies act,diffusion --dry-run
+```
+
+The launcher stages the dataset, writes the run matrix onto the machine and
+submits it; the steps below are what it is doing, and what to do when it will
+not. Everything after a row is picked is identical at both destinations: the
+same camera view, the same `test/system/long_vla_real.sh`, the same run
+directory.
 
 This directory provisions and submits two training cells on the
-[KCL CREATE](https://docs.er.kcl.ac.uk/) cluster, sharing one environment:
+cluster, sharing one environment:
 
 - the **sim-VLA cell** — task `single`, mode `simple`, policies `act` +
   `diffusion` — which reproduces the recipe that reaches 100 % eval success
@@ -318,16 +338,57 @@ would refuse the dataset on arrival anyway. Clear them in
 
 ### 3. Edit the run matrix — `hpc/runs.tsv`
 
-One row per run: `dataset policy cameras steps batch hours extra`. `-` means
-"the driver's default for this policy"; `extra` is the last column and is handed
-to `lerobot-train` verbatim, so a flag the driver does not name is still
+One row per run: `dataset policy cameras steps batch hours slots extra`. `-`
+means "the driver's default for this policy"; `extra` is the last column and is
+handed to `lerobot-train` verbatim, so a flag the driver does not name is still
 reachable. Rows sharing an `hours` value are submitted as one array with that
 wall time, so a short cell does not queue behind a long reservation.
 
-`policy` is `act`, `diffusion` or `pi05`. `cameras` is `all` or a comma list of
-camera names **with no spaces** — a space there would shift every later column
-one place left, so the wrapper refuses the row rather than training the wrong
-size for the wrong time.
+`policy` is `act`, `diffusion`, `pi05` or `fastwam`. `cameras` is `all`, a comma
+list of camera names **with no spaces**, or a composite (below) — a space there
+would shift every later column one place left, so the wrapper refuses the row
+rather than training the wrong size for the wrong time.
+
+`slots` is for pi0.5 only and is usually `-`. pi0.5 was pretrained with exactly
+**three** image slots, so a row naming more cameras than that is refused rather
+than quietly trained on fewer. With `-`, a camera whose viewpoint pi0.5 knows
+(the overhead one) takes that slot by name and a camera it has never seen —
+every tactile one — takes the next free slot in order; the driver prints the map
+it resolved. Pin it when the assignment is the experiment:
+`central=base,left_arm_left_gripper=left_wrist` (the slots are `base`,
+`left_wrist`, `right_wrist`).
+
+A row written before the `slots` column existed has seven fields, and `read`
+would put its `extra` into `slots` — so both the wrapper and the array task
+detect that on the **empty `extra`** and say which column is missing, rather
+than handing a string of `lerobot-train` flags to `--slots`.
+
+#### Composites: several cameras in one view
+
+A policy whose architecture fixes how many views it takes cannot be given more.
+FastWAM concatenates its image features into a single frame of
+`policy.image_size` — 224x448 by default, so exactly two square views — and this
+rig records five cameras. `tactile_quad` names a **composite**: the four
+fingertip cameras tiled 2x2 into one 224x224 feature, which sits beside the
+overhead view inside that frame. One view spent on four cameras instead of three
+of them thrown away.
+
+Name it like a camera (`central,tactile_quad`). `all` never includes one:
+spending a view this way is a choice about what the model sees. Unlike an
+ordinary view a composite cannot share the source's video files, because its
+frames do not exist until they are made — it decodes the four sources in
+lockstep and encodes one, with PyAV rather than the `ffmpeg` command line,
+because a compute node has neither an `ffmpeg` nor a way to install one.
+MEASURED: 26 s for 9985 frames x 4 cameras.
+
+#### FastWAM is gated
+
+`fastwam` needs a LeRobot that ships `src/lerobot/policies/fastwam`. The commit
+this repo pins (`3dd19d04`, 2026-06-27) does not; it exists upstream. A fastwam
+row is therefore **refused before anything is reserved**, by a probe for that
+module rather than a version comparison, so the gate opens by itself when
+`LEROBOT_COMMIT` moves in `install.sh` and `provision_create.sh` (both already
+list the `fastwam` extra, which pip ignores until the checkout defines it).
 
 #### What the `cameras` column does
 
@@ -482,6 +543,51 @@ a GPU box instead (`--dest <gpu-host>:...`, then `tool/policy_server.py` +
 **pi0.5 trains here now** (`--only pi05`), provided both its base *and* its
 tokenizer were staged in step 1 — see [What a `pi05` row
 needs](#what-a-pi05-row-needs). The base is not gated; the tokenizer repo is.
+
+## On a machine with no queue
+
+A GPU box reached by SSH is a destination like the cluster, described in
+`src/conf/train_destinations.yaml`:
+
+```yaml
+thanos:
+  ssh: thanos                          # an ~/.ssh/config alias
+  kind: ssh                            # no queue manager
+  repo: ~/project/so101_garment
+  scratch: ~/.cache/huggingface/lerobot
+  stage: "{scratch}/local"
+  limits: {}                           # nothing measured yet — see below
+```
+
+`~` and `$USER` are left alone and expand in the **remote** login shell, which
+is why they are written rather than a literal path. They therefore reach that
+shell unquoted, so what may appear in them is checked when the file is read.
+
+```bash
+venv/bin/python tool/train_launch.py --dir /mnt/seagate/so101 \
+    --dataset fold-short-from-flattend-tactile --dest thanos --policies act
+venv/bin/python tool/train_launch.py --status
+venv/bin/python tool/train_launch.py --stop <run id>
+```
+
+`hpc/gpu_box_run.sh` is what runs there, and it does the two things Slurm was
+doing for us.
+
+**It holds a lock, and runs one row at a time.** Nothing else reserves the card:
+pi0.5 under LoRA already needs 21.5 of a 24 GB card's 23.5 GiB, so a second run
+started alongside does not queue — it takes the first one down with an OOM hours
+in. A second invocation is refused (exit 3) unless it passes `--wait`.
+
+**It detaches.** `--detach` re-execs under `setsid` with the output on a log and
+prints `pid=… log=…`, so the launcher's SSH connection closing cannot take a
+36-hour run with it. One failing row does not abandon the rest of the matrix.
+
+**Measure the ceiling before a long run.** `limits:` above is empty on purpose:
+the one pi0.5 figure we have was taken with *three* cameras, and activations
+scale with the camera count, so it does not carry over to a five-camera dataset.
+Run one short row per policy, watch `nvidia-smi`, and write the number in — a
+row over a recorded ceiling is then refused in the console and the terminal
+instead of by the GPU.
 
 ## Scaling out later
 

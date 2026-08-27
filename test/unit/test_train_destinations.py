@@ -188,6 +188,16 @@ class TestCommands(unittest.TestCase):
     def test_a_dry_run_rsync_transfers_nothing(self):
         self.assertIn("--dry-run", rsync_argv("/mnt/x/a", self.dest, dry_run=True))
 
+    def test_the_source_is_one_dataset_and_not_the_drive_it_is_on(self):
+        # MEASURED failure: handed the collection directory instead of the
+        # dataset, this uploaded EVERY dataset on the drive into a directory
+        # named after the drive -- 1.2 GB in, with nothing to show for it but a
+        # transfer that was taking too long. The launcher joins the name; this
+        # pins what the resulting argv must look like.
+        argv = rsync_argv("/mnt/seagate/so101/fold-short", self.dest)
+        self.assertTrue(argv[-2].endswith("so101/fold-short"))
+        self.assertNotEqual(argv[-2], "/mnt/seagate/so101")
+
 
 class TestWhatAnUnreachableMachineSays(unittest.TestCase):
     """Four failures with four different fixes, and only one is a bug."""

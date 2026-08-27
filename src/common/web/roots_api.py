@@ -37,7 +37,17 @@ from common.web.util import in_executor
 # the page itself, the job dock, the signal map, a session's status -- answers
 # normally while the operator is still choosing one.
 ROOT_REQUIRED_PREFIXES = ("/api/datasets",)
-ROOT_REQUIRED_PATHS = ("/api/preflight", "/api/session/plan", "/api/session/start")
+ROOT_REQUIRED_PATHS = (
+    "/api/preflight",
+    "/api/session/plan",
+    "/api/session/start",
+    # These three read a dataset off the drive. The rest of the Training tab --
+    # which runs exist, how one is going, stopping one -- is about machines
+    # elsewhere and answers with no directory chosen.
+    "/api/training/config",
+    "/api/training/plan",
+    "/api/training/start",
+)
 NO_ROOT = "no collection directory chosen — pick one at the top of the page"
 
 
