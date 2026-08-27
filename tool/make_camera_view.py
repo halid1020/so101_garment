@@ -29,12 +29,14 @@ sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
 from common.recording.dataset_view import (  # noqa: E402
+    COMPOSITE_SIZE,
+    COMPOSITES,
     ViewError,
     build_view,
     camera_keys,
     pi05_rename_map,
-    resolve_cameras,
     short_name,
+    split_selection,
     view_slug,
 )
 
@@ -63,7 +65,9 @@ def main() -> None:
     parser.add_argument(
         "--cameras",
         default="all",
-        help="Comma list of camera names, or 'all' (default: all)",
+        help="Comma list of camera names, or 'all' (default: all). May also "
+        "name a COMPOSITE, which tiles several cameras into one image feature: "
+        f"{', '.join(sorted(COMPOSITES))}. 'all' never includes one",
     )
     parser.add_argument(
         "--out", help="View directory (default: <source>__<slug> beside it)"
@@ -108,11 +112,18 @@ def main() -> None:
         for key in camera_keys(info):
             shape = info["features"][key]["shape"]
             print(f"  {short_name(key):24s} {shape}")
+        have = {short_name(k) for k in camera_keys(info)}
+        for name, parts in sorted(COMPOSITES.items()):
+            if have.issuperset(parts):
+                h, w = COMPOSITE_SIZE
+                print(f"  {name:24s} [{h}, {w}, 3]  ({' + '.join(parts)})")
         return
 
     try:
-        keep = resolve_cameras(info, args.cameras.split(","))
-        slug = view_slug(info, keep)
+        keep, composites = split_selection(info, args.cameras.split(","))
+        slug = "+".join(
+            filter(None, [view_slug(info, keep) if keep else "", *composites])
+        )
 
         # Queries answer about the dataset as it stands and build nothing, so a
         # driver can ask what to pass a policy without side effects.
@@ -134,7 +145,14 @@ def main() -> None:
             parent = Path(args.out_dir).expanduser() if args.out_dir else src.parent
             dst = parent / f"{src.name}__{slug}"
         existed = dst.exists() and not args.force
-        build_view(src, dst, keep, canonical_task=args.canonical_task, force=args.force)
+        build_view(
+            src,
+            dst,
+            [*(short_name(k) for k in keep), *composites],
+            canonical_task=args.canonical_task,
+            force=args.force,
+            composite_size=COMPOSITE_SIZE,
+        )
     except ViewError as exc:
         raise SystemExit(f"❌ {exc}")
 
@@ -142,7 +160,10 @@ def main() -> None:
         print(dst)
         return
     print(f"{'↷ reusing' if existed else '✓ built'} {dst}")
-    print(f"  cameras: {', '.join(short_name(k) for k in keep)}")
+    print(f"  cameras: {', '.join([*(short_name(k) for k in keep), *composites])}")
+    for name in composites:
+        h, w = COMPOSITE_SIZE
+        print(f"  {name}: {' + '.join(COMPOSITES[name])} tiled into {h}x{w}")
 
 
 if __name__ == "__main__":

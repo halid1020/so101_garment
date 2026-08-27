@@ -26,6 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from common.recording.dataset_view import (
+    COMPOSITE_SIZE,
     COMPOSITES,
     PI05_SLOT_ORDER,
     PI05_SLOTS,
@@ -33,12 +34,16 @@ from common.recording.dataset_view import (
     available_camera_names,
     build_view,
     camera_keys,
+    composite_feature,
+    composite_grid,
+    composite_stats,
     dropped_meta_columns,
     filtered_info,
     filtered_stats,
     pi05_rename_map,
     resolve_cameras,
     short_name,
+    split_selection,
     task_remap,
     view_slug,
 )
@@ -452,3 +457,126 @@ class TestBuildView(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCompositeGeometry(unittest.TestCase):
+    """Four fingertip cameras into one frame, because FastWAM takes two views."""
+
+    def test_four_cameras_tile_two_by_two(self):
+        self.assertEqual(composite_grid(4), (2, 2))
+
+    def test_a_count_that_cannot_tile_is_refused(self):
+        with self.assertRaises(ViewError):
+            composite_grid(3)
+
+    def test_the_size_is_two_of_these_side_by_side(self):
+        # FastWAM's default image_size is 224x448 -- exactly the overhead view
+        # and this composite. If the composite stopped being square the pair
+        # would no longer fit, and the failure would be a shape error inside
+        # the model rather than anything readable.
+        height, width = COMPOSITE_SIZE
+        self.assertEqual(height, width)
+        self.assertEqual(height * 2, 448)
+
+    def test_every_tile_divides_the_frame_exactly(self):
+        rows, cols = composite_grid(len(COMPOSITES["tactile_quad"]))
+        height, width = COMPOSITE_SIZE
+        self.assertEqual(height % rows, 0)
+        self.assertEqual(width % cols, 0)
+
+
+class TestCompositeMetadata(unittest.TestCase):
+    def _info(self, cameras):
+        return {
+            "features": {
+                f"observation.images.{c}": {
+                    "dtype": "video",
+                    "shape": [480, 640, 3],
+                    "names": ["height", "width", "channels"],
+                    "info": {"video.height": 480, "video.width": 640, "video.fps": 30},
+                }
+                for c in cameras
+            }
+        }
+
+    def test_the_composite_is_described_as_an_ordinary_camera(self):
+        # LeRobot must open it as a camera and the policy must never be told it
+        # is a tiling; only the frame size differs from its parts.
+        parts = [f"observation.images.{p}" for p in COMPOSITES["tactile_quad"]]
+        info = self._info(COMPOSITES["tactile_quad"])
+        feature = composite_feature(info, parts, (224, 224))
+        self.assertEqual(feature["dtype"], "video")
+        self.assertEqual(feature["shape"], [224, 224, 3])
+        self.assertEqual(feature["info"]["video.fps"], 30)
+        self.assertEqual(feature["info"]["video.height"], 224)
+
+    def test_a_view_names_the_composite_and_drops_its_parts(self):
+        info = self._info(["central", *COMPOSITES["tactile_quad"]])
+        keep, composites = split_selection(info, ["central", "tactile_quad"])
+        out = filtered_info(info, keep, composites)
+        names = {short_name(k) for k in camera_keys(out)}
+        self.assertEqual(names, {"central", "tactile_quad"})
+
+    def test_all_never_pulls_in_a_composite(self):
+        # Spending one view on four cameras is a choice about what the policy
+        # sees, so it has to be asked for.
+        info = self._info(["central", *COMPOSITES["tactile_quad"]])
+        keep, composites = split_selection(info, ["all"])
+        self.assertEqual(composites, [])
+        self.assertEqual(len(keep), 5)
+
+    def test_a_composite_the_dataset_cannot_build_is_refused_by_part(self):
+        info = self._info(["central", *COMPOSITES["tactile_quad"][:2]])
+        with self.assertRaises(ViewError) as caught:
+            split_selection(info, ["tactile_quad"])
+        self.assertIn(COMPOSITES["tactile_quad"][2], str(caught.exception))
+
+
+class TestCompositeStats(unittest.TestCase):
+    """Derived from the parts', because equal-area tiles allow it exactly."""
+
+    def _stats(self, mean, std):
+        return {
+            "mean": [[[mean]]],
+            "std": [[[std]]],
+            "min": [[[0.0]]],
+            "max": [[[1.0]]],
+            "count": [10],
+        }
+
+    def test_the_mean_of_equal_tiles_is_the_mean_of_their_means(self):
+        stats = {"a": self._stats(0.2, 0.1), "b": self._stats(0.4, 0.1)}
+        out = composite_stats(stats, ["a", "b"])
+        self.assertAlmostEqual(out["mean"][0][0][0], 0.3)
+
+    def test_the_spread_grows_when_the_tiles_differ(self):
+        # Two tiles 0.2 apart are more varied together than either alone, and a
+        # std that ignored that would normalise the tiled frame wrongly.
+        same = composite_stats(
+            {"a": self._stats(0.3, 0.1), "b": self._stats(0.3, 0.1)}, ["a", "b"]
+        )
+        apart = composite_stats(
+            {"a": self._stats(0.2, 0.1), "b": self._stats(0.4, 0.1)}, ["a", "b"]
+        )
+        self.assertAlmostEqual(same["std"][0][0][0], 0.1)
+        self.assertGreater(apart["std"][0][0][0], same["std"][0][0][0])
+
+    def test_the_extremes_carry_straight_over(self):
+        stats = {"a": self._stats(0.2, 0.1), "b": self._stats(0.4, 0.1)}
+        stats["b"]["max"] = [[[0.5]]]
+        out = composite_stats(stats, ["a", "b"])
+        self.assertEqual(out["max"][0][0][0], 1.0)
+        self.assertEqual(out["min"][0][0][0], 0.0)
+
+    def test_the_shape_is_the_one_lerobot_writes(self):
+        out = composite_stats(
+            {"a": self._stats(0.2, 0.1), "b": self._stats(0.4, 0.1)}, ["a", "b"]
+        )
+        for key in ("mean", "std", "min", "max"):
+            self.assertEqual(out[key], [[[out[key][0][0][0]]]], key)
+
+    def test_statistics_that_cannot_be_read_give_none_not_an_exception(self):
+        # They only normalise an image; a dataset whose stats are shaped
+        # differently should still produce a composite.
+        self.assertIsNone(composite_stats({"a": {"mean": "?"}}, ["a"]))
+        self.assertIsNone(composite_stats({}, ["a"]))

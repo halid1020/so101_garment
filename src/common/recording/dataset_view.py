@@ -51,7 +51,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 CAMERA_PREFIX = "observation.images."
 _VIDEO_DTYPES = ("video", "image")
@@ -103,6 +103,13 @@ PI05_SLOT_ALIASES = {
 #
 # The grid is row-major and must be square-ish: four cameras tile 2x2, each
 # quadrant a quarter of the output's width and height.
+#
+# 224x224 because that is what the policy this exists for takes: FastWAM's
+# default image_size is 224x448, which is exactly two square features side by
+# side -- the overhead view and this. Each fingertip therefore gets 112x112,
+# which is the price of showing the model all four rather than one.
+COMPOSITE_SIZE = (224, 224)
+
 COMPOSITES: "dict[str, tuple[str, ...]]" = {
     "tactile_quad": (
         "left_arm_left_gripper",
@@ -183,6 +190,30 @@ def resolve_cameras(info: dict, names: Iterable[str]) -> list[str]:
     return [key for key in available if key in set(wanted)]
 
 
+def split_selection(info: dict, names: Iterable[str]) -> "tuple[list[str], list[str]]":
+    """``central,tactile_quad`` -> the real camera keys, and the composites.
+
+    ``all`` is the dataset's own cameras and never a composite: spending one
+    view on four cameras is a deliberate choice about what a policy sees, so it
+    has to be asked for by name.
+    """
+    wanted = [n.strip() for n in names if str(n).strip()]
+    composites = [n for n in wanted if n in COMPOSITES]
+    for name in composites:
+        missing = [
+            part
+            for part in COMPOSITES[name]
+            if CAMERA_PREFIX + part not in camera_keys(info)
+        ]
+        if missing:
+            raise ViewError(
+                f"composite {name!r} needs {', '.join(COMPOSITES[name])}, and "
+                f"this dataset has no {', '.join(missing)}"
+            )
+    plain = [n for n in wanted if n not in COMPOSITES]
+    return (resolve_cameras(info, plain) if plain else []), composites
+
+
 def view_slug(info: dict, keep: Sequence[str]) -> str:
     """A short, stable directory name for a camera set (``all``, ``central+wrist_left``)."""
     available = camera_keys(info)
@@ -198,11 +229,23 @@ def view_slug(info: dict, keep: Sequence[str]) -> str:
     return "+".join(parts)
 
 
-def filtered_info(info: dict, keep: Sequence[str]) -> dict:
-    """``info.json`` with every camera feature except ``keep`` removed."""
+def filtered_info(
+    info: dict,
+    keep: Sequence[str],
+    composites: Sequence[str] = (),
+    size: "tuple[int, int]" = COMPOSITE_SIZE,
+) -> dict:
+    """``info.json`` with every camera feature except ``keep`` removed.
+
+    A composite is ADDED as a camera feature of its own, so LeRobot opens it as
+    an ordinary camera and the policy is never told it is a tiling.
+    """
     drop = set(camera_keys(info)) - set(keep)
     out = dict(info)
     out["features"] = {k: v for k, v in info["features"].items() if k not in drop}
+    for name in composites:
+        parts = [CAMERA_PREFIX + p for p in COMPOSITES[name]]
+        out["features"][CAMERA_PREFIX + name] = composite_feature(info, parts, size)
     return out
 
 
@@ -342,18 +385,30 @@ def _rewrite_parquet_dir(
     drop_columns: Sequence[str] = (),
     task_index_map: dict[int, int] | None = None,
     task_strings: dict[int, str] | None = None,
+    copy_column_prefixes: "dict[str, str] | None" = None,
 ) -> None:
     """Copy a tree of parquet files, dropping columns and remapping task indices.
 
     Types are preserved by editing the arrow table in place rather than taking a
     pandas round trip, which would silently widen ints and turn the fixed-size
     lists the metadata uses into something LeRobot reads back differently.
+
+    ``copy_column_prefixes`` duplicates a block of per-camera columns under a
+    new camera's name, which is how a composite gets its own. It runs BEFORE the
+    drop, so a composite can be built out of cameras the view itself does not
+    keep.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     for src in sorted(src_dir.rglob("*.parquet")):
         table = pq.read_table(src)
+        for old, new in (copy_column_prefixes or {}).items():
+            for name in list(table.column_names):
+                if name.startswith(old):
+                    table = table.append_column(
+                        new + name[len(old) :], table.column(name)
+                    )
         drop = [c for c in drop_columns if c in table.column_names]
         if drop:
             table = table.drop(drop)
@@ -385,8 +440,196 @@ def _rewrite_parquet_dir(
         pq.write_table(table, out)
 
 
+# --------------------------------------------------------------------------
+# composites: several cameras tiled into one image feature
+# --------------------------------------------------------------------------
+#
+# A policy whose architecture fixes how many views it takes cannot be given
+# more of them. FastWAM concatenates its image features into a single frame of
+# `policy.image_size`, so a five-camera rig has to choose three cameras to throw
+# away -- unless four of them are tiled into one feature first, which is what
+# this does. The four fingertip cameras become one square frame, and the policy
+# sees every tactile signal for the price of one view.
+#
+# The tiles are SQUASHED to fill their quadrant rather than letterboxed. That is
+# what LeRobot's own resize does to these frames anyway, and a letterbox would
+# spend a fifth of the pixels on black.
+
+
+def composite_grid(count: int) -> "tuple[int, int]":
+    """Rows and columns for ``count`` tiles. Raises for a count that cannot tile."""
+    if count == 4:
+        return 2, 2
+    if count == 2:
+        return 1, 2
+    raise ViewError(f"no tile layout for {count} cameras; a composite takes 2 or 4")
+
+
+def composite_feature(
+    info: dict, parts: Sequence[str], size: "tuple[int, int]"
+) -> dict:
+    """The ``info.json`` feature entry for a composite of ``parts``.
+
+    Everything about the encoding is taken from the first part, so the composite
+    is written the way the recorder writes a camera; only the frame size, which
+    is the point of the composite, differs.
+    """
+    height, width = size
+    first = info["features"][parts[0]]
+    video = dict(first.get("info") or {})
+    video.update({"video.height": height, "video.width": width})
+    return {
+        "dtype": "video",
+        "shape": [height, width, 3],
+        "names": ["height", "width", "channels"],
+        "info": video,
+    }
+
+
+def composite_stats(stats: dict, parts: Sequence[str]) -> "dict | None":
+    """Pixel statistics for the tiled frame, derived from its parts'.
+
+    Equal-area tiles, so the mean is the mean of the means and the second moment
+    is the mean of the second moments; min and max carry straight over. Derived
+    rather than measured because measuring means decoding every frame a second
+    time for a number that only normalises an image -- and the resize, which is
+    the one thing this ignores, moves it far less than the tiling does.
+    """
+    import math
+
+    maybe = [stats.get(p) for p in parts]
+    if any(s is None for s in maybe):
+        return None
+    have: "list[dict]" = [s for s in maybe if s is not None]
+    try:
+        n = len(have)
+        # One row per part, one column per channel.
+        means = [_flat(s["mean"]) for s in have]
+        stds = [_flat(s["std"]) for s in have]
+        mins = [_flat(s["min"]) for s in have]
+        maxs = [_flat(s["max"]) for s in have]
+
+        mean = [sum(col) / n for col in zip(*means)]
+        # E[x^2] over equal-area tiles is the mean of each tile's E[x^2].
+        second = [
+            sum(m * m + sd * sd for m, sd in zip(mcol, scol)) / n
+            for mcol, scol in zip(zip(*means), zip(*stds))
+        ]
+        std = [math.sqrt(max(e - m * m, 0.0)) for e, m in zip(second, mean)]
+        return {
+            "mean": _nest(mean),
+            "std": _nest(std),
+            "min": _nest([min(col) for col in zip(*mins)]),
+            "max": _nest([max(col) for col in zip(*maxs)]),
+            "count": [int(sum(float(_flat(s.get("count", [1]))[0]) for s in have) / n)],
+        }
+    except (KeyError, TypeError, ValueError, IndexError):
+        # Statistics are a convenience for normalisation, not a correctness
+        # requirement: a dataset whose stats are shaped differently should
+        # produce a composite without them rather than no composite.
+        return None
+
+
+def _nest(channels: "Sequence[float]") -> list:
+    """``[a, b, c]`` -> ``[[[a]], [[b]], [[c]]]``, the shape LeRobot writes."""
+    return [[[float(v)]] for v in channels]
+
+
+def _flat(value) -> list:
+    """``[[[a]],[[b]],[[c]]]`` -> ``[a, b, c]``; a flat list is left alone."""
+    out = []
+    stack = [value]
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, list):
+            stack = list(item) + stack
+        else:
+            out.append(float(item))
+    return out
+
+
+def build_composite_video(
+    sources: "Sequence[Path]", dst: Path, size: "tuple[int, int]"
+) -> int:
+    """Tile ``sources`` frame by frame into one video at ``dst``. Returns frames.
+
+    Decoded and encoded with PyAV rather than the ffmpeg command line, because
+    this runs where the training runs: a CREATE compute node has no ffmpeg and
+    no way to install one, while PyAV's wheel carries its own.
+
+    The sources are read in LOCKSTEP and must have the same number of frames.
+    They do by construction -- the recorder writes one frame per camera per
+    dataset frame -- and if they ever do not, tiling them would silently pair
+    frame k of one camera with frame k+1 of another, which is a dataset that
+    looks fine and teaches the wrong thing. So it is checked.
+    """
+    import av
+    import numpy as np
+
+    rows, cols = composite_grid(len(sources))
+    height, width = size
+    tile_h, tile_w = height // rows, width // cols
+
+    # Annotated because PyAV's stubs overload av.open on its mode argument and
+    # do not narrow to a container when the mode is not a literal at the call.
+    containers: "list[Any]" = [av.open(str(p)) for p in sources]
+    out: "Any" = av.open(str(dst), mode="w")
+    try:
+        rate = containers[0].streams.video[0].average_rate
+        stream = out.add_stream("libsvtav1", rate=rate)
+        stream.width, stream.height = width, height
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"crf": "30", "preset": "8"}
+
+        streams = [
+            c.decode(video=0) for c in containers
+        ]  # generators, advanced together
+        written = 0
+        while True:
+            tiles = []
+            ended = 0
+            for gen in streams:
+                try:
+                    tiles.append(next(gen))
+                except StopIteration:
+                    ended += 1
+            if ended == len(streams):
+                break
+            if ended:
+                raise ViewError(
+                    f"the cameras of this composite do not have the same number "
+                    f"of frames ({written} in the shortest); they cannot be "
+                    "tiled without pairing one camera's frame with another's "
+                    "neighbour"
+                )
+            canvas = np.zeros((height, width, 3), dtype=np.uint8)
+            for i, frame in enumerate(tiles):
+                row, col = divmod(i, cols)
+                canvas[
+                    row * tile_h : (row + 1) * tile_h,
+                    col * tile_w : (col + 1) * tile_w,
+                ] = frame.reformat(
+                    width=tile_w, height=tile_h, format="rgb24"
+                ).to_ndarray()
+            for packet in stream.encode(av.VideoFrame.from_ndarray(canvas, "rgb24")):
+                out.mux(packet)
+            written += 1
+        for packet in stream.encode():
+            out.mux(packet)
+        return written
+    finally:
+        out.close()
+        for container in containers:
+            container.close()
+
+
 def _write_view(
-    src: Path, work: Path, keep: Sequence[str], canonical_task: str | None
+    src: Path,
+    work: Path,
+    keep: Sequence[str],
+    canonical_task: str | None,
+    composites: Sequence[str] = (),
+    composite_size: "tuple[int, int]" = COMPOSITE_SIZE,
 ) -> None:
     import pandas as pd
 
@@ -394,14 +637,18 @@ def _write_view(
     cameras = camera_keys(info)
 
     (work / "meta").mkdir(parents=True)
-    info_out = filtered_info(info, keep)
+    info_out = filtered_info(info, keep, composites, composite_size)
 
     stats_path = src / "meta" / "stats.json"
     if stats_path.exists():
         stats = json.loads(stats_path.read_text())
-        (work / "meta" / "stats.json").write_text(
-            json.dumps(filtered_stats(stats, keep, cameras), indent=4)
-        )
+        out_stats = filtered_stats(stats, keep, cameras)
+        for name in composites:
+            parts = [CAMERA_PREFIX + p for p in COMPOSITES[name]]
+            derived = composite_stats(stats, parts)
+            if derived is not None:
+                out_stats[CAMERA_PREFIX + name] = derived
+        (work / "meta" / "stats.json").write_text(json.dumps(out_stats, indent=4))
 
     # Tasks: one canonical string, and the index map that keeps the data honest.
     tasks_df = pd.read_parquet(src / "meta" / "tasks.parquet")
@@ -423,6 +670,21 @@ def _write_view(
 
     (work / "meta" / "info.json").write_text(json.dumps(info_out, indent=4))
 
+    # A composite's per-episode columns are its FIRST PART's. For `videos/…`
+    # that is exact: those columns say which file an episode's frames are in and
+    # between which timestamps, and the tiled video is written frame for frame
+    # against that same timeline in the same layout. For `stats/…` it is an
+    # approximation -- one tile's pixel statistics standing for four. The
+    # aggregate in stats.json, which is what LeRobot normalises with, is derived
+    # from all four properly; these per-episode ones exist so the metadata is
+    # shaped like every other camera's.
+    renames = {
+        f"{prefix}/{CAMERA_PREFIX}{COMPOSITES[name][0]}/": (
+            f"{prefix}/{CAMERA_PREFIX}{name}/"
+        )
+        for name in composites
+        for prefix in ("videos", "stats")
+    }
     _rewrite_parquet_dir(
         src / "meta" / "episodes",
         work / "meta" / "episodes",
@@ -431,6 +693,7 @@ def _write_view(
         ),
         task_index_map=index_map,
         task_strings=task_strings,
+        copy_column_prefixes=renames,
     )
     _rewrite_parquet_dir(src / "data", work / "data", task_index_map=index_map)
 
@@ -438,6 +701,32 @@ def _write_view(
     (work / "videos").mkdir()
     for key in keep:
         (work / "videos" / key).symlink_to((src / "videos" / key).resolve())
+    for name in composites:
+        _build_composite(src, work, name, composite_size)
+
+
+def _build_composite(src: Path, work: Path, name: str, size: "tuple[int, int]") -> None:
+    """Tile one composite's parts into a new video tree under ``work``.
+
+    This is the one thing a view cannot share by symlink: the frames do not
+    exist until they are made. It mirrors the source's chunk/file layout so the
+    per-episode timestamps copied above still name the right file.
+    """
+    parts = [CAMERA_PREFIX + p for p in COMPOSITES[name]]
+    first = src / "videos" / parts[0]
+    for rel in sorted(
+        p.relative_to(first) for p in first.rglob("*.mp4") if p.is_file()
+    ):
+        sources = [src / "videos" / part / rel for part in parts]
+        missing = [s for s in sources if not s.is_file()]
+        if missing:
+            raise ViewError(
+                f"composite {name!r} is missing {missing[0]}; its cameras must "
+                "share the source's chunk layout"
+            )
+        dst = work / "videos" / (CAMERA_PREFIX + name) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        build_composite_video(sources, dst, size)
 
 
 def _task_frame_counts(data_dir: Path) -> dict[int, int]:
@@ -468,6 +757,8 @@ def build_view(
     cameras: Iterable[str],
     canonical_task: str | None = None,
     force: bool = False,
+    composites: Sequence[str] = (),
+    composite_size: "tuple[int, int]" = COMPOSITE_SIZE,
 ) -> Path:
     """Create (or reuse) a camera view of ``src`` at ``dst``.
 
@@ -485,12 +776,19 @@ def build_view(
         shutil.rmtree(dst)
 
     info = json.loads((src / "meta" / "info.json").read_text())
-    keep = resolve_cameras(info, cameras)
+    # The selection may name composites as well as cameras; splitting it here
+    # means a caller passes what the run matrix said and nothing else.
+    keep, named = split_selection(info, cameras)
+    composites = list(composites) + [c for c in named if c not in composites]
+    if not keep and not composites:
+        raise ViewError("no cameras selected")
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f".{dst.name}.", dir=dst.parent))
     try:
-        _write_view(src, work / "view", keep, canonical_task)
+        _write_view(
+            src, work / "view", keep, canonical_task, composites, composite_size
+        )
         try:
             os.replace(work / "view", dst)
         except OSError:

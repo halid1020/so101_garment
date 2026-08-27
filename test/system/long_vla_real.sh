@@ -8,7 +8,9 @@
 #     tool/run_policy.py at the rig, not on the cluster.
 # For each policy (act, diffusion by default) it trains a long run on the
 # staged real dataset, saves checkpoints, and writes a results.md pointing at
-# them and their final training loss.
+# them and their final training loss. `pi05` and `fastwam` are also trainable
+# here; both are finetunes of a large pretrained model rather than policies
+# trained from scratch, and differ accordingly (see below).
 #
 # `pi05` is also trainable here, and differs from the other two in three ways
 # that are all consequences of it being a FINETUNE of a 4.1B-param base rather
@@ -63,6 +65,16 @@ DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encod
 # pi0.5 finetunes a pretrained base: far fewer steps than training from scratch,
 # and a small batch because 4.1B params leave little room even under LoRA.
 PI05_STEPS=30000; PI05_BATCH=8; PI05_SAVE=5000
+# FastWAM builds its visual world model from a Wan2.2 video backbone and then
+# predicts actions directly, so like pi0.5 it is a finetune and wants far fewer
+# steps than the docs' 300000, which is sized for a large multi-task corpus.
+# Its image features are CONCATENATED into one frame of --fastwam-image-size,
+# so every camera must be that high and their widths must sum to its width:
+# two square views, or one wide one. A camera set that cannot is refused by
+# tool/train_launch.py before anything is reserved.
+FASTWAM_STEPS=30000; FASTWAM_BATCH=8; FASTWAM_SAVE=5000
+FASTWAM_IMAGE_SIZE="[224,448]"
+FASTWAM_HORIZON=32; FASTWAM_N_ACTION_STEPS=10
 PI05_BASE="${SO101_PI05_BASE:-lerobot/pi05_base}"
 PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GPU)
 # Which pi0.5 slot each camera is fed into, as camera=slot pairs. Empty means
@@ -96,6 +108,8 @@ while [ $# -gt 0 ]; do
         --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
         --pi05-steps) PI05_STEPS="$2"; shift 2;;
         --pi05-base) PI05_BASE="$2"; shift 2;;
+        --fastwam-steps) FASTWAM_STEPS="$2"; shift 2;;
+        --fastwam-image-size) FASTWAM_IMAGE_SIZE="$2"; shift 2;;
         --slots) PI05_SLOTS="$2"; shift 2;;
         --lora-r) PI05_LORA_R="$2"; shift 2;;
         --steps) STEPS="$2"; shift 2;;
@@ -275,7 +289,8 @@ train_cell() {
         act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
         diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
         pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05)";;
+        fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.
@@ -320,6 +335,25 @@ train_cell() {
         args+=(--policy.pretrained_backbone_weights=null
                --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]")
     fi
+    if [ "$policy" = "fastwam" ]; then
+        # The action and proprioception widths come from THIS dataset rather
+        # than from the docs' 7 and 8: this rig has two arms, so both are 12,
+        # and a mismatch is a shape error thousands of steps in.
+        local dims
+        dims="$("$PY" - "$DATASET_ROOT" <<'PYDIM'
+import json, sys
+info = json.load(open(f"{sys.argv[1]}/meta/info.json"))
+print(info["features"]["action"]["shape"][0], info["features"]["observation.state"]["shape"][0])
+PYDIM
+)" || fail "fastwam dimensions for $DATASET_ROOT"
+        args+=(--policy.action_dim="${dims%% *}"
+               --policy.proprio_dim="${dims##* }"
+               --policy.action_horizon="$FASTWAM_HORIZON"
+               --policy.n_action_steps="$FASTWAM_N_ACTION_STEPS"
+               --policy.image_size="$FASTWAM_IMAGE_SIZE")
+        echo "  fastwam dims : action=${dims%% *} proprio=${dims##* }"
+        echo "  fastwam image: $FASTWAM_IMAGE_SIZE"
+    fi
     # Deliberately unquoted: --extra is a string of flags to be word-split.
     # shellcheck disable=SC2206
     [ -n "$EXTRA" ] && args+=($EXTRA)
@@ -333,6 +367,7 @@ if [ "$SKIP_TRAIN" = "0" ]; then
     have act && { train_cell act; prune_checkpoints act; }
     have diffusion && { train_cell diffusion; prune_checkpoints diffusion; }
     have pi05 && { train_cell pi05; prune_checkpoints pi05; }
+    have fastwam && { train_cell fastwam; prune_checkpoints fastwam; }
 fi
 
 # ---- report ----------------------------------------------------------

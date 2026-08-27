@@ -26,7 +26,12 @@ set -euo pipefail
 
 # ---- pins (keep identical to ../install.sh) --------------------------
 LEROBOT_COMMIT="3dd19d043e2f3fe5673b13ea0ebe4f31884c0797"
-LEROBOT_EXTRAS="feetech,dataset,pi,libero,pusht,training,diffusion,peft"
+# `fastwam` is listed but INERT until the pinned commit above ships
+# src/lerobot/policies/fastwam -- it is not in 3dd19d04 (2026-06-27), only
+# upstream. MEASURED: pip ignores an extra the checkout does not define
+# (`pip install -e "../lerobot[fastwam]"` exits 0 against this pin), so
+# naming it now costs nothing and makes the bump one line, not two files.
+LEROBOT_EXTRAS="feetech,dataset,pi,libero,pusht,training,diffusion,peft,fastwam"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"

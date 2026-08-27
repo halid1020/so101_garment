@@ -19,6 +19,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -125,6 +126,14 @@ class TestConsoleSession(AioHTTPTestCase):
         # Never the machine's real assignment file, even though the routes
         # under test are refused before they would reach it.
         app["sensor_map_path"] = self.root / "sensor_map.yaml"
+        # The plan resolvers reach the map directly rather than through the
+        # app, so without this the session refuses to start unless the rig
+        # named in the machine's real sensor_map.yaml happens to be plugged
+        # into whatever is running the suite -- which is not what this tests.
+        self._sensor_patch = mock.patch(
+            "tool.test_sensor_rates.SENSOR_MAP_PATH", app["sensor_map_path"]
+        )
+        self._sensor_patch.start()
         return app
 
     async def tearDownAsync(self):
@@ -134,6 +143,7 @@ class TestConsoleSession(AioHTTPTestCase):
             proc.kill()
             proc.wait(timeout=5)
         await super().tearDownAsync()
+        self._sensor_patch.stop()
         if self._outputs is None:
             os.environ.pop("SO101_OUTPUT_DIR", None)
         else:
