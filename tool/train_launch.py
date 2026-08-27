@@ -295,7 +295,10 @@ def dispatch_slurm(
 
 
 def dispatch_ssh(
-    dest: dict, remote_manifest: str, dry_run: bool = False
+    dest: dict,
+    remote_manifest: str,
+    dry_run: bool = False,
+    run_tag: "str | None" = None,
 ) -> "dict[str, Any]":
     cmd = " ".join(
         [
@@ -304,6 +307,7 @@ def dispatch_ssh(
             # NOT shlex.quote — see dispatch_slurm.
             f"--manifest {remote_manifest}",
             f"--scratch {dest['scratch']}",
+            *([f"--run-tag {shlex.quote(run_tag)}"] if run_tag else []),
             "--dry-run" if dry_run else "--detach",
         ]
     )
@@ -434,6 +438,7 @@ def launch(
     dry_run: bool = False,
     restage: bool = False,
     no_stage: bool = False,
+    run_tag: "str | None" = None,
     progress=lambda message: None,
 ) -> "dict[str, Any] | None":
     """Stage, write the manifest and submit. ``None`` for a dry run.
@@ -450,7 +455,7 @@ def launch(
     launched = (
         dispatch_slurm(dest, remote_manifest, dry_run)
         if dest["kind"] == "slurm"
-        else dispatch_ssh(dest, remote_manifest, dry_run)
+        else dispatch_ssh(dest, remote_manifest, dry_run, run_tag)
     )
     if dry_run:
         return None
@@ -463,6 +468,7 @@ def launch(
         "cameras": sorted({r["cameras"] for r in rows}),
         "episodes": info.get("total_episodes"),
         "manifest": remote_manifest,
+        "run_tag": run_tag,
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
         **launched,
     }
@@ -492,6 +498,13 @@ def main() -> None:
     parser.add_argument("--batch", help="Batch size (default: per policy/machine)")
     parser.add_argument("--hours", help="Slurm wall time in hours")
     parser.add_argument("--extra", help="Raw lerobot-train flags")
+    parser.add_argument(
+        "--run-tag",
+        help="Name the run directory this instead of the camera view. Use it "
+        "for anything throwaway: a short probe under the real name leaves a "
+        "checkpoint that makes the long run skip training and report success "
+        "at the probe's step count",
+    )
     parser.add_argument(
         "--matrix",
         help="Take this dataset's rows from a runs.tsv instead of building them",
@@ -567,6 +580,7 @@ def main() -> None:
         dry_run=args.dry_run,
         restage=args.restage,
         no_stage=args.no_stage,
+        run_tag=args.run_tag,
         progress=print,
     )
     if record is None:

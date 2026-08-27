@@ -27,6 +27,10 @@
 #                  columns as hpc/runs.tsv; every data row is run, in order.
 #   --scratch DIR  where HF_LEROBOT_HOME and SO101_OUTPUT_DIR live
 #                  (default: $SO101_SCRATCH, else ~/.cache/huggingface/lerobot)
+#   --run-tag NAME name the run directory NAME instead of the camera view.
+#                  Use it for anything throwaway -- a short probe under the real
+#                  name leaves a checkpoint that makes the long run skip
+#                  training and report success at the probe's step count.
 #   --detach       start in the background and print `pid=N log=PATH`, then
 #                  return. Without it the rows run in the foreground.
 #   --wait         with a run already going, wait for the lock instead of
@@ -46,6 +50,13 @@ cd "$REPO_ROOT"
 
 MANIFEST=""
 SCRATCH="${SO101_SCRATCH:-$HOME/.cache/huggingface/lerobot}"
+# What the run directory is called. Normally the camera VIEW, so a rerun after
+# a crash reuses the checkpoints the previous attempt wrote -- which is exactly
+# why a THROWAWAY run needs its own name: long_vla_real.sh skips a policy whose
+# checkpoints/last already exists, so a 200-step probe left under the real name
+# would make the 80000-step run print "reusing checkpoint" and report success at
+# 200 steps. Same override, and the same spelling, as create_real_vla.sbatch.
+RUN_TAG="${SO101_RUN_TAG:-}"
 DETACH=0
 WAIT=0
 DRY_RUN=0
@@ -56,12 +67,13 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --manifest) MANIFEST="$2"; shift 2;;
         --scratch) SCRATCH="$2"; shift 2;;
+        --run-tag) RUN_TAG="$2"; shift 2;;
         --detach) DETACH=1; shift;;
         --wait) WAIT=1; shift;;
         --dry-run) DRY_RUN=1; shift;;
         --status) STATUS=1; shift;;
         --stop) STOP=1; shift;;
-        -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 0;;
+        -h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}"; exit 0;;
         *) echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
@@ -195,8 +207,9 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     # The run name is the VIEW, exactly as on the cluster, so a rerun after a
     # crash reuses finished checkpoints and every policy trained on one camera
-    # set shares a run directory and one report.
-    args=(--dataset-root "$VIEW" --only "$POLICY" --run-name "$(basename "$VIEW")")
+    # set shares a run directory and one report. --run-tag overrides it.
+    args=(--dataset-root "$VIEW" --only "$POLICY"
+          --run-name "${RUN_TAG:-$(basename "$VIEW")}")
     [ "${STEPS:--}" != "-" ] && args+=(--steps "$STEPS")
     [ "${BATCH:--}" != "-" ] && args+=(--batch "$BATCH")
     [ "${SLOTS:--}" != "-" ] && args+=(--slots "$SLOTS")

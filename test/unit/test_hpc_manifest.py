@@ -432,3 +432,103 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGpuBoxRunNames(unittest.TestCase):
+    """The run directory a plain GPU box writes into.
+
+    ``long_vla_real.sh`` SKIPS a policy whose ``checkpoints/last`` already
+    exists, which is what makes a crashed run resumable -- and what makes a
+    short probe dangerous: left under the real name, a 200-step probe would
+    make the 80000-step run print "reusing checkpoint" and write a results.md
+    claiming success at 200 steps. ``--run-tag`` is the way out, and it is the
+    same override ``create_real_vla.sbatch`` already had.
+    """
+
+    GPU_BOX = REPO / "hpc" / "gpu_box_run.sh"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "repo"
+        (self.repo / "hpc").mkdir(parents=True)
+        (self.repo / "test" / "system").mkdir(parents=True)
+        (self.repo / "venv" / "bin").mkdir(parents=True)
+        shutil.copy2(self.GPU_BOX, self.repo / "hpc" / "gpu_box_run.sh")
+        (self.repo / "setup.sh").write_text("true\n")
+
+        # Stand-ins that record what they were handed.
+        self.captured = self.tmp / "driver_args"
+        (self.repo / "test" / "system" / "long_vla_real.sh").write_text(
+            "#!/usr/bin/env bash\n" f'printf "%s\\n" "$@" > {self.captured}\n'
+        )
+        view_out = self.tmp / "view_args"
+        (self.repo / "venv" / "bin" / "python").write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf "%s\\n" "$@" > {view_out}\n'
+            'ds=""; out=""\n'
+            "while [ $# -gt 0 ]; do\n"
+            '  case "$1" in --dataset) ds="$2"; shift 2;; --out-dir) out="$2"; shift 2;;'
+            " *) shift;; esac\n"
+            "done\n"
+            'view="$out/$(basename "$ds")__all"\n'
+            'mkdir -p "$view/meta" && echo "{}" > "$view/meta/info.json"\n'
+            'echo "$view"\n'
+        )
+        (self.repo / "venv" / "bin" / "python").chmod(0o755)
+
+        self.scratch = self.tmp / "scratch"
+        (self.scratch / "local" / "alpha" / "meta").mkdir(parents=True)
+        (self.scratch / "local" / "alpha" / "meta" / "info.json").write_text("{}")
+        self.manifest = self.tmp / "runs.tsv"
+        self.manifest.write_text("alpha act all 200 - 1 - -\n")
+
+    def run_box(self, *args, env_extra=None):
+        env = dict(os.environ)
+        env["SO101_OUTPUT_DIR"] = str(self.tmp / "out")
+        env.pop("SO101_RUN_TAG", None)
+        env.update(env_extra or {})
+        return subprocess.run(
+            [
+                "bash",
+                str(self.repo / "hpc" / "gpu_box_run.sh"),
+                "--manifest",
+                str(self.manifest),
+                "--scratch",
+                str(self.scratch),
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def driver_args(self):
+        return self.captured.read_text().splitlines()
+
+    def test_the_run_is_named_after_the_view_by_default(self):
+        result = self.run_box()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = self.driver_args()
+        self.assertEqual(args[args.index("--run-name") + 1], "alpha__all")
+
+    def test_a_run_tag_takes_the_place_of_the_view(self):
+        self.run_box("--run-tag", "probe5cam")
+        args = self.driver_args()
+        self.assertEqual(args[args.index("--run-name") + 1], "probe5cam")
+
+    def test_the_environment_spelling_matches_the_cluster_script(self):
+        # create_real_vla.sbatch reads SO101_RUN_TAG; two executors that took
+        # different names for one idea is how a probe ends up in the real run's
+        # directory on whichever box the operator forgot about.
+        self.run_box(env_extra={"SO101_RUN_TAG": "from-env"})
+        args = self.driver_args()
+        self.assertEqual(args[args.index("--run-name") + 1], "from-env")
+        self.assertIn(
+            "SO101_RUN_TAG", (REPO / "hpc" / "create_real_vla.sbatch").read_text()
+        )
+
+    def test_the_flag_wins_over_the_environment(self):
+        self.run_box("--run-tag", "explicit", env_extra={"SO101_RUN_TAG": "from-env"})
+        args = self.driver_args()
+        self.assertEqual(args[args.index("--run-name") + 1], "explicit")
