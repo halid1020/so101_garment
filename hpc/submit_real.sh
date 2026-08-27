@@ -98,14 +98,24 @@ while IFS= read -r line || [ -n "$line" ]; do
     LINE_NO=$((LINE_NO + 1))
     [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
     # `extra` is the last column and may contain spaces: read takes the rest.
-    read -r ds policy cameras steps batch hours extra <<<"$line"
+    read -r ds policy cameras steps batch hours slots extra <<<"$line"
     if [ -z "${hours:-}" ]; then
-        echo "❌ $MANIFEST:$LINE_NO needs 6 fields (dataset policy cameras steps batch hours): $line" >&2
+        echo "❌ $MANIFEST:$LINE_NO needs 7 fields (dataset policy cameras steps batch hours slots): $line" >&2
+        exit 2
+    fi
+    # The `slots` column was added after the first matrices were written, and a
+    # row from before it has SEVEN fields -- so `read` puts the old `extra` into
+    # `slots` and leaves `extra` empty. Catching it on the empty `extra` rather
+    # than on an empty `slots` is what tells the two apart; reading such a row
+    # leniently would pass a string of lerobot-train flags as a camera mapping.
+    if [ -z "${extra:-}" ]; then
+        echo "❌ $MANIFEST:$LINE_NO has 7 fields, not 8 -- the 'slots' column was added." >&2
+        echo "   Put a '-' before the last column: $line" >&2
         exit 2
     fi
     case "$policy" in
-        act|diffusion|pi05) ;;
-        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy' (want act|diffusion|pi05)" >&2; exit 2;;
+        act|diffusion|pi05|fastwam) ;;
+        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy' (want act|diffusion|pi05|fastwam)" >&2; exit 2;;
     esac
     # A space here would silently shift every later column into `extra`, so the
     # row would submit and train the wrong thing. Refuse it at the door.
@@ -128,6 +138,15 @@ while IFS= read -r line || [ -n "$line" ]; do
                 exit 2;;
         esac
     done
+    # A space here shifts `extra` along, and unlike the numeric columns there is
+    # nothing after it to notice. So the column's SHAPE is checked instead: `-`
+    # or comma-joined camera=slot pairs and nothing else, which also refuses the
+    # trailing comma a shifted row leaves behind.
+    if [ "$slots" != "-" ] && \
+       ! [[ "$slots" =~ ^[A-Za-z0-9_]+=[A-Za-z0-9_]+(,[A-Za-z0-9_]+=[A-Za-z0-9_]+)*$ ]]; then
+        echo "❌ $MANIFEST:$LINE_NO slots must be '-' or comma-joined camera=slot pairs with no spaces: '$slots'" >&2
+        exit 2
+    fi
     in_list "$ds" "$FILTER_DATASETS" || continue
     in_list "$policy" "$FILTER_POLICIES" || continue
     # NOT in_list: a cameras value is ITSELF a comma list, so `central,wrist_x`
@@ -137,7 +156,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     if [ -n "$FILTER_CAMERAS" ] && [ "$cameras" != "$FILTER_CAMERAS" ]; then
         continue
     fi
-    ROWS+=("$ds	$policy	$cameras	${steps:--}	${batch:--}	$hours	${extra:--}")
+    ROWS+=("$ds	$policy	$cameras	${steps:--}	${batch:--}	$hours	${slots:--}	${extra:--}")
 done < "$MANIFEST"
 
 if [ "${#ROWS[@]}" -eq 0 ]; then
@@ -187,7 +206,7 @@ for hours in $HOURS_SET; do
     group_file="$SUB_DIR/runs_${hours}h.tsv"
     index_file="$SUB_DIR/index_${hours}h.md"
     {
-        echo "# dataset	policy	cameras	steps	batch	hours	extra"
+        echo "# dataset	policy	cameras	steps	batch	hours	slots	extra"
         printf '%s\n' "${ROWS[@]}" | awk -F'\t' -v h="$hours" '$6 == h'
     } > "$group_file"
     n="$(awk -F'\t' 'NF && $1 !~ /^#/' "$group_file" | wc -l)"
@@ -195,9 +214,9 @@ for hours in $HOURS_SET; do
     {
         echo "# Array index -> run  (${hours} h group, submitted $STAMP)"
         echo
-        echo "| array id | dataset | policy | cameras | steps | batch |"
-        echo "|---------:|---------|--------|---------|-------|-------|"
-        awk -F'\t' 'NF && $1 !~ /^#/ {printf "| %d | %s | %s | %s | %s | %s |\n", NR-2, $1, $2, $3, $4, $5}' "$group_file"
+        echo "| array id | dataset | policy | cameras | steps | batch | slots |"
+        echo "|---------:|---------|--------|---------|-------|-------|-------|"
+        awk -F'\t' 'NF && $1 !~ /^#/ {printf "| %d | %s | %s | %s | %s | %s | %s |\n", NR-2, $1, $2, $3, $4, $5, $7}' "$group_file"
     } > "$index_file"
 
     range="0-$((n - 1))"

@@ -11,15 +11,26 @@
 # does not name is still reachable from here.
 #
 #   dataset : directory name staged under $HF_LEROBOT_HOME/local/
-#   policy  : act | diffusion | pi05
-#   cameras : `all`, or a comma list of camera names with NO spaces
-#             (central, wrist_camera_left, wrist_camera_right)
+#   policy  : act | diffusion | pi05 | fastwam
+#   cameras : `all`, or a comma list of camera names with NO spaces. `all` is
+#             the dataset's own cameras and never a composite; a COMPOSITE
+#             (tactile_quad, which tiles the four fingertip cameras 2x2 into
+#             one image feature) has to be named, because spending one view on
+#             four cameras is a choice about what the policy sees.
 #   steps   : optimiser steps          (default: act 80000, diffusion 100000, pi05 30000)
 #   batch   : batch size               (default: act 8, diffusion 32, pi05 8)
 #             pi05 MUST be 4 on a 40 GB A100: batch 8 OOMs at 39.22 GiB
 #             (MEASURED). LoRA shrinks optimiser state, not the activations
 #             of a 4.1B model reading three cameras; batch 4 sits at 34 GB.
 #   hours   : Slurm wall time, hours   (rows sharing a value share one array)
+#   slots   : pi0.5 only: which pretrained image slot each camera is fed into,
+#             as camera=slot pairs with no spaces
+#             (central=base,left_arm_left_gripper=left_wrist; slots are base,
+#             left_wrist, right_wrist). `-` derives it: a camera whose
+#             viewpoint pi0.5 knows takes that slot by name, and one it does
+#             not -- every tactile camera -- takes the next free slot in order.
+#             pi0.5 has THREE slots, so a pi05 row naming more cameras than
+#             that is refused rather than quietly trained on fewer.
 #   extra   : raw lerobot-train flags, or `-`
 #
 # The job builds a camera VIEW of the dataset for each distinct `cameras` value
@@ -33,20 +44,34 @@
 # dataset            policy     cameras                          steps   batch  hours  extra
 #
 # --- camera ablation on cube-pnp-new: all three, central+left wrist, left wrist
-cube-pnp-new         act        all                              80000   8      36     -
-cube-pnp-new         act        central,wrist_camera_left        80000   8      36     -
-cube-pnp-new         act        wrist_camera_left                80000   8      36     -
-cube-pnp-new         diffusion  all                              100000  32     36     -
-cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -
-cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -
-cube-pnp-new         pi05       all                              30000   4      36     -
-cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -
-cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -
+cube-pnp-new         act        all                              80000   8      36     -       -
+cube-pnp-new         act        central,wrist_camera_left        80000   8      36     -       -
+cube-pnp-new         act        wrist_camera_left                80000   8      36     -       -
+cube-pnp-new         diffusion  all                              100000  32     36     -       -
+cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -       -
+cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -       -
+cube-pnp-new         pi05       all                              30000   4      36     -       -
+cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -       -
+cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -       -
 #
 # --- earlier datasets, trained on every camera
-cube-pnp             act        all                              80000   8      24     -
-cube-pnp             diffusion  all                              100000  32     24     -
-cube-dual-pnp-new    act        all                              80000   8      36     -
-cube-dual-pnp-new    diffusion  all                              100000  32     36     -
-fold-short           act        all                              80000   8      36     -
-fold-short           diffusion  all                              100000  32     36     -
+cube-pnp             act        all                              80000   8      24     -       -
+cube-pnp             diffusion  all                              100000  32     24     -       -
+cube-dual-pnp-new    act        all                              80000   8      36     -       -
+cube-dual-pnp-new    diffusion  all                              100000  32     36     -       -
+fold-short           act        all                              80000   8      36     -       -
+fold-short           diffusion  all                              100000  32     36     -       -
+#
+# --- fold-short-from-flattend-tactile: five cameras, four of them tactile.
+# The first two see everything; the pi05 rows are an ablation over which THREE
+# of the five reach its three slots (it has no more, and no slot was pretrained
+# on a gel image, so the assignment is worth stating rather than deriving).
+# The fastwam row is REFUSED until the LeRobot pin ships policies/fastwam --
+# it needs its cameras tiled into one 224x448 frame, which is what tactile_quad
+# is for. See documents/training_destinations.md.
+fold-short-from-flattend-tactile act       all                              80000   8      36     -       -
+fold-short-from-flattend-tactile diffusion all                              100000  32     36     -       -
+fold-short-from-flattend-tactile pi05      central,left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
+fold-short-from-flattend-tactile pi05      central                          30000   4      36     -       -
+fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
+fold-short-from-flattend-tactile fastwam   central,tactile_quad             30000   8      36     -       -

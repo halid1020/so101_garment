@@ -49,6 +49,29 @@ _USER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # ── The target ───────────────────────────────────────────────────────────────
 
 
+def parse_ssh_host(text: str) -> "tuple[str | None, str]":
+    """``[user@]host`` -> ``(user, host)``. Raises ValueError. Pure.
+
+    ``host`` may be an ``~/.ssh/config`` alias rather than a real name; what is
+    checked is that it could not be read as an option or a second command. Both
+    halves go on a command line unquoted, so a host like ``-oProxyCommand=…`` or
+    ``box;rm -rf /`` is refused here rather than run.
+    """
+    target = str(text).strip()
+    if not target:
+        raise ValueError("give a machine, as host or user@host")
+    if any(c.isspace() for c in target):
+        raise ValueError("a remote machine cannot contain spaces")
+    user: "str | None" = None
+    if "@" in target:
+        user, _, target = target.partition("@")
+        if not _USER_RE.match(user):
+            raise ValueError(f"{user!r} is not a usable user name")
+    if not _HOST_RE.match(target):
+        raise ValueError(f"{target!r} is not a usable host name")
+    return user, target
+
+
 def parse_ssh_target(text: str) -> "tuple[str | None, str, str]":
     """``user@host:/path`` -> ``(user, host, path)``. Raises ValueError. Pure.
 
@@ -61,16 +84,10 @@ def parse_ssh_target(text: str) -> "tuple[str | None, str, str]":
         raise ValueError("give a remote directory, as user@host:/path")
     if any(c.isspace() for c in target):
         raise ValueError("a remote target cannot contain spaces")
-    user: "str | None" = None
-    if "@" in target:
-        user, _, target = target.partition("@")
-        if not _USER_RE.match(user):
-            raise ValueError(f"{user!r} is not a usable user name")
-    host, sep, path = target.partition(":")
+    machine, sep, path = target.rpartition(":")
     if not sep:
         raise ValueError("missing the ':' before the remote path (user@host:/path)")
-    if not _HOST_RE.match(host):
-        raise ValueError(f"{host!r} is not a usable host name")
+    user, host = parse_ssh_host(machine)
     if not path:
         raise ValueError("give the directory on the remote machine after the ':'")
     return user, host, path

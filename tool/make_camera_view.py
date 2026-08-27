@@ -39,6 +39,22 @@ from common.recording.dataset_view import (  # noqa: E402
 )
 
 
+def parse_slots(text: "str | None") -> "dict[str, str] | None":
+    """``central=base,left_arm_left_gripper=left_wrist`` -> a map, or None."""
+    if not text or text.strip() in ("", "-"):
+        return None
+    out: "dict[str, str]" = {}
+    for pair in text.split(","):
+        camera, sep, slot = pair.partition("=")
+        if not sep or not camera.strip() or not slot.strip():
+            raise ViewError(
+                f"--slots {text!r}: want camera=slot pairs, e.g. "
+                "central=base,left_arm_left_gripper=left_wrist"
+            )
+        out[camera.strip()] = slot.strip()
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -59,6 +75,13 @@ def main() -> None:
         "--canonical-task",
         help="Force this task string on every frame (default: whichever spelling "
         "covers the most frames, when a dataset carries more than one)",
+    )
+    parser.add_argument(
+        "--slots",
+        help="pi0.5 only: pin which slot each camera is fed into, as "
+        "camera=slot pairs (central=base,left_arm_left_gripper=left_wrist). "
+        "Without it a camera whose viewpoint pi0.5 knows takes that slot by "
+        "name and the rest take the free ones in order",
     )
     parser.add_argument("--force", action="store_true", help="Rebuild an existing view")
     parser.add_argument(
@@ -97,7 +120,12 @@ def main() -> None:
             print(slug)
             return
         if args.print == "pi05-rename-map":
-            print(json.dumps(pi05_rename_map(keep), separators=(",", ":")))
+            print(
+                json.dumps(
+                    pi05_rename_map(keep, parse_slots(args.slots)),
+                    separators=(",", ":"),
+                )
+            )
             return
 
         if args.out:

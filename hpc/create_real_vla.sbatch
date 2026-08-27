@@ -47,12 +47,22 @@ if [ -z "$ROW" ]; then
     echo "❌ manifest $MANIFEST has no row $TASK_ID"; exit 1
 fi
 # `extra` is the last column and may contain spaces: read takes the rest.
-read -r DATASET POLICY CAMERAS STEPS BATCH HOURS EXTRA <<<"$ROW"
+read -r DATASET POLICY CAMERAS STEPS BATCH HOURS SLOTS EXTRA <<<"$ROW"
+# A row from before the `slots` column has SEVEN fields, so `read` puts the old
+# `extra` into `SLOTS` and leaves `EXTRA` empty -- the empty EXTRA is what tells
+# the two shapes apart. Reading such a row leniently would hand a string of
+# lerobot-train flags to --slots as if it were a camera mapping.
+if [ -z "${EXTRA:-}" ]; then
+    echo "❌ row $TASK_ID of $MANIFEST has 7 fields, not 8."
+    echo "   The 'slots' column was added: put a '-' before the last column."
+    echo "   $ROW"
+    exit 1
+fi
 
 echo "======================================================================"
 echo " REAL-VLA  array task $TASK_ID  ->  dataset=$DATASET policy=$POLICY"
 echo "   cameras=$CAMERAS"
-echo "   steps=$STEPS batch=$BATCH hours=$HOURS extra=${EXTRA:--}"
+echo "   steps=$STEPS batch=$BATCH hours=$HOURS slots=$SLOTS extra=${EXTRA:--}"
 echo "   manifest=$MANIFEST"
 echo "======================================================================"
 
@@ -117,6 +127,7 @@ RUN_NAME="${SO101_RUN_TAG:-$(basename "$VIEW")}"
 args=(--dataset-root "$DS" --only "$POLICY" --run-name "$RUN_NAME")
 [ "${STEPS:--}" != "-" ] && args+=(--steps "$STEPS")
 [ "${BATCH:--}" != "-" ] && args+=(--batch "$BATCH")
+[ "${SLOTS:--}" != "-" ] && args+=(--slots "$SLOTS")
 [ "${EXTRA:--}" != "-" ] && args+=(--extra "$EXTRA")
 
 bash test/system/long_vla_real.sh "${args[@]}"

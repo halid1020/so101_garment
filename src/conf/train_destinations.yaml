@@ -1,0 +1,53 @@
+# Where a training run can be sent, and what that machine can carry.
+#
+# One entry per machine. The console's Training tab and tool/train_launch.py
+# both read this file and nothing else: adding a GPU box is an entry here, not
+# a code change. Every key is validated strictly at load time
+# (common.training.destinations.load_destinations) -- a missing or unknown key
+# is a hard error naming it.
+#
+# Keys, all required except `limits` and `partition`:
+#
+#   ssh       [user@]host, as SSH itself reads it -- an ~/.ssh/config alias is
+#             the intended form, so the key, port and jump host stay in one
+#             place. Both halves reach a command line unquoted, so a host that
+#             could be read as an option or a second command is refused.
+#   kind      slurm | ssh.  `slurm` submits an array through hpc/submit_real.sh
+#             and asks squeue how it is going; `ssh` starts the driver directly
+#             under nohup and watches a pid. This is the ONLY thing that differs
+#             between the two paths -- the dataset, the manifest, the camera
+#             views and the driver are identical.
+#   repo      the so101_garment checkout on that machine.
+#   scratch   where its HF_LEROBOT_HOME and SO101_OUTPUT_DIR live. `$USER` and
+#             `~` are left alone and expand REMOTELY, in the login shell.
+#   stage     where staged datasets go; `{scratch}` is substituted.
+#   partition slurm only: the GPU partition (`sinfo -s`).
+#   limits    per-policy ceilings MEASURED on that machine, not guessed. A row
+#             asking for more is refused before anything is reserved.
+
+create:
+  ssh: create
+  kind: slurm
+  repo: ~/so101_garment
+  scratch: /scratch/users/$USER
+  stage: "{scratch}/hf_lerobot/local"
+  partition: gpu
+  # MEASURED on a 40 GB A100: pi05 at batch 8 raised torch.OutOfMemoryError at
+  # 39.22 GiB; batch 4 sits at 34.02 GiB and ~0.49 s/step. LoRA shrinks the
+  # optimiser state, not the activations of a 4.1B model reading three cameras.
+  limits:
+    pi05:
+      batch: 4
+
+thanos:
+  ssh: thanos
+  kind: ssh
+  repo: ~/project/so101_garment
+  scratch: ~/.cache/huggingface/lerobot
+  stage: "{scratch}/local"
+  # NOT MEASURED for this rig's five-camera datasets. The one figure we have --
+  # pi0.5 LoRA needing 21.5 of this card's 23.5 GiB -- was taken with THREE
+  # cameras, and activations scale with the camera count, so it does not carry
+  # over. Run one short row per policy and write the ceiling here before
+  # starting anything long. Until then a row is only refused by the GPU.
+  limits: {}

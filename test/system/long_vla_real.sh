@@ -29,6 +29,8 @@
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only act --steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --extra "--policy.optimizer_lr=5e-5"
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --keep-checkpoints 3
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --only pi05 \
+#        --slots central=base,left_arm_left_gripper=left_wrist
 #
 # --steps/--batch/--save-freq apply to whichever policy --only selects, so one
 # cluster row per (dataset, policy) needs one column each; --extra is handed to
@@ -63,6 +65,11 @@ DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encod
 PI05_STEPS=30000; PI05_BATCH=8; PI05_SAVE=5000
 PI05_BASE="${SO101_PI05_BASE:-lerobot/pi05_base}"
 PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GPU)
+# Which pi0.5 slot each camera is fed into, as camera=slot pairs. Empty means
+# derive it from the view (named viewpoints first, then the free slots in
+# order), which is right for most rows; an ablation that needs a particular
+# assignment pins it here and the run matrix carries it in one column.
+PI05_SLOTS=""
 STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
 # Every sample decodes one video frame per camera, so the loader is the floor on
 # training speed. Follow the CPUs the job was actually given rather than a fixed
@@ -89,6 +96,7 @@ while [ $# -gt 0 ]; do
         --diffusion-resize) DIFF_RESIZE_H="$2"; DIFF_RESIZE_W="$3"; shift 3;;
         --pi05-steps) PI05_STEPS="$2"; shift 2;;
         --pi05-base) PI05_BASE="$2"; shift 2;;
+        --slots) PI05_SLOTS="$2"; shift 2;;
         --lora-r) PI05_LORA_R="$2"; shift 2;;
         --steps) STEPS="$2"; shift 2;;
         --batch) BATCH="$2"; shift 2;;
@@ -97,7 +105,7 @@ while [ $# -gt 0 ]; do
         --keep-checkpoints) KEEP_CKPTS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
-        -h|--help) sed -n '2,38p' "$0"; exit 0;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0;;
         *) echo "Unknown arg: $1" >&2; exit 2;;
     esac
 done
@@ -296,8 +304,10 @@ train_cell() {
         # view with one camera produces a one-entry map, and pi0.5 pads and
         # masks the two slots left over.
         local rename
+        local slot_args=()
+        [ -n "$PI05_SLOTS" ] && [ "$PI05_SLOTS" != "-" ] && slot_args=(--slots "$PI05_SLOTS")
         rename="$("$PY" "$REPO_ROOT/tool/make_camera_view.py" \
-            --dataset "$DATASET_ROOT" --print pi05-rename-map)" \
+            --dataset "$DATASET_ROOT" "${slot_args[@]}" --print pi05-rename-map)" \
             || fail "pi05 rename map for $DATASET_ROOT"
         args+=(--rename_map="$rename")
         echo "  pi0.5 base   : $PI05_BASE"

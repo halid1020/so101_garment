@@ -26,23 +26,23 @@ MANIFEST = REPO / "hpc" / "runs.tsv"
 SUBMIT = REPO / "hpc" / "submit_real.sh"
 SBATCH = REPO / "hpc" / "create_real_vla.sbatch"
 
-POLICIES = {"act", "diffusion", "pi05"}
+POLICIES = {"act", "diffusion", "pi05", "fastwam"}
 
 
 def manifest_rows(path: Path) -> "list[list[str]]":
-    """Data rows of a manifest, as the shell reads them: 6 fields plus the rest."""
+    """Data rows of a manifest, as the shell reads them: 7 fields plus the rest."""
     rows = []
     for line in path.read_text().splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        rows.append(line.split(maxsplit=6))
+        rows.append(line.split(maxsplit=7))
     return rows
 
 
 class TestRunManifest(unittest.TestCase):
-    def test_every_row_has_the_seven_columns(self):
+    def test_every_row_has_the_eight_columns(self):
         for row in manifest_rows(MANIFEST):
-            self.assertEqual(len(row), 7, f"row is not 7 fields: {row}")
+            self.assertEqual(len(row), 8, f"row is not 8 fields: {row}")
 
     def test_policies_are_ones_the_driver_trains(self):
         for row in manifest_rows(MANIFEST):
@@ -54,6 +54,18 @@ class TestRunManifest(unittest.TestCase):
         for row in manifest_rows(MANIFEST):
             self.assertNotIn(" ", row[2], f"cameras must be comma-joined in {row}")
             self.assertTrue(row[2], f"cameras must be given in {row}")
+
+    def test_the_slots_column_never_contains_a_space(self):
+        # Same reason as the cameras column: a space shifts `extra` along.
+        for row in manifest_rows(MANIFEST):
+            self.assertNotIn(" ", row[6], f"slots must be comma-joined in {row}")
+
+    def test_only_pi05_rows_pin_slots(self):
+        # The slots are pi0.5's; naming them for another policy would be a row
+        # that reads as if it did something it cannot.
+        for row in manifest_rows(MANIFEST):
+            if row[6] != "-":
+                self.assertEqual(row[1], "pi05", f"slots on a non-pi05 row: {row}")
 
     def test_numeric_columns_are_numbers_or_the_default_marker(self):
         for row in manifest_rows(MANIFEST):
@@ -118,11 +130,11 @@ class _WrapperCase(unittest.TestCase):
 
 class TestSubmissionDryRun(_WrapperCase):
     MANIFEST = (
-        "# dataset policy cameras steps batch hours extra\n"
-        "alpha  act        all     80000   8   24  -\n"
-        "alpha  diffusion  all     100000  32  24  -\n"
-        "alpha  act        wrist   80000   8   24  -\n"
-        "beta   act        all     -       -   36  -\n"
+        "# dataset policy cameras steps batch hours slots extra\n"
+        "alpha  act        all     80000   8   24  -  -\n"
+        "alpha  diffusion  all     100000  32  24  -  -\n"
+        "alpha  act        wrist   80000   8   24  -  -\n"
+        "beta   act        all     -       -   36  -  -\n"
     )
 
     def setUp(self):
@@ -202,7 +214,7 @@ class TestSubmissionDryRun(_WrapperCase):
 
 class TestSubmissionRefusals(_WrapperCase):
     def test_an_unstaged_dataset_is_reported_instead_of_submitted(self):
-        manifest = self.write_manifest("alpha act all 10 2 24 -\n")
+        manifest = self.write_manifest("alpha act all 10 2 24 - -\n")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 1)
         self.assertIn("not staged", result.stderr)
@@ -211,14 +223,14 @@ class TestSubmissionRefusals(_WrapperCase):
         self.assertNotIn("DRY-RUN would submit", result.stdout)
 
     def test_an_unknown_policy_is_refused(self):
-        manifest = self.write_manifest("alpha smolvla all 10 2 24 -\n")
+        manifest = self.write_manifest("alpha smolvla all 10 2 24 - -\n")
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown policy", result.stderr)
 
     def test_pi05_is_a_policy_the_driver_trains(self):
-        manifest = self.write_manifest("alpha pi05 all 10 2 24 -\n")
+        manifest = self.write_manifest("alpha pi05 all 10 2 24 - -\n")
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -228,7 +240,23 @@ class TestSubmissionRefusals(_WrapperCase):
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
         self.assertEqual(result.returncode, 2)
-        self.assertIn("needs 6 fields", result.stderr)
+        self.assertIn("needs 7 fields", result.stderr)
+
+    def test_a_row_written_before_the_slots_column_says_which_one_is_missing(self):
+        # Reading the old 7-field shape leniently would put `extra` -- a string
+        # of lerobot-train flags -- into the slots column, and the row would
+        # submit and train something nobody asked for.
+        manifest = self.write_manifest("alpha act all 10 2 24 -\n")
+        self.stage("alpha")
+        result = self.submit("--manifest", str(manifest))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("slots", result.stderr)
+
+    def test_a_space_in_the_slots_column_is_refused(self):
+        manifest = self.write_manifest("alpha pi05 all 10 2 24 central=base, x=y -\n")
+        self.stage("alpha")
+        result = self.submit("--manifest", str(manifest))
+        self.assertEqual(result.returncode, 2)
 
     def test_a_space_in_the_cameras_column_is_refused(self):
         # The shell has already split on that space by the time the row is read,
@@ -236,7 +264,7 @@ class TestSubmissionRefusals(_WrapperCase):
         # and the real steps/batch/hours slide one column left -- leaving an
         # hours that still looks valid. The numeric columns are what catch it.
         manifest = self.write_manifest(
-            "alpha act central, wrist_camera_left 10 2 24 -\n"
+            "alpha act central, wrist_camera_left 10 2 24 - -\n"
         )
         self.stage("alpha")
         result = self.submit("--manifest", str(manifest))
@@ -294,17 +322,19 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
         )
         (self.repo / "venv" / "bin" / "python").chmod(0o755)
         self.scratch = self.tmp / "scratch"
-        for name in ("alpha", "beta"):
+        for name in ("alpha", "beta", "gamma"):
             (self.scratch / "hf_lerobot" / "local" / name / "meta").mkdir(parents=True)
             (
                 self.scratch / "hf_lerobot" / "local" / name / "meta" / "info.json"
             ).write_text("{}")
         self.manifest = self.tmp / "runs.tsv"
         self.manifest.write_text(
-            "# dataset policy cameras steps batch hours extra\n"
-            "alpha  act        all                        -  -  24  -\n"
-            "beta   diffusion  central,wrist_camera_left  5  2  36  "
+            "# dataset policy cameras steps batch hours slots extra\n"
+            "alpha  act        all                        -  -  24  -  -\n"
+            "beta   diffusion  central,wrist_camera_left  5  2  36  -  "
             "--policy.optimizer_lr=5e-5 --num_workers=1\n"
+            "gamma  pi05       central,wrist_camera_left  5  2  36  "
+            "central=base,wrist_camera_left=right_wrist  -\n"
         )
 
     def run_task(self, task_id: int) -> "subprocess.CompletedProcess[str]":
@@ -356,8 +386,24 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
     def test_default_columns_pass_no_override(self):
         self.run_task(0)
         args = self.driver_args()
-        for flag in ("--steps", "--batch", "--extra"):
+        for flag in ("--steps", "--batch", "--slots", "--extra"):
             self.assertNotIn(flag, args)
+
+    def test_a_pinned_slot_map_reaches_the_driver(self):
+        # Which camera pi0.5 sees through which pretrained slot is the ablation
+        # itself, so it has to survive the trip from the row to the driver.
+        self.run_task(2)
+        args = self.driver_args()
+        self.assertEqual(
+            args[args.index("--slots") + 1],
+            "central=base,wrist_camera_left=right_wrist",
+        )
+
+    def test_a_row_written_before_the_slots_column_is_refused_by_the_task(self):
+        self.manifest.write_text("alpha act all - - 24 -\n")
+        result = self.run_task(0)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("slots", result.stdout + result.stderr)
 
     def test_given_columns_reach_the_driver_intact(self):
         self.run_task(1)

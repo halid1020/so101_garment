@@ -26,8 +26,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from common.recording.dataset_view import (
+    COMPOSITES,
+    PI05_SLOT_ORDER,
     PI05_SLOTS,
     ViewError,
+    available_camera_names,
     build_view,
     camera_keys,
     dropped_meta_columns,
@@ -255,10 +258,75 @@ class TestPi05Slots(unittest.TestCase):
     def test_two_cameras_never_share_a_slot(self):
         self.assertEqual(len(set(PI05_SLOTS.values())), len(PI05_SLOTS))
 
-    def test_a_camera_with_no_slot_is_refused_by_name(self):
+    def test_a_camera_pi05_never_saw_still_gets_a_slot(self):
+        # This rig's fingertip cameras have no counterpart in pi0.5's
+        # pretraining -- no slot was ever shown a gel image -- so naming is
+        # impossible and the choice is between an arbitrary slot and refusing
+        # to train pi0.5 on a tactile dataset at all. It takes the first free
+        # one, and the map is printed by the driver so the assignment is on the
+        # record rather than implied.
+        gel = "observation.images.left_arm_left_gripper"
+        self.assertEqual(pi05_rename_map([gel]), {gel: PI05_SLOT_ORDER[0]})
+
+    def test_a_named_camera_keeps_its_own_slot_when_an_unnamed_one_is_present(self):
+        # The overhead view must not be pushed off base_0_rgb by a camera that
+        # merely came first: what a slot learned is the reason to use it.
+        gel = "observation.images.left_arm_left_gripper"
+        self.assertEqual(
+            pi05_rename_map([gel, KEYS[0]]),
+            {KEYS[0]: PI05_SLOT_ORDER[0], gel: PI05_SLOT_ORDER[1]},
+        )
+
+    def test_more_cameras_than_slots_is_refused_rather_than_dropped(self):
+        five = KEYS + [
+            "observation.images.left_arm_left_gripper",
+            "observation.images.right_arm_left_gripper",
+        ]
         with self.assertRaises(ViewError) as caught:
-            pi05_rename_map(["observation.images.overhead_depth"])
-        self.assertIn("overhead_depth", str(caught.exception))
+            pi05_rename_map(five)
+        self.assertIn("3 image slots", str(caught.exception))
+        self.assertIn("5 cameras", str(caught.exception))
+
+    def test_a_pinned_map_overrides_the_named_slots(self):
+        # An ablation asks what a slot's pretraining is worth, so it has to be
+        # able to put a camera somewhere the naming would not.
+        self.assertEqual(
+            pi05_rename_map(KEYS[:2], {"central": "right_wrist"}),
+            {KEYS[0]: "observation.images.right_wrist_0_rgb"},
+        )
+
+    def test_a_pinned_map_naming_a_camera_the_view_lacks_is_refused(self):
+        with self.assertRaises(ViewError) as caught:
+            pi05_rename_map(KEYS[:1], {"wrist_camera_left": "base"})
+        self.assertIn("wrist_camera_left", str(caught.exception))
+
+    def test_a_pinned_map_naming_something_that_is_not_a_slot_is_refused(self):
+        with self.assertRaises(ViewError) as caught:
+            pi05_rename_map(KEYS[:1], {"central": "overhead"})
+        self.assertIn("overhead", str(caught.exception))
+
+
+class TestCompositeNames(unittest.TestCase):
+    """A composite is offered only when the dataset can actually build it."""
+
+    def _info(self, cameras):
+        return {
+            "features": {f"observation.images.{c}": {"dtype": "video"} for c in cameras}
+        }
+
+    def test_a_dataset_with_every_part_is_offered_the_composite(self):
+        parts = COMPOSITES["tactile_quad"]
+        names = available_camera_names(self._info(["central", *parts]))
+        self.assertIn("tactile_quad", names)
+
+    def test_a_dataset_missing_one_part_is_not(self):
+        parts = COMPOSITES["tactile_quad"][:-1]
+        names = available_camera_names(self._info(["central", *parts]))
+        self.assertNotIn("tactile_quad", names)
+
+    def test_the_dataset_s_own_cameras_come_first_and_in_order(self):
+        names = available_camera_names(self._info(CAMERAS))
+        self.assertEqual(names[: len(CAMERAS)], CAMERAS)
 
 
 class TestBuildView(unittest.TestCase):

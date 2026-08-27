@@ -83,10 +83,21 @@ class ConsoleTestCase(AioHTTPTestCase):
         # devices would then open the arms and cameras of whatever rig is
         # plugged into the machine running the tests.
         app["sensor_map_path"] = Path(self.tmp.name) / "sensor_map.yaml"
+        # The same file, for the resolvers that reach the map directly rather
+        # than through the app. Without this the plan is judged against the
+        # rig actually attached to whatever machine runs the suite, so the
+        # camera and arm refusals fire or stay silent according to what happens
+        # to be plugged in -- and a test that passes only while the rig is
+        # connected is not testing the console.
+        self._sensor_patch = mock.patch(
+            "tool.test_sensor_rates.SENSOR_MAP_PATH", app["sensor_map_path"]
+        )
+        self._sensor_patch.start()
         return app
 
     async def tearDownAsync(self):
         await super().tearDownAsync()
+        self._sensor_patch.stop()
         if self._outputs is None:
             os.environ.pop("SO101_OUTPUT_DIR", None)
         else:

@@ -14,8 +14,8 @@
 #                 fragment what is left.
 #
 # dataset            policy     cameras                          steps   batch  hours  extra
-cube-pnp-new         diffusion  all                              100000  32     36     -
-cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -
-cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -
-cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -
-cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -
+cube-pnp-new         diffusion  all                              100000  32     36     -       -
+cube-pnp-new         diffusion  central,wrist_camera_left        100000  32     36     -       -
+cube-pnp-new         diffusion  wrist_camera_left                100000  32     36     -       -
+cube-pnp-new         pi05       central,wrist_camera_left        30000   4      36     -       -
+cube-pnp-new         pi05       wrist_camera_left                30000   4      36     -       -

@@ -74,6 +74,44 @@ PI05_SLOTS = {
     "wrist_camera_right": "observation.images.right_wrist_0_rgb",
 }
 
+# The slots themselves, in the order an unnamed camera is given one. The
+# overhead slot first because it is the one whose viewpoint is least
+# arm-specific, then the two wrists left-to-right.
+PI05_SLOT_ORDER = (
+    "observation.images.base_0_rgb",
+    "observation.images.left_wrist_0_rgb",
+    "observation.images.right_wrist_0_rgb",
+)
+
+# Short names accepted in a run matrix's `slots` column, so a row can say
+# `central=base,left_arm_left_gripper=left_wrist` instead of repeating the
+# openpi feature keys.
+PI05_SLOT_ALIASES = {
+    "base": "observation.images.base_0_rgb",
+    "left_wrist": "observation.images.left_wrist_0_rgb",
+    "right_wrist": "observation.images.right_wrist_0_rgb",
+}
+
+# Named COMPOSITES tile several cameras into ONE image feature.
+#
+# A policy whose architecture fixes the number of views cannot simply be given
+# more of them: FastWAM concatenates its image features into a single frame of
+# `policy.image_size`, so five 640x480 cameras have nowhere to go. Tiling the
+# four fingertip cameras into one square feature spends one view on all four
+# instead of losing three of them, and keeps every tactile signal in front of
+# the model.
+#
+# The grid is row-major and must be square-ish: four cameras tile 2x2, each
+# quadrant a quarter of the output's width and height.
+COMPOSITES: "dict[str, tuple[str, ...]]" = {
+    "tactile_quad": (
+        "left_arm_left_gripper",
+        "left_arm_right_gripper",
+        "right_arm_left_gripper",
+        "right_arm_right_gripper",
+    ),
+}
+
 
 class ViewError(Exception):
     """A view was asked for that the source dataset cannot provide."""
@@ -94,6 +132,20 @@ def camera_keys(info: dict) -> list[str]:
 def short_name(key: str) -> str:
     """``observation.images.central`` -> ``central``."""
     return key[len(CAMERA_PREFIX) :] if key.startswith(CAMERA_PREFIX) else key
+
+
+def available_camera_names(info: dict) -> list[str]:
+    """The dataset's camera SHORT names, plus every composite it could build.
+
+    A composite is offered only when the dataset records all of its parts, so a
+    run matrix naming one is judged against what this dataset can actually
+    produce rather than against a list of names that exist somewhere.
+    """
+    have = [short_name(k) for k in camera_keys(info)]
+    known = set(have)
+    return have + [
+        name for name, parts in COMPOSITES.items() if known.issuperset(parts)
+    ]
 
 
 def resolve_cameras(info: dict, names: Iterable[str]) -> list[str]:
@@ -212,22 +264,72 @@ def task_remap(
     return chosen, {old: 0 for old in range(len(tasks))}
 
 
-def pi05_rename_map(keep: Sequence[str]) -> dict[str, str]:
+def pi05_rename_map(
+    keep: Sequence[str], slots: "dict[str, str] | None" = None
+) -> dict[str, str]:
     """This view's cameras -> the pi0.5 slots they should be fed into.
 
     Only cameras the view actually has are mapped. The slots left over stay
     empty on purpose: that is how a camera is ablated for a policy whose
     architecture has a fixed number of views.
+
+    A camera whose viewpoint matches one of pi0.5's own -- an overhead view, a
+    wrist -- takes that slot by NAME, so it inherits what the base learned about
+    it. A camera with no counterpart (this rig's fingertip cameras have none:
+    pi0.5 was never pretrained on a gel image) takes the next slot still free,
+    in ``PI05_SLOT_ORDER``. That is a weaker claim than the named case and is
+    worth saying out loud, but it is the right one: the alternative was refusing
+    to train pi0.5 on a tactile dataset at all.
+
+    ``slots`` overrides both, and is how a run matrix pins the assignment for an
+    ablation. Its values may be the openpi feature keys or the short aliases in
+    ``PI05_SLOT_ALIASES``.
     """
-    out = {}
+    out: "dict[str, str]" = {}
+    if len(keep) > len(PI05_SLOT_ORDER):
+        raise ViewError(
+            f"pi0.5 has {len(PI05_SLOT_ORDER)} image slots but this view has "
+            f"{len(keep)} cameras ({', '.join(short_name(k) for k in keep)}); "
+            "build a view with fewer, or map them in the slots column"
+        )
+
+    if slots:
+        for camera, slot in slots.items():
+            key = camera if camera.startswith(CAMERA_PREFIX) else CAMERA_PREFIX + camera
+            if key not in list(keep):
+                raise ViewError(
+                    f"slots names camera {short_name(key)!r}, which this view "
+                    f"does not have: {', '.join(short_name(k) for k in keep)}"
+                )
+            full = PI05_SLOT_ALIASES.get(slot, slot)
+            if full not in PI05_SLOT_ORDER:
+                raise ViewError(
+                    f"{slot!r} is not a pi0.5 slot; want one of "
+                    f"{', '.join(sorted(PI05_SLOT_ALIASES))}"
+                )
+            out[key] = full
+        return out
+
+    taken: "set[str]" = set()
+    unnamed: "list[str]" = []
     for key in keep:
-        slot = PI05_SLOTS.get(short_name(key))
-        if slot is None:
-            raise ViewError(
-                f"no pi0.5 slot known for camera {short_name(key)!r}; "
-                f"add one to PI05_SLOTS (slots: {', '.join(sorted(PI05_SLOTS))})"
-            )
+        named = PI05_SLOTS.get(short_name(key))
+        if named is None:
+            unnamed.append(key)
+            continue
+        out[key] = named
+        taken.add(named)
+    free = [s for s in PI05_SLOT_ORDER if s not in taken]
+    for key, slot in zip(unnamed, free):
         out[key] = slot
+    # zip stops at the shorter list, so a camera left without a slot means the
+    # named ones already filled them -- which the length check above cannot
+    # catch, because it counts cameras rather than collisions.
+    if len(out) < len(keep):
+        raise ViewError(
+            "pi0.5's slots are already taken by the named cameras; map them "
+            f"explicitly in the slots column ({', '.join(sorted(PI05_SLOT_ALIASES))})"
+        )
     return out
 
 
