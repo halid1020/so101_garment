@@ -591,5 +591,73 @@ class TestAbsentStreamsInThePlan(unittest.TestCase):
             self.assertEqual(absent_stream_refusals({"unassigned"}), [])
 
 
+class TestArmPortsInThePlan(unittest.TestCase):
+    """A bus the session cannot open is refused before it is started."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.ports = {}
+        for name in ("follow-left", "follow-right", "lead-left", "lead-right"):
+            port = self.root / name
+            port.write_text("")
+            self.ports[name] = port
+        self.map_path = self.root / "sensor_map.yaml"
+        self._write()
+
+    def _write(self):
+        p = self.ports
+        self.map_path.write_text(
+            "arms:\n"
+            f"  left: {p['follow-left']}\n"
+            f"  right: {p['follow-right']}\n"
+            "leaders:\n"
+            f"  left:\n    port: {p['lead-left']}\n"
+            f"  right:\n    port: {p['lead-right']}\n"
+        )
+
+    def _refusals(self, leader=False):
+        from common.web.session import arm_port_refusals
+
+        with mock.patch("tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path):
+            return arm_port_refusals(leader)
+
+    def test_openable_ports_are_silent(self):
+        self.assertEqual(self._refusals(), [])
+        self.assertEqual(self._refusals(leader=True), [])
+
+    def test_a_port_that_cannot_be_opened_says_so_and_says_why(self):
+        # The rig's own recurring failure: a bus comes back root:dialout after a
+        # replug, and an operator outside that group loses the arm.
+        self.ports["follow-right"].chmod(0o660)
+        os.chmod(self.ports["follow-right"], 0o000)
+        (refusal,) = self._refusals()
+        self.assertIn("right follower arm", refusal)
+        self.assertIn("setup.sh", refusal)
+        self.assertIn("dialout", refusal)
+
+    def test_a_missing_port_is_a_different_message(self):
+        self.ports["follow-left"].unlink()
+        (refusal,) = self._refusals()
+        self.assertIn("left follower arm", refusal)
+        self.assertIn("not there", refusal)
+        self.assertNotIn("dialout", refusal)
+
+    def test_the_leaders_are_only_needed_by_a_leader_session(self):
+        # A Quest session never opens them, so an unusable leader must not stop
+        # one -- and a leader session must not be started without them.
+        self.ports["lead-right"].unlink()
+        self.assertEqual(self._refusals(), [])
+        (refusal,) = self._refusals(leader=True)
+        self.assertIn("right leader arm", refusal)
+
+    def test_no_assignment_file_judges_nothing(self):
+        from common.web.session import arm_port_refusals
+
+        with mock.patch(
+            "tool.test_sensor_rates.SENSOR_MAP_PATH", self.root / "absent.yaml"
+        ):
+            self.assertEqual(arm_port_refusals(True), [])
+
+
 if __name__ == "__main__":
     unittest.main()

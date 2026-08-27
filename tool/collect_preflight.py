@@ -12,6 +12,8 @@ Exit code is 0 when nothing FAILed (WARN is tolerated), else 1 — so it can gat
 a collection script. Checks:
 
 * sensor map assigned (both followers, cameras; leaders optional);
+* every assigned arm port exists and is openable (they come back
+  root:dialout after a replug, which silently costs an arm);
 * follower + leader calibration files present;
 * ready/rest pose configs valid;
 * recording.yaml loads;
@@ -184,6 +186,24 @@ def check_sensor_map() -> CheckResult:
             "sensor map", FAIL, "not found — run tool/test_sensor_rates.py --assign"
         )
     return sensor_map_status(load_sensor_map(SENSOR_MAP_PATH))
+
+
+def check_arm_ports() -> CheckResult:
+    """Can the assigned arm buses be opened at all? File-level, nothing probed.
+
+    The SO-101 buses come back as root:dialout after every re-enumeration, so on
+    a machine whose operator is not in that group a hub reset silently takes an
+    arm away -- and the ports that reappear after ``setup.sh`` ran are exactly
+    the ones its chmod did not reach. The recorder connects both followers before
+    it records anything, so this is the difference between a sentence here and a
+    serial traceback thirty seconds into a session.
+    """
+    from common.web.session import arm_port_refusals
+
+    refusals = arm_port_refusals(leader=True)
+    if refusals:
+        return CheckResult("arm ports", FAIL, "; ".join(refusals))
+    return CheckResult("arm ports", OK, "followers and leaders all openable")
 
 
 def check_follower_calibration() -> CheckResult:
@@ -460,6 +480,7 @@ def run_checks(hardware: bool, dataset_dir: "Path | None" = None) -> list[CheckR
     results: list[CheckResult] = []
     file_checks: list[Callable[[], CheckResult]] = [
         check_sensor_map,
+        check_arm_ports,
         check_follower_calibration,
         check_leader_calibration,
         check_pose_configs,

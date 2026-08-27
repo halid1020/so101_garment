@@ -148,6 +148,65 @@ def absent_stream_refusals(selected: "set[str]") -> "list[str]":
     ]
 
 
+def _port_problem(port: "str") -> "str | None":
+    """Why this serial port cannot be opened, or None if it can. Pure-ish.
+
+    Two failures, two different fixes. A port that is not there is a replug or
+    a socket the arm was not assigned from. A port that is there but not
+    writable is the far more common one on this rig: the SO-101 buses come back
+    as root:dialout after every re-enumeration, so an operator who is not in
+    that group loses access to an arm whenever its hub resets, and the ports
+    that reappear after ``setup.sh`` ran are exactly the ones it did not chmod.
+    """
+    path = Path(str(port))
+    try:
+        if not path.exists():
+            return "is not there — replug the arm, or re-assign it on the Signals tab"
+        if not os.access(path, os.R_OK | os.W_OK):
+            return (
+                "is there but cannot be opened (permission denied) — it came "
+                "back as root:dialout after a replug. Run `source setup.sh` "
+                f"or `sudo chmod 666 {path.resolve()}` — and joining the "
+                "dialout group fixes it for good"
+            )
+    except OSError as exc:
+        return f"cannot be checked ({exc})"
+    return None
+
+
+def arm_port_refusals(leader: bool) -> "list[str]":
+    """Refuse a session whose arm buses cannot be opened. One per port.
+
+    The same argument as :func:`absent_stream_refusals`, for the other half of
+    the rig: the recorder connects both follower buses before it records
+    anything, so a port it cannot open ends the session seconds after Start with
+    a serial traceback in the output tail. Both followers are always needed; the
+    leaders only when the session is driven by them.
+
+    Reads the assignments and the filesystem only -- no port is opened, so this
+    cannot disturb an arm or take a bus a session is about to want.
+    """
+    from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
+
+    if not SENSOR_MAP_PATH.exists():
+        return []
+    sensor_map = load_sensor_map(SENSOR_MAP_PATH) or {}
+    wanted: list[tuple[str, str]] = []
+    for side, port in sorted((sensor_map.get("arms") or {}).items()):
+        wanted.append((f"{side} follower arm", str(port)))
+    if leader:
+        for side, entry in sorted((sensor_map.get("leaders") or {}).items()):
+            port = (entry or {}).get("port")
+            if port:
+                wanted.append((f"{side} leader arm", str(port)))
+    refusals = []
+    for label, port in wanted:
+        problem = _port_problem(port)
+        if problem:
+            refusals.append(f"the {label} port {port} {problem}")
+    return refusals
+
+
 def resolve_plan(
     root: Path,
     name: str,
@@ -215,6 +274,7 @@ def resolve_plan(
     # A refusal, unlike the budget above: an absent camera is not a risk the
     # operator can weigh, it is a session that will exit as soon as it starts.
     refusals += absent_stream_refusals(set(selection["cameras"]))
+    refusals += arm_port_refusals(leader)
 
     return {
         "resuming": resuming,

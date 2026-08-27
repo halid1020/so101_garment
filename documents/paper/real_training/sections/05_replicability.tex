@@ -35,10 +35,13 @@ inference disagreement.
 
 \paragraph{Readiness procedure.} A preflight check confirms, before
 collection, that every arm is calibrated and bound to a stable alias, that
-the wrist joints are limited to protect the fingertip cables, that the arms
-are at their home pose, that every camera and the depth device open at
-their configured resolution, that the dataset volume has headroom, and that
-the host-tuning items which reduce timing jitter are set. It reports one
+each arm's bus can actually be opened --- these re-enumerate under restricted
+ownership whenever their hub resets, so an operator outside the privileged
+group loses an arm without touching anything --- that the wrist joints are
+limited to protect the fingertip cables, that the arms are at their home pose,
+that every camera and the depth device open at their configured resolution,
+that the dataset volume has headroom, and that the host-tuning items which
+reduce timing jitter are set. It reports one
 ready-or-not verdict, so an operator does not begin a long session on a rig
 that is quietly misconfigured. The check is also read from the console of the
 following paragraphs, immediately above the form that starts a session, so it

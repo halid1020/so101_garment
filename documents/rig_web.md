@@ -130,6 +130,15 @@ the other side: it opens the assigned cameras that `recording.yaml` still
 enables, so a camera the rig no longer carries is neither previewed nor reported
 missing on every poll.
 
+The arm buses are checked the same way and for the same reason. They come back
+as `root:dialout` after every re-enumeration, so on a machine whose operator is
+not in that group a hub reset takes an arm away without anyone touching it —
+and the ports that reappear *after* `setup.sh` ran are precisely the ones its
+`chmod` did not reach. A port that is missing, or there but unopenable, is
+named before Start rather than thrown as a serial traceback thirty seconds
+in. The fix it names is `source setup.sh`; joining the `dialout` group fixes it
+for good.
+
 **Driving the session.** *Driving the session* lists the steps in order —
 what enables the arms, what makes them follow, what closes the grippers,
 what records an episode and what ends the session — and, for each, the
