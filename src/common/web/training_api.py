@@ -172,7 +172,6 @@ def _config(app: web.Application, root: Path) -> "dict[str, Any]":
             }
             for name, dest in sorted(_destinations(app).items())
         ],
-        "policy_names": list(POLICIES),
     }
 
 
