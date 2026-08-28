@@ -208,6 +208,10 @@
           <p class="muted" id="t-dest-detail"></p>
           <label class="row"><input type="checkbox" id="t-restage">
             copy the dataset up again even if it is already there</label>
+          <label class="row" id="t-allow-cpu-row" hidden>
+            <input type="checkbox" id="t-allow-cpu">
+            train on the CPU anyway — it will not fail, it will just never
+            finish</label>
 
           <table class="checks" id="t-rows"></table>
           <p class="err" id="t-err"></p>
@@ -224,7 +228,21 @@
 
       <div class="col grow" id="training-runs">
         <h2>Runs</h2>
-        <div class="bar"><button id="t-refresh">Refresh</button></div>
+        <div class="bar wrap">
+          <button id="t-refresh">Refresh</button>
+          <label class="row"><input type="checkbox" id="t-logy" checked>
+            log scale</label>
+          <select id="t-xaxis">
+            <option value="step">by step</option>
+            <option value="hours">by hours</option>
+          </select>
+          <span class="grow muted" id="t-runstate"></span>
+        </div>
+        <figure class="plot" id="t-compare" hidden>
+          <figcaption class="bar wrap" id="t-compare-legend"></figcaption>
+          <canvas id="t-compare-canvas"></canvas>
+        </figure>
+        <p class="err" id="t-runs-err"></p>
         <div class="pad" id="t-runs"></div>
       </div>
     </section>
@@ -339,4 +357,5 @@
   <script src="/static/collect.js"></script>
   <script src="/static/signals.js"></script>
   <script src="/static/training.js"></script>
+  <script src="/static/training_chart.js"></script>
 </body></html>
