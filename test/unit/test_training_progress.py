@@ -428,3 +428,29 @@ class TestSectionsSurviveALogWithNoFinalNewline(unittest.TestCase):
             sections["stat"].split(), ["6242789", "1787942791", "1787942792"]
         )
         self.assertNotIn(runs.SENTINEL, sections["tail"])
+
+
+class TestALogCutThroughACharacter(unittest.TestCase):
+    """`head -c` counts bytes, and a progress bar is drawn in three-byte glyphs.
+
+    So the head of a log is routinely cut through the middle of one. Decoding
+    that strictly raises, and the whole run then cannot be watched -- which is
+    how this was found: a real local run, at byte 20012.
+    """
+
+    LOCAL = {
+        "name": "here",
+        "kind": "local",
+        "ssh": "-",
+        "repo": ".",
+        "scratch": "/tmp",
+        "stage": "{scratch}/local",
+    }
+
+    def test_a_truncated_glyph_does_not_take_the_whole_read_down(self):
+        # The first two bytes of U+2588 FULL BLOCK, which is what tqdm draws.
+        out, problem = runs.run_command(
+            self.LOCAL, r"printf 'ok\xe2\x96'", timeout=20.0
+        )
+        self.assertIsNone(problem)
+        self.assertTrue(out.startswith("ok"))

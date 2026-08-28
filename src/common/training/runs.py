@@ -215,7 +215,18 @@ def run_command(
     """
     argv = command_argv(dest, command)
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            # `head -c` counts BYTES, and a progress bar is drawn with
+            # three-byte block characters, so the head of a log is routinely
+            # cut through the middle of one. Without this the whole read raises
+            # UnicodeDecodeError and the run cannot be watched at all --
+            # measured on a real local run, at byte 20012.
+            errors="replace",
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         return "", f"{dest.get('name', 'the machine')} did not answer in {timeout:.0f}s"
     except OSError as exc:
