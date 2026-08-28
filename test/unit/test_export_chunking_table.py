@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 
 from common.sweep_journal import append_row
-from tool.export_chunking_table import PROSE, latex_table, merge
+from tool.export_chunking_table import (
+    PROSE,
+    latency_of,
+    latency_table,
+    latex_table,
+    merge,
+)
 
 
 def episode(cell, trial, success=True, seam=2.0):
@@ -109,3 +115,66 @@ class TestLatexTable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLatencyOf(unittest.TestCase):
+    """A journal must be able to say what delay it was measured at."""
+
+    def test_the_rows_are_believed_first(self):
+        rows = [{"latency_ticks": 16, "pace": "virtual"}]
+        self.assertEqual(latency_of(Path("whatever.jsonl"), rows), 16)
+
+    def test_an_older_journal_falls_back_to_its_file_name(self):
+        # Written before the pacing was recorded; the campaign named the files.
+        self.assertEqual(latency_of(Path("stage_c_lat24.md.episodes.jsonl"), [{}]), 24)
+
+    def test_a_realtime_journal_has_no_pinned_delay(self):
+        rows = [{"pace": "realtime", "latency_ticks": None}]
+        self.assertIsNone(latency_of(Path("stage_c_lat8.jsonl"), rows))
+
+    def test_and_neither_has_an_unnamed_one(self):
+        self.assertIsNone(latency_of(Path("stage_a.md.episodes.jsonl"), [{}]))
+
+
+class TestLatencyTable(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def journal(self, lat, cell, successes, n=5):
+        p = self.dir / f"stage_c_lat{lat}.md.episodes.jsonl"
+        for i in range(n):
+            row = episode(cell, i, success=i < successes)
+            row["latency_ticks"] = lat
+            row["pace"] = "virtual"
+            append_row(p, row)
+        return p
+
+    def test_the_delays_become_the_columns_in_order(self):
+        a = self.journal(8, "sync", 5)
+        b = self.journal(32, "sync", 0)
+        out = latency_table([b, a], "cap", "tab:x")
+        self.assertIn("8 ticks & 32 ticks", out)
+
+    def test_a_cell_missing_at_one_delay_is_dashed_not_dropped(self):
+        a = self.journal(8, "sync", 5)
+        b = self.journal(32, "append", 0)
+        out = latency_table([a, b], "cap", "tab:x")
+        self.assertIn("--", out)
+        self.assertIn(PROSE["sync"], out)
+        self.assertIn(PROSE["append"], out)
+
+    def test_the_held_metric_can_be_asked_for_instead(self):
+        a = self.journal(8, "sync", 5)
+        out = latency_table([a], "cap", "tab:x", metric="held")
+        self.assertIn(r"0\%", out)
+
+    def test_a_realtime_journal_is_left_out_of_a_latency_table(self):
+        a = self.journal(8, "sync", 5)
+        rt = self.dir / "stage_a.md.episodes.jsonl"
+        row = episode("sync", 0)
+        row["pace"] = "realtime"
+        row["latency_ticks"] = None
+        append_row(rt, row)
+        out = latency_table([a, rt], "cap", "tab:x")
+        self.assertIn("8 ticks", out)
+        self.assertNotIn("None", out)

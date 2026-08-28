@@ -21,6 +21,7 @@ rather than averaging two different sample sizes together.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -116,6 +117,80 @@ def latex_table(folded: "list[dict]", caption: str, label: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def latency_of(path: Path, rows: "list[dict]") -> "int | None":
+    """The pinned delay a journal was measured at, in ticks.
+
+    Prefer what the rows record. Journals written before the pacing was
+    recorded fall back to the delay in their own file name, which is how the
+    campaign named them; a journal that answers neither is realtime.
+    """
+    for row in rows:
+        if row.get("latency_ticks") is not None:
+            return int(row["latency_ticks"])
+    if any(row.get("pace") == "realtime" for row in rows):
+        return None
+    found = re.search(r"lat(\d+)", path.name)
+    return int(found.group(1)) if found else None
+
+
+def latency_table(
+    journals: "list[Path]", caption: str, label: str, metric: str = "success"
+) -> str:
+    """Strategies down the side, pinned delays across the top.
+
+    The comparison the campaign is actually about: not which splice wins, but
+    how each one holds up as the delay grows towards the chunk's own duration,
+    beyond which an aligning splice has no rows left to execute.
+    """
+    by_lat: "dict[int, dict[str, dict]]" = {}
+    for path in journals:
+        rows = load_rows(path)
+        lat = latency_of(path, rows)
+        if lat is None:
+            continue
+        by_lat.setdefault(lat, {})
+        for folded in _fold(rows):
+            by_lat[lat][str(folded["cell"])] = folded
+    lats = sorted(by_lat)
+    cells: "list[str]" = []
+    for lat in lats:
+        for name in by_lat[lat]:
+            if name not in cells:
+                cells.append(name)
+
+    def render(cell: str, lat: int) -> str:
+        row = by_lat[lat].get(cell)
+        if row is None:
+            return "--"
+        if metric == "success":
+            return rf"{row['success']:.0%}".replace("%", r"\%")
+        return rf"{row['held_fraction']:.0%}".replace("%", r"\%")
+
+    lines = [
+        r"\begin{table}[t]",
+        r"\centering",
+        r"\small",
+        r"\begin{tabular}{l" + "r" * len(lats) + "}",
+        r"\toprule",
+        "Splice & " + " & ".join(f"{ln} ticks" for ln in lats) + r" \\",
+        r"\midrule",
+    ]
+    for cell in cells:
+        base, _, tuning = cell.partition("@")
+        name = PROSE.get(base, base) + (f" ({tuning})" if tuning else "")
+        lines.append(
+            name + " & " + " & ".join(render(cell, ln) for ln in lats) + r" \\"
+        )
+    lines += [
+        r"\bottomrule",
+        r"\end{tabular}",
+        rf"\caption{{{caption}}}",
+        rf"\label{{{label}}}",
+        r"\end{table}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("journals", nargs="+", type=Path)
@@ -123,15 +198,26 @@ def main() -> int:
     ap.add_argument("--caption", default="Action-chunk splice strategies.")
     ap.add_argument("--label", default="tab:chunking")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument(
+        "--by-latency",
+        action="store_true",
+        help="strategies down the side, pinned delays across the top",
+    )
+    ap.add_argument("--metric", choices=("success", "held"), default="success")
     args = ap.parse_args()
 
-    rows = merge(args.journals)
-    if not rows:
-        raise SystemExit("❌ no scored episodes in those journals")
-    folded = _fold(rows)
-    text = (
-        latex_table(folded, args.caption, args.label) if args.latex else _table(folded)
-    )
+    if args.by_latency:
+        text = latency_table(args.journals, args.caption, args.label, args.metric)
+    else:
+        rows = merge(args.journals)
+        if not rows:
+            raise SystemExit("❌ no scored episodes in those journals")
+        folded = _fold(rows)
+        text = (
+            latex_table(folded, args.caption, args.label)
+            if args.latex
+            else _table(folded)
+        )
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(text)

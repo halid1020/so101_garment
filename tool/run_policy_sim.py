@@ -341,6 +341,11 @@ def run_episode(env, source, scenario, args, label: str, composer=None) -> dict:
     # 0-based, so a successful episode has ticks == ticks_to_success + 1.
     row["ticks_to_success"] = ticks_to_success
     row["fps"] = float(args.fps)
+    # The pacing is part of the measurement, not of the invocation: a journal
+    # that cannot say whether a delay was the link's or a pinned one cannot be
+    # compared with another journal months later.
+    row["pace"] = str(args.pace)
+    row["latency_ticks"] = int(args.latency_ticks) if args.pace == "virtual" else None
     row["wall_s"] = round(time.perf_counter() - wall0, 2)
     row["place_err_mm"] = round(float(env.place_error() * 1e3), 2)
     return row
