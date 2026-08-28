@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -532,3 +533,22 @@ class TestGpuBoxRunNames(unittest.TestCase):
         self.run_box("--run-tag", "explicit", env_extra={"SO101_RUN_TAG": "from-env"})
         args = self.driver_args()
         self.assertEqual(args[args.index("--run-name") + 1], "explicit")
+
+    def test_detaching_carries_every_option_to_the_copy_it_starts(self):
+        # MEASURED failure: --detach rebuilt its own argument list and left
+        # --run-tag out of it, so a probe ran under the REAL run's name on a
+        # real box. The tests before this one all took the foreground path,
+        # which is the path nobody uses -- the launcher always detaches.
+        result = self.run_box("--run-tag", "probe", "--detach")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("pid=", result.stdout)
+
+        log = Path(result.stdout.split("log=")[1].strip())
+        deadline = time.time() + 30
+        while time.time() < deadline and not self.captured.exists():
+            time.sleep(0.1)
+        self.assertTrue(
+            self.captured.exists(), f"driver never ran; log:\n{log.read_text()}"
+        )
+        args = self.driver_args()
+        self.assertEqual(args[args.index("--run-name") + 1], "probe")

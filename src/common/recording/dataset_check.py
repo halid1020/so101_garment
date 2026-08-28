@@ -50,6 +50,12 @@ EPISODE_STAT_PREFIX = "stats/episode_index/"
 #: survive a renumbering untouched.
 EPISODE_STAT_KEEP = ("std", "count")
 
+#: Per-camera columns of the episode metadata: where an episode's frames sit in
+#: that camera's video file.
+VIDEO_PREFIX = "videos/observation.images."
+VIDEO_FROM = "from_timestamp"
+VIDEO_TO = "to_timestamp"
+
 
 class DatasetDamaged(Exception):
     """A dataset cannot be rewritten until something on disk is put right.
@@ -109,6 +115,76 @@ def episodes_in_metadata(root: Path) -> "dict[int, dict[str, Any]]":
                 "file": path,
             }
     return found
+
+
+def camera_span_problems(root: Path) -> "list[dict[str, Any]]":
+    """Episodes whose video does not last as long as their rows say. Cheap.
+
+    A camera that stops delivering mid-episode leaves the recording SHORTER than
+    the frames the dataset claims for it, and nothing else notices: the metadata
+    row, the parquet rows and the side files are all written, and the counts in
+    ``info.json`` add up. The dataset opens, trains, and then dies partway
+    through the first pass with a ``FrameTimestampError`` naming a query the
+    video cannot answer -- on a rented GPU, hours from the operator.
+
+    MEASURED on ``fold-short-from-flattend-tactile``: episode 63 held 260 rows
+    and 260 frames from each of the four fingertip cameras, but only 213 from
+    the overhead one. Every other check in this module passed it.
+
+    The invariant is per camera and per episode: ``to - from == length / fps``.
+    It reads two more columns from metadata already being read, so it costs
+    nothing and needs no video decoded.
+    """
+    import pyarrow.parquet as pq  # type: ignore[import]
+
+    root = Path(root)
+    fps = float(_read_json(root / "meta" / "info.json").get("fps") or 0)
+    if not fps:
+        return []
+    # Half a frame: wide enough for float noise in a stored timestamp, far
+    # narrower than the smallest dropout worth reporting.
+    tolerance = 0.5 / fps
+
+    problems: "list[dict[str, Any]]" = []
+    for path in episode_meta_files(root):
+        names = list(pq.ParquetFile(path).schema_arrow.names)
+        cameras = sorted(
+            {
+                n[len(VIDEO_PREFIX) : n.rindex("/")]
+                for n in names
+                if n.startswith(VIDEO_PREFIX) and n.endswith("/" + VIDEO_TO)
+            }
+        )
+        if not cameras or EPISODE_KEY not in names or LENGTH_KEY not in names:
+            continue
+        wanted = [EPISODE_KEY, LENGTH_KEY] + [
+            f"{VIDEO_PREFIX}{c}/{end}"
+            for c in cameras
+            for end in (VIDEO_FROM, VIDEO_TO)
+        ]
+        table = pq.read_table(path, columns=[c for c in wanted if c in names])
+        columns = {k: table.column(k).to_pylist() for k in table.column_names}
+        for row in range(table.num_rows):
+            length = columns[LENGTH_KEY][row]
+            if not length:
+                continue
+            want = float(length) / fps
+            for camera in cameras:
+                start = columns.get(f"{VIDEO_PREFIX}{camera}/{VIDEO_FROM}", [None])[row]
+                end = columns.get(f"{VIDEO_PREFIX}{camera}/{VIDEO_TO}", [None])[row]
+                if start is None or end is None:
+                    continue
+                span = float(end) - float(start)
+                if abs(span - want) > tolerance:
+                    problems.append(
+                        {
+                            "episode": int(columns[EPISODE_KEY][row]),
+                            "camera": camera,
+                            "rows": int(length),
+                            "frames": round(span * fps),
+                        }
+                    )
+    return sorted(problems, key=lambda p: (p["episode"], p["camera"]))
 
 
 def _at(columns: "dict[str, list]", key: str, row: int) -> "int | None":
@@ -200,6 +276,7 @@ def dataset_integrity(root: Path, deep: bool = True) -> "dict[str, Any]":
         "orphan_data": orphan_data,
         "beyond_count": beyond,
         "stale_meta_files": [],
+        "short_video": camera_span_problems(root) if deep else [],
         "bad_offsets": not offsets_consistent(in_meta),
         "bad_totals": counted != len(everywhere)
         or int(info.get("total_frames") or 0) != frames_present,
@@ -209,13 +286,17 @@ def dataset_integrity(root: Path, deep: bool = True) -> "dict[str, Any]":
         or orphan_meta
         or orphan_data
         or beyond
+        or report["short_video"]
         or report["bad_offsets"]
         or report["bad_totals"]
     )
     # Repairable means: the only thing wrong is that the dataset counts episodes
     # nobody wrote (and whatever bookkeeping that alone knocked out of step).
+    # A camera that recorded fewer frames than the episode claims is NOT
+    # repairable here: the frames are gone, and whether to drop the episode or
+    # keep the part that was recorded depends on what it shows.
     report["repairable"] = not report["ok"] and not (
-        orphan_meta or orphan_data or beyond
+        orphan_meta or orphan_data or beyond or report["short_video"]
     )
     report["summary"] = damage_summary(report)
     return report
@@ -245,6 +326,19 @@ def damage_summary(report: "dict[str, Any]") -> str:
     if report.get("beyond_count"):
         parts.append(
             f"episode(s) {report['beyond_count']} exist beyond the counted total"
+        )
+    short = report.get("short_video") or []
+    if short:
+        shown = "; ".join(
+            f"episode {p['episode']} has {p['rows']} rows but only {p['frames']} "
+            f"frames from {p['camera']}"
+            for p in short[:3]
+        )
+        more = "" if len(short) <= 3 else f" (+{len(short) - 3} more)"
+        parts.append(
+            f"{shown}{more} — that camera stopped delivering mid-episode, and "
+            "training dies partway through the first pass on it. Remove the "
+            "episode, or train on a camera set that leaves it out"
         )
     if not parts:
         if report.get("bad_totals"):

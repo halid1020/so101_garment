@@ -45,9 +45,19 @@ thanos:
   repo: ~/project/so101_garment
   scratch: ~/.cache/huggingface/lerobot
   stage: "{scratch}/local"
-  # NOT MEASURED for this rig's five-camera datasets. The one figure we have --
-  # pi0.5 LoRA needing 21.5 of this card's 23.5 GiB -- was taken with THREE
-  # cameras, and activations scale with the camera count, so it does not carry
-  # over. Run one short row per policy and write the ceiling here before
-  # starting anything long. Until then a row is only refused by the GPU.
+  # MEASURED on this card (24.5 GiB) with a FIVE-camera dataset
+  # (fold-short-from-flattend-tactile, 65 episodes):
+  #   act       batch 8   -> mem_gb 11.27, updt_s 0.414, 16 smp/s
+  #   diffusion batch 16  -> not yet measured; see below
+  #   pi05      batch ?   -> not yet measured at five cameras. The 21.5-of-23.5
+  #                          GiB figure often quoted for it was taken with
+  #                          THREE, and activations scale with camera count.
+  # Nothing is refused here yet because nothing measured has been exceeded: act
+  # at batch 8 leaves better than half the card free. Add a limit when a real
+  # ceiling is observed, not before -- a guessed number refuses rows that fit
+  # and admits rows that do not.
+  #
+  # This card is also SINGLE-TENANT in practice: hpc/gpu_box_run.sh holds a lock
+  # so the matrix runs one row at a time, and a policy server left serving on it
+  # takes its memory off the top of whatever these figures allow.
   limits: {}

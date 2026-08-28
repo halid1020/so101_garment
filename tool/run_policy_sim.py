@@ -176,6 +176,32 @@ EPISODE_ATTEMPTS = 5
 RETRY_WAIT_S = 30.0
 
 
+def _source_with_retry(args, cell: dict, label: str):
+    """A cell's source, waiting out a link that is down rather than aborting.
+
+    The per-cell handshake sits outside the per-episode retry, so a link that
+    drops between cells used to end a grid that had hours of finished work
+    behind it. It is the same failure as any other transport failure and gets
+    the same treatment.
+    """
+    last = ""
+    for attempt in range(1, EPISODE_ATTEMPTS + 1):
+        try:
+            return make_source(args, cell, args.fps)
+        except (urllib.error.URLError, OSError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            print(
+                f"  \u26a0\ufe0f  cannot open {label} ({last}) — "
+                f"waiting {RETRY_WAIT_S:.0f}s (attempt {attempt})"
+            )
+            if attempt < EPISODE_ATTEMPTS:
+                time.sleep(RETRY_WAIT_S)
+    raise SystemExit(
+        f"\u274c the host stayed unreachable for {label}: {last}\n"
+        f"   Finished episodes are in the journal; re-run with --resume."
+    )
+
+
 def _episode_with_retry(env, source, scenario, args, label, composer) -> dict:
     """One scored episode, re-attempted when the failure is not about us.
 
@@ -483,7 +509,7 @@ def main() -> int:
         if all(row_key(label, i) in done for i in range(len(seeds))):
             print(f"\n== {label} — already complete, skipped")
             continue
-        source = make_source(args, cell, args.fps)
+        source = _source_with_retry(args, cell, label)
         _refuse_mismatched_cameras(args, source)
         print(f"\n== {label} — {source.describe()}")
         for i, seed in enumerate(seeds):

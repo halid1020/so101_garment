@@ -63,6 +63,10 @@ DRY_RUN=0
 STATUS=0
 STOP=0
 
+# Kept whole so --detach can hand them to the copy of itself it starts, rather
+# than rebuilding a list that has to be edited every time an option is added.
+ORIGINAL_ARGS=("$@")
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --manifest) MANIFEST="$2"; shift 2;;
@@ -123,8 +127,17 @@ MANIFEST="$(cd "$(dirname "$MANIFEST")" && pwd)/$(basename "$MANIFEST")"
 # SSH connection closing cannot take a 36-hour run with it.
 if [ "$DETACH" = "1" ]; then
     LOG="$RUN_STATE/run.log"
-    args=(--manifest "$MANIFEST" --scratch "$SCRATCH")
-    [ "$WAIT" = "1" ] && args+=(--wait)
+    # Rebuilding the argument list here means every option has to be repeated,
+    # and the one that was NOT is the one that matters: --run-tag was dropped,
+    # so a probe meant for a throwaway directory ran under the real run's name
+    # and left a checkpoint that would have made the long run skip training.
+    # Pass the ORIGINAL arguments through instead, minus --detach, so an option
+    # added later cannot be forgotten the same way.
+    args=()
+    for arg in "${ORIGINAL_ARGS[@]}"; do
+        [ "$arg" = "--detach" ] && continue
+        args+=("$arg")
+    done
     setsid nohup bash "${BASH_SOURCE[0]}" "${args[@]}" \
         >"$LOG" 2>&1 </dev/null &
     child=$!
