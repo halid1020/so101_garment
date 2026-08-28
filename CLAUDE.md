@@ -311,6 +311,19 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     self-referential columns from each file's own path; the console runs
     it before a merge reads its sources, after a merge writes its output,
     and before any compaction.
+  - **A camera that stops mid-episode leaves a dataset every count agrees
+    with.** The metadata row, the frames, the side files and the totals are all
+    written and consistent; only that one camera's video is short. It opens, it
+    trains, and it dies partway through the first pass with LeRobot's
+    `FrameTimestampError`, naming a timestamp rather than a cause — on a rented
+    GPU, hours in. MEASURED on `fold-short-from-flattend-tactile`: episode 63
+    held 260 rows and 260 frames from each of the four fingertip cameras, and
+    213 from `central`; every other check in `dataset_check.py` passed it.
+    `camera_span_problems` is the guard (`to - from == length / fps`, per camera
+    per episode) and it runs inside `dataset_integrity`, so `ensure_loadable`
+    refuses such a dataset before staging. It is NOT repairable automatically:
+    the frames are gone, and dropping the episode versus keeping the recorded
+    part depends on what it shows.
   - **An episode counted but never written breaks the whole dataset, and the
     error blames the network:** `DatasetReader._check_cached_episodes_sufficient`
     needs `set(range(total_episodes))` to be a subset of the episodes actually

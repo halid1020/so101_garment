@@ -51,3 +51,17 @@ P8b Motion review: playback answers whether a demonstration did the right thing,
     arms, since the Cartesian channels exist only in the pose-tracking mode.
     Hand back to the argument that reviewing before training keeps a collection
     honest.
+
+P-new  A defect no count reveals: a camera that stops delivering mid-episode
+    leaves a recording where EVERY count agrees — metadata row, frames, side
+    files, totals — and only that camera's video is short. Every integrity
+    check we had passed it; it failed partway through the first training pass
+    with a decoder error naming a timestamp rather than a cause, hours from the
+    operator on rented compute. The check needs no decode and no threshold:
+    each camera's recorded span must equal the episode's frame count over the
+    frame rate, and any disagreement is a fault because the decoder's tolerance
+    is far below one frame. Run wherever a dataset is rewritten or sent to
+    train. NOT auto-repairable: the frames are gone and the choice between
+    discarding the episode and keeping the recorded part depends on what it
+    shows. Unjustified: we report our own rate, not a general one; cause links
+    to the bus-contention section.

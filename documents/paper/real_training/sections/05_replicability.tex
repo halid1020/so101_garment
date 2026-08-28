@@ -107,6 +107,30 @@ episodes renumbered consistently across the training features and the side
 files, so curation leaves a valid dataset rather than a gap. Reviewing and
 pruning before training keeps a collection honest without re-running the rig.
 
+\paragraph{A defect no count reveals.} Human review catches what looks wrong;
+it cannot catch a fault that is invisible in playback. A camera that stops
+delivering partway through an episode leaves a recording in which every count
+still agrees: the episode's metadata row is written, its frames are written,
+its side files are written, and the dataset's totals add up. Only the video of
+that one camera is shorter than the episode claims, and the integrity checks we
+had --- which compare the metadata, the frames and the counted totals against
+one another --- all passed such a dataset. It opened, it began training, and it
+failed partway through the first pass with a decoder error naming a moment that
+camera never recorded. On rented compute that is discovered hours from the
+operator, and the error names a timestamp rather than a cause.
+
+The check that finds it needs no video decoded and no threshold: the recorded
+span of each camera in each episode must equal that episode's frame count
+divided by the frame rate, and any disagreement at all is a fault, because the
+decoder's own tolerance is far below a single frame. We now run it wherever a
+dataset is about to be rewritten or sent for training. It is deliberately not
+offered as automatically repairable --- the frames are gone, and whether to
+discard the episode or keep the part that was recorded depends on what the
+episode shows. \unjustified{} we report the defect and its rate in our own
+collection; we have not established how often such dropouts occur in general,
+and the underlying cause on our platform is the bus contention discussed in
+Section~\ref{sec:difficulties}.
+
 \paragraph{Dataset curation.} Curation of whole datasets belongs in the same
 place, because the mistakes it repairs are made in the sessions that produced
 the recordings. The console therefore also names, renames, deletes and merges

@@ -27,6 +27,7 @@ import pyarrow.parquet as pq
 
 from common.recording.dataset_check import (
     DatasetDamaged,
+    camera_span_problems,
     dataset_integrity,
     ensure_loadable,
     offsets_consistent,
@@ -310,3 +311,123 @@ class TestRepair(DatasetCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FPS = 30
+CAMERAS = ("central", "left_arm_left_gripper")
+
+
+def build_with_cameras(root: Path, lengths: "dict[int, int]", short=None):
+    """A dataset whose episode rows carry per-camera video timestamps.
+
+    ``short`` is ``(episode, camera, frames)``: that camera's video holds only
+    ``frames`` of that episode, which is exactly what a camera dropping off the
+    bus mid-episode leaves behind -- every count in the dataset still adds up.
+    """
+    root = Path(root)
+    (root / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+
+    start = 0
+    cursor = {c: 0.0 for c in CAMERAS}
+    for index, length in sorted(lengths.items()):
+        row = _episode_row(index, length, start)
+        start = row["dataset_to_index"]
+        for camera in CAMERAS:
+            frames = length
+            if short and short[0] == index and short[1] == camera:
+                frames = short[2]
+            row[f"videos/observation.images.{camera}/from_timestamp"] = cursor[camera]
+            row[f"videos/observation.images.{camera}/to_timestamp"] = (
+                cursor[camera] + frames / FPS
+            )
+            cursor[camera] += frames / FPS
+        pq.write_table(
+            pa.Table.from_pylist([row]),
+            root / "meta" / "episodes" / "chunk-000" / f"file-{index:03d}.parquet",
+        )
+        pq.write_table(
+            pa.table({"episode_index": pa.array([index] * length, pa.int64())}),
+            root / "data" / "chunk-000" / f"file-{index:03d}.parquet",
+        )
+    (root / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "codebase_version": "v3.0",
+                "fps": FPS,
+                "total_episodes": len(lengths),
+                "total_frames": sum(lengths.values()),
+            }
+        )
+    )
+    return root
+
+
+class TestShortVideo(DatasetCase):
+    """A camera that stopped delivering mid-episode.
+
+    Nothing else in this module sees it: the metadata row is there, the parquet
+    rows are there, the side files are there and every total adds up. The
+    dataset opens and trains, and then dies partway through the first pass with
+    a FrameTimestampError, on a rented GPU, hours from the operator.
+
+    MEASURED on fold-short-from-flattend-tactile: episode 63 held 260 rows and
+    260 frames from each fingertip camera, and 213 from the overhead one.
+    """
+
+    def test_a_whole_dataset_is_silent(self):
+        build_with_cameras(self.root, {0: 100, 1: 120, 2: 90})
+        self.assertEqual(camera_span_problems(self.root), [])
+
+    def test_the_camera_that_came_up_short_is_named(self):
+        build_with_cameras(
+            self.root, {0: 100, 1: 260, 2: 90}, short=(1, "central", 213)
+        )
+        (problem,) = camera_span_problems(self.root)
+        self.assertEqual(problem["episode"], 1)
+        self.assertEqual(problem["camera"], "central")
+        self.assertEqual(problem["rows"], 260)
+        self.assertEqual(problem["frames"], 213)
+
+    def test_the_other_cameras_are_not_blamed(self):
+        build_with_cameras(self.root, {0: 100, 1: 260}, short=(1, "central", 213))
+        self.assertEqual(
+            [p["camera"] for p in camera_span_problems(self.root)], ["central"]
+        )
+
+    def test_the_integrity_report_is_not_ok(self):
+        # The guard every rewrite and every launch runs through.
+        build_with_cameras(self.root, {0: 100, 1: 260}, short=(1, "central", 213))
+        report = dataset_integrity(self.root)
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["short_video"])
+
+    def test_it_is_not_offered_as_repairable(self):
+        # The frames are gone. Whether to drop the episode or keep the part that
+        # was recorded depends on what it shows, so a person decides.
+        build_with_cameras(self.root, {0: 100, 1: 260}, short=(1, "central", 213))
+        self.assertFalse(dataset_integrity(self.root)["repairable"])
+
+    def test_the_summary_says_what_to_do(self):
+        build_with_cameras(self.root, {0: 100, 1: 260}, short=(1, "central", 213))
+        summary = dataset_integrity(self.root)["summary"]
+        self.assertIn("central", summary)
+        self.assertIn("260 rows", summary)
+        self.assertIn("213", summary)
+
+    def test_the_guard_refuses_it(self):
+        build_with_cameras(self.root, {0: 100, 1: 260}, short=(1, "central", 213))
+        with self.assertRaises(DatasetDamaged):
+            ensure_loadable(self.root)
+
+    def test_a_single_dropped_frame_is_still_reported(self):
+        # There is no threshold below which this is acceptable: LeRobot's own
+        # tolerance is 1e-4 s, so one missing frame fails a run just as surely.
+        build_with_cameras(self.root, {0: 100}, short=(0, "central", 99))
+        self.assertEqual(len(camera_span_problems(self.root)), 1)
+
+    def test_a_dataset_without_camera_columns_is_not_judged(self):
+        # The older synthetic datasets in this file have none, and neither does
+        # a dataset recorded with no cameras at all.
+        self.healthy()
+        self.assertEqual(camera_span_problems(self.root), [])
