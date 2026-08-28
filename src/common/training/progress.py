@@ -1,0 +1,434 @@
+"""How far a training run has got, read from the only record that exists.
+
+Nothing in this pipeline writes metrics anywhere a program can read them.
+``--wandb.enable=false`` is unconditional in ``test/system/long_vla_real.sh``,
+this LeRobot ships no ``SummaryWriter``, and no jsonl or csv is produced --
+``MetricsTracker.to_dict()`` returns exactly the numbers wanted and is never
+called. What there is, is the driver's log, and so that is what this parses.
+
+Two things about that log are not obvious and both are load-bearing.
+
+**The step is abbreviated.** ``format_big_number`` renders steps 10 500 and
+10 600 alike as ``10K``, so the ``step:`` field CANNOT be the x-axis of a curve;
+above a thousand it is a label, not a number. ``loss``, ``grdn``, ``lr``,
+``mem_gb`` and ``smp/s`` are printed at full precision, so only the axis is
+affected -- but a plot drawn against ``step:`` would silently pile two thirds of
+an 80 000-step run onto eight distinct x-values.
+
+**The two destinations log differently.** tqdm is disabled inside Slurm, so a
+CREATE log is clean ``INFO`` lines with no exact step anywhere, while a thanos
+or local log is one enormous ``\\r``-separated blob whose progress frames carry
+the exact step, the total, the elapsed time and the ETA -- strictly better
+information than the line that follows them.
+
+So the step comes from whichever source is present: the tqdm frame immediately
+preceding a metric line, else the line's ordinal times ``log_freq``, which is
+exact because lerobot logs at ``step % log_freq == 0`` and nowhere else.
+``log_freq`` and the run's total are read from the config dump lerobot prints at
+the head of its own log, which both destinations have.
+
+Pure. No I/O, no SSH, no aiohttp: which file to read, on which machine, is
+``common.training.runs``.
+"""
+
+from __future__ import annotations
+
+import bisect
+import re
+from datetime import datetime
+from typing import Any
+
+# ── The shapes in the log ────────────────────────────────────────────────────
+
+# The config lerobot pprints before training. Only flat integer keys are taken:
+# this is a Python repr spread over hundreds of lines, and the parts worth
+# having are all `'key': 1234,` at the top level of it.
+_HEAD_KEYS = ("steps", "log_freq", "save_freq", "batch_size", "num_workers")
+# pprint puts the first key on the same line as the opening brace -- which is
+# the INFO line itself -- and every later top-level key one space in. Nested
+# keys are indented much further, so this matches the top level and no more.
+_HEAD_RE = re.compile(r"(?:^ ?|\{)'(" + "|".join(_HEAD_KEYS) + r")':\s*(\d+),", re.M)
+
+# `INFO 2026-08-24 11:51:09 ot_train.py:596 step:100 smpl:800 ... loss:10.460`
+_STAMP = r"(?P<stamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+_METRIC_LINE_RE = re.compile(_STAMP + r"[^\n\r]*?\bstep:[^\n\r]*")
+
+# Every field is `name:value`, and the value may carry a magnitude suffix. The
+# names are enumerated rather than matched generically because the line also
+# contains `ot_train.py:596` and a `11:51:09`, both of which a general
+# `word:number` pattern happily mistakes for a metric.
+_FLOATS = {
+    "loss": "loss",
+    "grdn": "grad_norm",
+    "lr": "lr",
+    "updt_s": "update_s",
+    "data_s": "dataloading_s",
+    "smp/s": "samples_per_s",
+    "mem_gb": "gpu_mem_gb",
+    "epch": "epochs",
+}
+# Abbreviated by format_big_number, so kept only as labels and cross-checks.
+_COUNTERS = {"step": "step_label", "smpl": "samples_label", "ep": "episodes_label"}
+_FIELD_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in [*_FLOATS, *_COUNTERS]) + r"):"
+    r"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?[KMBTQ]?)"
+)
+
+# `Training:  89%|███| 71379/80000 [7:56:20<39:15,  3.66step/s]`. tqdm switches
+# to seconds-per-step below one step a second, and prints `?` for an ETA it
+# cannot yet estimate, so both forms have to be read.
+_TQDM_RE = re.compile(
+    r"(?P<done>\d+)/(?P<total>\d+)\s+"
+    r"\[(?P<elapsed>[\d:]+)<(?P<eta>[\d:]+|\?),\s*"
+    r"(?P<rate>[\d.]+)(?P<unit>step/s|s/step)\]"
+)
+
+_CHECKPOINT_RE = re.compile(r"Checkpoint policy after step (\d+)")
+_DONE_RE = re.compile(r"End of training")
+_TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\)")
+# The exception line that ends a traceback, and the driver's own verdicts.
+_EXCEPTION_RE = re.compile(r"^(\w+(?:\.\w+)*(?:Error|Exception|Interrupt)\b.*)$", re.M)
+_ROW_FAILED_RE = re.compile(r"❌\s*row (\d+) FAILED[^\n\r]*")
+_ROW_DONE_RE = re.compile(r"✓\s*row (\d+) done")
+_REUSED_RE = re.compile(r"↷\s*reusing checkpoint")
+
+# A run is called stalled when its log has been silent for this many times its
+# own observed logging interval. Long enough that a slow policy writing every
+# few minutes is never libelled, short enough to notice a machine that went away
+# -- thanos rebooted mid-run on 27 August 2026 and nothing said so for hours.
+STALL_FACTOR = 6.0
+STALL_FLOOR_S = 900.0
+
+DEFAULT_LOG_FREQ = 100
+
+
+# ── Small conversions ────────────────────────────────────────────────────────
+
+
+def parse_big(text: str) -> float:
+    """``'80K'`` -> ``80000.0``. The inverse of lerobot's format_big_number."""
+    suffixes = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12, "Q": 1e15}
+    text = text.strip()
+    if text and text[-1] in suffixes:
+        return float(text[:-1]) * suffixes[text[-1]]
+    return float(text)
+
+
+def parse_clock(text: str) -> "float | None":
+    """``'7:56:20'`` or ``'39:15'`` -> seconds. ``'?'`` -> ``None``."""
+    if not text or "?" in text:
+        return None
+    parts = text.split(":")
+    try:
+        values = [float(p) for p in parts]
+    except ValueError:
+        return None
+    seconds = 0.0
+    for value in values:
+        seconds = seconds * 60.0 + value
+    return seconds
+
+
+def parse_stamp(text: str) -> "float | None":
+    """A log timestamp -> epoch seconds, read in THIS machine's timezone.
+
+    lerobot prints local time with no offset, so a log written on a machine in
+    another zone is read here as if it were local. That is why staleness is
+    judged from the file's mtime against the remote clock (see
+    ``common.training.runs``) and never from these stamps: they are exact for
+    intervals, which is all they are used for.
+    """
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError:
+        return None
+
+
+# ── The pieces ───────────────────────────────────────────────────────────────
+
+
+def parse_head(text: str) -> "dict[str, int]":
+    """The run's own configuration, from the dump lerobot prints before training.
+
+    First occurrence wins: the same key name appears again inside nested policy
+    and dataset sections, and the top-level one is printed first.
+    """
+    out: "dict[str, int]" = {}
+    for key, value in _HEAD_RE.findall(text):
+        out.setdefault(key, int(value))
+    return out
+
+
+def parse_tqdm(text: str) -> "list[dict[str, Any]]":
+    """Every progress frame, with its position in the text. Pure."""
+    frames = []
+    for match in _TQDM_RE.finditer(text):
+        rate = float(match.group("rate"))
+        if match.group("unit") == "s/step":
+            rate = 1.0 / rate if rate else 0.0
+        frames.append(
+            {
+                "at": match.start(),
+                "done": int(match.group("done")),
+                "total": int(match.group("total")),
+                "elapsed_s": parse_clock(match.group("elapsed")),
+                "eta_s": parse_clock(match.group("eta")),
+                "rate": rate,
+            }
+        )
+    return frames
+
+
+def parse_points(text: str) -> "list[dict[str, Any]]":
+    """One entry per metric line, in order, without a step. Pure.
+
+    The step is deliberately not decided here: it depends on the tqdm frames and
+    on the head, and putting it in one place (``resolve_steps``) is what keeps
+    the two destinations from growing two parsers.
+    """
+    points = []
+    for match in _METRIC_LINE_RE.finditer(text):
+        line = match.group(0)
+        point: "dict[str, Any]" = {
+            "at": match.start(),
+            "time": parse_stamp(match.group("stamp")),
+        }
+        for key, raw in _FIELD_RE.findall(line):
+            if key in _FLOATS:
+                try:
+                    point[_FLOATS[key]] = float(raw)
+                except ValueError:
+                    continue
+            else:
+                point[_COUNTERS[key]] = parse_big(raw)
+                if key == "step":
+                    # How much the label was rounded by. `10K` stands for
+                    # anything from 9500 to 10499, and the cross-check below is
+                    # only meaningful if it knows that.
+                    point["step_divisor"] = (
+                        parse_big("1" + raw[-1]) if raw[-1].isalpha() else 1.0
+                    )
+        if "loss" in point:
+            points.append(point)
+    return points
+
+
+def resolve_steps(
+    points: "list[dict[str, Any]]",
+    frames: "list[dict[str, Any]]",
+    log_freq: int = DEFAULT_LOG_FREQ,
+    total_steps: "int | None" = None,
+) -> "list[str]":
+    """Give every point its exact step, in place. Returns any disagreements.
+
+    Two sources, in order of preference:
+
+    * the tqdm frame immediately BEFORE the line -- exact, and present on any
+      machine that is not a Slurm node;
+    * the line's ordinal times ``log_freq`` -- exact too, because lerobot logs
+      when ``step % log_freq == 0`` and at no other time, which is the only
+      source a CREATE log has.
+
+    A resumed run makes tqdm count from zero again with ``total`` set to what is
+    LEFT, so the offset is recovered from the head's total rather than trusting
+    ``done`` as an absolute. The abbreviated ``step:`` field is used for neither;
+    it is only checked, and a mismatch is returned rather than hidden, because a
+    curve drawn against a wrong axis looks exactly like a curve.
+    """
+    positions = [f["at"] for f in frames]
+    problems: "list[str]" = []
+    for index, point in enumerate(points):
+        frame = None
+        slot = bisect.bisect_left(positions, point["at"])
+        if slot:
+            frame = frames[slot - 1]
+        if frame is not None:
+            offset = 0
+            if total_steps and frame["total"] and total_steps > frame["total"]:
+                offset = total_steps - frame["total"]
+            point["step"] = offset + frame["done"]
+            point["source"] = "tqdm"
+        else:
+            point["step"] = (index + 1) * log_freq
+            point["source"] = "count"
+
+        label = point.get("step_label")
+        if label is not None and problems == []:
+            # format_big_number divides by a thousand per suffix and rounds to
+            # a whole number, so `10K` stands for anything in [9500, 10500).
+            # Half the divisor is therefore the whole tolerance -- a looser one
+            # (the label's digit count, which was the first attempt) accepts a
+            # curve drawn 9 600 steps away from where it happened.
+            tolerance = max(point.get("step_divisor", 1.0) / 2.0, 1.0)
+            if abs(point["step"] - label) > tolerance:
+                problems.append(
+                    f"step {point['step']} disagrees with the log's own "
+                    f"'step:{int(label)}' at line {index + 1}"
+                )
+    return problems
+
+
+def parse_markers(text: str) -> "dict[str, Any]":
+    """Everything in the log that is not a metric: checkpoints, and endings."""
+    failure = None
+    if _TRACEBACK_RE.search(text):
+        exceptions = _EXCEPTION_RE.findall(text)
+        failure = exceptions[-1].strip() if exceptions else "training raised"
+    row_failed = _ROW_FAILED_RE.search(text)
+    if row_failed and not failure:
+        failure = row_failed.group(0).strip()
+    return {
+        "checkpoints": [int(s) for s in _CHECKPOINT_RE.findall(text)],
+        "finished": bool(_DONE_RE.search(text)),
+        "failure": failure,
+        "rows_done": [int(s) for s in _ROW_DONE_RE.findall(text)],
+        "reused": bool(_REUSED_RE.search(text)),
+    }
+
+
+# ── The whole thing ──────────────────────────────────────────────────────────
+
+
+def parse_log(
+    text: str,
+    log_freq: "int | None" = None,
+    head_text: "str | None" = None,
+) -> "dict[str, Any]":
+    """A log's text -> its configuration, its curve and how it ended. Pure.
+
+    ``head_text`` is the configuration dump when it was fetched SEPARATELY from
+    the metric lines, which is how ``common.training.runs`` reads a remote log.
+    Passing the two as one string is what a local read does, and is also how a
+    first attempt at the remote read got 887 points out of an 800-point run: the
+    head prefix already contained the first 87 metric lines, and they were then
+    counted again from the filtered body. Whichever way the caller has it, the
+    ordinal a step is derived from must count each line exactly once.
+    """
+    # tqdm separates its frames with \r, so a log from a machine that had one
+    # enabled is a single "line" megabytes long. Everything downstream wants
+    # lines, and nothing wants the overwritten frames back.
+    text = text.replace("\r", "\n")
+    head = parse_head(head_text if head_text is not None else text)
+    frames = parse_tqdm(text)
+    points = parse_points(text)
+    total = head.get("steps") or (frames[-1]["total"] if frames else None)
+    freq = log_freq or head.get("log_freq") or DEFAULT_LOG_FREQ
+    problems = resolve_steps(points, frames, freq, head.get("steps"))
+    markers = parse_markers(text)
+    if total and points and points[-1]["step"] > total:
+        # Counted past the end of the run. The curve is then drawn against an
+        # axis that does not exist, so say so rather than plot it.
+        problems.append(
+            f"counted {len(points)} logged steps, which is past the run's "
+            f"{total}: are some lines in the text twice?"
+        )
+    for point in points:
+        point.pop("at", None)
+    return {
+        "config": head,
+        "log_freq": freq,
+        "total_steps": total,
+        "points": points,
+        "last_frame": frames[-1] if frames else None,
+        "problems": problems,
+        **markers,
+    }
+
+
+def summarise(
+    parsed: "dict[str, Any]", age_s: "float | None" = None
+) -> "dict[str, Any]":
+    """The one-line state of a run: where it is, how fast, and whether it lives.
+
+    ``age_s`` is how long ago the log was last written, measured on the machine
+    that holds it -- never from the timestamps inside, which are in that
+    machine's timezone and cannot be compared with this one's clock.
+    """
+    points = parsed.get("points") or []
+    total = parsed.get("total_steps")
+    frame = parsed.get("last_frame")
+    losses = [p["loss"] for p in points if "loss" in p]
+    step = points[-1]["step"] if points else 0
+    if frame is not None:
+        # The bar is written every step and the metric line every hundredth, so
+        # between two log lines the bar is the more current of the two.
+        step = max(step, frame["done"])
+
+    interval = _median_interval(points)
+    rate = frame["rate"] if frame else _rate_from(points)
+    eta = None
+    if frame is not None and frame["eta_s"] is not None:
+        eta = frame["eta_s"]
+    elif rate and total and step < total:
+        eta = (total - step) / rate
+
+    out = {
+        "step": step,
+        "total_steps": total,
+        "fraction": (step / total) if total else None,
+        "eta_s": eta,
+        "rate": rate,
+        "loss_last": losses[-1] if losses else None,
+        "loss_first": losses[0] if losses else None,
+        "loss_min": min(losses) if losses else None,
+        "gpu_mem_gb_max": _peak(points, "gpu_mem_gb"),
+        "samples_per_s": points[-1].get("samples_per_s") if points else None,
+        "epochs": points[-1].get("epochs") if points else None,
+        "checkpoint": max(parsed.get("checkpoints") or [0]) or None,
+        "points": len(points),
+        "age_s": age_s,
+    }
+    out["state"] = _state(parsed, interval, age_s)
+    return out
+
+
+def _state(
+    parsed: "dict[str, Any]", interval: "float | None", age_s: "float | None"
+) -> str:
+    if parsed.get("failure"):
+        return "failed"
+    if parsed.get("finished"):
+        return "done"
+    if age_s is None:
+        return "running"
+    # A log that has stopped growing has not necessarily stopped training -- a
+    # policy that logs every few minutes is silent between lines -- so the
+    # threshold follows the run's OWN cadence, with a floor under it.
+    limit = max(STALL_FLOOR_S, STALL_FACTOR * (interval or 0.0))
+    return "stalled" if age_s > limit else "running"
+
+
+def _median_interval(points: "list[dict[str, Any]]") -> "float | None":
+    times = [p["time"] for p in points if p.get("time") is not None]
+    gaps = sorted(b - a for a, b in zip(times, times[1:]) if b > a)
+    return gaps[len(gaps) // 2] if gaps else None
+
+
+def _rate_from(points: "list[dict[str, Any]]") -> "float | None":
+    """Steps per second over the whole run, when there is no progress bar."""
+    timed = [p for p in points if p.get("time") is not None]
+    if len(timed) < 2:
+        return None
+    span = timed[-1]["time"] - timed[0]["time"]
+    steps = timed[-1]["step"] - timed[0]["step"]
+    return (steps / span) if span > 0 and steps > 0 else None
+
+
+def _peak(points: "list[dict[str, Any]]", key: str) -> "float | None":
+    values = [p[key] for p in points if key in p]
+    return max(values) if values else None
+
+
+def thin(points: "list[dict[str, Any]]", limit: int = 1200) -> "list[dict[str, Any]]":
+    """At most ``limit`` points, keeping the first and last. Pure.
+
+    A 100 000-step diffusion run logs a thousand points, which a canvas a few
+    hundred pixels wide cannot show anyway; this only matters when several runs
+    are overlaid.
+    """
+    if limit <= 2 or len(points) <= limit:
+        return list(points)
+    stride = len(points) / float(limit - 1)
+    kept = [points[int(i * stride)] for i in range(limit - 1)]
+    kept.append(points[-1])
+    return kept
