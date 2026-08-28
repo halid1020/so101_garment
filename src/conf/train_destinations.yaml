@@ -61,3 +61,24 @@ thanos:
   # so the matrix runs one row at a time, and a policy server left serving on it
   # takes its memory off the top of whatever these figures allow.
   limits: {}
+
+local:
+  # The machine the console itself is running on. Not a lesser destination: the
+  # same driver, the same lock, the same run directories and the same manifest,
+  # with no ssh in front of the command. `repo: .` means THIS checkout, whatever
+  # machine that is -- this console is meant to run on more than one.
+  kind: local
+  repo: .
+  scratch: ~/.cache/huggingface/lerobot
+  stage: "{scratch}/local"
+  # A console started through setup.sh puts SO101_OUTPUT_DIR in the repo, so a
+  # run started here writes beside the older ones rather than into the cache.
+  # Both places are scanned when the runs on this machine are listed.
+  outputs: "{repo}/outputs"
+  # Deliberately empty, and it must stay that way. What this machine can carry
+  # is asked of it (common.training.runs.local_capability) rather than written
+  # down: this file is checked in, and a VRAM figure in it would be a fact about
+  # whoever committed it. MEASURED here today: an RTX 3050 with 4 GB, which is
+  # under the 8 GB the driver wants, so every row is refused unless the operator
+  # asks for a CPU run outright.
+  limits: {}

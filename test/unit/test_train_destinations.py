@@ -264,3 +264,72 @@ class TestRememberingWhatWasLaunched(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheLocalMachine(unittest.TestCase):
+    """``kind: local`` -- the machine the console is running on.
+
+    Not a lesser destination: the same driver, the same lock, the same run
+    directories and the same manifest. The only difference is that there is no
+    ssh in front of the command, and that is deliberately the ONE place the kind
+    is consulted -- staging, the manifest, the dispatch, the status and the stop
+    then all work on it unchanged.
+    """
+
+    def dest(self, **over):
+        entry = {
+            "kind": "local",
+            "repo": ".",
+            "scratch": "~/.cache/huggingface/lerobot",
+            "stage": "{scratch}/local",
+            **over,
+        }
+        return load_destinations(write({"here": entry}))["here"]
+
+    def test_local_is_a_kind(self):
+        self.assertIn("local", KINDS)
+
+    def test_it_needs_no_host(self):
+        # There is no host to name, and naming one would be a lie the launcher
+        # would then try to reach.
+        self.assertEqual(self.dest()["ssh"], "-")
+
+    def test_every_other_kind_still_needs_one(self):
+        with self.assertRaises(ValueError) as caught:
+            load_destinations(
+                write(
+                    {
+                        "box": {
+                            "kind": "ssh",
+                            "repo": ".",
+                            "scratch": "/s",
+                            "stage": "{scratch}/l",
+                        }
+                    }
+                )
+            )
+        self.assertIn("needs an 'ssh'", str(caught.exception))
+
+    def test_a_dot_repo_means_this_checkout(self):
+        # The only local path that is the same on every machine the console
+        # runs on -- and it has to be resolved here, because the driver is
+        # started from wherever the console happened to be launched.
+        repo = Path(self.dest()["repo"])
+        self.assertTrue(repo.is_absolute())
+        self.assertTrue((repo / "hpc" / "gpu_box_run.sh").is_file())
+
+    def test_a_command_runs_in_a_shell_and_not_over_ssh(self):
+        self.assertEqual(ssh_argv(self.dest(), "echo hi"), ["bash", "-lc", "echo hi"])
+
+    def test_rsync_needs_no_host_prefix(self):
+        self.assertNotIn(":", rsync_argv("/data/ds", self.dest())[-1])
+
+    def test_a_second_output_root_may_be_named(self):
+        # A console started through setup.sh puts SO101_OUTPUT_DIR in the repo,
+        # so a run started here lands there rather than in the cache.
+        dest = self.dest(outputs="{repo}/outputs")
+        self.assertEqual(dest["outputs"], "{repo}/outputs")
+
+    def test_an_output_path_is_checked_like_every_other_path(self):
+        with self.assertRaises(ValueError):
+            self.dest(outputs="{repo}/out; rm -rf /")

@@ -24,11 +24,10 @@ import yaml
 
 from common.web.roots import parse_ssh_host
 
-DESTINATIONS_PATH = (
-    Path(__file__).resolve().parents[3] / "src" / "conf" / "train_destinations.yaml"
-)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DESTINATIONS_PATH = REPO_ROOT / "src" / "conf" / "train_destinations.yaml"
 
-KINDS = ("slurm", "ssh")
+KINDS = ("slurm", "ssh", "local")
 
 # A remote path from this file reaches the destination's LOGIN SHELL unquoted,
 # because that is the only way `~` and `$USER` can mean the remote home and the
@@ -40,8 +39,11 @@ _PATH_OK = set(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" "_-./~${}+:="
 )
 
-_REQUIRED = frozenset({"ssh", "kind", "repo", "scratch", "stage"})
-_OPTIONAL = frozenset({"partition", "account", "limits"})
+_REQUIRED = frozenset({"kind", "repo", "scratch", "stage"})
+# `ssh` is required of every machine that is not this one; `outputs` names a
+# second place run directories may be, which is what the local machine needs
+# (a console started through setup.sh puts SO101_OUTPUT_DIR in the repo).
+_OPTIONAL = frozenset({"ssh", "partition", "account", "limits", "outputs"})
 
 # Long enough for a login node behind a jump host to answer, short enough that
 # an operator watching a page does not think it has hung. A machine that needs
@@ -67,20 +69,35 @@ def _validate(name: str, entry: object, path: Path) -> "dict[str, Any]":
 
     out = dict(entry)
     out["name"] = name
-    try:
-        parse_ssh_host(str(out["ssh"]))
-    except ValueError as exc:
-        raise ValueError(f"{path}: {where} has an unusable 'ssh': {exc}") from exc
     if out["kind"] not in KINDS:
         raise ValueError(
             f"{path}: {where} has kind {out['kind']!r}; want one of {', '.join(KINDS)}"
         )
+    if out["kind"] == "local":
+        # The machine the console is running on. There is no host to name, and
+        # naming one would be a lie the launcher would then try to reach.
+        out.setdefault("ssh", "-")
+        # `.` means "this checkout", which is the only local path that is the
+        # same on every machine the console runs on -- and it must be resolved
+        # here, because the driver is started from wherever the console
+        # happened to be launched.
+        if str(out.get("repo", "")).strip() in (".", "./"):
+            out["repo"] = str(REPO_ROOT)
+    else:
+        if not out.get("ssh"):
+            raise ValueError(f"{path}: {where} is not local and needs an 'ssh'")
+        try:
+            parse_ssh_host(str(out["ssh"]))
+        except ValueError as exc:
+            raise ValueError(f"{path}: {where} has an unusable 'ssh': {exc}") from exc
     if out["kind"] == "slurm" and not out.get("partition"):
         # Without one, sbatch falls back to whatever the cluster's default
         # partition is -- which on CREATE has no GPU, so the row would queue and
         # then train on a CPU. Naming it here is cheaper than discovering that.
         raise ValueError(f"{path}: {where} is 'slurm' and needs a 'partition'")
-    for field in ("repo", "scratch", "stage"):
+    for field in ("repo", "scratch", "stage", "outputs"):
+        if field not in out:
+            continue
         value = str(out[field]).strip()
         if not value:
             raise ValueError(f"{path}: {where} has an empty {field!r}")
@@ -163,6 +180,8 @@ def dataset_dir(dest: "dict[str, Any]", dataset: str) -> str:
 
 def rsync_destination(dest: "dict[str, Any]", subpath: str = "") -> str:
     """The ``host:path`` rsync writes to. Trailing subpath is appended raw."""
+    if dest.get("kind") == "local":
+        return f"{stage_dir(dest)}{subpath}"
     return f"{dest['ssh']}:{stage_dir(dest)}{subpath}"
 
 
@@ -172,9 +191,17 @@ def rsync_destination(dest: "dict[str, Any]", subpath: str = "") -> str:
 def ssh_argv(dest: "dict[str, Any]", remote_cmd: str) -> "list[str]":
     """Run one shell command on the destination. Pure.
 
+    The local machine is not a special case anywhere else -- same driver, same
+    lock, same run directories, same manifest -- so it is not one here either:
+    the only difference is that there is no ssh in front of the command. Making
+    that the ONE place the kind is consulted is what lets staging, the manifest,
+    the dispatch, the status and the stop all work on it unchanged.
+
     ``BatchMode=yes`` because a password prompt in a web request simply hangs,
     and because an unattended launcher that stops to ask has already failed.
     """
+    if dest.get("kind") == "local":
+        return ["bash", "-lc", remote_cmd]
     return [
         "ssh",
         "-o",
@@ -253,7 +280,15 @@ def reachable(dest: "dict[str, Any]", timeout: float = REACH_TIMEOUT_S) -> "str 
     A timeout is reported as exit 124, the same code ``timeout(1)`` uses, so
     ``reach_message`` can tell "did not answer" from "refused me".
     """
-    argv = ssh_argv(dest, "true")
+    # The local machine is reachable by definition; what can be missing is the
+    # checkout the driver is started from, and saying "cannot reach localhost"
+    # would be no help at all.
+    probe = (
+        f"test -f {dest['repo']}/hpc/gpu_box_run.sh"
+        if dest.get("kind") == "local"
+        else "true"
+    )
+    argv = ssh_argv(dest, probe)
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout + 5.0
@@ -262,6 +297,12 @@ def reachable(dest: "dict[str, Any]", timeout: float = REACH_TIMEOUT_S) -> "str 
         return reach_message(124, "", str(dest.get("name", dest["ssh"])))
     except OSError as exc:
         return f"could not run ssh: {exc}"
+    if dest.get("kind") == "local":
+        return (
+            None
+            if proc.returncode == 0
+            else f"no so101_garment checkout at {dest['repo']} on this machine"
+        )
     return reach_message(
         proc.returncode, proc.stderr, str(dest.get("name", dest["ssh"]))
     )

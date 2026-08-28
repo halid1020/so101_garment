@@ -273,3 +273,54 @@ class TestPolicyDefaults(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestADeviceThatWouldBeTheCpu(unittest.TestCase):
+    """The refusal that only the local machine can trigger.
+
+    A GPU too small does not make ``long_vla_real.sh`` fail -- it falls back to
+    the CPU and trains, which for an 80 000-step run means a week of work that
+    looks like it is going fine. The driver itself calls that "the worst outcome
+    available", and on a 4 GB laptop it is the DEFAULT outcome.
+    """
+
+    LOCAL = {
+        "name": "local",
+        "kind": "local",
+        "ssh": "-",
+        "repo": ".",
+        "scratch": "~/.cache",
+        "stage": "{scratch}/local",
+        "limits": {},
+        "measured": {
+            "device": "cpu",
+            "why": "this GPU has 4.1 GB and the driver wants at least 8 GB",
+        },
+    }
+
+    def row(self, policy="act"):
+        return make_row("fold-short", policy)
+
+    def test_a_cpu_machine_refuses_by_default(self):
+        problems = row_refusals(self.row(), None, self.LOCAL)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("would train on the CPU", problems[0])
+        # The measured reason, not a generic one: the operator has to be able
+        # to tell "too small" from "no GPU at all".
+        self.assertIn("4.1 GB", problems[0])
+
+    def test_asking_for_it_outright_is_allowed(self):
+        self.assertEqual(
+            row_refusals(self.row(), None, {**self.LOCAL, "allow_cpu": True}), []
+        )
+
+    def test_a_machine_with_a_real_card_is_not_asked_about_it(self):
+        dest = {**self.LOCAL, "measured": {"device": "cuda", "why": "24.5 GB"}}
+        self.assertEqual(row_refusals(self.row(), None, dest), [])
+
+    def test_a_machine_that_was_never_measured_is_not_refused(self):
+        # Remote destinations are not probed: their ceilings are measured and
+        # written into the destinations file, which is the right place for a
+        # number somebody had to observe.
+        dest = {k: v for k, v in self.LOCAL.items() if k != "measured"}
+        self.assertEqual(row_refusals(self.row(), None, dest), [])

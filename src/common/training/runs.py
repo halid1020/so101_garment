@@ -94,22 +94,47 @@ def out_roots(dest: "dict[str, Any]") -> "list[str]":
     return roots
 
 
-def run_dir_name(record: "dict[str, Any]") -> str:
-    """The directory a launched run writes into.
+def view_dir_name(dataset: str, cameras: str, info: "dict[str, Any] | None") -> str:
+    """``<dataset>__<slug>`` -- the directory both drivers name a run after.
 
-    ``--run-tag`` when one was given, else the camera view's basename, which is
-    ``<dataset>__<slug>``. Recorded at launch since this branch; derived here
-    for the runs that predate that, and for anything started from a terminal.
+    The slug is the camera view's, computed the way ``make_camera_view`` does,
+    because that is the name the run directory actually gets. Joining the row's
+    camera list would be close and wrong: ``central,wrist_left`` is a row, and
+    ``central+wrist_left`` is the directory.
+    """
+    if info is None:
+        return f"{dataset}__{cameras.replace(',', '+')}"
+    from common.recording.dataset_view import split_selection, view_slug
+
+    keep, composites = split_selection(info, str(cameras or "all").split(","))
+    slug = "+".join(filter(None, [view_slug(info, keep) if keep else "", *composites]))
+    return f"{dataset}__{slug}"
+
+
+def run_dir_names(record: "dict[str, Any]") -> "list[str]":
+    """Every directory a recorded run may have written into.
+
+    ``--run-tag`` when one was given, else what was recorded at launch, else the
+    camera view derived from the row -- which is what the runs launched before
+    this branch, and everything started from a terminal, have to fall back to.
     """
     tag = record.get("run_tag")
     if tag:
-        return str(tag)
-    recorded = record.get("run_dir")
+        return [str(tag)]
+    recorded = record.get("run_dir") or record.get("run_dirs")
     if recorded:
-        return str(recorded)
-    cameras = record.get("cameras") or ["all"]
-    slug = "+".join(str(c) for c in cameras)
-    return f"{record['dataset']}__{slug}"
+        return (
+            [str(recorded)] if isinstance(recorded, str) else [str(r) for r in recorded]
+        )
+    dataset = record["dataset"]
+    return [
+        view_dir_name(dataset, str(c), None) for c in (record.get("cameras") or ["all"])
+    ]
+
+
+def run_dir_name(record: "dict[str, Any]") -> str:
+    """The first directory of ``run_dir_names``. Convenience."""
+    return run_dir_names(record)[0]
 
 
 def log_path(out_root: str, run: str, policy: str) -> str:
@@ -383,3 +408,17 @@ def _device_why(cuda: bool, vram: float) -> str:
             f"{MIN_GPU_GB:.0f} GB, so training would fall back to the CPU"
         )
     return f"{vram:.1f} GB of VRAM"
+
+
+def with_measurements(dest: "dict[str, Any]") -> "dict[str, Any]":
+    """The destination, plus what the machine says about itself. Blocking.
+
+    Only the local machine is asked, and only because it is the one whose
+    hardware this repo cannot write down: ``train_destinations.yaml`` is checked
+    in and the console is meant to run on more than one machine. A remote
+    destination's ceilings are MEASURED and recorded in that file, which is the
+    right place for a number somebody had to observe.
+    """
+    if dest.get("kind") != "local":
+        return dest
+    return {**dest, "measured": local_capability()}
