@@ -160,7 +160,12 @@ def read_command(path: str) -> str:
         "echo '" + SENTINEL + "body'; "
         f"tr '\\r' '\\n' < \"$L\" | grep -aE '{KEEP_PATTERN}' | tail -n {BODY_LINES}; "
         "echo '" + SENTINEL + "tail'; "
-        "tail -c 4000 \"$L\" | tr '\\r' '\\n' | tail -n 4; "
+        # The `echo` after each section is load-bearing: a progress bar's last
+        # frame ends WITHOUT a newline, so the next marker landed on the end of
+        # it -- which put `@@so101:stat` in the text shown to the operator and
+        # lost the file's age, which is the whole basis for calling a run
+        # stalled.
+        "tail -c 4000 \"$L\" | tr '\\r' '\\n' | tail -n 4; echo; "
         "echo '" + SENTINEL + "stat'; stat -c '%s %Y' \"$L\"; date +%s"
     )
 

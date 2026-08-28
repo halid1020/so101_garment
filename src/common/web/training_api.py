@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -42,12 +43,67 @@ from common.training.matrix import (
     row_refusals,
     unavailable_message,
 )
+from common.training.runs import (
+    RunsError,
+    check_name,
+    discover,
+    log_path,
+    out_roots,
+    read_log,
+    run_dir_names,
+    with_measurements,
+)
 from common.web.jobs import finish, new_job, refuse_while_busy
 from common.web.util import in_executor
 
 
 def _destinations(app: web.Application) -> "dict[str, dict]":
     return load_destinations(app.get("destinations_file"))
+
+
+def _destination(app: web.Application, name: str) -> "dict[str, Any]":
+    """One destination, plus what it said about itself when asked.
+
+    Only the local machine is asked, and only because its hardware is the one
+    thing this repo cannot write down -- see common.training.runs.
+    """
+    known = _destinations(app)
+    if name not in known:
+        raise web.HTTPBadRequest(
+            text=f"no destination called {name!r}; this rig knows "
+            f"{', '.join(sorted(known))}"
+        )
+    return with_measurements(known[name])
+
+
+# ── the cache in front of the machines ───────────────────────────────────────
+#
+# Every question here costs a whole SSH, and a page with several run cards on
+# it asks them repeatedly. So an answer is remembered for a few seconds and one
+# in-flight request is shared: how often the browser polls then has no bearing
+# on how often a machine is disturbed, and a second tab is free.
+
+PROGRESS_TTL_S = 20.0
+DISCOVER_TTL_S = 45.0
+MACHINE_TTL_S = 45.0
+
+
+async def _cached(
+    app: web.Application, key: tuple, ttl: float, fetch, fresh: bool = False
+) -> "Any":
+    cache = app.setdefault("training_cache", {})
+    locks = app.setdefault("training_cache_locks", {})
+    entry = cache.get(key)
+    if entry and not fresh and (time.time() - entry[0]) < ttl:
+        return entry[1]
+    lock = locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        entry = cache.get(key)
+        if entry and not fresh and (time.time() - entry[0]) < ttl:
+            return entry[1]
+        value = await in_executor(app, fetch)
+        cache[key] = (time.time(), value)
+        return value
 
 
 def _runs_file(app: web.Application) -> Path:
@@ -116,6 +172,7 @@ def _config(app: web.Application, root: Path) -> "dict[str, Any]":
             }
             for name, dest in sorted(_destinations(app).items())
         ],
+        "policy_names": list(POLICIES),
     }
 
 
@@ -147,13 +204,9 @@ def _plan(app: web.Application, root: Path, body: "dict[str, Any]") -> "dict[str
     if not dataset:
         raise web.HTTPBadRequest(text="choose a dataset")
     name = str(body.get("dest") or "").strip()
-    known = _destinations(app)
-    if name not in known:
-        raise web.HTTPBadRequest(
-            text=f"no destination called {name!r}; this rig knows "
-            f"{', '.join(sorted(known))}"
-        )
-    dest = known[name]
+    dest = _destination(app, name)
+    if body.get("allow_cpu"):
+        dest = {**dest, "allow_cpu": True}
     try:
         info = _read_info(root, dataset)
     except (OSError, ValueError) as exc:
@@ -224,7 +277,9 @@ async def handle_start(request: web.Request) -> web.Response:
         # plan the operator was shown.
         raise web.HTTPBadRequest(text="; ".join(plan["refusals"]))
 
-    dest = _destinations(app)[str(body["dest"])]
+    dest = _destination(app, str(body["dest"]))
+    if body.get("allow_cpu"):
+        dest = {**dest, "allow_cpu": True}
     problem = await in_executor(app, reachable, dest)
     if problem:
         raise web.HTTPBadGateway(text=problem)
@@ -307,7 +362,13 @@ def _live(dest: dict, record: "dict[str, Any]") -> "dict[str, Any]":
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {"ok": False, "text": str(exc)}
-    text = (proc.stdout or proc.stderr or "").strip()
+    # Standard output ONLY. CREATE greets every login with an MFA banner and a
+    # QR code on stderr, and squeue prints nothing at all for a job that has
+    # finished -- so falling back to stderr rendered that QR code as the status
+    # of every completed run on the cluster.
+    text = (proc.stdout or "").strip()
+    if not text and proc.returncode != 0:
+        return {"ok": False, "text": (proc.stderr or "").strip() or "no answer"}
     return {"ok": True, "text": text or "nothing running"}
 
 
@@ -352,6 +413,138 @@ async def handle_run_stop(request: web.Request) -> web.Response:
     return web.json_response({"stopped": await in_executor(app, _stop, dest, record)})
 
 
+# ── watching a run ───────────────────────────────────────────────────────────
+
+
+def _machine(app: web.Application, name: str) -> "dict[str, Any]":
+    """Whether a machine answers, and what it says about itself. Blocking."""
+    dest = _destination(app, name)
+    problem = reachable(dest)
+    return {
+        "name": name,
+        "kind": dest["kind"],
+        "ok": problem is None,
+        "problem": problem,
+        "measured": dest.get("measured"),
+        "roots": out_roots(dest),
+    }
+
+
+async def handle_machines(request: web.Request) -> web.Response:
+    app = request.app
+    fresh = request.query.get("refresh") == "1"
+    names = sorted(_destinations(app))
+    out = await asyncio.gather(
+        *[
+            _cached(app, ("machine", n), MACHINE_TTL_S, _make(_machine, app, n), fresh)
+            for n in names
+        ]
+    )
+    return web.json_response(list(out))
+
+
+def _make(fn, *args):
+    """A no-argument callable for the executor, without a lambda per call."""
+
+    def call():
+        return fn(*args)
+
+    return call
+
+
+def _launched_index(app: web.Application) -> "dict[tuple, dict[str, Any]]":
+    """Every recorded launch, keyed by the directory it writes into.
+
+    A run started from a terminal is not in here at all, which is the point of
+    discovering runs rather than listing this file: nine of the run directories
+    on CREATE predate the launcher entirely.
+    """
+    index: "dict[tuple, dict[str, Any]]" = {}
+    for record in load_runs(_runs_file(app))["runs"]:
+        for directory in run_dir_names(record):
+            for policy in record.get("policies") or []:
+                index.setdefault((record.get("dest"), directory, policy), record)
+    return index
+
+
+def _discover(app: web.Application, name: str) -> "dict[str, Any]":
+    """What training one machine holds, annotated with what we launched."""
+    found = discover(_destination(app, name))
+    index = _launched_index(app)
+    for entry in found["runs"]:
+        entry["dest"] = name
+        record = index.get((name, entry["run"], entry["policy"]))
+        if record:
+            entry["id"] = record["id"]
+            entry["dataset"] = record.get("dataset")
+            entry["episodes"] = record.get("episodes")
+            entry["started"] = record.get("started")
+        else:
+            # The directory names the dataset it was built from, which is the
+            # only thing a run nobody recorded can still say about itself.
+            entry["dataset"] = entry["run"].split("__")[0]
+    return found
+
+
+async def handle_discovered(request: web.Request) -> web.Response:
+    app = request.app
+    fresh = request.query.get("refresh") == "1"
+    wanted = request.query.get("dest")
+    names = [wanted] if wanted else sorted(_destinations(app))
+    results = await asyncio.gather(
+        *[
+            _cached(
+                app, ("discover", n), DISCOVER_TTL_S, _make(_discover, app, n), fresh
+            )
+            for n in names
+        ]
+    )
+    runs: "list[dict[str, Any]]" = []
+    problems = {}
+    for name, result in zip(names, results):
+        runs += result["runs"]
+        if result.get("problem"):
+            problems[name] = result["problem"]
+    runs.sort(key=lambda r: -(r.get("mtime") or 0))
+    return web.json_response({"runs": runs, "problems": problems})
+
+
+def _progress(app: web.Application, name: str, run: str, policy: str) -> "dict":
+    dest = _destination(app, name)
+    # Both roots are tried because a machine may hold runs in either -- the
+    # local one does, since a console started through setup.sh writes into the
+    # repo while the launcher stages into the cache.
+    last: "dict[str, Any]" = {}
+    for root in out_roots(dest):
+        result = read_log(dest, log_path(root, run, policy))
+        if result["ok"]:
+            return {**result, "dest": name, "run": run, "policy": policy}
+        last = result
+    return {**last, "dest": name, "run": run, "policy": policy}
+
+
+async def handle_progress(request: web.Request) -> web.Response:
+    app = request.app
+    name = request.query.get("dest") or ""
+    try:
+        # These land inside a command on the far machine, so what they may
+        # contain is checked rather than escaped -- and a name this rig would
+        # never have created is a bad request, not a server error.
+        run = check_name(request.query.get("run") or "", "run directory")
+        policy = check_name(request.query.get("policy") or "", "policy")
+    except RunsError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    fresh = request.query.get("refresh") == "1"
+    out = await _cached(
+        app,
+        ("progress", name, run, policy),
+        PROGRESS_TTL_S,
+        _make(_progress, app, name, run, policy),
+        fresh,
+    )
+    return web.json_response(out)
+
+
 def add_training_routes(app: web.Application) -> None:
     """Register the Training tab. ``training_file`` must exist."""
     app.setdefault("destinations_file", None)
@@ -364,5 +557,8 @@ def add_training_routes(app: web.Application) -> None:
             web.get("/api/training/runs", handle_runs),
             web.get("/api/training/runs/{id}/status", handle_run_status),
             web.post("/api/training/runs/{id}/stop", handle_run_stop),
+            web.get("/api/training/machines", handle_machines),
+            web.get("/api/training/discovered", handle_discovered),
+            web.get("/api/training/progress", handle_progress),
         ]
     )

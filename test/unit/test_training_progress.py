@@ -389,3 +389,42 @@ class TestReadingTheAnswers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSectionsSurviveALogWithNoFinalNewline(unittest.TestCase):
+    """The bug this catches was found by calling the route, not by a test.
+
+    A progress bar's last frame ends without a newline, so the marker that
+    follows it lands on the END of that line rather than the start of its own.
+    ``parse_sections`` then never sees the marker: the operator is shown
+    ``@@so101:stat`` at the end of the log tail, and the file's modification
+    time -- the whole basis for calling a run stalled -- is silently absent.
+    """
+
+    def test_the_command_terminates_every_section(self):
+        command = runs.read_command("/x/train_act.log")
+        # Each section that can end mid-line is followed by a bare `echo`.
+        self.assertIn("| tail -n 4; echo; ", command)
+        self.assertIn('"$L"; echo; ', command)
+
+    def test_a_marker_stuck_to_a_bar_is_not_a_section(self):
+        stuck = (
+            f"{runs.SENTINEL}tail\n"
+            "Training:  96%|...| 76706/80000 [8:20:57<15:02,  3.65step/s]"
+            f"{runs.SENTINEL}stat\n6242789 1787942791\n1787942792\n"
+        )
+        # Without the terminating echo there is no `stat` section at all, and
+        # the tail keeps a marker that means nothing to a reader.
+        self.assertNotIn("stat", runs.parse_sections(stuck))
+
+    def test_a_terminated_answer_yields_the_age(self):
+        proper = (
+            f"{runs.SENTINEL}tail\n"
+            "Training:  96%|...| 76706/80000 [8:20:57<15:02,  3.65step/s]\n"
+            f"{runs.SENTINEL}stat\n6242789 1787942791\n1787942792\n"
+        )
+        sections = runs.parse_sections(proper)
+        self.assertEqual(
+            sections["stat"].split(), ["6242789", "1787942791", "1787942792"]
+        )
+        self.assertNotIn(runs.SENTINEL, sections["tail"])
