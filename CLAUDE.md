@@ -143,18 +143,40 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   symlink — it decodes its parts in lockstep and encodes one video with PyAV
   (not the ffmpeg CLI: a compute node has neither). Built by
   `tool/make_camera_view.py`; the cluster job builds one per `cameras` row.
-- `src/common/training/` — where a training run may be sent and whether it can
-  work there. `destinations.py` (pure: `src/conf/train_destinations.yaml`
-  validated, the ssh/rsync argv, and what an unreachable machine should be told
-  — its paths reach the REMOTE shell unquoted so `~`/`$USER` mean the remote
-  home and user, which is why what may appear in them is checked at load) +
-  `matrix.py` (the `runs.tsv` row model in Python, and `row_refusals`, the ONE
-  place a run is judged: unknown policy, a camera the dataset lacks, more
-  cameras than the policy has slots, a batch over a MEASURED ceiling, a policy
-  this LeRobot has never heard of). Two front ends: `tool/train_launch.py` and
-  the console's Training tab, so a run started in the browser is the same run.
-  A `-` in the steps/batch column means "whatever fits here" and takes the
-  destination's measured ceiling; an explicit number is refused if it is over.
+- `src/common/training/` — where a training run may be sent, whether it can
+  work there, and how it is going. `destinations.py` (pure:
+  `src/conf/train_destinations.yaml` validated, the ssh/rsync argv, and what an
+  unreachable machine should be told — its paths reach the REMOTE shell
+  unquoted so `~`/`$USER` mean the remote home and user, which is why what may
+  appear in them is checked at load; `kind: local` is the machine the console
+  is on, and `ssh_argv` returning `bash -lc` is the ONE place that kind is
+  consulted, so staging, the manifest, the dispatch, the status and the stop
+  all work on it unchanged) + `matrix.py` (the `runs.tsv` row model in Python,
+  and `row_refusals`, the ONE place a run is judged: unknown policy, a camera
+  the dataset lacks, more cameras than the policy has slots, a batch over a
+  MEASURED ceiling, a policy this LeRobot has never heard of, and a run that
+  would fall back to the CPU) + `progress.py`/`runs.py` (below). Two front
+  ends: `tool/train_launch.py` and the console's Training tab, so a run started
+  in the browser is the same run. A `-` in the steps/batch column means
+  "whatever fits here" and takes the destination's measured ceiling; an
+  explicit number is refused if it is over.
+- `src/common/training/progress.py` + `runs.py` — how far a run has got. The
+  driver's LOG is the only metric record that exists (`--wandb.enable=false` is
+  unconditional, this LeRobot ships no `SummaryWriter`, and
+  `MetricsTracker.to_dict()` returns exactly the right numbers and is never
+  called). Two measured facts shape the parser: **`step:` is abbreviated**
+  (`format_big_number` prints 10 500 and 10 600 alike as `10K`, so it is a
+  label and cannot be a curve's x-axis), and **tqdm is disabled inside Slurm**
+  (a thanos/local log is a `\r`-blob whose frames carry the exact step; a
+  CREATE log has no exact step at all). So the step is the preceding tqdm
+  frame's where there is one, else the line's ordinal x `log_freq` — exact,
+  because lerobot logs at `step % log_freq == 0` and nowhere else, and both
+  `log_freq` and the total are in the config dump at the head of the log.
+  `runs.py` filters the log ON THE FAR SIDE (5.8 MB of frames -> 190 KB) in one
+  sentinel-delimited command, discovers run directories rather than listing what
+  was launched, and returns **stdout only** — CREATE's stderr is an MFA banner.
+  Staleness is judged from the file's mtime against the REMOTE clock, never the
+  timestamps inside (they carry no timezone).
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -380,6 +402,13 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     MERGES the dict, so a slot left out of the override survives. It does not
     need dropping anyway — pi0.5 pads a slot with no camera behind it to -1 and
     gives it a zero attention mask, which is what an ablated camera should be.
+  - **The step in a training log is a label, not a number.** `format_big_number`
+    (`lerobot/utils/utils.py`) divides by a thousand per suffix and rounds, so
+    `step:`, `smpl:` and `ep:` are lossy above 1000 — steps 10 500 and 10 600
+    both print `10K`. `loss`, `grdn`, `lr`, `updt_s`, `data_s`, `smp/s` and
+    `mem_gb` are full precision. Anything plotting a curve must reconstruct the
+    x-axis (`common/training/progress.py`); a plot against `step:` piles two
+    thirds of an 80 000-step run onto eight x-values.
   - **AV1 is not the slow part** (measured, contrary to the obvious guess): our
     recordings decode through `libdav1d` at ~2x the speed of the same clips
     transcoded to H.264, so do not transcode a dataset to "speed up" training.

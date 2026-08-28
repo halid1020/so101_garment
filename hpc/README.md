@@ -474,6 +474,20 @@ Monitor with `squeue --me`; logs land in the submit directory as
 `real_vla-<arrayjobid>_<taskid>.out`, and the `index_*.md` says which task is
 which run.
 
+`squeue` says only that a job exists. For loss, step, throughput, memory and
+time remaining, open the rig console's **Training** tab: it discovers the run
+directories on this machine and draws the curve
+(`documents/rig_web.md`, "Watching a run"). It reads
+`<scratch>/so101_outputs/vla_real_long/<run>/logs/train_<policy>.log`, which is
+**the only machine-readable metric record that exists** — wandb is disabled
+unconditionally and nothing writes a jsonl or a tensorboard event. Two things
+about that log matter to anything reading it by hand as well:
+
+- `step:` is **rounded above a thousand** (`10K` is anywhere from 9 500 to
+  10 499), so count metric lines and multiply by `log_freq` instead;
+- tqdm is **disabled inside Slurm**, so a cluster log has no progress bar and
+  no exact step, while the same run on a plain GPU box does.
+
 ### 5. Collect results — *login node, then anywhere*
 
 ```

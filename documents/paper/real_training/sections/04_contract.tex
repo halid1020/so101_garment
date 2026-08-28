@@ -157,4 +157,34 @@ cannot accept, or a batch size that machine has been measured to exhaust is
 reported in seconds rather than discovered hours into a reservation. The
 destination's ceilings are recorded only where they were measured, and a
 machine with none simply refuses nothing --- which we prefer to a plausible
-number that would refuse runs that fit and admit runs that do not.
+number that would refuse runs that fit and admit runs that do not. The
+workstation the operator is sitting at is treated as one of these destinations
+rather than as a special case, since the same queueing discipline applies to a
+single accelerator wherever it sits; what differs is only that its capacity
+cannot be written down in advance, because the configuration is shared across
+machines, and so it is asked of the machine at the moment a run is proposed.
+That question earns its place: an accelerator too small does not make training
+fail, it makes it fall back to the processor and continue, which for a run of
+this length is indistinguishable from progress for as long as anyone is willing
+to wait.
+
+\paragraph{Following a run that is elsewhere.} A reservation of this length
+is not a thing to submit and forget, and the two failures worth catching early
+are opposite in character: a loss that is not falling, and a machine that has
+quietly gone away. Neither is visible from a queue's own report, which says
+only that a job exists. We therefore read progress from the record the training
+itself leaves --- its log --- rather than adding instrumentation to the training
+code, and we discover the runs on a machine by looking for them rather than
+listing what was launched from any one place, so that a run started from a
+terminal, by a colleague, or before the launcher existed is followed on the same
+terms as one started from the console. Two properties of that log shape the
+reading. Its step counter is formatted for a human and is therefore rounded
+above a thousand, so the axis of a training curve must be reconstructed from the
+logging interval rather than read off the line; and a progress display, where
+the environment leaves one enabled, carries the exact position while a batch
+scheduler suppresses it entirely. A reader that assumes either is present
+silently mis-draws the curve on the machine where it is not. Staleness is judged
+against the clock of the machine holding the log, never the reader's, since the
+two need not agree; a run whose log has stopped growing relative to its own
+observed cadence is reported as stalled rather than as running, which is the
+state a lost machine leaves behind.
