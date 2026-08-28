@@ -47,15 +47,20 @@ thanos:
   stage: "{scratch}/local"
   # MEASURED on this card (24.5 GiB) with a FIVE-camera dataset
   # (fold-short-from-flattend-tactile, 65 episodes):
-  #   act       batch 8   -> mem_gb 11.27, updt_s 0.414, 16 smp/s
-  #   diffusion batch 16  -> not yet measured; see below
+  #   act       batch 8   -> mem_gb 11.27 peak, 3.66 step/s, 8h34 for 80000
+  #                            steps, final train loss 0.075
+  #   diffusion batch 16  -> mem_gb 8.70, 4.79 step/s (resized to 180x240, so
+  #                            it reads the cameras far smaller than act does)
   #   pi05      batch ?   -> not yet measured at five cameras. The 21.5-of-23.5
   #                          GiB figure often quoted for it was taken with
   #                          THREE, and activations scale with camera count.
-  # Nothing is refused here yet because nothing measured has been exceeded: act
-  # at batch 8 leaves better than half the card free. Add a limit when a real
-  # ceiling is observed, not before -- a guessed number refuses rows that fit
-  # and admits rows that do not.
+  # Nothing is refused here yet because nothing measured has been exceeded: the
+  # largest of these, act at batch 8, leaves better than half the card free.
+  # Add a limit when a real ceiling is observed, not before -- a guessed number
+  # refuses rows that fit and admits rows that do not. In particular diffusion
+  # is at batch 16 rather than the driver's 32 because the box went down
+  # uncleanly seconds after a batch-32 row started; at 8.70 GB for 16, memory
+  # was very unlikely to have been the cause, and 32 is not refused here.
   #
   # This card is also SINGLE-TENANT in practice: hpc/gpu_box_run.sh holds a lock
   # so the matrix runs one row at a time, and a policy server left serving on it
