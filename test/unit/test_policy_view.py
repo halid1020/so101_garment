@@ -520,6 +520,77 @@ class TestTaskRoute(ViewTestCase):
         self.assertEqual(self.source.task, "pick up the cube")
 
 
+class TestJudgingAnAttempt(ViewTestCase):
+    """The verdict route: the one control here that touches nothing."""
+
+    async def get_application(self):
+        app = await super().get_application()
+        self.said: "list[tuple[str, str]]" = []
+        self.trial = 0
+
+        def on_outcome(outcome, notes):
+            self.said.append((outcome, notes))
+            return {"trial": self.trial, "outcome": outcome, "notes": notes, "t": 1.0}
+
+        self.view.on_outcome = on_outcome
+        self.view.logging = True
+        return app
+
+    async def judge(self, **body):
+        return await self.client.post("/api/outcome", json=body)
+
+    async def test_a_verdict_reaches_the_run_and_comes_back(self):
+        response = await self.judge(outcome="success", notes="clean fold")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["outcome"], "success")
+        self.assertEqual(self.said, [("success", "clean fold")])
+
+    async def test_the_page_is_told_what_it_already_recorded(self):
+        # So a reload does not lose which button was lit.
+        await self.judge(outcome="failure", notes="missed the hem")
+
+        verdicts = (await self.status())["verdicts"]
+        self.assertEqual(verdicts["0"]["outcome"], "failure")
+
+    async def test_notes_are_optional(self):
+        self.assertEqual((await self.judge(outcome="discard")).status, 200)
+        self.assertEqual(self.said, [("discard", "")])
+
+    async def test_an_outcome_nothing_can_score_is_refused(self):
+        for bad in ("", "maybe", "SUCCESS"):
+            response = await self.judge(outcome=bad)
+            self.assertEqual(response.status, 400)
+        self.assertEqual(self.said, [])
+
+    async def test_judging_moves_nothing(self):
+        # Deliberate: it is allowed mid-run precisely because it is inert.
+        before = self.control.mode
+        await self.judge(outcome="success")
+        self.assertEqual(self.control.mode, before)
+
+    async def test_looking_again_replaces_what_the_page_shows(self):
+        await self.judge(outcome="failure")
+        await self.judge(outcome="success", notes="it had folded after all")
+
+        verdicts = (await self.status())["verdicts"]
+        self.assertEqual(len(verdicts), 1)
+        self.assertEqual(verdicts["0"]["outcome"], "success")
+
+
+class TestJudgingARunThatKeepsNoLog(ViewTestCase):
+    """--no-log: three buttons whose clicks would go nowhere."""
+
+    async def test_the_status_says_nothing_is_being_kept(self):
+        self.assertFalse((await self.status())["logging"])
+
+    async def test_a_verdict_is_refused_rather_than_dropped(self):
+        response = await self.client.post("/api/outcome", json={"outcome": "success"})
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("no log", await response.text())
+
+
 class TestStrategyRoute(ViewTestCase):
     """Changing the splice from the page."""
 

@@ -148,3 +148,76 @@ The demonstrator itself completes this task on \SI{87}{\percent} of attempts,
 and every one of its failures occurs at placement rather than at the grasp or
 the hand-off. No policy trained on its output should be expected to exceed
 that, and a policy's placement failures may be inherited rather than its own.
+
+\subsection{Executing a chunked policy over a network link}
+\label{sec:chunking}
+
+The protocol above evaluates a policy with its inference and its environment
+inside one process. A rig does not run one that way. The machine with the
+graphics processor sits elsewhere, the policy answers with a chunk of future
+actions rather than a single one, and by the time a chunk arrives the arms have
+already executed part of the previous one. Something must decide what becomes
+of the actions still queued. This subsection defines the choices we implemented
+(Section~\ref{sec:chunking-methods}), reports the measurement that first misled
+us and why (Section~\ref{sec:chunking-instrument}), gives the corrected result
+(Section~\ref{sec:chunking-results}), and marks the boundary of what the
+experiment can say (Section~\ref{sec:chunking-limits}).
+
+\subsubsection{Why a chunk needs a join}
+\label{sec:chunking-why}
+
+Inference on a separate machine costs a round trip that is long against the
+control period. Ours spends roughly half a second inside the model alone, while
+a control tick lasts a thirtieth of a second. The arms therefore face two
+options and no third. They can stand still until the reply arrives, which
+wastes most of a second out of every chunk. Or they can keep executing the plan
+they hold, which was computed from an observation now stale by that same
+interval. Deployed systems resolve this somehow, usually implicitly. We make
+the resolution explicit, name the alternatives, and measure them.
+
+We group them into two families. A \emph{blocking} strategy stops issuing
+actions until it holds a plan it trusts. An \emph{aligning} strategy keeps
+moving and reconciles the incoming plan against the one in flight. The families
+trade a known cost against an unknown one: blocking pays in time, aligning pays
+in whatever discontinuity the reconciliation leaves behind.
+
+\subsubsection{The strategies}
+\label{sec:chunking-methods}
+
+We implemented six, defined here in enough detail to reimplement. In each, $Q$
+is the queue of actions not yet executed and $C$ is the chunk that has just
+arrived.
+
+\begin{description}
+  \item[Hold for the reply.] Request only once $Q$ is empty, and execute $C$ to
+    exhaustion. Nothing stale is ever executed. Blocking.
+  \item[Execute a fraction.] As above, but keep only the leading fraction of
+    $C$ and discard the rest, so the next observation is taken while this one
+    is still recent. A receding horizon; the fraction sets how much of a plan
+    is trusted before replanning. Blocking.
+  \item[Queue behind.] Append $C$ after everything in $Q$. Nothing is
+    discarded, so the plan being executed falls further behind the world with
+    every chunk.
+  \item[Discard and replace.] Drop $Q$ and execute $C$ from the row
+    corresponding to now, skipping the rows planned for ticks already past.
+    Maximally responsive; the join is unsmoothed.
+  \item[Cross-fade.] Replace as above, but over a window of ticks command a
+    weighted mixture of old plan and new, the weight ramping from one to the
+    other, linearly or exponentially.
+  \item[Weighted average.] Command a fixed convex combination of the queued
+    action and the new one throughout, rather than only across a window.
+\end{description}
+
+\unjustified{} the fractions, window lengths, ramp shapes and weights we sweep
+are grid points chosen to span a plausible range, not values derived from a
+model of the arm or the task.
+
+\paragraph{One method we did not measure.}
+Real-time chunking smooths the join inside the generative model on the
+inference machine, by conditioning the next chunk on the actions already
+committed. It is therefore a distinct method only when the inference machine
+performs it, and ours does not. Against a host that does not, the client-side
+behaviour is exactly the discard-and-replace row, so a row labelled real-time
+chunking would duplicate one already present under a name no reader could
+trust. Our client refuses such a run rather than downgrading it silently. This
+is a boundary on the experiment's scope, not a result about the method.

@@ -47,7 +47,13 @@ more than once and re-launching between attempts costs a handshake, a ramp and
 the comparison of one splice against another on one scene. Reset scene does the
 same and begins the next trial, putting the scene back where the scene is a data
 structure. The process itself ends on Ctrl+C. Every rollout is written to a run
-log, one row per tick and numbered by trial (``--no-log`` to skip).
+log, one row per tick and numbered by trial (``--no-log`` to skip). Each attempt
+can also be JUDGED from the page -- success, failure or discard, with a note --
+and the verdict is appended against its trial number, so two checkpoints are
+compared from the logs rather than from somebody's memory. ``--log-frames``
+additionally keeps the camera frames each plan was drawn from, which is what
+``tool/analyse_policy_inputs.py`` needs to attribute a plan to the streams that
+produced it.
 
 SAFETY: the followers MOVE (unless ``--dry-run`` or ``--sim``). Consent is taken once, before
 any torque -- at the terminal by default, or ON THE PAGE when ``--web`` is used
@@ -567,6 +573,14 @@ def main() -> None:
         action="store_true",
         help="Do not write the run log (default: $SO101_OUTPUT_DIR/policy_runs/<stamp>)",
     )
+    parser.add_argument(
+        "--log-frames",
+        action="store_true",
+        help="Also keep the camera frames each plan was drawn from, under the "
+        "run log's frames/. Off by default -- they are the largest part of an "
+        "observation. Needed by tool/analyse_policy_inputs.py, which cannot "
+        "attribute a plan to inputs it does not have",
+    )
     args = parser.parse_args()
 
     if args.hz <= 0:
@@ -764,8 +778,17 @@ def main() -> None:
         if not args.no_log:
             from common.policy_log import RunLog
 
-            run_log = RunLog.create(task=task, source=source.describe(), hz=args.hz)
+            run_log = RunLog.create(
+                task=task,
+                source=source.describe(),
+                hz=args.hz,
+                save_frames=bool(args.log_frames),
+                checkpoint=str(getattr(source, "checkpoint", "") or ""),
+                policy_type=str(getattr(source, "type", "") or ""),
+            )
             print(f"📝 run log: {run_log.root}")
+            if args.log_frames:
+                print("   keeping the frames behind each plan (--log-frames)")
 
         if arm_from_view and not args.dry_run:
             # Waited out BEFORE the first inference, so the plan the arms ramp
@@ -866,6 +889,21 @@ def main() -> None:
                 trial[0] = run_log.new_trial() if run_log is not None else trial[0] + 1
 
         if view is not None:
+
+            def on_outcome(outcome: str, notes: str):
+                """The page judged this attempt. Returns None if nothing kept it."""
+                if run_log is None:
+                    return None
+                record = run_log.trial_outcome(outcome, notes)
+                mark = {"success": "✅", "failure": "❌", "discard": "🚫"}[outcome]
+                print(
+                    f"{mark} trial {record['trial']}: {outcome}"
+                    + (f" — {notes}" if notes else "")
+                )
+                return record
+
+            view.on_outcome = on_outcome
+            view.logging = run_log is not None
 
             def on_splice_change(settings, _current=current):
                 _close_segment(_current[0])
@@ -976,6 +1014,7 @@ def main() -> None:
             control.publish(
                 tick=tick,
                 t=tick / args.hz,
+                trial=trial[0],
                 # float(), not round() alone: the twin observes in float32 and
                 # numpy's round gives a numpy scalar back, which the view's JSON
                 # encoder refuses -- so every status poll 500s and the whole page

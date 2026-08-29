@@ -67,6 +67,21 @@
   <p class="bar torque" id="p-torque">…</p>
   <p class="bar err" id="p-err" hidden></p>
 
+  <!-- How the attempt went. Judging moves nothing and ends nothing, so it is
+       allowed at any time -- including mid-run, which is usually when the
+       operator knows. The verdict is appended against the trial number; giving
+       it again just supersedes it. -->
+  <div id="p-verdict">
+    <span class="vlabel">trial <b id="p-trial">1</b></span>
+    <button id="p-win" class="verdict win">✅ success</button>
+    <button id="p-lose" class="verdict lose">❌ failure</button>
+    <button id="p-void" class="verdict void">🚫 discard</button>
+    <input id="p-note" type="text" placeholder="what happened? (optional)"
+           autocomplete="off">
+    <span class="grow"></span>
+    <span class="muted" id="p-verdict-said"></span>
+  </div>
+
   <main id="p-main">
     <section class="card" id="c-shown">
       <h2>What the policy was shown

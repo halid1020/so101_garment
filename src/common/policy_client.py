@@ -76,6 +76,10 @@ class LocalActionSource:
         self.build_batch = build_batch
         self.policy, self.pre, self.post, self.type = load_policy(checkpoint, device)
         self.policy.reset()
+        #: Which weights answered. Both sources carry it under the same name so
+        #: a run log can say WHICH checkpoint a rollout scored, rather than only
+        #: that one did -- the whole point of comparing several.
+        self.checkpoint = str(checkpoint)
         self.device = device
         self.task = task
         self.cameras: "list[str] | None" = None  # whatever the rig is configured with
@@ -279,6 +283,9 @@ class RemoteActionSource:
 
         meta = json.loads(self._rpc("/reset", b""))
         self.type = meta["policy_type"]
+        #: See LocalActionSource.checkpoint. The server reports it in /meta, so
+        #: this costs nothing but was being thrown away.
+        self.checkpoint = str(meta.get("checkpoint") or "")
         self.session = meta["session"]
         self.cameras = sorted(meta["cameras"])
         self.n_obs_steps = int(meta["n_obs_steps"])
