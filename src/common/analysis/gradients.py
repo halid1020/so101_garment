@@ -105,7 +105,10 @@ def integrated_gradients(
     rather than picked. On the five-camera ACT checkpoint, one real frame, the
     completeness error falls 0.29 (16 steps) -> 0.22 (32) -> 0.15 (64) ->
     0.017 (128) -> 0.008 (256): the axiom holds and this model is simply
-    non-linear enough to need a fine path.
+    non-linear enough to need a fine path. Over 206 frames of six episodes the
+    error at 64 steps averages 0.20 and reaches 0.87 on the worst frame, so it
+    varies a great deal with the observation and is worth reading per result
+    rather than assuming from that one convergence sweep.
 
     The per-stream SHARES -- what is actually reported -- converge far sooner
     than the sum does: the largest share moves by 0.0016 between 64 steps and

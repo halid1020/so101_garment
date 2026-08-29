@@ -102,8 +102,9 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
   console — see below), plus the two that read a deployment back:
   `policy_report.py` (every rollout's verdicts, pooled per checkpoint — the row
-  an ablation is reported from) and `analyse_policy_inputs.py` (what each input
-  stream contributed; see `src/common/analysis/`).
+  an ablation is reported from), `analyse_policy_inputs.py` (what each input
+  stream contributed; see `src/common/analysis/`) and `analysis_slides.py` (the
+  same, as videos, plots and tables for a talk).
 - `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
   controller, and which selection does not. Pure string work over the by-path
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
@@ -195,14 +196,22 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   result and every figure names it), `gradients.py` (integrated gradients,
   whose completeness axiom makes per-stream shares parts of one whole;
   SmoothGrad; Grad-CAM), `attention.py` (ACT only, per action of the chunk) and
-  `diffusion`'s differences. MEASURED: IG agrees with occlusion at rank
-  correlation **+1.00**; ACT's cross-attention is within 1.5 % of UNIFORM over
-  tokens, so the raw mass counts tokens rather than measuring consultation
-  (it ranks the cameras at -0.71 against occlusion, the deviation from uniform
-  at +0.70) — only the deviation is reported; IG's completeness error needs 128+
-  steps to reach 0.02 though the shares converge by 64. `--sanity` is Adebayo
-  et al.'s model-randomisation test. Runbook:
-  `documents/policy_input_analysis.md`.
+  `diffusion`'s differences. MEASURED over 206 frames of six episodes on the
+  finished ACT checkpoint: **central 57.1 %, proprioception 36.4 %, the four
+  fingertips 6.5 % together** — but tactile is not flat, running 0.6 % while the
+  arms travel and peaking 21–31 % in every episode, so a mean over an episode
+  hides the whole point. During `opening` proprioception rises to 74.7 %. IG
+  agrees with occlusion at **+0.90**. ACT's cross-attention has almost no
+  DYNAMIC RANGE (pooled shares 0.192–0.219, a 1.14x spread, against occlusion's
+  42x) and per FRAME agrees at only +0.17 with 35 % of frames negative — so the
+  raw mass is dominated by token count and only the deviation from uniform is
+  reported. IG's completeness error at 64 steps averages 0.20 over real frames
+  (0.87 worst) though the shares converge by then. `--sanity` is Adebayo et
+  al.'s model-randomisation test, which this checkpoint passes outright (a
+  randomised policy plans the same chunk whatever it is shown, so every share
+  falls to zero). `slides.py` + `tool/analysis_slides.py` turn a finished run
+  into slide-ready videos (PyAV/H.264, no ffmpeg binary), plots and tables.
+  Runbook: `documents/policy_input_analysis.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.

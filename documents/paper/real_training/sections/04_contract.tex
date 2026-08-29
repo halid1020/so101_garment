@@ -228,13 +228,17 @@ detail. Gradient attribution adds a decomposition whose parts sum to the change
 in the quantity attributed, which is what makes several streams' contributions
 comparable as shares of one whole rather than as unrelated magnitudes. Attention
 weights, where the architecture exposes them, are reported beside these and
-never in place of them --- on our own checkpoint the attention mass over each
-camera sits within a small fraction of what the number of tokens that camera
-contributes would give it regardless of content, and ranks the cameras against
-the measured behavioural effect almost in reverse, while the gradient
-decomposition ranks them identically to it. Reporting attention as though it
-measured importance would therefore have inverted the platform's central
-finding. Finally, because an attribution averaged over an episode answers
+never in place of them. On our own checkpoint the attention mass over each
+camera sits within a small fraction of what that camera's share of the tokens
+would give it regardless of content: across two hundred frames the five cameras
+span a factor of $1.1$ in attention where the behavioural measurement spans a
+factor of forty, and on individual frames the two orderings agree only weakly
+and disagree outright on a third of them. Attention here therefore sorts the
+streams tolerably when averaged and understates the differences between them by
+more than an order of magnitude, which is not the same as measuring importance;
+the gradient decomposition, by contrast, reproduces the behavioural ranking
+closely. We report the departure from what token count alone would predict,
+never the raw mass. Finally, because an attribution averaged over an episode answers
 almost nothing --- a contact sensor cannot contribute while the hand is still
 travelling --- contributions are read against phases segmented from the
 recorded gripper channels themselves, with thresholds drawn from each episode's

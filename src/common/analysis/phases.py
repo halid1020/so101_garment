@@ -49,9 +49,16 @@ def segment(
     and on the calibration of the day.
 
     A frame is *closing* or *opening* when the gripper is moving faster than
-    ``move_quantile`` of this episode's speeds, and the sign says which. It is
-    *holding* when closed and not moving, *reaching* when open before the first
-    close, and *released* when open after the last one.
+    ``move_quantile`` of the speeds at which this episode's gripper actually
+    MOVES, and the sign says which. It is *holding* when closed and not moving,
+    *reaching* when open before the first close, and *released* when open after
+    the last one.
+
+    "Actually moves" is doing real work there. The commanded gripper is held
+    constant most of the time, so a quantile over every frame is dominated by
+    zeros -- and for an episode whose gripper changes on only 17 % of frames it
+    comes out at exactly zero, which made every frame a transition and collapsed
+    the episode to a single phase.
     """
     trace = gripper_trace(actions, columns)
     if trace.size == 0:
@@ -63,19 +70,30 @@ def segment(
     # The tighter of the two hands drives the phase: a one-armed fold still has
     # a contact moment, and averaging would smear it into nothing.
     tightest = trace.min(axis=1)
-    speed = np.gradient(tightest)
+    speed = np.abs(np.gradient(tightest))
     closed_at = np.quantile(tightest, closed_quantile)
-    moving_at = np.quantile(np.abs(speed), move_quantile)
-    # A perfectly still trace makes every threshold zero and every frame
-    # "moving"; require a real change before calling anything a transition.
-    if moving_at <= 0 or np.allclose(np.abs(speed).max(), 0.0):
+
+    # The "moving" threshold is a quantile of the frames that are ACTUALLY
+    # MOVING, not of every frame. MEASURED on this dataset: the commanded
+    # gripper is held constant most of the time -- it changes on 17 % of
+    # episode 0's frames and 29 % of episode 2's -- so a quantile over all of
+    # them is exactly zero for the first, every frame then counts as a
+    # transition, and the guard below collapsed the whole episode into one
+    # phase. Which is how three of six episodes came back labelled `reaching`
+    # from end to end while their grippers plainly opened and closed.
+    active = speed[speed > 1e-9]
+    if active.size < 3:
         return ["reaching"] * frames
+    moving_at = float(np.quantile(active, move_quantile))
+    if moving_at <= 0:
+        return ["reaching"] * frames
+    signed = np.gradient(tightest)
 
     closed = tightest <= closed_at
     labels: "list[str]" = []
     for index in range(frames):
-        if abs(speed[index]) >= moving_at:
-            labels.append("closing" if speed[index] < 0 else "opening")
+        if speed[index] >= moving_at:
+            labels.append("closing" if signed[index] < 0 else "opening")
         elif closed[index]:
             labels.append("holding")
         else:

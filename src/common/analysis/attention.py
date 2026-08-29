@@ -19,15 +19,16 @@ occlusion effect, and where the three disagree that disagreement is the finding.
 Only occlusion actually intervenes on the policy; the other two are inferences
 about it.
 
-MEASURED on the five-camera ACT checkpoint, and the reason :func:`deviation`
-exists: this decoder's cross-attention is very nearly UNIFORM over tokens. Each
-camera owns 300 of 1 502 tokens, so uniform would give it 0.1997 of the mass --
-and the observed shares are 0.192 to 0.208, within 1.5 % of that at most frames
-and never more than 8 % away. Over the same frames, occlusion finds `central`
-worth ten times any fingertip and integrated gradients agrees with occlusion at
-a rank correlation of 1.00, while attention ranks the five almost backwards
-(-0.71). So the raw mass mostly counts TOKENS rather than measuring consultation,
-and reporting it as though it measured importance would be actively misleading.
+MEASURED on the five-camera ACT checkpoint over 206 frames of six episodes, and
+the reason :func:`deviation` exists: this decoder's cross-attention has almost no
+DYNAMIC RANGE. Each camera owns 300 of 1 502 tokens, so uniform would give it
+0.1997 of the mass -- and the pooled shares run 0.192 to 0.219, a spread of
+1.14x across the five, where occlusion over the same frames spans 1.4 % to
+57.1 %, a spread of 42x. Pooled, the two rank the cameras alike (+0.90); PER
+FRAME they often do not, agreeing at a mean of only +0.17 with 35 % of frames
+correlating negatively. So the raw mass is dominated by TOKEN COUNT and is far
+too flat to read as importance, however well it happens to sort.
+
 What carries information is the DEVIATION from uniform, and how it varies across
 the chunk's own horizon -- `central`'s share runs about 0.31 for the first
 actions of a plan and 0.08 for the last, which no token count explains.

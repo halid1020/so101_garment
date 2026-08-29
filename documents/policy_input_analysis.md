@@ -66,24 +66,30 @@ over cameras at all.
 
 ## Three measured things that change how the output is read
 
-**Attention is nearly uniform, so the raw mass means almost nothing.** Each
-camera owns 300 of 1 502 tokens, so uniform hands it 0.1997 — and the observed
-shares are 0.192 to 0.208, within 1.5 % of that at most frames. Over the same
-frames occlusion finds `central` worth ten times any fingertip, and integrated
-gradients agrees with occlusion at a rank correlation of **+1.00**, while raw
-attention ranks the five almost backwards at **−0.71**. The **deviation** from
-uniform agrees at **+0.70**, so that is what is reported and plotted. What does
-carry information is how attention varies along the chunk's own horizon:
-`central`'s share runs about 0.31 for a plan's first actions and 0.08 for its
-last, which no token count explains.
+**Attention has almost no dynamic range, so the raw mass means little.**
+Measured over 206 frames of six episodes: each camera owns 300 of 1 502 tokens,
+so uniform hands it 0.1997 — and the pooled shares run 0.192 to 0.219, a spread
+of **1.14×** across the five cameras. Occlusion over the same frames spans 1.4 %
+to 57.1 %, a spread of **42×**. Pooled, the two happen to rank the cameras alike
+(+0.90); *per frame* they often do not, agreeing at a mean of only **+0.17**,
+with **35 % of frames correlating negatively**. So attention sorts the cameras
+tolerably on average while understating the differences between them by more
+than an order of magnitude, and it is unreliable on any single observation —
+which is why the **deviation** from uniform is what gets reported and plotted,
+never the raw mass. What does carry information is how attention varies along
+the chunk's own horizon: `central`'s share runs about 0.31 for a plan's first
+actions and 0.08 for its last, which no token count explains.
 
-**Integrated gradients needs a fine path here.** The completeness error falls
-0.29 (16 steps) → 0.22 (32) → 0.15 (64) → 0.017 (128) → 0.008 (256). The axiom
-holds; this model is simply non-linear enough that a coarse Riemann sum misses.
-The per-stream *shares* converge far sooner than the sum — the largest moves by
-0.0016 between 64 and 128 steps — so 64 is the default and the completeness
-error is returned with every result rather than assumed away. Raise `--ig-steps`
-for a figure that has to carry the axiom.
+**Integrated gradients needs a fine path here.** On one frame the completeness
+error falls 0.29 (16 steps) → 0.22 (32) → 0.15 (64) → 0.017 (128) → 0.008 (256).
+The axiom holds; this model is simply non-linear enough that a coarse Riemann sum
+misses. Across 206 real frames at 64 steps the error averages **0.20** and
+reaches **0.87** on the worst — it varies a lot with the observation, so read it
+per result rather than trusting that one sweep. The per-stream *shares* converge
+far sooner than the sum — the largest moves by 0.0016 between 64 and 128 steps —
+so 64 is the default and the completeness error is returned with every result.
+Raise `--ig-steps` for a figure that has to carry the axiom. IG agrees with
+occlusion at **+0.90** pooled over those frames.
 
 **The baseline is part of the result.** There is no neutral image. Zeroing is
 conventional and off-manifold — a policy has never seen a black frame, so its
@@ -167,12 +173,31 @@ Saliency methods are easy to misread, so the toolkit carries its own checks.
   depends on the object and the day's calibration, so an absolute threshold
   would put every frame in one phase.
 
-## An early result
+## The result so far
 
-On the finished five-camera ACT checkpoint, one episode of
-`fold-short-from-flattend-tactile`: early in the episode the overhead camera and
-proprioception carry almost everything and the four fingertips together
-contribute about **3 %**; by mid-episode the tactile share reaches **20 %**,
-then falls below 1 % as the arms withdraw. That is the shape the question was
-asked to find, and it is what the trained ablation rows should now be compared
-against.
+On the finished five-camera ACT checkpoint, six episodes of
+`fold-short-from-flattend-tactile`, 206 analysed frames:
+
+| stream | share of the plan's movement |
+|---|---|
+| `central` (overhead RGB) | 57.1 % |
+| proprioception (12 joints) | 36.4 % |
+| four fingertip cameras, together | 6.5 % |
+
+The average understates the interesting part. The tactile share is **not**
+constant: it runs as low as **0.6 %** while the arms are travelling and reaches
+**30.7 %** at its peak, and every one of the six episodes peaks between 21 % and
+31 %. Touch matters in moments rather than throughout, which is exactly what a
+mean over an episode hides and what `vision_vs_touch.png` shows.
+
+Broken out by gripper phase, one row is worth a second look: during `opening`,
+proprioception rises to **74.7 %** and the overhead camera falls to **19.1 %** —
+letting go is the part of the task the policy does by feel of its own posture
+rather than by looking.
+
+`tool/analysis_slides.py` turns any of this into slide-ready videos, plots and
+tables; see `SLIDES.md` in its output for a running order.
+
+These numbers say what the trained policy *uses*. What a policy could learn
+*without* a stream is the ablation rows in `hpc/runs.tsv`, and the two should be
+read together.
