@@ -91,6 +91,9 @@ _EXCEPTION_RE = re.compile(r"^(\w+(?:\.\w+)*(?:Error|Exception|Interrupt)\b.*)$"
 _ROW_FAILED_RE = re.compile(r"❌\s*row (\d+) FAILED[^\n\r]*")
 _ROW_DONE_RE = re.compile(r"✓\s*row (\d+) done")
 _REUSED_RE = re.compile(r"↷\s*reusing checkpoint")
+#: A run the driver picked back up after the box went down under it. The step it
+#: resumed AT is worth surfacing: it is exactly what the interruption cost.
+_RESUMED_RE = re.compile(r"↻\s*resuming \S+ at step (\d+) of (\d+)")
 
 # A run is called stalled when its log has been silent for this many times its
 # own observed logging interval. Long enough that a slow policy writing every
@@ -213,11 +216,26 @@ def parse_points(text: str) -> "list[dict[str, Any]]":
     return points
 
 
+def parse_resumes(text: str) -> "list[dict[str, Any]]":
+    """Where the driver picked a run back up, and at which step. Pure.
+
+    A resumed run APPENDS to the log it already had, so one file can hold two or
+    more attempts end to end. These markers are the only thing that says where
+    one stops and the next begins -- and therefore the only reliable way to give
+    the second attempt's lines their true step (see :func:`resolve_steps`).
+    """
+    return [
+        {"at": m.start(), "step": int(m.group(1)), "total": int(m.group(2))}
+        for m in _RESUMED_RE.finditer(text)
+    ]
+
+
 def resolve_steps(
     points: "list[dict[str, Any]]",
     frames: "list[dict[str, Any]]",
     log_freq: int = DEFAULT_LOG_FREQ,
     total_steps: "int | None" = None,
+    resumes: "list[dict[str, Any]] | None" = None,
 ) -> "list[str]":
     """Give every point its exact step, in place. Returns any disagreements.
 
@@ -229,27 +247,55 @@ def resolve_steps(
       when ``step % log_freq == 0`` and at no other time, which is the only
       source a CREATE log has.
 
-    A resumed run makes tqdm count from zero again with ``total`` set to what is
-    LEFT, so the offset is recovered from the head's total rather than trusting
-    ``done`` as an absolute. The abbreviated ``step:`` field is used for neither;
-    it is only checked, and a mismatch is returned rather than hidden, because a
-    curve drawn against a wrong axis looks exactly like a curve.
+    A RESUMED run breaks both, and does so invisibly: lerobot builds its bar
+    with ``total=cfg.steps - step``, so the second attempt's frames count from
+    zero again, and its metric lines restart their ordinal too. The log holds
+    both attempts one after the other, so the offset a line needs is decided by
+    WHERE it is: the step named by the last ``resuming`` marker before it, and
+    zero for a line before any. Inferring the offset from the totals instead --
+    which is what this did first -- moves the FIRST attempt's points as well,
+    because both attempts happen to carry the same total when the target has not
+    changed.
+
+    Falls back to the total-difference heuristic when a log was resumed without
+    the driver's marker, which is what a resume done by hand looks like.
+
+    The abbreviated ``step:`` field is used for neither; it is only checked, and
+    a mismatch is returned rather than hidden, because a curve drawn against a
+    wrong axis looks exactly like a curve.
     """
     positions = [f["at"] for f in frames]
+    marks = sorted(resumes or [], key=lambda r: r["at"])
+    mark_positions = [r["at"] for r in marks]
     problems: "list[str]" = []
+    # The ordinal a `count`-sourced step is derived from restarts at each
+    # resume, so it is counted per segment rather than over the whole file.
+    ordinal = 0
+    segment = 0
     for index, point in enumerate(points):
+        here = bisect.bisect_right(mark_positions, point["at"])
+        if here != segment:
+            segment, ordinal = here, 0
+        ordinal += 1
+        base = marks[here - 1]["step"] if here else 0
+
         frame = None
         slot = bisect.bisect_left(positions, point["at"])
         if slot:
             frame = frames[slot - 1]
         if frame is not None:
-            offset = 0
-            if total_steps and frame["total"] and total_steps > frame["total"]:
+            offset = base
+            if (
+                not marks
+                and total_steps
+                and frame["total"]
+                and total_steps > frame["total"]
+            ):
                 offset = total_steps - frame["total"]
             point["step"] = offset + frame["done"]
             point["source"] = "tqdm"
         else:
-            point["step"] = (index + 1) * log_freq
+            point["step"] = base + ordinal * log_freq
             point["source"] = "count"
 
         label = point.get("step_label")
@@ -269,7 +315,7 @@ def resolve_steps(
 
 
 def parse_markers(text: str) -> "dict[str, Any]":
-    """Everything in the log that is not a metric: checkpoints, and endings."""
+    """Everything in the log that is not a metric: checkpoints, restarts, endings."""
     failure = None
     if _TRACEBACK_RE.search(text):
         exceptions = _EXCEPTION_RE.findall(text)
@@ -277,12 +323,21 @@ def parse_markers(text: str) -> "dict[str, Any]":
     row_failed = _ROW_FAILED_RE.search(text)
     if row_failed and not failure:
         failure = row_failed.group(0).strip()
+    resumed = _RESUMED_RE.findall(text)
     return {
         "checkpoints": [int(s) for s in _CHECKPOINT_RE.findall(text)],
         "finished": bool(_DONE_RE.search(text)),
         "failure": failure,
         "rows_done": [int(s) for s in _ROW_DONE_RE.findall(text)],
         "reused": bool(_REUSED_RE.search(text)),
+        # One entry per interruption, so a run that was cut short twice says so
+        # twice rather than reading as one clean run.
+        "resumed_at": [int(m[0]) for m in resumed],
+        # The step target the RESUME was given. This is not decoration: a
+        # resumed run appends to the log it already had, so the config dump at
+        # the head still states the total the FIRST attempt was given, and a
+        # target that has since been raised would be read from a stale number.
+        "resumed_total": int(resumed[-1][1]) if resumed else None,
     }
 
 
@@ -311,10 +366,18 @@ def parse_log(
     head = parse_head(head_text if head_text is not None else text)
     frames = parse_tqdm(text)
     points = parse_points(text)
-    total = head.get("steps") or (frames[-1]["total"] if frames else None)
-    freq = log_freq or head.get("log_freq") or DEFAULT_LOG_FREQ
-    problems = resolve_steps(points, frames, freq, head.get("steps"))
     markers = parse_markers(text)
+    # A resume states the target it was actually given, and it is the later
+    # word: see parse_markers. Without this a run resumed with a raised target
+    # has every point of its second half plotted at the wrong step, because the
+    # tqdm frames of a resumed run count what is LEFT rather than what is done.
+    total = (
+        markers.get("resumed_total")
+        or head.get("steps")
+        or (frames[-1]["total"] if frames else None)
+    )
+    freq = log_freq or head.get("log_freq") or DEFAULT_LOG_FREQ
+    problems = resolve_steps(points, frames, freq, total, parse_resumes(text))
     if total and points and points[-1]["step"] > total:
         # Counted past the end of the run. The curve is then drawn against an
         # axis that does not exist, so say so rather than plot it.
@@ -377,6 +440,11 @@ def summarise(
         "checkpoint": max(parsed.get("checkpoints") or [0]) or None,
         "points": len(points),
         "age_s": age_s,
+        # How often the run was picked back up, and what the last interruption
+        # cost. A curve with a restart in it is a different thing from a clean
+        # one, and the panel should not present them as the same.
+        "resumes": len(parsed.get("resumed_at") or []),
+        "resumed_at": (parsed.get("resumed_at") or [None])[-1],
     }
     out["state"] = _state(parsed, interval, age_s)
     return out

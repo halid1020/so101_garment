@@ -42,6 +42,10 @@ SENTINEL = "@@so101:"
 KEEP_PATTERN = (
     "step:|Checkpoint policy after step|End of training|Traceback"
     "|Error|error:|row [0-9]+ FAILED|row [0-9]+ done|reusing checkpoint"
+    # A resumed run appends to the log it already had, so without this line the
+    # curve would show one continuous run where in fact the box rebooted and the
+    # driver picked the checkpoint back up.
+    "|resuming"
 )
 
 # 20 000 lines is 2 000 000 steps at the log_freq this repo uses; the longest
