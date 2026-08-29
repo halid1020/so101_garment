@@ -57,11 +57,20 @@ The real-data cell on the cluster (`hpc/README.md`) has produced these:
 | cube-dual-pnp-new | diffusion | 0.003 | pick the cube and place it on the plate |
 | fold-short | act | 0.114 | flatten the short and fold it |
 | fold-short | diffusion | 0.004 | flatten the short and fold it |
+| fold-short-from-flattend-tactile | act | 0.075 | fold the short |
 
 Training loss ranks nothing on the robot; it is here so that a checkpoint can be
 told apart from a run that never converged. ACT and diffusion ignore the task
 string, but pass the recorded one anyway — it is what the dataset froze, and a
 policy that does read it will need it.
+
+`fold-short-from-flattend-tactile` is the first dataset with the fingertip
+cameras: 65 episodes at 30 fps over **five** cameras — `central` plus one
+tactile camera per gripper finger — which are exactly the five the rig has
+enabled, so it needs no `--camera-map`. It was trained on thanos, 80 000 steps
+in 8 h 34 at 11.27 GB peak. Its diffusion row is **not** in the table because it
+has not finished anywhere: the box rebooted under it at step 1 323 of 100 000.
+That is also why `train_cell` now resumes rather than restarting (`hpc/README.md`).
 
 Two footnotes on cube-pnp. Its ACT weights come from an earlier submission,
 whose run directory is named after the job id rather than the dataset, so it
@@ -84,6 +93,23 @@ bash hpc/fetch_policies.sh --from <user>@<create-login-host> --list
 bash hpc/fetch_policies.sh --from <user>@<create-login-host> \
     --dest <gpu-host>:project/so101_garment/outputs/policies
 ```
+
+**`--scratch` reaches the remote shell through `printf '%q'`**, so a `~` arrives
+literal and the scan reports `NOROOT` for a directory that is plainly there.
+Spell the path out. thanos, whose runs live beside its LeRobot cache rather than
+under `/scratch/users`, therefore wants:
+
+```bash
+bash hpc/fetch_policies.sh --from thanos \
+    --scratch /home/<user>/.cache/huggingface/lerobot --list
+```
+
+A fetched checkpoint is FLAT: `--dest outputs/policies` gives
+`outputs/policies/<dataset>__<cameras>-<policy>/` holding `config.json` and the
+weights directly, with no `pretrained_model/` under it. That is the path to pass
+to `--checkpoint`. A checkpoint still in its run directory does have the extra
+segment (`.../checkpoints/last/pretrained_model`), which is the one place the
+two spellings differ.
 
 `--list` first. A run cancelled at its wall time still has checkpoints, just not
 a `last`, and it reads `unfinished` there instead of installing something that
@@ -162,6 +188,10 @@ browser — see *Watching a rollout* below. The task is optional there.)
 policy chooses, with the chunk-queue depth and the round-trip time, but never
 enables torque. Watch two things: the queue depth should never reach zero, and
 the round trip should be a small fraction of a chunk's wall time.
+
+Pass `--server` **or** `--checkpoint`, never both — the client takes one source
+of actions and refuses two. Which checkpoint answered travels in `/meta` and is
+written into the run log, so it does not need naming twice.
 
 Then, with the workspace clear:
 
@@ -242,6 +272,35 @@ other request with `409`. A second client — a rollout page, another sweep, a
 stray probe — claiming that slot is now survivable (the sweep re-handshakes and
 re-runs the episode), but it still costs the episode, and a busy port costs one
 per interruption.
+
+## Judging an attempt, and keeping what it saw
+
+A run is a sequence of attempts at the same rig, and until each one has a
+verdict against it a comparison between two checkpoints lives in somebody's
+notebook. Three buttons sit under the torque bar — **success**, **failure**,
+**discard** — with a note beside them. Judging touches nothing: no torque, no
+mode, no scene. So it is never confirmed and stays live mid-run, which is
+usually when the operator already knows how it went. Giving a verdict twice
+keeps both lines and scores the later one, because looking again is the normal
+reason to do it.
+
+`discard` is not a third outcome between the other two. It says the attempt
+should not be counted at all — the scene was wrong, somebody bumped the table,
+the tunnel dropped — and it leaves the denominator rather than counting against
+the policy. A run nobody judged reads as *unscored*, never as nought per cent.
+
+```bash
+venv/bin/python tool/policy_report.py                 # every run, then per checkpoint
+venv/bin/python tool/policy_report.py --checkpoint act  # matching runs only
+```
+
+`--log-frames` additionally keeps the camera frames each plan was drawn from,
+under `frames/<seq>/<camera>.jpg`. Nothing new is captured — the observation was
+already in hand and was being dropped — and it is written per *chunk*, not per
+tick, so it is a few MB a minute. It is off by default because those frames are
+the largest part of an observation, and it is what
+`tool/analyse_policy_inputs.py` needs to attribute a plan to the streams that
+produced it (`documents/policy_input_analysis.md`).
 
 ## Watching a rollout
 

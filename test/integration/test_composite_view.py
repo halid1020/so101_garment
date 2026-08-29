@@ -162,6 +162,21 @@ class TestCompositeVideo(unittest.TestCase):
         self.assertIn("same number of frames", str(caught.exception))
 
 
+def _readable(path: Path) -> bool:
+    """Is this file there AND reachable? Not the same question as is_file().
+
+    These datasets live on an external drive under an autofs mount point, so
+    when the drive is detached the path exists as a mount trigger and stat()
+    raises OSError(ENODEV) rather than FileNotFoundError -- which is_file()
+    swallows the second of and not the first. The test then ERRORS on a machine
+    that simply does not have the drive plugged in, when what it means is skip.
+    """
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 class TestCompositeViewIsAnOrdinaryDataset(unittest.TestCase):
     """The metadata a composite view writes, against a real source dataset.
 
@@ -177,7 +192,7 @@ class TestCompositeViewIsAnOrdinaryDataset(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = next((r for r in cls.ROOTS if (r / "meta/info.json").is_file()), None)
+        cls.src = next((r for r in cls.ROOTS if _readable(r / "meta/info.json")), None)
         if cls.src is None:
             raise unittest.SkipTest("no tactile dataset on this machine")
 

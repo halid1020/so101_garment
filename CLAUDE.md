@@ -100,7 +100,10 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
-  console — see below).
+  console — see below), plus the two that read a deployment back:
+  `policy_report.py` (every rollout's verdicts, pooled per checkpoint — the row
+  an ablation is reported from) and `analyse_policy_inputs.py` (what each input
+  stream contributed; see `src/common/analysis/`).
 - `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
   controller, and which selection does not. Pure string work over the by-path
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
@@ -177,6 +180,29 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   was launched, and returns **stdout only** — CREATE's stderr is an MFA banner.
   Staleness is judged from the file's mtime against the REMOTE clock, never the
   timestamps inside (they carry no timezone).
+- `src/common/analysis/` — **what each input stream contributes to the actions a
+  policy plans**, kept OUT of the inference path (nothing there imports it back)
+  and driven by `tool/analyse_policy_inputs.py`. It rests on one verified fact:
+  both policies reduce their inputs to a vector in which each stream owns a
+  CONTIGUOUS piece — ACT's encoder tokens are `[latent, state, cam x H*W, ...]`
+  in `config.image_features` order (300 tokens a camera at 480x640, 1 502 in
+  total, MEASURED against the loaded backbone), diffusion concatenates
+  per-camera features once per observation step — so `streams.py` is that map,
+  pure and GPU-free, and `check_layout` asserts it tiles. Four methods, because
+  each answers something the others cannot: `perturb.py` (occlusion — behaviour,
+  and the ground truth the rest are SCORED against; leave-one-out measures
+  redundancy, only-one-in measures sufficiency; the baseline is part of the
+  result and every figure names it), `gradients.py` (integrated gradients,
+  whose completeness axiom makes per-stream shares parts of one whole;
+  SmoothGrad; Grad-CAM), `attention.py` (ACT only, per action of the chunk) and
+  `diffusion`'s differences. MEASURED: IG agrees with occlusion at rank
+  correlation **+1.00**; ACT's cross-attention is within 1.5 % of UNIFORM over
+  tokens, so the raw mass counts tokens rather than measuring consultation
+  (it ranks the cameras at -0.71 against occlusion, the deviation from uniform
+  at +0.70) — only the deviation is reported; IG's completeness error needs 128+
+  steps to reach 0.02 though the shares converge by 64. `--sanity` is Adebayo
+  et al.'s model-randomisation test. Runbook:
+  `documents/policy_input_analysis.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -225,7 +251,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `/twin/at?seq&i`) + `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
   (the throttle's pure state machine, the per-trial consent and the prefetch
   arithmetic, shared with the control loop) and `common/policy_log.py` (the per-run log under
-  `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
+  `outputs/policy_runs/`: ticks, chunks, and `trials.jsonl` — one VERDICT per
+  attempt, given from the page, where a `discard` leaves the denominator rather
+  than counting against the policy and an unjudged run reads as unscored, never
+  as nought per cent; `--log-frames` additionally keeps the frames each plan was
+  drawn from, off by default and required by `analyse_policy_inputs.py`. Read
+  back by `tool/policy_report.py`). Runbooks: `documents/rig_web.md`,
   `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
   one asks in the browser first, and marking an episode (reversible) does
   not. The third tab is called **Signals** in the UI while the module,
@@ -402,6 +433,18 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     MERGES the dict, so a slot left out of the override survives. It does not
     need dropping anyway — pi0.5 pads a slot with no camera behind it to -1 and
     gives it a zero attention mask, which is what an ablated camera should be.
+  - **A box that reboots mid-run used to cost the WHOLE run.** `train_cell`
+    reused a FINISHED checkpoint but `rm -rf`'d a partial one, while
+    lerobot-train has supported `--resume=true --config_path=<ckpt>/
+    train_config.json` all along. It now decides three ways — reuse, resume,
+    delete only what has no checkpoint — so an interruption costs one
+    `save_freq`. MEASURED: thanos rebooted at 20:08 on 2026-08-28 and again the
+    day before; the log just stops mid-tqdm-frame with no traceback and `who -b`
+    is the only record. A resume APPENDS to the same log, and lerobot builds its
+    bar with `total = steps - step`, so the second attempt's frames count from
+    zero and its metric lines restart their ordinal — `progress.py` reads them
+    apart by the driver's `↻ resuming <run> at step N of M` line, NOT by
+    comparing totals (that moves the first attempt's points too).
   - **The step in a training log is a label, not a number.** `format_big_number`
     (`lerobot/utils/utils.py`) divides by a thousand per suffix and rounds, so
     `step:`, `smpl:` and `ep:` are lossy above 1000 — steps 10 500 and 10 600
