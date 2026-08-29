@@ -69,8 +69,30 @@ fold-short           diffusion  all                              100000  32     
 # The fastwam row is REFUSED until the LeRobot pin ships policies/fastwam --
 # it needs its cameras tiled into one 224x448 frame, which is what tactile_quad
 # is for. See documents/training_destinations.md.
+#
+# INPUT-STREAM ABLATION. `all` is the five cameras; `central` is the overhead
+# RGB alone; the four *_gripper rows are the fingertips alone. Together they
+# separate what vision contributes from what touch does, which neither `all`
+# nor a single row can say by itself. It is the TRAINING half of that question
+# -- what a policy could learn from each stream -- and reads alongside the
+# attribution half, which asks what a trained policy actually uses
+# (tool/analyse_policy_inputs.py). A stream a policy could do without is not
+# the same as one it ignores, and the two halves disagreeing is a result.
+#
+# BATCH IS HELD FIXED across the camera sets of one policy. Vary it and the
+# comparison confounds capacity with input, which is the one thing this table
+# exists to separate. act is pinned at 8 by the row that has already finished
+# (thanos, 80000 steps, 11.27 GB peak, final train loss 0.075). diffusion has
+# not completed anywhere yet -- the thanos attempt died at step 1 323 when the
+# box rebooted, at 8.70 GB of 24.5 with batch 16 -- so if 32 turns out not to
+# fit wherever these run, change ALL THREE diffusion rows together and not just
+# the one that failed.
 fold-short-from-flattend-tactile act       all                              80000   8      36     -       -
+fold-short-from-flattend-tactile act       central                          80000   8      36     -       -
+fold-short-from-flattend-tactile act       left_arm_left_gripper,left_arm_right_gripper,right_arm_left_gripper,right_arm_right_gripper 80000 8 36 - -
 fold-short-from-flattend-tactile diffusion all                              100000  32     36     -       -
+fold-short-from-flattend-tactile diffusion central                          100000  32     36     -       -
+fold-short-from-flattend-tactile diffusion left_arm_left_gripper,left_arm_right_gripper,right_arm_left_gripper,right_arm_right_gripper 100000 32 36 - -
 fold-short-from-flattend-tactile pi05      central,left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
 fold-short-from-flattend-tactile pi05      central                          30000   4      36     -       -
 fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
