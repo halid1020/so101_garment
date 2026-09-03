@@ -265,6 +265,7 @@ class So101DreamzeroPolicy(PreTrainedPolicy):
         Input frames are ``(B, T, 3, H, W)`` per camera; the output is
         ``(B, T, 3, image_size, image_size)``.
         """
+        cells = self.camera_cells()
         frames = []
         for key in self.camera_keys:
             frame = batch[key]
@@ -280,26 +281,47 @@ class So101DreamzeroPolicy(PreTrainedPolicy):
                     "config.observation_delta_indices, not just one of them."
                 )
             frames.append(frame)
-        count = len(frames)
-        grid = math.ceil(math.sqrt(count))
-        cell = self.config.image_size // grid
         batch_size, steps = frames[0].shape[:2]
-
         canvas = frames[0].new_zeros(
             batch_size, steps, 3, self.config.image_size, self.config.image_size
         )
-        for index, frame in enumerate(frames):
+        for frame, (top, left, size) in zip(frames, cells.values()):
             resized = F.interpolate(
                 frame.flatten(0, 1),
-                size=(cell, cell),
+                size=(size, size),
                 mode="bilinear",
                 align_corners=False,
             ).unflatten(0, (batch_size, steps))
-            row, column = divmod(index, grid)
-            canvas[
-                ..., row * cell : (row + 1) * cell, column * cell : (column + 1) * cell
-            ] = resized
+            canvas[..., top : top + size, left : left + size] = resized
         return canvas
+
+    def camera_cells(self) -> "dict[str, tuple[int, int, int]]":
+        """Where each camera sits in the tiled frame: ``{key: (top, left, size)}``.
+
+        The single source of the grid, so tiling and un-tiling cannot disagree --
+        and un-tiling is what makes prediction accuracy reportable PER CAMERA,
+        which is the whole point on a rig where four of five views are tactile
+        and behave nothing like the overhead one.
+        """
+        grid = math.ceil(math.sqrt(len(self.camera_keys)))
+        size = self.config.image_size // grid
+        cells = {}
+        for index, key in enumerate(self.camera_keys):
+            row, column = divmod(index, grid)
+            cells[key] = (row * size, column * size, size)
+        return cells
+
+    def untile_cameras(self, tiled: Tensor) -> "dict[str, Tensor]":
+        """Split a tiled frame back into one tensor per camera.
+
+        The inverse of :meth:`tile_cameras` up to the resize, which is lossy --
+        so a prediction and its ground truth are BOTH compared at cell
+        resolution, never one upscaled to meet the other.
+        """
+        return {
+            key: tiled[..., top : top + size, left : left + size]
+            for key, (top, left, size) in self.camera_cells().items()
+        }
 
     def _chunk_tokens(self, video: Tensor, actions: Tensor, block: int) -> Tensor:
         """Embed one chunk's video patches and actions into ``dim_model``.

@@ -99,8 +99,28 @@ distinctive output is `predict_future` / `predict_future_frames`: **what it
 thinks will happen**, alongside what it plans to do about it.
 
 That is what makes prediction accuracy measurable here in a way the paper never
-reports — in the twin the ground-truth future exists, so predicted frames can be
-compared against what actually happened. Report it **per camera and per horizon
-step, against a held-last-frame baseline**: a tactile gel image is nearly static
-until contact, so a predictor that simply copies the current frame scores well on
-average, and without that bar on the chart the numbers flatter the model.
+reports — the ground-truth future is on disk, so predicted frames can be compared
+against what actually happened:
+
+```bash
+venv/bin/python tool/eval_world_model.py \
+    --checkpoint <run>/checkpoints/last/pretrained_model \
+    --dataset <collection>/<dataset> --episodes 0-9
+```
+
+It reports **per camera and per horizon step, against a held-last-frame
+baseline**, and both of those are load-bearing:
+
+- **Per camera**, because the views do not behave alike. Four of five on this rig
+  are tactile: a gel image is nearly static until contact, then changes fast. One
+  averaged number hides exactly the moment worth predicting.
+- **Against the baseline**, because "nothing changes" is a strong predictor of a
+  static scene. Measured on the sim dataset, simply holding the last frame scores
+  **67.8 dB** on the right wrist camera. A model reported without that bar looks
+  excellent for the wrong reason, so the headline is not PSNR — it is *on how
+  many horizon steps does the model beat holding*.
+
+`untile_cameras` is what makes per-camera reporting possible: the views are tiled
+into one frame for the model, and split back out for scoring, with prediction and
+ground truth both compared at cell resolution so neither is upscaled to meet the
+other.
