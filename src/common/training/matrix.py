@@ -405,4 +405,26 @@ def _destination_refusals(
             f"{row.get('dataset')} is not staged on {where} yet — stage it "
             "before submitting (the launcher does this for you)."
         )
+    out += _device_refusals(dest, where)
     return out
+
+
+def _device_refusals(dest: "dict[str, Any]", where: str) -> "list[str]":
+    """Refuse a run that would quietly become a CPU run.
+
+    ``measured`` is what the machine said about itself when it was asked -- not
+    something the destinations file claims, because that file is checked in and
+    this console runs on more than one machine. A GPU too small makes
+    ``long_vla_real.sh`` fall back to the CPU without failing, which for an
+    80 000-step run means a week of work that looks like it is going fine; the
+    driver calls that "the worst outcome available" and it is the DEFAULT
+    outcome on a 4 GB laptop. An operator who means it says so.
+    """
+    measured = dest.get("measured") or {}
+    if measured.get("device") != "cpu" or dest.get("allow_cpu"):
+        return []
+    return [
+        f"{where} would train on the CPU: {measured.get('why', 'no usable GPU')}. "
+        "A run that falls back to the CPU does not fail, it just never "
+        "finishes — ask for a CPU run outright if that is what you mean."
+    ]

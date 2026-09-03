@@ -402,8 +402,9 @@ an entry there rather than a code change:
 
 | Key | Meaning |
 |---|---|
-| `ssh` | `[user@]host` as SSH reads it — an `~/.ssh/config` alias keeps the key, port and jump host in one place |
-| `kind` | `slurm` (submit an array, ask `squeue`) or `ssh` (start the driver under `nohup`, watch a pid) |
+| `ssh` | `[user@]host` as SSH reads it — an `~/.ssh/config` alias keeps the key, port and jump host in one place. Omitted for `local` |
+| `kind` | `slurm` (submit an array, ask `squeue`), `ssh` (start the driver under `nohup`, watch a pid), or `local` (this machine) |
+| `outputs` | a second place run directories may be, besides `<scratch>/so101_outputs` |
 | `repo` | the `so101_garment` checkout on that machine |
 | `scratch` | where its `HF_LEROBOT_HOME` and `SO101_OUTPUT_DIR` live |
 | `stage` | where staged datasets go; `{scratch}` is substituted |
@@ -450,10 +451,58 @@ The dataset is copied **as it stands**. A collection still being recorded
 therefore trains on a snapshot, so the episode count that went up is shown
 before the launch and kept with the run.
 
-**Runs** lists what this console has launched. *Status* asks the machine
-(`squeue` on a cluster, the pid on a plain box); *Stop* cancels it, and asks
-first. The record is a convenience — the run lives on the machine, and
-`tool/train_launch.py --status` reads the same file.
+### This machine as a destination
+
+`local` is not a lesser destination: the same driver, the same lock (a laptop
+GPU is single-tenant too), the same run directories and the same manifest,
+with no SSH in front of the command. `repo: .` means *this* checkout, so the
+entry is correct on whichever machine the console is running on. Staging is a
+**symlink** rather than a copy — the dataset is already on this disk.
+
+What it can carry is *asked of it* rather than written into the destinations
+file, which is checked in and would otherwise record whoever committed it. So
+the machine line shows the GPU it actually found, and there is one refusal only
+this destination can raise: **a run that would fall back to the CPU**. Under
+8 GB of VRAM the driver picks the CPU and trains anyway, which for an
+80 000-step run is a week of work that looks like it is going fine. Tick *train
+on the CPU anyway* (or pass `--allow-cpu`) if that is really what you mean —
+the box only appears when the machine has said it would.
+
+## Watching a run
+
+The **Runs** panel lists every training run **found on every machine**, not
+just what this console started: nineteen of the twenty-one run directories on
+these machines were started from a terminal, and nine predate the launcher.
+Each card names the run directory, the policy, the machine and when its log was
+last written.
+
+Opening a card reads that log and draws the curve. The list is cheap — one
+call per machine, and the answers are cached — while a log is only fetched for
+what is being watched: the cards you opened, the ones ticked to compare, and
+anything written to in the last few minutes, which is how a live run is
+recognised without reading it. Nothing polls while the tab is off screen.
+
+- **log scale** is on by default. An ACT run here goes 10.1 → 0.075, and on a
+  linear axis everything after the first few hundred steps is one flat line
+  along the floor.
+- **by step / by hours** switches the axis between optimiser steps and
+  wall-clock, which is the one that answers "will this finish tonight".
+- **Ticking two or more** runs overlays their curves on one axis, across
+  machines. That is how a camera ablation, or act-against-diffusion, is read.
+- The state chip is `running`, `done`, `failed`, `stalled` or `idle`.
+  **stalled** is the one worth knowing: a log that has stopped growing relative
+  to its own cadence. thanos rebooted under a run in August and nothing said
+  so — every count still agreed, the log simply stopped.
+- *Stop* is offered only for runs this console launched, since only those have
+  a job id or a pid recorded. It asks first.
+
+Two things about the log decide what the chart can honestly show. Its `step:`
+field is **rounded above a thousand** — 10 500 and 10 600 both print as `10K` —
+so the axis is reconstructed from the logging interval, which lerobot records in
+the configuration it dumps at the head of its own log. And the progress bar that
+carries the exact step is **disabled inside Slurm**, so a CREATE log has no
+exact step in it at all and a thanos one does. Both are read; neither is
+assumed.
 
 ### pi0.5's three slots, and the tiled fingertips
 

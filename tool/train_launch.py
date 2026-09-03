@@ -75,6 +75,7 @@ from common.training.matrix import (  # noqa: E402
     resolved,
     row_refusals,
 )
+from common.training.runs import view_dir_name, with_measurements  # noqa: E402
 
 
 def runs_file() -> Path:
@@ -244,9 +245,11 @@ def push_manifest(
     remote = f"{remote_dir}/{name}.tsv"
     text = format_rows(rows)
     if dry_run:
-        print(
-            f"    $ ssh {dest['ssh']} 'mkdir -p {remote_dir}'  # then write {remote}:"
-        )
+        # show() rather than a hand-written ssh line: on the local machine
+        # there is no ssh, and a dry run that prints a command nobody would run
+        # is worse than no dry run at all.
+        print(f"    $ {show(ssh_argv(dest, f'mkdir -p {remote_dir}'))}")
+        print(f"      # then write {remote}:")
         for line in text.splitlines():
             print(f"        {line}")
         return remote
@@ -414,6 +417,24 @@ def stage(
     if no_stage:
         progress(f"staging : skipped; assuming {remote}")
         return
+    if dest["kind"] == "local":
+        # Nothing to copy: the dataset is already on this disk, and a 750 MB
+        # duplicate of it on the same drive is waste. A view built from the link
+        # symlinks the videos on through, exactly as one built from a staged
+        # copy does.
+        progress(f"staging : linking {remote} -> {source}")
+        run(
+            ssh_argv(
+                dest,
+                f"mkdir -p {stage_dir(dest)} && "
+                f"if [ -e {remote} ] && [ ! -L {remote} ]; then "
+                f"echo 'refusing to replace the real directory at {remote}' >&2; "
+                "exit 1; fi && "
+                f"ln -sfn {shlex.quote(str(source.resolve()))} {remote}",
+            ),
+            dry_run,
+        )
+        return
     there = (
         not dry_run
         and subprocess.run(
@@ -469,9 +490,22 @@ def launch(
         "episodes": info.get("total_episodes"),
         "manifest": remote_manifest,
         "run_tag": run_tag,
+        # Where the run writes. The drivers name it after the camera view, so
+        # it can be derived -- but deriving it is guesswork the moment a row
+        # carries a composite or a --run-tag, and everything that later reads
+        # the progress needs it exactly.
+        "run_dirs": (
+            [run_tag]
+            if run_tag
+            else sorted({view_dir_name(dataset, r["cameras"], info) for r in rows})
+        ),
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
         **launched,
     }
+    if dest.get("measured", {}).get("device"):
+        # Which device it will really use, on a machine that was asked rather
+        # than declared. A CPU run is a decision, and this is where it is kept.
+        record["device"] = dest["measured"]["device"]
     save_runs(runs_file(), remember_run(load_runs(runs_file()), record))
     return record
 
@@ -530,6 +564,13 @@ def main() -> None:
         "--no-probe", action="store_true", help="--status without asking the machines"
     )
     parser.add_argument("--stop", metavar="ID", help="Stop a recorded run")
+    parser.add_argument(
+        "--allow-cpu",
+        action="store_true",
+        help="Train on the CPU when this machine's GPU is too small for the "
+        "driver. Off by default: a run that falls back to the CPU does not "
+        "fail, it just never finishes",
+    )
     args = parser.parse_args()
 
     if args.list_destinations:
@@ -547,7 +588,9 @@ def main() -> None:
         if not getattr(args, required):
             raise SystemExit(f"❌ --{required} is required (or use --status)")
 
-    dest = destination(args.dest, args.destinations)
+    dest = with_measurements(destination(args.dest, args.destinations))
+    if args.allow_cpu:
+        dest = {**dest, "allow_cpu": True}
     collection_dir = Path(args.dir or ".").expanduser()
     info = read_dataset(collection_dir / args.dataset)
 

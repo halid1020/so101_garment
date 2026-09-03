@@ -82,6 +82,46 @@ $('#p-run').onclick = () => setMode('run');
 $('#p-stop').onclick = endTrial;
 $('#p-reset').onclick = resetRun;
 
+// -- how the attempt went ---------------------------------------------
+// The one control on this page that touches nothing: no torque, no mode, no
+// scene. So it is never confirmed and never disabled mid-run — the moment an
+// operator knows how an attempt went is usually before it has finished playing
+// out, and a dialog in front of that verdict would lose it.
+let verdictOff = false;
+
+async function judge(outcome) {
+  try {
+    const said = await j('/api/outcome', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({outcome, notes: $('#p-note').value}),
+    });
+    $('#p-note').value = '';
+    $('#p-err').hidden = true;
+    // Shown straight away rather than waiting for the next poll: the click and
+    // the confirmation belong to the same moment.
+    paintVerdict(said.trial, {[String(said.trial)]: said});
+  } catch (e) {
+    fail(e);
+  }
+}
+
+function paintVerdict(trial, verdicts) {
+  const n = Number.isFinite(trial) ? trial : 1;
+  $('#p-trial').textContent = n;
+  const said = (verdicts || {})[String(n)];
+  const map = {success: '#p-win', failure: '#p-lose', discard: '#p-void'};
+  Object.values(map).forEach((sel) => $(sel).classList.remove('sel'));
+  if (said && map[said.outcome]) $(map[said.outcome]).classList.add('sel');
+  $('#p-verdict-said').textContent = said
+    ? `recorded: ${said.outcome}${said.notes ? ` — ${said.notes}` : ''}`
+    : (verdictOff ? 'this run keeps no log (--no-log)' : '');
+}
+
+$('#p-win').onclick = () => judge('success');
+$('#p-lose').onclick = () => judge('failure');
+$('#p-void').onclick = () => judge('discard');
+
 // -- the task ---------------------------------------------------------
 // A run may be started with no task at all; it waits for this.
 $('#p-task-form').onsubmit = async (ev) => {
@@ -524,6 +564,12 @@ function render(s) {
   $('#p-shown-note').textContent = s.chunk
     ? `the window of plan #${s.chunk.seq}, ${((Date.now() / 1000) - s.chunk.at).toFixed(1)} s ago`
     : 'nothing sent yet';
+  verdictOff = s.logging === false;
+  $('#p-verdict').classList.toggle('off', verdictOff);
+  ['#p-win', '#p-lose', '#p-void'].forEach((sel) => {
+    $(sel).disabled = verdictOff;
+  });
+  paintVerdict(s.trial, s.verdicts);
   jointsTable(s.state, s.commanded);
   grippers(s.state, s.commanded);
   vitals(s);

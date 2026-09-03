@@ -5,9 +5,6 @@
 // the page cannot be more permissive than the thing that actually submits.
 
 let trainingConfig = null;
-let trainingRuns = [];
-let trainingTimer = null;
-let trainingBusy = false;
 
 function trainingVisible() {
   return !document.querySelector('#pane-training').hidden;
@@ -65,9 +62,32 @@ function describeDest() {
   if (!d) { $('#t-dest-detail').textContent = ''; return; }
   const limits = Object.entries(d.limits || {})
     .map(([p, caps]) => `${p} ${Object.entries(caps).map(([k, v]) => `${k}≤${v}`).join(' ')}`);
+  const live = machine(d.name);
+  const measured = live && live.measured;
   $('#t-dest-detail').textContent =
-    `${d.ssh} — stages to ${d.stage}`
-    + (limits.length ? ` — measured ceilings: ${limits.join(', ')}` : '');
+    `${d.kind === 'local' ? 'this machine' : d.ssh} — stages to ${d.stage}`
+    + (limits.length ? ` — measured ceilings: ${limits.join(', ')}` : '')
+    + (live && !live.ok ? ` — ${live.problem}` : '')
+    + (measured && measured.ok ? ` — ${measured.gpu || 'no GPU'}, ${measured.why}` : '');
+  // Only a machine that was ASKED can offer this, and only when the answer is
+  // that it would not use its GPU. A run that falls back to the CPU does not
+  // fail, it just never finishes, so it has to be asked for.
+  $('#t-allow-cpu-row').hidden = !(measured && measured.device === 'cpu');
+}
+
+// Reaching a machine costs an SSH, so this is asked for in the background
+// once the tab is open and the detail line is filled in when it lands -- the
+// form stays usable off the VPN, which is the whole reason Check touches
+// nothing.
+let trainingMachines = [];
+
+async function loadMachines() {
+  trainingMachines = await j('/api/training/machines');
+  describeDest();
+}
+
+function machine(name) {
+  return trainingMachines.find(m => m.name === name);
 }
 
 function trainingRequest() {
@@ -81,6 +101,7 @@ function trainingRequest() {
     batch: $('#t-batch').value.trim() || '-',
     hours: $('#t-hours').value.trim() || null,
     restage: $('#t-restage').checked,
+    allow_cpu: $('#t-allow-cpu').checked,
   };
 }
 
@@ -128,69 +149,20 @@ async function startTraining() {
   });
   // Staging outlives this request, so the dock is where it is watched.
   if (window.pollJobs) pollJobs();
-  loadRuns();
+  $('#t-state').textContent = `staging ${request.dataset} to ${request.dest}…`;
+  // The run appears in the panel as soon as the machine has a log to show.
+  if (window.loadRunList) loadRunList(true).catch(() => {});
 }
 
 async function testReach() {
+  // Re-asks every machine and rebuilds the detail line from the answer, rather
+  // than replacing it with "answered" — what a machine measured about itself
+  // is the more useful half of the reply, and it is already in there.
   $('#t-err').textContent = 'connecting…';
-  const out = await j('/api/training/reach', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({dest: $('#t-dest').value}),
-  });
-  $('#t-err').textContent = out.ok ? '' : out.problem;
-  $('#t-dest-detail').textContent = out.ok
-    ? `${$('#t-dest').value} answered.`
-    : $('#t-dest-detail').textContent;
-}
-
-async function loadRuns() {
-  trainingRuns = await j('/api/training/runs');
-  const box = $('#t-runs');
-  box.innerHTML = '';
-  $('#t-state').textContent = trainingRuns.length
-    ? `${trainingRuns.length} run(s) launched from this console`
-    : 'nothing launched';
-  for (const run of trainingRuns) {
-    const div = document.createElement('div');
-    div.className = 'pad';
-    div.innerHTML = `<b>${run.id}</b> — ${run.dest} — ${run.dataset}`
-      + ` (${run.episodes} ep)<br><span class="muted">`
-      + `${(run.policies || []).join(', ')} · ${run.started}</span>`;
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    const status = document.createElement('span');
-    status.className = 'muted';
-    const ask = document.createElement('button');
-    ask.textContent = 'Status';
-    ask.onclick = async () => {
-      status.textContent = 'asking…';
-      try {
-        const out = await j(`/api/training/runs/${run.id}/status`);
-        status.textContent = out.text;
-        status.className = out.ok ? 'muted' : 'err';
-      } catch (e) { status.textContent = e.message; status.className = 'err'; }
-    };
-    const stop = document.createElement('button');
-    stop.textContent = 'Stop';
-    stop.className = 'danger';
-    stop.onclick = async () => {
-      const yes = await confirmDialog({
-        title: `Stop ${run.id}?`,
-        body: `This cancels the run on ${run.dest}. Checkpoints already written `
-          + `are kept, but the training itself does not resume by itself.`,
-        confirmLabel: 'Stop it',
-      });
-      if (!yes) return;
-      try {
-        const out = await j(`/api/training/runs/${run.id}/stop`, {method: 'POST'});
-        status.textContent = out.stopped;
-      } catch (e) { status.textContent = e.message; status.className = 'err'; }
-    };
-    bar.append(ask, stop, status);
-    div.appendChild(bar);
-    box.appendChild(div);
-  }
+  trainingMachines = await j('/api/training/machines?refresh=1');
+  const live = machine($('#t-dest').value);
+  $('#t-err').textContent = !live || live.ok ? '' : live.problem;
+  describeDest();
 }
 
 $('#t-check').onclick = () =>
@@ -199,35 +171,18 @@ $('#t-reach').onclick = () =>
   testReach().catch(e => { $('#t-err').textContent = e.message; });
 $('#t-start').onclick = () =>
   startTraining().catch(e => { $('#t-err').textContent = e.message; });
-$('#t-refresh').onclick = () =>
-  loadRuns().catch(e => { $('#t-err').textContent = e.message; });
 $('#t-dataset').onchange = describeDataset;
 $('#t-dest').onchange = describeDest;
-
-// Nothing here streams, and asking a machine anything costs an SSH — so the
-// list is refreshed slowly and only while the tab is on screen. A launch in
-// progress is watched in the job dock, which polls on its own.
-async function trainingTick() {
-  if (trainingVisible() && !trainingBusy) {
-    trainingBusy = true;
-    try { await loadRuns(); }
-    catch (e) { /* the next tick tries again */ }
-    finally { trainingBusy = false; }
-  }
-  clearTimeout(trainingTimer);
-  trainingTimer = setTimeout(trainingTick, 10000);
-}
 
 const _trainingPaneShown = window.onPaneShown;
 window.onPaneShown = (name) => {
   if (_trainingPaneShown) _trainingPaneShown(name);
   if (name === 'training') {
     loadTrainingConfig().catch(e => { $('#t-err').textContent = e.message; });
-    loadRuns().catch(() => {});
+    loadMachines().catch(() => {});
   }
 };
 
 window.addEventListener('load', () => {
-  trainingTimer = setTimeout(trainingTick, 1200);
   if (trainingVisible()) window.onPaneShown('training');
 });

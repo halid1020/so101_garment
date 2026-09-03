@@ -962,3 +962,132 @@ class TestTrainingTab(ConsoleTestCase):
             )
         self.assertEqual(response.status, 502)
         self.assertIn("VPN", await response.text())
+
+
+class TestWatchingARun(ConsoleTestCase):
+    """The progress panel, against a run directory on this machine.
+
+    ``kind: local`` is what makes this testable without a GPU box: the routes
+    take exactly the same path they take for thanos or CREATE -- discover, read
+    the log, parse it -- with a shell where the ssh would be. So this exercises
+    the real command, the real filter and the real parser, and only the machine
+    is different.
+    """
+
+    def _local_dest(self, outputs: Path) -> Path:
+        path = Path(self.tmp.name) / "destinations.yaml"
+        path.write_text(
+            "here:\n"
+            "  kind: local\n"
+            f"  repo: {Path.cwd()}\n"
+            f"  scratch: {outputs}\n"
+            "  stage: '{scratch}/local'\n"
+            "  limits: {}\n"
+        )
+        self.app["destinations_file"] = path
+        return path
+
+    def _write_run(self, run="towel__all", policy="act", lines=8, finished=True):
+        """A run directory shaped exactly like the drivers leave one."""
+        outputs = Path(self.tmp.name) / "scratch"
+        logs = outputs / "so101_outputs" / "vla_real_long" / run / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        head = (
+            "INFO 2026-08-24 11:50:53 ot_train.py:222 {'batch_size': 8,\n"
+            " 'log_freq': 100,\n 'save_freq': 10000,\n 'steps': 800,\n"
+            " 'wandb': {'enable': False}}\n"
+        )
+        body = "".join(
+            f"INFO 2026-08-24 11:5{i % 10}:09 ot_train.py:596 step:{(i + 1) * 100} "
+            f"smpl:800 ep:2 epch:0.0{i} loss:{10.0 - i:.3f} grdn:210.415 lr:1.0e-05 "
+            f"updt_s:0.135 data_s:0.013 smp/s:54 mem_gb:5.7{i}\n"
+            for i in range(lines)
+        )
+        end = (
+            "INFO 2026-08-24 14:23:34 ot_train.py:641 Checkpoint policy after step 800\n"
+            "INFO 2026-08-24 14:23:35 ot_train.py:721 End of training\n"
+            if finished
+            else ""
+        )
+        (logs / f"train_{policy}.log").write_text(head + body + end)
+        self._local_dest(outputs)
+        return outputs
+
+    async def test_a_machine_that_is_here_answers_without_a_network(self):
+        self._write_run()
+        machines = await (await self.client.get("/api/training/machines")).json()
+        self.assertEqual([m["name"] for m in machines], ["here"])
+        self.assertTrue(machines[0]["ok"])
+        # And it says what it measured about itself, which no remote does.
+        self.assertIsNotNone(machines[0]["measured"])
+
+    async def test_runs_are_discovered_not_listed_from_what_we_launched(self):
+        # Nine of the run directories on CREATE were started from a terminal.
+        # A viewer that listed only the launcher's own records would show an
+        # empty page beside a full drive.
+        self._write_run(run="towel__all", policy="act")
+        found = await (await self.client.get("/api/training/discovered")).json()
+        self.assertEqual(found["problems"], {})
+        self.assertEqual(len(found["runs"]), 1)
+        entry = found["runs"][0]
+        self.assertEqual(entry["run"], "towel__all")
+        self.assertEqual(entry["policy"], "act")
+        # With nothing recorded, the directory still names its dataset.
+        self.assertEqual(entry["dataset"], "towel")
+
+    async def test_the_curve_comes_back_with_an_exact_step_axis(self):
+        self._write_run(lines=8)
+        response = await self.client.get(
+            "/api/training/progress?dest=here&run=towel__all&policy=act"
+        )
+        body = await response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(
+            [p["step"] for p in body["points"]], list(range(100, 900, 100))
+        )
+        self.assertEqual(body["summary"]["state"], "done")
+        self.assertEqual(body["summary"]["checkpoint"], 800)
+        self.assertEqual(body["problems"], [])
+
+    async def test_a_run_still_going_is_not_called_finished(self):
+        self._write_run(finished=False)
+        body = await (
+            await self.client.get(
+                "/api/training/progress?dest=here&run=towel__all&policy=act"
+            )
+        ).json()
+        self.assertEqual(body["summary"]["state"], "running")
+        self.assertIsNone(body["summary"]["checkpoint"])
+
+    async def test_a_log_that_is_not_there_says_so_rather_than_raising(self):
+        self._write_run()
+        body = await (
+            await self.client.get(
+                "/api/training/progress?dest=here&run=towel__all&policy=diffusion"
+            )
+        ).json()
+        self.assertFalse(body["ok"])
+        self.assertIn("no log at", body["problem"])
+
+    async def test_a_name_that_could_not_be_sent_is_refused(self):
+        self._write_run()
+        response = await self.client.get(
+            "/api/training/progress?dest=here&run=towel;rm -rf /&policy=act"
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("plain name", await response.text())
+
+    async def test_the_answer_is_cached_so_polling_costs_one_read(self):
+        outputs = self._write_run()
+        url = "/api/training/progress?dest=here&run=towel__all&policy=act"
+        first = await (await self.client.get(url)).json()
+        # Change the log underneath: a second call inside the TTL must still
+        # show the first answer, which is what bounds how often several run
+        # cards on a page disturb a machine.
+        log = outputs / "so101_outputs/vla_real_long/towel__all/logs/train_act.log"
+        log.unlink()
+        second = await (await self.client.get(url)).json()
+        self.assertEqual(first["summary"], second["summary"])
+        # ...and asking for it fresh goes back to the file.
+        third = await (await self.client.get(url + "&refresh=1")).json()
+        self.assertFalse(third["ok"])

@@ -157,4 +157,89 @@ cannot accept, or a batch size that machine has been measured to exhaust is
 reported in seconds rather than discovered hours into a reservation. The
 destination's ceilings are recorded only where they were measured, and a
 machine with none simply refuses nothing --- which we prefer to a plausible
-number that would refuse runs that fit and admit runs that do not.
+number that would refuse runs that fit and admit runs that do not. The
+workstation the operator is sitting at is treated as one of these destinations
+rather than as a special case, since the same queueing discipline applies to a
+single accelerator wherever it sits; what differs is only that its capacity
+cannot be written down in advance, because the configuration is shared across
+machines, and so it is asked of the machine at the moment a run is proposed.
+That question earns its place: an accelerator too small does not make training
+fail, it makes it fall back to the processor and continue, which for a run of
+this length is indistinguishable from progress for as long as anyone is willing
+to wait.
+
+\paragraph{Following a run that is elsewhere.} A reservation of this length
+is not a thing to submit and forget, and the two failures worth catching early
+are opposite in character: a loss that is not falling, and a machine that has
+quietly gone away. Neither is visible from a queue's own report, which says
+only that a job exists. We therefore read progress from the record the training
+itself leaves --- its log --- rather than adding instrumentation to the training
+code, and we discover the runs on a machine by looking for them rather than
+listing what was launched from any one place, so that a run started from a
+terminal, by a colleague, or before the launcher existed is followed on the same
+terms as one started from the console. Two properties of that log shape the
+reading. Its step counter is formatted for a human and is therefore rounded
+above a thousand, so the axis of a training curve must be reconstructed from the
+logging interval rather than read off the line; and a progress display, where
+the environment leaves one enabled, carries the exact position while a batch
+scheduler suppresses it entirely. A reader that assumes either is present
+silently mis-draws the curve on the machine where it is not. Staleness is judged
+against the clock of the machine holding the log, never the reader's, since the
+two need not agree; a run whose log has stopped growing relative to its own
+observed cadence is reported as stalled rather than as running, which is the
+state a lost machine leaves behind.
+
+\paragraph{Surviving an interruption.} A run of this length outlives the
+availability of the machine underneath it. We observed a shared workstation
+restart beneath a reservation twice in as many days; the training log in each
+case ends mid-line with no exception, and the only surviving evidence of the
+cause is the machine's own record of when it last booted. What made this costly
+was not the restart but the recovery: a partially complete run directory was
+treated as debris and removed, so a reservation that had run for hours began
+again from nothing. The contract is now that an interruption costs one
+checkpoint interval rather than a run --- a completed run is reused, a partial
+one is resumed from its last checkpoint, and only a directory holding no
+checkpoint at all is discarded. This has a consequence for the reading of
+progress described above. A resumed run appends to the log it already had, and
+the training framework rebuilds its progress display over the steps that
+\emph{remain}, so the second attempt's positions and the ordinal of its logged
+lines both restart. Segmenting the log by the resumption itself recovers the
+true axis; inferring it from the displayed totals does not, because it shifts
+the first attempt's points as well whenever the target has not changed.
+
+\paragraph{Which streams the policy uses.} A platform that records five
+viewpoints and a proprioceptive vector invites the question of what each is
+worth, and that question has two answers which should not be conflated. One
+asks what a policy \emph{could} learn from a given subset, and is answered by
+training a policy per subset and comparing them; it is the more familiar
+experiment and it costs a reservation per cell. The other asks what a policy
+that has already been trained on everything \emph{actually uses}, and is
+answered from the trained weights alone in minutes. The two can disagree, and
+where they do the disagreement is the result: a stream whose removal a
+retrained policy compensates for is not the same as a stream the trained policy
+ignores.
+
+We answer the second by intervention wherever we can, and by inference only
+where intervention cannot reach. Replacing one stream and re-planning is
+behaviour rather than a claim about behaviour, so it is the measurement the
+others are scored against; because there is no neutral substitute for an image,
+the substitute used is reported alongside every result rather than treated as a
+detail. Gradient attribution adds a decomposition whose parts sum to the change
+in the quantity attributed, which is what makes several streams' contributions
+comparable as shares of one whole rather than as unrelated magnitudes. Attention
+weights, where the architecture exposes them, are reported beside these and
+never in place of them. On our own checkpoint the attention mass over each
+camera sits within a small fraction of what that camera's share of the tokens
+would give it regardless of content: across two hundred frames the five cameras
+span a factor of $1.1$ in attention where the behavioural measurement spans a
+factor of forty, and on individual frames the two orderings agree only weakly
+and disagree outright on a third of them. Attention here therefore sorts the
+streams tolerably when averaged and understates the differences between them by
+more than an order of magnitude, which is not the same as measuring importance;
+the gradient decomposition, by contrast, reproduces the behavioural ranking
+closely. We report the departure from what token count alone would predict,
+never the raw mass. Finally, because an attribution averaged over an episode answers
+almost nothing --- a contact sensor cannot contribute while the hand is still
+travelling --- contributions are read against phases segmented from the
+recorded gripper channels themselves, with thresholds drawn from each episode's
+own distribution rather than fixed in advance.

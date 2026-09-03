@@ -45,6 +45,27 @@ The files:
 | `fetch_policies.sh` | the **collection box** (or any machine) | Brings the finished checkpoints back out of scratch, into the layout the policy server and the on-robot runner expect. |
 | `tool/make_camera_view.py` | wherever the dataset is | Builds a **camera view**: the same episodes with only some cameras named. The job calls it; you rarely do. |
 
+## A run that was interrupted
+
+`train_cell` (`test/system/long_vla_real.sh`) meets an existing run directory in
+one of three ways, and only one of them is a reason to delete it: a FINISHED
+checkpoint is reused, a PARTIAL one is **resumed** with `--resume=true` against
+its own `train_config.json`, and only a directory with no checkpoint at all is
+wiped. What an interruption costs is therefore every `save_freq` steps, not the
+whole run.
+
+This is not hypothetical. thanos rebooted under a run at 20:08 on 28 August 2026
+and again the day before; the log simply stops mid-frame with no traceback, and
+`who -b` is the only record of why. The diffusion row lost 1 323 steps of
+100 000 and, before this, would have restarted from zero.
+
+A resume APPENDS to the log it already had, so one file can hold two attempts
+end to end. `common/training/progress.py` reads them apart by the driver's own
+`↻ resuming <run> at step N of M` line — necessary because lerobot builds its
+progress bar with `total = steps - step`, so the second attempt's frames count
+from zero again and its metric lines restart their ordinal.
+
+
 ## Why a CREATE-specific path (not just `install.sh` + the driver)
 
 - **Compute nodes have no internet.** Both ACT and Diffusion Policy build
@@ -473,6 +494,20 @@ so editing `runs.tsv` afterwards cannot shift the indices of a queued array.
 Monitor with `squeue --me`; logs land in the submit directory as
 `real_vla-<arrayjobid>_<taskid>.out`, and the `index_*.md` says which task is
 which run.
+
+`squeue` says only that a job exists. For loss, step, throughput, memory and
+time remaining, open the rig console's **Training** tab: it discovers the run
+directories on this machine and draws the curve
+(`documents/rig_web.md`, "Watching a run"). It reads
+`<scratch>/so101_outputs/vla_real_long/<run>/logs/train_<policy>.log`, which is
+**the only machine-readable metric record that exists** — wandb is disabled
+unconditionally and nothing writes a jsonl or a tensorboard event. Two things
+about that log matter to anything reading it by hand as well:
+
+- `step:` is **rounded above a thousand** (`10K` is anywhere from 9 500 to
+  10 499), so count metric lines and multiply by `log_freq` instead;
+- tqdm is **disabled inside Slurm**, so a cluster log has no progress bar and
+  no exact step, while the same run on a plain GPU box does.
 
 ### 5. Collect results — *login node, then anywhere*
 

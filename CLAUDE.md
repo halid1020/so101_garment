@@ -100,7 +100,11 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
   wire format in `src/common/policy_wire.py`, runbook in
   `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
-  console — see below).
+  console — see below), plus the two that read a deployment back:
+  `policy_report.py` (every rollout's verdicts, pooled per checkpoint — the row
+  an ablation is reported from), `analyse_policy_inputs.py` (what each input
+  stream contributed; see `src/common/analysis/`) and `analysis_slides.py` (the
+  same, as videos, plots and tables for a talk).
 - `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
   controller, and which selection does not. Pure string work over the by-path
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
@@ -143,18 +147,71 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   symlink — it decodes its parts in lockstep and encodes one video with PyAV
   (not the ffmpeg CLI: a compute node has neither). Built by
   `tool/make_camera_view.py`; the cluster job builds one per `cameras` row.
-- `src/common/training/` — where a training run may be sent and whether it can
-  work there. `destinations.py` (pure: `src/conf/train_destinations.yaml`
-  validated, the ssh/rsync argv, and what an unreachable machine should be told
-  — its paths reach the REMOTE shell unquoted so `~`/`$USER` mean the remote
-  home and user, which is why what may appear in them is checked at load) +
-  `matrix.py` (the `runs.tsv` row model in Python, and `row_refusals`, the ONE
-  place a run is judged: unknown policy, a camera the dataset lacks, more
-  cameras than the policy has slots, a batch over a MEASURED ceiling, a policy
-  this LeRobot has never heard of). Two front ends: `tool/train_launch.py` and
-  the console's Training tab, so a run started in the browser is the same run.
-  A `-` in the steps/batch column means "whatever fits here" and takes the
-  destination's measured ceiling; an explicit number is refused if it is over.
+- `src/common/training/` — where a training run may be sent, whether it can
+  work there, and how it is going. `destinations.py` (pure:
+  `src/conf/train_destinations.yaml` validated, the ssh/rsync argv, and what an
+  unreachable machine should be told — its paths reach the REMOTE shell
+  unquoted so `~`/`$USER` mean the remote home and user, which is why what may
+  appear in them is checked at load; `kind: local` is the machine the console
+  is on, and `ssh_argv` returning `bash -lc` is the ONE place that kind is
+  consulted, so staging, the manifest, the dispatch, the status and the stop
+  all work on it unchanged) + `matrix.py` (the `runs.tsv` row model in Python,
+  and `row_refusals`, the ONE place a run is judged: unknown policy, a camera
+  the dataset lacks, more cameras than the policy has slots, a batch over a
+  MEASURED ceiling, a policy this LeRobot has never heard of, and a run that
+  would fall back to the CPU) + `progress.py`/`runs.py` (below). Two front
+  ends: `tool/train_launch.py` and the console's Training tab, so a run started
+  in the browser is the same run. A `-` in the steps/batch column means
+  "whatever fits here" and takes the destination's measured ceiling; an
+  explicit number is refused if it is over.
+- `src/common/training/progress.py` + `runs.py` — how far a run has got. The
+  driver's LOG is the only metric record that exists (`--wandb.enable=false` is
+  unconditional, this LeRobot ships no `SummaryWriter`, and
+  `MetricsTracker.to_dict()` returns exactly the right numbers and is never
+  called). Two measured facts shape the parser: **`step:` is abbreviated**
+  (`format_big_number` prints 10 500 and 10 600 alike as `10K`, so it is a
+  label and cannot be a curve's x-axis), and **tqdm is disabled inside Slurm**
+  (a thanos/local log is a `\r`-blob whose frames carry the exact step; a
+  CREATE log has no exact step at all). So the step is the preceding tqdm
+  frame's where there is one, else the line's ordinal x `log_freq` — exact,
+  because lerobot logs at `step % log_freq == 0` and nowhere else, and both
+  `log_freq` and the total are in the config dump at the head of the log.
+  `runs.py` filters the log ON THE FAR SIDE (5.8 MB of frames -> 190 KB) in one
+  sentinel-delimited command, discovers run directories rather than listing what
+  was launched, and returns **stdout only** — CREATE's stderr is an MFA banner.
+  Staleness is judged from the file's mtime against the REMOTE clock, never the
+  timestamps inside (they carry no timezone).
+- `src/common/analysis/` — **what each input stream contributes to the actions a
+  policy plans**, kept OUT of the inference path (nothing there imports it back)
+  and driven by `tool/analyse_policy_inputs.py`. It rests on one verified fact:
+  both policies reduce their inputs to a vector in which each stream owns a
+  CONTIGUOUS piece — ACT's encoder tokens are `[latent, state, cam x H*W, ...]`
+  in `config.image_features` order (300 tokens a camera at 480x640, 1 502 in
+  total, MEASURED against the loaded backbone), diffusion concatenates
+  per-camera features once per observation step — so `streams.py` is that map,
+  pure and GPU-free, and `check_layout` asserts it tiles. Four methods, because
+  each answers something the others cannot: `perturb.py` (occlusion — behaviour,
+  and the ground truth the rest are SCORED against; leave-one-out measures
+  redundancy, only-one-in measures sufficiency; the baseline is part of the
+  result and every figure names it), `gradients.py` (integrated gradients,
+  whose completeness axiom makes per-stream shares parts of one whole;
+  SmoothGrad; Grad-CAM), `attention.py` (ACT only, per action of the chunk) and
+  `diffusion`'s differences. MEASURED over 206 frames of six episodes on the
+  finished ACT checkpoint: **central 57.1 %, proprioception 36.4 %, the four
+  fingertips 6.5 % together** — but tactile is not flat, running 0.6 % while the
+  arms travel and peaking 21–31 % in every episode, so a mean over an episode
+  hides the whole point. During `opening` proprioception rises to 74.7 %. IG
+  agrees with occlusion at **+0.90**. ACT's cross-attention has almost no
+  DYNAMIC RANGE (pooled shares 0.192–0.219, a 1.14x spread, against occlusion's
+  42x) and per FRAME agrees at only +0.17 with 35 % of frames negative — so the
+  raw mass is dominated by token count and only the deviation from uniform is
+  reported. IG's completeness error at 64 steps averages 0.20 over real frames
+  (0.87 worst) though the shares converge by then. `--sanity` is Adebayo et
+  al.'s model-randomisation test, which this checkpoint passes outright (a
+  randomised policy plans the same chunk whatever it is shown, so every share
+  falls to zero). `slides.py` + `tool/analysis_slides.py` turn a finished run
+  into slide-ready videos (PyAV/H.264, no ffmpeg binary), plots and tables.
+  Runbook: `documents/policy_input_analysis.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.
@@ -203,7 +260,12 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `/twin/at?seq&i`) + `static/policy.{html,css,js}`. Its non-web halves are `common/policy_run.py`
   (the throttle's pure state machine, the per-trial consent and the prefetch
   arithmetic, shared with the control loop) and `common/policy_log.py` (the per-run log under
-  `outputs/policy_runs/`). Runbooks: `documents/rig_web.md`,
+  `outputs/policy_runs/`: ticks, chunks, and `trials.jsonl` — one VERDICT per
+  attempt, given from the page, where a `discard` leaves the denominator rather
+  than counting against the policy and an unjudged run reads as unscored, never
+  as nought per cent; `--log-frames` additionally keeps the frames each plan was
+  drawn from, off by default and required by `analyse_policy_inputs.py`. Read
+  back by `tool/policy_report.py`). Runbooks: `documents/rig_web.md`,
   `documents/remote_policy_inference.md`. Deletion is always available; every irreversible
   one asks in the browser first, and marking an episode (reversible) does
   not. The third tab is called **Signals** in the UI while the module,
@@ -380,6 +442,25 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
     MERGES the dict, so a slot left out of the override survives. It does not
     need dropping anyway — pi0.5 pads a slot with no camera behind it to -1 and
     gives it a zero attention mask, which is what an ablated camera should be.
+  - **A box that reboots mid-run used to cost the WHOLE run.** `train_cell`
+    reused a FINISHED checkpoint but `rm -rf`'d a partial one, while
+    lerobot-train has supported `--resume=true --config_path=<ckpt>/
+    train_config.json` all along. It now decides three ways — reuse, resume,
+    delete only what has no checkpoint — so an interruption costs one
+    `save_freq`. MEASURED: thanos rebooted at 20:08 on 2026-08-28 and again the
+    day before; the log just stops mid-tqdm-frame with no traceback and `who -b`
+    is the only record. A resume APPENDS to the same log, and lerobot builds its
+    bar with `total = steps - step`, so the second attempt's frames count from
+    zero and its metric lines restart their ordinal — `progress.py` reads them
+    apart by the driver's `↻ resuming <run> at step N of M` line, NOT by
+    comparing totals (that moves the first attempt's points too).
+  - **The step in a training log is a label, not a number.** `format_big_number`
+    (`lerobot/utils/utils.py`) divides by a thousand per suffix and rounds, so
+    `step:`, `smpl:` and `ep:` are lossy above 1000 — steps 10 500 and 10 600
+    both print `10K`. `loss`, `grdn`, `lr`, `updt_s`, `data_s`, `smp/s` and
+    `mem_gb` are full precision. Anything plotting a curve must reconstruct the
+    x-axis (`common/training/progress.py`); a plot against `step:` piles two
+    thirds of an 80 000-step run onto eight x-values.
   - **AV1 is not the slow part** (measured, contrary to the obvious guess): our
     recordings decode through `libdav1d` at ~2x the speed of the same clips
     transcoded to H.264, so do not transcode a dataset to "speed up" training.

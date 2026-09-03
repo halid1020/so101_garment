@@ -277,13 +277,23 @@ prune_checkpoints() {
 }
 
 
+# How far a run got, from the checkpoint it last wrote. Checkpoint directories
+# are named for the step (`checkpoints/070000`), and `last` points at the newest
+# one, so its target IS the step. Echoes 0 when there is no checkpoint at all.
+checkpoint_step() {
+    local link="$1/checkpoints/last"
+    [ -e "$link/pretrained_model" ] || { echo 0; return 0; }
+    local name
+    name="$(basename "$(readlink -f "$link")")"
+    case "$name" in
+        ''|*[!0-9]*) echo 0;;      # not a step-named directory: treat as none
+        *) echo "$((10#$name))";;  # 10# so 070000 is 70000, not an octal error
+    esac
+}
+
 train_cell() {
     local policy="$1"
     local out="$RUN_DIR/train/${policy}"
-    if [ -d "$out/checkpoints/last/pretrained_model" ]; then
-        echo "  ↷ reusing checkpoint $out"; return 0
-    fi
-    [ -d "$out" ] && rm -rf "$out"   # lerobot-train refuses an existing dir
     local steps batch save
     case "$policy" in
         act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
@@ -300,6 +310,44 @@ train_cell() {
     # A save interval longer than the run writes no checkpoint at all, which
     # this script would then report as a failed train. Clamp instead.
     [ "$save" -gt "$steps" ] && save="$steps"
+
+    # Three ways to meet an existing run directory, and only one of them is a
+    # reason to delete it. A box that reboots mid-run (this one has, twice) used
+    # to cost the WHOLE run, because a partial directory was wiped and started
+    # again from zero -- while lerobot-train has supported resuming from the last
+    # checkpoint all along.
+    local resume=0 at
+    at="$(checkpoint_step "$out")"
+    if [ "$at" -ge "$steps" ] && [ "$at" -gt 0 ]; then
+        echo "  ↷ reusing checkpoint $out (step $at)"; return 0
+    elif [ "$at" -gt 0 ]; then
+        # Every $save steps is what is at risk, never the run.
+        echo "  ↻ resuming $out at step $at of $steps"
+        resume=1
+    else
+        [ -d "$out" ] && rm -rf "$out"   # lerobot-train refuses an existing dir
+    fi
+
+    # A resume takes its whole configuration from the checkpoint's own
+    # train_config.json -- model, optimiser, scheduler and schedule alike -- so
+    # restating any of that here could only contradict it. What IS restated is
+    # where things are: a staged dataset or a run directory can legitimately
+    # have moved between the crash and the retry, and the step target can
+    # legitimately have been raised.
+    if [ "$resume" = "1" ]; then
+        local args=(
+            --config_path="$out/checkpoints/last/pretrained_model/train_config.json"
+            --resume=true
+            --output_dir="$out"
+            --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"
+            --steps="$steps" --num_workers="$WORKERS"
+        )
+        echo; echo "### resume $policy on $REPO_ID (step $at -> $steps)"
+        lerobot-train "${args[@]}" 2>&1 | tee -a "$RUN_DIR/logs/train_${policy}.log" \
+            || fail "train ($policy, resumed)"
+        [ -d "$out/checkpoints/last/pretrained_model" ] || fail "train ($policy): no checkpoint"
+        return 0
+    fi
 
     local args=(
         --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"

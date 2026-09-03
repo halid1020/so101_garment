@@ -39,7 +39,12 @@ Then, on the rig:
 
     ssh -N -L 8765:127.0.0.1:8765 <user>@<host>          # in another terminal
     venv/bin/python tool/run_policy.py --server http://127.0.0.1:8765 \\
-        --checkpoint <same-name-only-for-the-log> --task "..." --dry-run
+        --task "..." --dry-run
+
+EXACTLY ONE of --server and --checkpoint, never both: the client takes one
+source of actions and refuses two. Which checkpoint answered is reported over
+the wire in /meta and written into the run log, so naming it again on the rig
+would only be a second chance to name it wrongly.
 """
 
 from __future__ import annotations

@@ -208,3 +208,33 @@ button.link:hover { opacity:1; }
   color: #f59e0b;
   font-size: 12px;
 }
+
+/* ── Training progress ────────────────────────────────────────────────────── */
+/* A run card: what a machine is doing, and its curve when it is opened. */
+.runcard { border: 1px solid var(--bd); border-radius: 6px; padding: .4rem .5rem;
+           margin-bottom: .4rem; }
+.runcard .bar { gap: .4rem; }
+.runcard.open { border-color: var(--sel); }
+.runbar { height: 6px; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent);
+          margin: .35rem 0 .25rem; overflow: hidden; }
+.runbar > span { display: block; height: 100%; background: var(--sel); width: 0; }
+.runbar.done > span { background: #16a34a; }
+.runbar.failed > span, .runbar.stalled > span { background: #dc2626; }
+.runstate { font-size: .82em; padding: 0 .4em; border-radius: 3px;
+            border: 1px solid currentColor; }
+.runstate.running { color: #2563eb; }
+.runstate.done    { color: #16a34a; }
+.runstate.failed, .runstate.stalled { color: #dc2626; }
+.runstate.idle    { color: #6b7280; }
+.runnums { font-variant-numeric: tabular-nums; font-size: .88em; }
+.plot { margin: 0 0 .5rem; }
+.plot canvas { width: 100%; height: 180px; display: block; }
+.plot.small canvas { height: 56px; }
+.logtail { font-size: .78em; max-height: 8.5rem; overflow: auto; white-space: pre-wrap;
+           word-break: break-all; opacity: .8; margin: .3rem 0 0; }
+.swatch { display: inline-block; width: .7em; height: .7em; border-radius: 2px;
+          margin-right: .3em; vertical-align: baseline; }
+/* .pair is already the two-column grid used elsewhere; only the caption
+   needs sizing here. */
+.runcard .pair > figure { min-width: 0; }
+.runcard .pair figcaption { font-size: .78em; }

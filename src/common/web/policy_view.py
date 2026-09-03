@@ -36,6 +36,7 @@ import numpy as np
 from aiohttp import web  # type: ignore[import]
 
 from common.chunking import STRATEGIES
+from common.policy_log import OUTCOMES
 from common.recording.monitor_server import (
     BOUNDARY,
     DEFAULT_MAX_WIDTH,
@@ -143,6 +144,18 @@ class PolicyView:
         #: can close one measurement segment and open the next. Set by the
         #: caller; a no-op if nobody cares.
         self.on_splice_change = lambda _settings: None
+        #: Called with ``(outcome, notes)`` when somebody judges the attempt now
+        #: in force. Set by the caller to reach the run log; returning None means
+        #: this run keeps no log, and the page is told so rather than being left
+        #: to believe a verdict was written.
+        self.on_outcome = lambda _outcome, _notes: None
+        #: The verdicts given during this run, by trial number, so the page can
+        #: show what it already recorded after a reload.
+        self.verdicts: "dict[int, dict]" = {}
+        #: Whether a run log is being kept at all. A ``--no-log`` run has
+        #: nowhere to put a verdict, and the page says so rather than offering
+        #: three buttons whose clicks go nowhere.
+        self.logging = False
         self.control = control
         self.source = source
         self.data_manager = data_manager
@@ -176,6 +189,7 @@ class PolicyView:
                 web.post("/api/reset", self.handle_reset),
                 web.post("/api/strategy", self.handle_strategy),
                 web.post("/api/task", self.handle_task),
+                web.post("/api/outcome", self.handle_outcome),
                 web.get("/stream/{name}.mjpg", self.handle_mjpeg),
                 web.get("/shown/{name}.jpg", self.handle_shown),
                 web.get("/twin/at", self.handle_twin),
@@ -276,6 +290,9 @@ class PolicyView:
             "resettable": self.resettable,
             "twin_url": (None if self._twin is None else self._twin.url),
             "twin_error": self.twin_error,
+            "outcomes": list(OUTCOMES),
+            "logging": bool(self.logging),
+            "verdicts": {str(k): v for k, v in self.verdicts.items()},
         }
 
     async def handle_strategy(self, request: web.Request) -> web.Response:
@@ -317,6 +334,32 @@ class PolicyView:
         setter(task)
         self.control.publish(task=task)
         return web.json_response({"task": task})
+
+    async def handle_outcome(self, request: web.Request) -> web.Response:
+        """Record how the attempt now in force went. Writes nothing itself.
+
+        Judging an attempt is the one control here that does not touch the rig:
+        it moves nothing, ends nothing and is allowed at any time, including
+        mid-run, because the moment an operator knows how it went is usually
+        before it has finished playing out. It is also the only one that can be
+        given twice -- see ``RunLog.trial_outcome`` for why the later verdict
+        wins rather than the earlier one being erased.
+        """
+        body = await request.json()
+        outcome = str(body.get("outcome", "")).strip()
+        notes = str(body.get("notes", "")).strip()
+        if outcome not in OUTCOMES:
+            raise web.HTTPBadRequest(
+                text=f"outcome must be one of {', '.join(OUTCOMES)}"
+            )
+        record = self.on_outcome(outcome, notes)
+        if record is None:
+            raise web.HTTPBadRequest(
+                text="this run keeps no log (--no-log), so a verdict has "
+                "nowhere to be written"
+            )
+        self.verdicts[int(record["trial"])] = record
+        return web.json_response(record)
 
     async def handle_index(self, _request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "policy.html")
