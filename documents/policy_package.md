@@ -89,6 +89,44 @@ for no gain. Code we actually write is linted like everything else.
 If a port ever needs a real edit, it stops being a port: take the file out of
 `_port.PORTS` and say why.
 
+## `flowmatch` — the control for the world model
+
+`so101_flowmatch` is not a port. It is pi0.5's objective and action expert on the
+diffusion policy's vision trunk, and it exists to be a **control**: it shares
+DreamZero's training objective (conditional flow matching over an action chunk)
+and shares nothing else — no video prediction, no world model, no pretrained
+video prior. The gap between the two therefore measures the world-modelling
+objective with everything else held fixed, which is a cleaner comparison than
+either paper runs against its own baselines.
+
+The vision trunk is `DiffusionRgbEncoder` imported from
+`so101_policies.diffusion` — that literal class, not a reimplementation — so
+"same backbone" is a fact rather than a claim. Its eight config fields are
+spelled exactly as the diffusion policy spells them, because the encoder reads
+them off our config object.
+
+### The time convention, which is the thing to get right
+
+There are two flow-matching conventions in the literature and they run time in
+**opposite directions**:
+
+| | t = 0 | t = 1 | sampling |
+|---|---|---|---|
+| pi0.5 / openpi (`modeling_pi05.py:744`) | clean action | noise | integrates *down* |
+| DreamZero (arXiv 2602.15922, Eq. 2) | noise | clean sample | integrates *up* |
+
+A model trained in one and sampled in the other **trains perfectly and emits
+noise** — the loss curve looks entirely healthy the whole way.
+`so101_policies/common/flow.py` implements pi0.5's and says so at the top;
+anything else that uses it must state its own direction at the call site.
+
+MEASURED on a policy overfitted to one batch for 1500 steps: **9.1 %** of target
+scale at 5 inference steps in the right direction, **359.9 %** in the wrong one.
+`test/unit/test_flow_matching.py` guards the algebra cheaply (integrating the
+true velocity is exact in one step, because the path is straight);
+`test/integration/test_flowmatch_learns.py` guards the trained network, with the
+wrong-direction control included so the assertion cannot pass vacuously.
+
 ## Reading a checkpoint through the other implementation
 
 A checkpoint records the type that trained it, and that name picks the class.

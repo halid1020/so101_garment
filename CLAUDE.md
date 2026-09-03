@@ -239,7 +239,16 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   reads a checkpoint through the other member of a ported pair by symlinking its
   weights and rewriting one field — which is how a repo-local pi0.5 gets a base
   to finetune, since `lerobot/pi05_base` says `pi05` and would otherwise quietly
-  load LeRobot's class. See `documents/policy_package.md`.
+  load LeRobot's class. `flowmatch` is NOT a port: pi0.5's objective and action
+  expert on the diffusion policy's `DiffusionRgbEncoder` (that literal class, so
+  "same backbone" is a fact), built as the CONTROL for the world action model --
+  it shares DreamZero's loss and shares nothing else. **The two flow-matching
+  time conventions run OPPOSITE ways** and a model trained in one and sampled in
+  the other trains perfectly and emits noise: pi0.5 puts noise at t=1 and
+  integrates DOWN, DreamZero's Eq. 2 puts the clean sample at t=1 and integrates
+  UP. `common/flow.py` implements pi0.5's and says so; MEASURED 9.1 % of target
+  scale the right way against 359.9 % the wrong way. See
+  `documents/policy_package.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.

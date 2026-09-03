@@ -75,6 +75,10 @@ PI05_STEPS=30000; PI05_BATCH=8; PI05_SAVE=5000
 FASTWAM_STEPS=30000; FASTWAM_BATCH=8; FASTWAM_SAVE=5000
 FASTWAM_IMAGE_SIZE="[224,448]"
 FASTWAM_HORIZON=32; FASTWAM_N_ACTION_STEPS=10
+# Flow matching: pi0.5's objective trained from scratch on a small ResNet trunk,
+# so it wants more steps than a finetune and fewer than ACT, and a batch this
+# card has room for.
+FLOWMATCH_STEPS=60000; FLOWMATCH_BATCH=16; FLOWMATCH_SAVE=10000
 PI05_BASE="${SO101_PI05_BASE:-lerobot/pi05_base}"
 PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GPU)
 # Which pi0.5 slot each camera is fed into, as camera=slot pairs. Empty means
@@ -310,7 +314,8 @@ train_cell() {
         diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
         pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam, or so101_ prefixed)";;
+        flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch, or so101_ prefixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.

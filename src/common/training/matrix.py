@@ -102,6 +102,22 @@ for _ported, _from in (
     }
 del _ported, _from
 
+# pi0.5's flow-matching objective on the diffusion policy's ResNet trunk, and
+# nothing else -- no video model, no language. It is the CONTROL for the world
+# action model: it shares DreamZero's loss and shares nothing else, so the gap
+# between them measures the world-modelling objective with the rest held fixed.
+# Small enough to train from scratch in hours, hence a step count between ACT's
+# and pi0.5's rather than either.
+POLICIES["so101_flowmatch"] = {
+    "steps": 60000,
+    "batch": 16,
+    "hours": 24,
+    "scratch": True,
+    "max_cameras": None,
+    "local": True,
+    "module": "so101_policies.flowmatch",
+}
+
 POLICY_NAMES = tuple(POLICIES)
 
 #: A repo-local policy and the LeRobot one it was ported from. Their checkpoints
