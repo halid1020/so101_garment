@@ -212,6 +212,34 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   falls to zero). `slides.py` + `tool/analysis_slides.py` turn a finished run
   into slide-ready videos (PyAV/H.264, no ffmpeg binary), plots and tables.
   Runbook: `documents/policy_input_analysis.md`.
+- `src/so101_policies/` — every policy this rig trains, implemented HERE rather
+  than in LeRobot. Importing the package registers each one with LeRobot's
+  draccus registry, which is the whole mechanism: `lerobot.configs.parser.wrap`
+  loads whatever `--policy.discover_packages_path` names BEFORE draccus parses,
+  and `get_policy_class` then resolves our names by the same route as its own
+  (`policies/factory.py:606`). So one policy defined here is trainable by
+  `lerobot-train`, servable by `policy_server.py`, fetchable by
+  `fetch_policies.sh` and analysable by `common/analysis/` with no change to any
+  of them. The naming is a CONTRACT, not a style — LeRobot derives the policy
+  class and the processor factory from the config class name, mechanically:
+  `<x>/configuration_<x>.py` holds `So101<X>Config` registered as `so101_<x>`,
+  `modeling_<x>.py` holds `So101<X>Policy`, `processor_<x>.py` holds
+  `make_so101_<x>_pre_post_processors`. `act`, `diffusion` and `pi05` are
+  **ports**: the upstream module tree MOVED, not rewritten, so `state_dict` keys
+  are identical and the finished 80 000-step ACT checkpoint loads into either
+  implementation (VERIFIED bitwise, not in principle —
+  `test/integration/test_policy_ports_checkpoints.py`). `_port.py` holds every
+  rule the port applies and `tool/port_policies.py --check` re-derives them, so
+  a LeRobot bump is one command and a hand-edit fails
+  `test/unit/test_policy_ports.py` immediately. The three ported directories are
+  excluded from black/isort/flake8/mypy in `.pre-commit-config.yaml` for that
+  reason — reformatting them would destroy the diff against upstream that makes
+  the claim checkable. `loading.py` registers the package for any loader
+  (`eval_sim_policy.load_policy` calls it), and `tool/retarget_checkpoint.py`
+  reads a checkpoint through the other member of a ported pair by symlinking its
+  weights and rewriting one field — which is how a repo-local pi0.5 gets a base
+  to finetune, since `lerobot/pi05_base` says `pi05` and would otherwise quietly
+  load LeRobot's class. See `documents/policy_package.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.

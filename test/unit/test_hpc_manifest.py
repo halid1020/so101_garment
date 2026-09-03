@@ -22,12 +22,17 @@ import time
 import unittest
 from pathlib import Path
 
+from common.training.matrix import POLICY_NAMES
+
 REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "hpc" / "runs.tsv"
 SUBMIT = REPO / "hpc" / "submit_real.sh"
 SBATCH = REPO / "hpc" / "create_real_vla.sbatch"
 
-POLICIES = {"act", "diffusion", "pi05", "fastwam"}
+# Read from the registry rather than repeated here: a second list drifts the day
+# a policy is added, and its failure ("unknown policy") points at the manifest
+# rather than at itself.
+POLICIES = set(POLICY_NAMES)
 
 
 def manifest_rows(path: Path) -> "list[list[str]]":

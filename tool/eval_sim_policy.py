@@ -94,6 +94,13 @@ def load_policy(checkpoint: str, device: str) -> tuple[Any, Any, Any, str]:
     from lerobot.configs import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
+    from so101_policies.loading import ensure_registered
+
+    # A checkpoint trained by one of this repo's own policies names a type that
+    # only exists once so101_policies has been imported. Without this the load
+    # fails as "unknown policy", which says nothing about the real cause.
+    ensure_registered()
+
     cfg = PreTrainedConfig.from_pretrained(checkpoint)
     cfg.pretrained_path = checkpoint
     cfg.device = device

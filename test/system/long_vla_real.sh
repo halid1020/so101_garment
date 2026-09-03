@@ -233,7 +233,14 @@ echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy.py)."
 echo "======================================================================"
 
 fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
-have() { case ",$ONLY," in *",$1,"*) return 0;; *) return 1;; esac; }
+# A policy implemented in THIS repo (src/so101_policies/) rather than in LeRobot.
+# These are ports -- the upstream module tree moved, not rewritten -- so each one
+# wants exactly the flags its upstream twin wants, plus the one that makes
+# lerobot-train import our package before it parses anything. Deriving the base
+# instead of repeating every branch is what keeps the two from drifting apart.
+base_policy()  { case "$1" in so101_*) echo "${1#so101_}";; *) echo "$1";; esac; }
+local_policy() { case "$1" in so101_*) return 0;; *) return 1;; esac; }
+SO101_POLICY_PACKAGE="so101_policies"
 
 # lerobot-train writes a checkpoint every --save_freq steps and never removes an
 # older one, so a 100k-step diffusion run parks ten ~3.3 GB copies and an 80k-step
@@ -294,13 +301,16 @@ checkpoint_step() {
 train_cell() {
     local policy="$1"
     local out="$RUN_DIR/train/${policy}"
-    local steps batch save
-    case "$policy" in
+    local steps batch save base
+    # A ported policy takes its twin's budget on purpose: a run meant to compare
+    # the two implementations must not also change the number of steps.
+    base="$(base_policy "$policy")"
+    case "$base" in
         act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
         diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
         pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam)";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam, or so101_ prefixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.
@@ -357,10 +367,22 @@ train_cell() {
         --policy.device="$DEVICE"
         --steps="$steps" --batch_size="$batch" --save_freq="$save"
     )
-    if [ "$policy" = "pi05" ]; then
+    if [ "$base" = "pi05" ]; then
         # A finetune names its base instead of a policy type; the type comes
-        # from the base's own config.
-        args+=(--policy.path="$PI05_BASE")
+        # from the base's own config. Which is exactly why a REPO-LOCAL pi0.5
+        # needs the base retargeted first: lerobot/pi05_base says "pi05", so
+        # --policy.path to it would quietly load LeRobot's class no matter what
+        # --only asked for. The retarget symlinks the 14.5 GB of weights and
+        # rewrites one field.
+        local base_path="$PI05_BASE"
+        if local_policy "$policy"; then
+            base_path="$("$PY" "$REPO_ROOT/tool/retarget_checkpoint.py" \
+                --checkpoint "$PI05_BASE" --to "$policy" \
+                --out "$RUN_DIR/base_${policy}" --print-path)" \
+                || fail "retarget $PI05_BASE to $policy"
+            echo "  base retargeted: $base_path"
+        fi
+        args+=(--policy.path="$base_path")
         [ "$PI05_LORA_R" != "0" ] && args+=(--peft.r="$PI05_LORA_R")
         # Map THIS dataset's cameras onto the base's slots. Asking the dataset
         # rather than hard-coding it is what makes a camera ablation work: a
@@ -379,11 +401,18 @@ train_cell() {
     else
         args+=(--policy.type="$policy")
     fi
-    if [ "$policy" = "diffusion" ]; then
+    # lerobot.configs.parser.wrap loads this package before draccus parses, which
+    # is what puts our policy in the registry that --policy.type is looked up in.
+    # Without it the run dies on an unknown policy type having reserved the GPU.
+    if local_policy "$policy"; then
+        args+=(--policy.discover_packages_path="$SO101_POLICY_PACKAGE")
+        echo "  policy package: $SO101_POLICY_PACKAGE (implemented in this repo)"
+    fi
+    if [ "$base" = "diffusion" ]; then
         args+=(--policy.pretrained_backbone_weights=null
                --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]")
     fi
-    if [ "$policy" = "fastwam" ]; then
+    if [ "$base" = "fastwam" ]; then
         # The action and proprioception widths come from THIS dataset rather
         # than from the docs' 7 and 8: this rig has two arms, so both are 12,
         # and a mismatch is a shape error thousands of steps in.
@@ -412,10 +441,13 @@ PYDIM
 }
 
 if [ "$SKIP_TRAIN" = "0" ]; then
-    have act && { train_cell act; prune_checkpoints act; }
-    have diffusion && { train_cell diffusion; prune_checkpoints diffusion; }
-    have pi05 && { train_cell pi05; prune_checkpoints pi05; }
-    have fastwam && { train_cell fastwam; prune_checkpoints fastwam; }
+    # A loop rather than a ladder: a ladder silently IGNORED any policy nobody
+    # had added a line for, so --only <typo> trained nothing and reported success.
+    # train_cell's own case refuses a name it does not know.
+    for policy in ${ONLY//,/ }; do
+        train_cell "$policy"
+        prune_checkpoints "$policy"
+    done
 fi
 
 # ---- report ----------------------------------------------------------

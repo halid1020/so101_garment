@@ -79,7 +79,39 @@ POLICIES: "dict[str, dict[str, Any]]" = {
     },
 }
 
+# The same three policies again, implemented in THIS repo rather than in LeRobot
+# (src/so101_policies/). They are ports -- the upstream module tree moved, not
+# rewritten -- so they train to the same shape and their checkpoints are
+# interchangeable with the originals; test/unit/test_policy_ports.py and
+# test/integration/test_policy_ports_checkpoints.py hold them to that. They take
+# their sizing from the policy they were ported from, because a run that means to
+# compare the two must not also change the budget.
+#
+# `local` marks a policy this repo defines. It changes only what an unavailable
+# one is told to do about it: bumping LeRobot cannot fix a module that lives here.
+for _ported, _from in (
+    ("so101_act", "act"),
+    ("so101_diffusion", "diffusion"),
+    ("so101_pi05", "pi05"),
+):
+    POLICIES[_ported] = {
+        **POLICIES[_from],
+        "local": True,
+        "ported_from": _from,
+        "module": f"so101_policies.{_from}",
+    }
+del _ported, _from
+
 POLICY_NAMES = tuple(POLICIES)
+
+#: A repo-local policy and the LeRobot one it was ported from. Their checkpoints
+#: load into either implementation, so this is also the map a loader uses to read
+#: one through the other.
+PORTED_FROM = {
+    name: spec["ported_from"]
+    for name, spec in POLICIES.items()
+    if spec.get("ported_from")
+}
 
 
 class MatrixError(ValueError):
@@ -126,8 +158,21 @@ def lerobot_commit() -> "str | None":
 
 
 def unavailable_message(policy: str) -> str:
-    """Why this policy cannot be trained here, and what to do about it."""
-    module = (POLICIES.get(policy) or {}).get("module") or f"lerobot.policies.{policy}"
+    """Why this policy cannot be trained here, and what to do about it.
+
+    The advice differs by where the policy lives. Telling someone to bump
+    LeRobot when the missing module is one of ours would send them to the wrong
+    repository entirely, which is the whole reason `local` exists.
+    """
+    spec = POLICIES.get(policy) or {}
+    module = spec.get("module") or f"lerobot.policies.{policy}"
+    if spec.get("local"):
+        return (
+            f"{policy} is implemented in this repo and its module {module} did "
+            "not import. That is a checkout or a PYTHONPATH problem, not a "
+            "LeRobot version: check src/so101_policies/ is present and that "
+            "`source setup.sh` has run on the machine that trains."
+        )
     have = lerobot_commit()
     at = f"the one this venv installed is at {have}" if have else "this one is not"
     return (

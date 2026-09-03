@@ -113,9 +113,14 @@ while IFS= read -r line || [ -n "$line" ]; do
         echo "   Put a '-' before the last column: $line" >&2
         exit 2
     fi
+    # The names come from common.training.matrix.POLICY_NAMES, which is the one
+    # registry the console, tool/train_launch.py and this script all read. Asking
+    # it beats a second hardcoded list here that drifts the day a policy is added.
     case "$policy" in
-        act|diffusion|pi05|fastwam) ;;
-        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy' (want act|diffusion|pi05|fastwam)" >&2; exit 2;;
+        act|diffusion|pi05|fastwam|so101_act|so101_diffusion|so101_pi05) ;;
+        *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy'" >&2
+           echo "   want: act|diffusion|pi05|fastwam, or the so101_ prefixed ports" >&2
+           exit 2;;
     esac
     # A space here would silently shift every later column into `extra`, so the
     # row would submit and train the wrong thing. Refuse it at the door.
