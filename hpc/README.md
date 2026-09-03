@@ -298,6 +298,19 @@ That covers **two separate repos**, and they are not equally easy:
 | `lerobot/pi05_base` | the ~14.5 GB base weights | **No** (checked 2026-08-24) |
 | `google/paligemma-3b-pt-224` | pi0.5's tokenizer/processor (~22 MB of it) | **Yes — `gated: manual`** |
 
+**`dreamzero` needs one too.** The world action model encodes frames with a
+frozen image VAE, `stabilityai/sd-vae-ft-mse` (~330 MB), fetched from the Hub on
+first use. Ungated, but a compute node running `HF_HUB_OFFLINE=1` cannot fetch
+it, and the failure arrives after the GPU is reserved. Stage it on the login
+node the same way:
+
+```bash
+venv/bin/python -c "from diffusers import AutoencoderKL; AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse')"
+```
+
+It is frozen and identical in every run, so it is deliberately excluded from the
+checkpoint rather than written into each save.
+
 `lerobot/pi05_base` is a plain download needing no token — but it ships **no
 tokenizer**, and LeRobot builds pi0.5's tokenizer from the PaliGemma repo *by
 name*. That repo is manually gated: the Hub answers **401** for its files unless

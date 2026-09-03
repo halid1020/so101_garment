@@ -117,7 +117,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     # registry the console, tool/train_launch.py and this script all read. Asking
     # it beats a second hardcoded list here that drifts the day a policy is added.
     case "$policy" in
-        act|diffusion|pi05|fastwam|so101_act|so101_diffusion|so101_pi05|so101_flowmatch) ;;
+        act|diffusion|pi05|fastwam|so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero) ;;
         *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy'" >&2
            echo "   want: act|diffusion|pi05|fastwam, or the so101_ prefixed ports" >&2
            exit 2;;

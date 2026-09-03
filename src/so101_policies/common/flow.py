@@ -131,3 +131,54 @@ def integrate(
         )
         x_t = x_t + dt * velocity_fn(x_t, time)
     return x_t
+
+
+# ── DreamZero's schedules ────────────────────────────────────────────────────
+#
+# CONVERSION WARNING. The paper states its schedules in ITS convention, where
+# t = 1 is the CLEAN sample. This module runs pi0.5's, where t = 1 is NOISE. So
+# every timestep quoted from the paper is mirrored here as ``t_ours = 1 - t_paper``
+# and the constants below are given in OUR convention with the paper's number in
+# the comment. Copying the paper's formula in unchanged is the single most
+# likely way to break this model, and it would show up only as poor results.
+
+#: DreamZero-Flash biases the VIDEO timestep towards high noise (Eq. 5).
+#: The paper writes ``t_video = 1 - eta`` with ``eta ~ Beta(7, 1)``, giving
+#: ``E[t_video] = 0.125`` in ITS convention -- predominantly noisy. Mirrored into
+#: ours that is simply ``t_video ~ Beta(7, 1)``, mean 0.875, likewise noisy.
+FLASH_ALPHA = 7.0
+FLASH_BETA = 1.0
+
+
+def sample_uniform_time(
+    batch: int, device: "torch.device | str", generator: "torch.Generator | None" = None
+) -> torch.Tensor:
+    """``t ~ U(0, 1)``: DreamZero's coupled schedule (Eq. 4), and Flash's actions."""
+    return torch.rand(batch, device=device, generator=generator, dtype=torch.float32)
+
+
+def sample_flash_times(
+    batch: int,
+    device: "torch.device | str",
+    alpha: float = FLASH_ALPHA,
+    beta: float = FLASH_BETA,
+    generator: "torch.Generator | None" = None,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """``(video_time, action_time)`` for DreamZero-Flash (Eq. 5), in OUR convention.
+
+    The point of decoupling: at inference with very few denoising steps, actions
+    must be read off a video context that is still noisy. Training them at the
+    SAME timestep never shows the model that situation, so the paper biases video
+    towards noise while leaving actions uniform. It recovers most of the 4-step
+    quality at 1 step -- 74% against 52% on their table bussing task.
+
+    Returns video time near 1 (noisy) and action time spread over the interval.
+    """
+    video = torch._standard_gamma(  # type: ignore[call-arg]
+        torch.full((batch,), alpha), generator=generator
+    )
+    other = torch._standard_gamma(  # type: ignore[call-arg]
+        torch.full((batch,), beta), generator=generator
+    )
+    video_time = (video / (video + other)).to(device=device, dtype=torch.float32)
+    return video_time, sample_uniform_time(batch, device, generator=generator)

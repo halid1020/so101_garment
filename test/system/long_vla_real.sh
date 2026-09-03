@@ -79,6 +79,12 @@ FASTWAM_HORIZON=32; FASTWAM_N_ACTION_STEPS=10
 # so it wants more steps than a finetune and fewer than ACT, and a batch this
 # card has room for.
 FLOWMATCH_STEPS=60000; FLOWMATCH_BATCH=16; FLOWMATCH_SAVE=10000
+# The world action model predicts video as well as actions, so a step costs more
+# than a plain policy's and the batch is smaller for the same card.
+DREAMZERO_STEPS=80000; DREAMZERO_BATCH=8; DREAMZERO_SAVE=10000
+# Off by default: the coupled schedule is the paper's DreamZero, and Flash is the
+# variant measured against it.
+DREAMZERO_FLASH=0
 PI05_BASE="${SO101_PI05_BASE:-lerobot/pi05_base}"
 PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GPU)
 # Which pi0.5 slot each camera is fed into, as camera=slot pairs. Empty means
@@ -116,6 +122,7 @@ while [ $# -gt 0 ]; do
         --fastwam-image-size) FASTWAM_IMAGE_SIZE="$2"; shift 2;;
         --slots) PI05_SLOTS="$2"; shift 2;;
         --lora-r) PI05_LORA_R="$2"; shift 2;;
+        --dreamzero-flash) DREAMZERO_FLASH=1; shift;;
         --steps) STEPS="$2"; shift 2;;
         --batch) BATCH="$2"; shift 2;;
         --save-freq) SAVE_FREQ="$2"; shift 2;;
@@ -315,7 +322,8 @@ train_cell() {
         pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
         flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch, or so101_ prefixed)";;
+        dreamzero) steps="$DREAMZERO_STEPS"; batch="$DREAMZERO_BATCH"; save="$DREAMZERO_SAVE";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, or so101_ prefixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.
@@ -416,6 +424,10 @@ train_cell() {
     if [ "$base" = "diffusion" ]; then
         args+=(--policy.pretrained_backbone_weights=null
                --policy.resize_shape="[$DIFF_RESIZE_H,$DIFF_RESIZE_W]")
+    fi
+    if [ "$base" = "dreamzero" ] && [ "$DREAMZERO_FLASH" = "1" ]; then
+        args+=(--policy.flash=true)
+        echo "  dreamzero    : Flash (decoupled video/action noise schedules)"
     fi
     if [ "$base" = "fastwam" ]; then
         # The action and proprioception widths come from THIS dataset rather

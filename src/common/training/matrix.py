@@ -118,6 +118,21 @@ POLICIES["so101_flowmatch"] = {
     "module": "so101_policies.flowmatch",
 }
 
+# The world action model. Jointly predicts future video and actions under one
+# flow-matching objective, so it learns dynamics from every consecutive frame
+# pair rather than only from what an action label reveals. A video target makes
+# each step dearer than a plain policy's, hence the smaller batch, and it is
+# trained from scratch, hence the step count.
+POLICIES["so101_dreamzero"] = {
+    "steps": 80000,
+    "batch": 8,
+    "hours": 36,
+    "scratch": True,
+    "max_cameras": None,
+    "local": True,
+    "module": "so101_policies.dreamzero",
+}
+
 POLICY_NAMES = tuple(POLICIES)
 
 #: A repo-local policy and the LeRobot one it was ported from. Their checkpoints

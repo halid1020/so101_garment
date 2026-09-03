@@ -247,8 +247,19 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   the other trains perfectly and emits noise: pi0.5 puts noise at t=1 and
   integrates DOWN, DreamZero's Eq. 2 puts the clean sample at t=1 and integrates
   UP. `common/flow.py` implements pi0.5's and says so; MEASURED 9.1 % of target
-  scale the right way against 359.9 % the wrong way. See
-  `documents/policy_package.md`.
+  scale the right way against 359.9 % the wrong way. `dreamzero` is the WORLD
+  ACTION MODEL (arXiv 2602.15922) at rig scale: video latents and actions
+  denoised together under one flow-matching objective, chunk-wise teacher
+  forcing, a between-chunk causal mask (`masking.py`, Fig. 14 — printable and
+  tested, because the first draft LEAKED a chunk's own clean twin, which is the
+  answer it predicts), KV-cache rollout, Flash's decoupled schedules and
+  Savitzky-Golay smoothing. It trains from scratch with NO video pretraining, on
+  a per-frame VAE rather than Wan's temporal one, at ~1/100th the parameters —
+  so it tests the paper's CLAIMS, not its numbers. A chunk's frames and actions
+  must span the same interval; `frame_stride` subsamples to make that true and a
+  `chunk_size` that will not divide is refused. The frozen VAE is fetched from
+  the Hub and kept OUT of the checkpoint. See `documents/policy_package.md` and
+  `documents/world_action_model.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.

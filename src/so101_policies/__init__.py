@@ -28,6 +28,8 @@ from so101_policies.act.configuration_act import So101ActConfig
 from so101_policies.act.modeling_act import So101ActPolicy
 from so101_policies.diffusion.configuration_diffusion import So101DiffusionConfig
 from so101_policies.diffusion.modeling_diffusion import So101DiffusionPolicy
+from so101_policies.dreamzero.configuration_dreamzero import So101DreamzeroConfig
+from so101_policies.dreamzero.modeling_dreamzero import So101DreamzeroPolicy
 from so101_policies.flowmatch.configuration_flowmatch import So101FlowmatchConfig
 from so101_policies.flowmatch.modeling_flowmatch import So101FlowmatchPolicy
 from so101_policies.pi05.configuration_pi05 import So101Pi05Config
@@ -48,6 +50,8 @@ __all__ = [
     "So101ActPolicy",
     "So101DiffusionConfig",
     "So101DiffusionPolicy",
+    "So101DreamzeroConfig",
+    "So101DreamzeroPolicy",
     "So101FlowmatchConfig",
     "So101FlowmatchPolicy",
     "So101Pi05Config",
