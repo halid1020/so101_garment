@@ -210,3 +210,36 @@ def check_layout(spans: "list[Span]", total: int, latent: int = 0) -> "list[str]
     if cursor != total:
         problems.append(f"layout covers {cursor} of {total} entries")
     return problems
+
+
+def token_layout(cfg, tokens_per_camera: int) -> "list[Span]":
+    """Where each stream sits in a TOKEN model's prefix (pi0.5 and friends).
+
+    The third architecture this rig trains. Unlike ACT -- which puts one latent
+    and one state token ahead of the cameras -- and unlike diffusion -- which
+    flattens everything into one vector per observation step -- a token model
+    lays its cameras out as image patches followed by the state, all in one
+    sequence, in ``image_features`` order.
+
+    ``tokens_per_camera`` is the patch count of whatever vision tower the
+    checkpoint carries and is MEASURED from the loaded model, never derived from
+    the declared image shape: the tower resizes to its own resolution first, so
+    the declared shape says nothing about how many patches come out.
+
+    Returns spans over the PREFIX only. The action tokens that follow are the
+    output, not conditioning, so they own no span here.
+    """
+    cameras = camera_names(cfg)
+    state = getattr(cfg, "robot_state_feature", None)
+    state_dim = int(state.shape[0]) if state is not None else 0
+
+    spans = {s.name: Span(s, []) for s in streams_of(cfg)}
+    cursor = 0
+    for name in cameras:
+        spans[name].ranges.append((cursor, cursor + tokens_per_camera))
+        cursor += tokens_per_camera
+    if state_dim and "state" in spans:
+        # One token, however wide the state vector: a token model projects the
+        # whole state into the model width rather than giving each joint a slot.
+        spans["state"].ranges.append((cursor, cursor + 1))
+    return list(spans.values())

@@ -34,8 +34,51 @@ of one camera to the head of the next and the figure still looks plausible.
 step and flattens, so a camera owns a contiguous run *within each step block*
 and the blocks repeat `n_obs_steps` times.
 
+**pi0.5 and the flow-matching policies** lay their cameras out as image patches
+followed by the state, in one token sequence. The patch count per camera is
+measured from the vision tower, never derived from the declared image shape —
+the tower resizes to its own resolution first, so a 480×640 camera and a 224×224
+one produce the same number of tokens.
+
 `src/common/analysis/streams.py` is that map, and it is pure: a config in, index
-ranges out, no torch and no GPU.
+ranges out, no torch and no GPU. Which of the three layouts applies is decided
+by **structure, not by name** (`Inference.family`), so a policy ported into
+`so101_policies` answers the same as the original.
+
+## Pinning a stochastic sampler — read this before believing a diffusion number
+
+ACT plans deterministically at eval, so an occlusion delta is entirely the
+perturbation's doing. **Diffusion is not, and the difference is not small.**
+
+MEASURED on a real checkpoint, in commanded units:
+
+| | mean abs difference |
+|---|---|
+| two plans from **one unchanged observation**, unpinned | **32.15** |
+| the same two plans, pinned | **0.000000** |
+| occluding the overhead camera, pinned | **0.39** |
+
+So the sampler's own variation is **83× the effect being measured**. Unpinned,
+an occlusion study on a diffusion policy measures essentially nothing but noise,
+and it does so while producing perfectly plausible-looking bars. (This
+checkpoint is deliberately under-trained, so its true sensitivity is at the low
+end; the sampler's contribution, however, is set by the action scale and does
+not shrink with training.) The same applies to pi0.5 and to anything else that
+integrates from noise.
+
+The obvious fix — hand the policy a fixed starting `noise`, which both
+`predict_action_chunk` and `generate_actions` accept — **is not enough**, and
+believing it is leaves the numbers just as wrong while looking fixed. The
+scheduler is a `DDPMScheduler`: it draws fresh noise at *every* denoising step,
+and only `conditional_sample` takes a `generator`, which neither wrapper
+forwards. Verified: identical starting noise and identical conditioning still
+give different plans.
+
+So `common/analysis/diffusion.py` pins the **global** RNG and restores the state
+it found, which covers every draw wherever it happens and leaves no side effect
+on the rest of the process. `diffusion.plan()` is the call to use anywhere two
+plans are compared; `sampler_spread()` reports the floor — an effect smaller
+than the sampler's own wobble is not a finding.
 
 ## The four methods
 

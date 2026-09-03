@@ -9,7 +9,7 @@ observation to give one chunk, repeatably, with nothing remembered in between.
 plan and touches no queue -- and for ACT it is deterministic: the VAE latent is
 sampled only ``if self.training``, so at eval it is zeros and two identical
 observations give identical chunks. Diffusion is not; see
-:mod:`common.analysis.diffusion`.
+:mod:`common.analysis.diffusion`, which pins its starting noise.
 
 Actions come back UNNORMALISED, in the units the arms are commanded in
 (degrees, and gripper open fraction), because a per-joint number is meant to be
@@ -32,6 +32,7 @@ from common.analysis.streams import (
     check_layout,
     diffusion_layout,
     streams_of,
+    token_layout,
 )
 
 
@@ -82,6 +83,23 @@ class Inference:
             feature_map = backbone(probe)["feature_map"]
         return int(feature_map.shape[-2] * feature_map.shape[-1])
 
+    def tokens_per_camera_vlm(self) -> int:
+        """A token model's patch count per camera. MEASURED from the tower.
+
+        The declared image shape says nothing about it -- pi0.5 resizes to its
+        own resolution before patching, so a 480x640 camera and a 224x224 one
+        produce the same number of tokens. Asking the model is the only way to
+        be right, and a count that is wrong does not raise: it silently
+        attributes the tail of one camera to the head of the next.
+        """
+        config = self.cfg
+        size = int(getattr(config, "resize_imgs_with_padding", None) or 224)
+        if isinstance(getattr(config, "resize_imgs_with_padding", None), (tuple, list)):
+            size = int(config.resize_imgs_with_padding[0])
+        patch = int(getattr(config, "patch_size", 0) or 14)
+        side = max(size // patch, 1)
+        return side * side
+
     def camera_feature_dim(self) -> int:
         """Diffusion's per-camera encoder width, from the model rather than a guess."""
         encoder = getattr(getattr(self.policy, "diffusion", None), "rgb_encoder", None)
@@ -95,15 +113,40 @@ class Inference:
         return int(getattr(encoder, "feature_dim", 0))
 
     def layout(self):
-        """Where each stream sits in this policy's conditioning, and whether it tiles."""
-        if self.type == "act":
+        """Where each stream sits in this policy's conditioning, and whether it tiles.
+
+        Three architectures, named. The fork used to be ``act`` versus
+        everything-else-is-diffusion, which handed a pi0.5 checkpoint a layout of
+        zero-width camera spans and reported it as a tiling problem rather than
+        as the wrong question.
+        """
+        family = self.family()
+        if family == "act":
             per_camera = self.tokens_per_camera()
             spans = act_layout(self.cfg, per_camera)
             total = 1 + sum(s.width for s in spans)
             return spans, total, check_layout(spans, total, latent=1)
-        spans = diffusion_layout(self.cfg, self.camera_feature_dim())
+        if family == "diffusion":
+            spans = diffusion_layout(self.cfg, self.camera_feature_dim())
+            total = sum(s.width for s in spans)
+            return spans, total, check_layout(spans, total)
+        spans = token_layout(self.cfg, self.tokens_per_camera_vlm())
         total = sum(s.width for s in spans)
         return spans, total, check_layout(spans, total)
+
+    def family(self) -> str:
+        """Which conditioning layout this checkpoint has: act, diffusion or tokens.
+
+        By STRUCTURE, not by name, so a ported policy (``so101_act``) and a
+        renamed one answer the same as the original. The name is the hint; the
+        module tree is the evidence.
+        """
+        policy = self.policy
+        if getattr(getattr(policy, "model", None), "backbone", None) is not None:
+            return "act"
+        if getattr(policy, "diffusion", None) is not None:
+            return "diffusion"
+        return "tokens"
 
     # -- the forward pass ---------------------------------------------------
     def batch(self, state: np.ndarray, images: "dict[str, np.ndarray]") -> dict:
@@ -161,10 +204,27 @@ class Inference:
         return self.chunk_from(self.batch(state, images))
 
     def chunk_from(self, batch: dict) -> np.ndarray:
-        """As :meth:`chunk`, from an already-built batch (so it can be perturbed)."""
+        """As :meth:`chunk`, from an already-built batch (so it can be perturbed).
+
+        Note this does NOT pin a stochastic sampler: two calls on one diffusion
+        checkpoint differ by roughly the size of the effect an ablation measures.
+        Use :func:`common.analysis.diffusion.plan` where that matters, which is
+        everywhere two plans are compared.
+        """
+        with self.torch.no_grad():
+            planned = self.policy.predict_action_chunk(batch)
+        return self.finish_chunk(planned)
+
+    def finish_chunk(self, planned) -> np.ndarray:
+        """A raw plan to unnormalised numpy: ``(n_action_steps, action_dim)``.
+
+        Separate so that a seeded forward pass and an ordinary one cannot
+        disagree about the trimming or the unnormalising -- the post-processor
+        takes one step at a time, and handing it a whole chunk is the obvious
+        thing to try and is wrong.
+        """
         torch = self.torch
         with torch.no_grad():
-            planned = self.policy.predict_action_chunk(batch)
             if planned.ndim != 3:
                 planned = planned.unsqueeze(0)
             planned = planned[:, : self.n_action_steps, :]
@@ -173,6 +233,12 @@ class Inference:
         return np.asarray(out.detach().to("cpu"), dtype=np.float32).reshape(
             -1, self.action_dim
         )
+
+    def stochastic(self) -> bool:
+        """Does this checkpoint's sampler start from noise? See analysis.diffusion."""
+        from common.analysis.diffusion import is_stochastic
+
+        return is_stochastic(self)
 
     # -- the same forward pass, differentiable ------------------------------
     def chunk_tensor(self, batch: dict):
@@ -192,13 +258,33 @@ class Inference:
         torch = self.torch
         batch = dict(batch)
         keys = list(self.cfg.image_features)
-        if self.type == "act":
+        family = self.family()
+        if family == "act":
             batch[OBS_IMAGES] = [batch[k] for k in keys]
             return self.policy.model(batch)[0]
-        # Diffusion stacks along a camera axis instead of using a list, and its
-        # sampler is stochastic -- see common.analysis.diffusion for the seed.
-        batch[OBS_IMAGES] = torch.stack([batch[k] for k in keys], dim=-4)
-        return self.policy.diffusion.generate_actions(batch)
+        if family == "diffusion":
+            # Diffusion stacks along a camera axis instead of using a list, and
+            # its sampler is stochastic -- common.analysis.diffusion pins the
+            # noise so a gradient is taken through one fixed path, not a lottery.
+            batch[OBS_IMAGES] = torch.stack([batch[k] for k in keys], dim=-4)
+            from common.analysis.diffusion import pinned
+
+            # A gradient has to be taken through ONE fixed sampling path, not a
+            # lottery -- the scheduler draws fresh noise at every denoising step.
+            with pinned(self):
+                return self.policy.diffusion.generate_actions(batch)
+        # A token model (pi0.5 and the flow-matching policies here) has no single
+        # module to reach past the no_grad wrapper for, so the wrapper is
+        # bypassed directly. That is legitimate -- the decorator is there to save
+        # memory in a rollout, not to mark the pass as non-differentiable.
+        inner = getattr(self.policy.predict_action_chunk, "__wrapped__", None)
+        if inner is None:
+            raise RuntimeError(
+                f"cannot take a gradient through a '{self.type}' policy: its "
+                "predict_action_chunk is not a torch.no_grad wrapper, so there "
+                "is nothing to unwrap. Occlusion still works and needs no gradient."
+            )
+        return inner(self.policy, dict(batch))
 
     def image_keys(self) -> "list[str]":
         """The batch keys the cameras arrive under, in the policy's own order."""

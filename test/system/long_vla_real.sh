@@ -59,8 +59,15 @@ ONLY="act,diffusion"         # comma list of policies to train
 DATASET_ROOT=""; DIR=""; NAME=""; REPO_ID=""
 DEVICE=""                    # empty => auto-pick (>=8 GB VRAM -> cuda)
 RUN_NAME="vla_real_long_$(date +%Y%m%d_%H%M%S)"
-ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=10000
-DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=10000
+# The save interval is an exposure window, not a disk-space setting: a machine
+# that goes down loses everything since its last checkpoint, and the resume path
+# can only pick up from one that exists. thanos has gone down UNCLEANLY four
+# times since 2026-08-23 -- no shutdown record, no journal entry, no OOM, no Xid
+# -- and three of those killed a training run, the last of them 33 seconds after
+# training began. Until that is fixed, 5000 steps caps the loss at roughly an
+# hour instead of three. KEEP_CKPTS still prunes, so this costs no disk.
+ACT_STEPS=80000;  ACT_BATCH=8;   ACT_SAVE=5000
+DIFF_STEPS=100000; DIFF_BATCH=32; DIFF_SAVE=5000
 DIFF_RESIZE_H=180; DIFF_RESIZE_W=240   # downsample cams for the diffusion encoder (3:4)
 # pi0.5 finetunes a pretrained base: far fewer steps than training from scratch,
 # and a small batch because 4.1B params leave little room even under LoRA.
