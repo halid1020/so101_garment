@@ -104,7 +104,16 @@ STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
 # training speed. Follow the CPUs the job was actually given rather than a fixed
 # 4: reading a dataset over network scratch with too few workers is the likeliest
 # explanation for the cube-pnp ACT run that hit its 24 h wall time at ~10 s/step.
-WORKERS="${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || echo 4)}"
+#
+# But a box can also have MORE cores than its power supply can feed alongside the
+# card. thanos has 24 of them, and every diffusion run started there at 24
+# workers took the whole machine down within minutes -- twice, at batch 32 and
+# at batch 16, with nothing in the journal either time (see the SAVE comment
+# above). At 8 workers and batch 8 the same run held 366 W of a 480 W limit and
+# trained through. Which of the two reductions mattered is NOT isolated, so this
+# knob exists to vary one of them without touching the other, and without
+# pretending to be Slurm on a machine that has none.
+WORKERS="${SO101_LOADER_WORKERS:-${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || echo 4)}}"
 # How many step checkpoints to keep per policy once training finishes (see
 # prune_checkpoints below for why this is not simply "all of them"). 0 => keep all.
 KEEP_CKPTS=2

@@ -51,16 +51,29 @@ thanos:
   #                            steps, final train loss 0.075
   #   diffusion batch 16  -> mem_gb 8.70, 4.79 step/s (resized to 180x240, so
   #                            it reads the cameras far smaller than act does)
+  #   diffusion batch 8   -> 7.28 GB, 7.9 step/s, 395 W peak of a 480 W limit,
+  #                            59 C, at EIGHT loader workers rather than 24
   #   pi05      batch ?   -> not yet measured at five cameras. The 21.5-of-23.5
   #                          GiB figure often quoted for it was taken with
   #                          THREE, and activations scale with camera count.
-  # Nothing is refused here yet because nothing measured has been exceeded: the
-  # largest of these, act at batch 8, leaves better than half the card free.
-  # Add a limit when a real ceiling is observed, not before -- a guessed number
-  # refuses rows that fit and admits rows that do not. In particular diffusion
-  # is at batch 16 rather than the driver's 32 because the box went down
-  # uncleanly seconds after a batch-32 row started; at 8.70 GB for 16, memory
-  # was very unlikely to have been the cause, and 32 is not refused here.
+  # Nothing is refused here on memory, because memory has never been the
+  # binding constraint: the largest of these, act at batch 8, leaves better
+  # than half the card free. Add a limit when a real ceiling is observed, not
+  # before -- a guessed number refuses rows that fit and admits rows that do
+  # not.
+  #
+  # WHAT DOES BIND HERE IS POWER, and it is a fact about the box rather than
+  # the card. Every diffusion run started with the driver's default of one
+  # loader worker per core (24 of them) took the WHOLE MACHINE down within
+  # minutes -- at batch 32 in under a minute, at batch 16 in about six -- with
+  # no shutdown record, no journal entry, no OOM and no Xid either time, which
+  # is what a power cut looks like from software and what a panic or a thermal
+  # trip does not. act at batch 8 never did, and it is the lightest reader
+  # here: roughly 150 video-frame decodes a second against diffusion's 750 at
+  # batch 16. At 8 workers and batch 8 the same diffusion row trained through.
+  # WHICH of the two reductions mattered is NOT isolated -- both were made at
+  # once, deliberately, because a second crash costs a reboot. SO101_LOADER_WORKERS
+  # in test/system/long_vla_real.sh is the knob for varying one alone.
   #
   # This card is also SINGLE-TENANT in practice: hpc/gpu_box_run.sh holds a lock
   # so the matrix runs one row at a time, and a policy server left serving on it
