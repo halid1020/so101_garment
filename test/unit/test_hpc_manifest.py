@@ -534,6 +534,40 @@ class TestGpuBoxRunNames(unittest.TestCase):
         args = self.driver_args()
         self.assertEqual(args[args.index("--run-name") + 1], "probe5cam")
 
+    def test_an_explicit_scratch_beats_an_inherited_output_dir(self):
+        """The failure this prevents is a run that trains and cannot be found.
+
+        setup.sh sets SO101_OUTPUT_DIR to the repo's own outputs/ on every
+        machine, so a run launched from a shell that had sourced it used to go
+        there rather than under --scratch -- while the console discovers a
+        machine's runs at <scratch>/so101_outputs and would list nothing.
+        MEASURED on thanos while setting up the port-parity pair.
+        """
+        result = self.run_box("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = [x for x in result.stdout.splitlines() if x.startswith("   outputs :")]
+        self.assertEqual(line, [f"   outputs : {self.scratch}/so101_outputs"])
+
+    def test_with_no_scratch_the_environment_still_decides(self):
+        # Nobody said otherwise, so an operator who exported it deliberately
+        # keeps getting what they asked for.
+        env = dict(os.environ)
+        env["SO101_OUTPUT_DIR"] = str(self.tmp / "chosen")
+        env.pop("SO101_RUN_TAG", None)
+        result = subprocess.run(
+            [
+                "bash",
+                str(self.repo / "hpc" / "gpu_box_run.sh"),
+                "--manifest",
+                str(self.manifest),
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertIn(f"   outputs : {self.tmp / 'chosen'}", result.stdout)
+
     def test_the_environment_spelling_matches_the_cluster_script(self):
         # create_real_vla.sbatch reads SO101_RUN_TAG; two executors that took
         # different names for one idea is how a probe ends up in the real run's

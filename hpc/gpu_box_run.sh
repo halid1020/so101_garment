@@ -50,6 +50,7 @@ cd "$REPO_ROOT"
 
 MANIFEST=""
 SCRATCH="${SO101_SCRATCH:-$HOME/.cache/huggingface/lerobot}"
+SCRATCH_GIVEN=0   # was --scratch passed? see OUT_ROOT below
 # What the run directory is called. Normally the camera VIEW, so a rerun after
 # a crash reuses the checkpoints the previous attempt wrote -- which is exactly
 # why a THROWAWAY run needs its own name: long_vla_real.sh skips a policy whose
@@ -70,7 +71,7 @@ ORIGINAL_ARGS=("$@")
 while [ $# -gt 0 ]; do
     case "$1" in
         --manifest) MANIFEST="$2"; shift 2;;
-        --scratch) SCRATCH="$2"; shift 2;;
+        --scratch) SCRATCH="$2"; SCRATCH_GIVEN=1; shift 2;;
         --run-tag) RUN_TAG="$2"; shift 2;;
         --detach) DETACH=1; shift;;
         --wait) WAIT=1; shift;;
@@ -82,7 +83,19 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-OUT_ROOT="${SO101_OUTPUT_DIR:-$SCRATCH/so101_outputs}"
+# An explicit --scratch WINS over an inherited SO101_OUTPUT_DIR. It did not,
+# and the consequence was silent: setup.sh sets SO101_OUTPUT_DIR to the repo's
+# own outputs/ on every machine, so a run launched from a shell that had sourced
+# it went there instead of under --scratch -- while the console discovers a
+# machine's runs at <scratch>/so101_outputs and would never list it. The run
+# trains fine and simply cannot be found, which is the worst shape a bug of this
+# kind can take. With no --scratch the environment still decides, because then
+# nobody has said otherwise.
+if [ "$SCRATCH_GIVEN" = "1" ]; then
+    OUT_ROOT="$SCRATCH/so101_outputs"
+else
+    OUT_ROOT="${SO101_OUTPUT_DIR:-$SCRATCH/so101_outputs}"
+fi
 RUN_STATE="$OUT_ROOT/gpu_box"
 LOCK="$RUN_STATE/run.lock"
 PIDFILE="$RUN_STATE/run.pid"
