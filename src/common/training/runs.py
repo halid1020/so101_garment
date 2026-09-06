@@ -31,6 +31,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from common.training import metrics
 from common.training.destinations import ssh_argv
 
 SENTINEL = "@@so101:"
@@ -46,6 +47,13 @@ KEEP_PATTERN = (
     # curve would show one continuous run where in fact the box rebooted and the
     # driver picked the checkpoint back up.
     "|resuming"
+    # Everything that is a curve but not one of lerobot's tracker fields: our
+    # own metric channel (common.training.metrics.SENTINEL) and lerobot's
+    # held-out validation loss, whose line says `step 12000: eval_loss=...`
+    # with a space and so matches none of the above. This grep runs on the FAR
+    # side, so a metric missing from here is a metric that never leaves the
+    # machine -- there is no second chance to notice it downstream.
+    f"|{metrics.SENTINEL}|eval_loss="
 )
 
 # 20 000 lines is 2 000 000 steps at the log_freq this repo uses; the longest
@@ -53,6 +61,13 @@ KEEP_PATTERN = (
 # them the ordinal the CREATE step count is derived from.
 BODY_LINES = 20000
 HEAD_BYTES = 20000
+# A resolved train_config.json is a few tens of kilobytes; pi0.5's, the largest
+# here, is under 40. Capped anyway, because this arrives over the same link the
+# log does and a truncated diff is better than a stalled panel.
+CONFIG_BYTES = 200000
+# One eval_sim_policy result. `episodes` is the long part -- one record per
+# rollout -- and the summary this reads is at the top level beside it.
+VAL_BYTES = 100000
 READ_TIMEOUT_S = 90.0
 DISCOVER_TIMEOUT_S = 60.0
 
@@ -141,14 +156,46 @@ def run_dir_name(record: "dict[str, Any]") -> str:
     return run_dir_names(record)[0]
 
 
-def log_path(out_root: str, run: str, policy: str) -> str:
-    return f"{out_root}/vla_real_long/{run}/logs/train_{policy}.log"
+#: The two trees a driver writes into. They are shaped differently and that
+#: difference is load-bearing, so it is named rather than pattern-matched: a
+#: REAL run is one policy under `<run>/train/<policy>`, while a SIM run is a
+#: cell `<run>/<mode>/<task>/<policy>` and its log is named for all three. Only
+#: a sim run has per-checkpoint rollout results, because only a simulator can
+#: roll a checkpoint out without a person and a robot in the room.
+REAL_TREE = "vla_real_long"
+SIM_TREE = "vla_sim_long"
+
+
+def log_path(out_root: str, run: str, policy: str, tree: str = REAL_TREE) -> str:
+    return f"{out_root}/{tree}/{run}/logs/train_{policy}.log"
+
+
+def cell_path(out_root: str, run: str, cell: str, tree: str = SIM_TREE) -> str:
+    """The directory a sim cell's checkpoints and rollout results live in."""
+    return f"{out_root}/{tree}/{run}/{cell}"
+
+
+def config_path(out_root: str, run: str, policy: str, tree: str = REAL_TREE) -> str:
+    """Where the run's resolved configuration is, for the runs table's diff.
+
+    lerobot writes it into every checkpoint, so the last one has it. A run with
+    no checkpoint yet has no config to compare, which is correct -- nothing has
+    been committed to disk to compare against.
+    """
+    train = (
+        f"{out_root}/{tree}/{run}/train/{policy}"
+        if tree == REAL_TREE
+        else f"{out_root}/{tree}/{run}/{policy}"
+    )
+    return f"{train}/checkpoints/last/pretrained_model/train_config.json"
 
 
 # ── The commands ─────────────────────────────────────────────────────────────
 
 
-def read_command(path: str) -> str:
+def read_command(
+    path: str, config: "str | None" = None, cell: "str | None" = None
+) -> str:
     """One command that returns everything needed to draw a run. Pure.
 
     The sections are the configuration lerobot dumps before training, the
@@ -156,8 +203,14 @@ def read_command(path: str) -> str:
     still shows), and the file's size and modification time against the
     machine's OWN clock -- which is how staleness is judged, because the
     timestamps inside the log carry no timezone.
+
+    ``config`` and ``cell`` ride along in the SAME command rather than costing
+    a second SSH: the resolved ``train_config.json`` the runs table diffs, and
+    -- for a sim cell only -- the per-checkpoint rollout results
+    ``long_vla_sim.sh`` writes. Both are small and both are optional; a run
+    without them simply has no such section.
     """
-    return (
+    parts = [
         f"L={path}; "
         'if [ ! -f "$L" ]; then echo \'' + SENTINEL + "missing'; exit 0; fi; "
         "echo '" + SENTINEL + f'head\'; head -c {HEAD_BYTES} "$L"; echo; '
@@ -171,7 +224,25 @@ def read_command(path: str) -> str:
         # stalled.
         "tail -c 4000 \"$L\" | tr '\\r' '\\n' | tail -n 4; echo; "
         "echo '" + SENTINEL + "stat'; stat -c '%s %Y' \"$L\"; date +%s"
-    )
+    ]
+    if config:
+        parts.append(
+            "echo '" + SENTINEL + "config'; "
+            f"[ -f {config} ] && head -c {CONFIG_BYTES} {config}; echo"
+        )
+    if cell:
+        # One JSON per checkpoint, each prefixed by the file it came from so
+        # the step is read from the NAME rather than guessed from the order --
+        # a shell glob sorts step_5000 before step_10000.
+        parts.append(
+            "echo '" + SENTINEL + "val'; "
+            f"for v in {cell}/val/step_*.json {cell}/selected.json; do "
+            '[ -f "$v" ] && { echo "VAL $v"; head -c '
+            + str(VAL_BYTES)
+            + ' "$v"; echo; }; '
+            "done"
+        )
+    return "; ".join(parts)
 
 
 def discover_command(dest: "dict[str, Any]") -> str:
@@ -184,10 +255,24 @@ def discover_command(dest: "dict[str, Any]") -> str:
     parts = []
     for root in out_roots(dest):
         parts.append(
-            f"for f in {root}/vla_real_long/*/logs/train_*.log; do "
+            f"for f in {root}/{REAL_TREE}/*/logs/train_*.log; do "
             '[ -f "$f" ] && stat -c "LOG %n %s %Y" "$f"; done; '
-            f"for c in {root}/vla_real_long/*/train/*/checkpoints/last; do "
+            f"for c in {root}/{REAL_TREE}/*/train/*/checkpoints/last; do "
             '[ -e "$c" ] && echo "CKPT $c $(basename "$(readlink -f "$c")")"; done'
+        )
+        # The sim tree, whose cells are <mode>/<task>/<policy> rather than
+        # train/<policy>. The CELL lines are what pair a log with its rollout
+        # results: the log is named train_<mode>_<task>_<policy>.log, and every
+        # one of those three may itself contain an underscore (handover_split,
+        # so101_act), so the name cannot be split back apart -- the directory
+        # is listed instead and the name rebuilt FROM it.
+        parts.append(
+            f"for f in {root}/{SIM_TREE}/*/logs/train_*.log; do "
+            '[ -f "$f" ] && stat -c "SIMLOG %n %s %Y" "$f"; done; '
+            f"for d in {root}/{SIM_TREE}/*/*/*/*/; do "
+            '[ -d "$d/checkpoints" ] && echo "CELL $d"; done; '
+            f"for c in {root}/{SIM_TREE}/*/*/*/*/checkpoints/last; do "
+            '[ -e "$c" ] && echo "SIMCKPT $c $(basename "$(readlink -f "$c")")"; done'
         )
     return "; ".join(parts) + "; echo '" + SENTINEL + "now'; date +%s"
 
@@ -261,11 +346,72 @@ def parse_sections(text: str) -> "dict[str, str]":
     return out
 
 
-def read_log(dest: "dict[str, Any]", path: str) -> "dict[str, Any]":
+_VAL_FILE_RE = re.compile(
+    r"^VAL \S+/(?:step_(?P<step>\d+)|(?P<selected>selected))\.json$"
+)
+
+
+def parse_val_results(text: str) -> "dict[str, Any]":
+    """Per-checkpoint rollout results -> series, plus which one was selected.
+
+    SIM ONLY, and deliberately so. ``long_vla_sim.sh`` rolls every checkpoint
+    out on the validation seeds because a simulator can; the real rig's
+    equivalent is a person judging trials in ``outputs/policy_runs``, which is
+    a different thing measured at a different time and must never be drawn on
+    this axis as though the training loop had produced it.
+    """
+    import json
+
+    series: "dict[str, list[dict[str, Any]]]" = {}
+    selected: "dict[str, Any] | None" = None
+    current: "re.Match[str] | None" = None
+    buffer: "list[str]" = []
+
+    def flush() -> None:
+        nonlocal selected
+        if current is None or not buffer:
+            return
+        try:
+            payload = json.loads("\n".join(buffer))
+        except (ValueError, TypeError):
+            return
+        if current.group("selected"):
+            selected = payload
+            return
+        step = int(current.group("step"))
+        for key, name in (
+            ("success_rate", "eval/success_rate"),
+            ("place_err_mm_mean", "eval/place_err_mm"),
+        ):
+            value = payload.get(key)
+            if isinstance(value, (int, float)):
+                series.setdefault(name, []).append(
+                    {"step": step, "time": None, "value": float(value)}
+                )
+
+    for line in text.splitlines():
+        header = _VAL_FILE_RE.match(line.strip())
+        if header:
+            flush()
+            current, buffer = header, []
+        elif current is not None:
+            buffer.append(line)
+    flush()
+    for entries in series.values():
+        entries.sort(key=lambda e: e["step"])
+    return {"series": series, "selected": selected}
+
+
+def read_log(
+    dest: "dict[str, Any]",
+    path: str,
+    config: "str | None" = None,
+    cell: "str | None" = None,
+) -> "dict[str, Any]":
     """Fetch and parse one training log. Blocking; never raises."""
     from common.training.progress import parse_log, parse_markers, parse_tqdm, summarise
 
-    text, problem = run_command(dest, read_command(path))
+    text, problem = run_command(dest, read_command(path, config=config, cell=cell))
     if problem:
         return {"ok": False, "problem": problem, "path": path}
     sections = parse_sections(text)
@@ -296,30 +442,92 @@ def read_log(dest: "dict[str, Any]", path: str) -> "dict[str, Any]":
         marks = parse_markers(tail_text)
         parsed["finished"] = parsed["finished"] or marks["finished"]
         parsed["failure"] = parsed["failure"] or marks["failure"]
+
+    val = parse_val_results(sections.get("val") or "")
+    if val["series"]:
+        parsed["series"].update(val["series"])
+        parsed["metrics"] = sorted(parsed["series"])
+
     return {
         "ok": True,
         "path": path,
         "summary": summarise(parsed, age_s=age),
         "points": parsed["points"],
+        "series": parsed["series"],
+        "metrics": parsed["metrics"],
         "problems": parsed["problems"],
         "failure": parsed["failure"],
         "checkpoints": parsed["checkpoints"],
+        "config": parse_config(sections.get("config") or ""),
+        "selected": val["selected"],
         "tail": sections.get("tail", "").strip(),
     }
 
 
+def parse_config(text: str) -> "dict[str, Any] | None":
+    """The resolved ``train_config.json``, flattened for the runs table's diff.
+
+    Flattened to dotted keys because the interesting differences between two
+    runs are nested (``policy.type``, ``dataset.repo_id``, ``batch_size``) and
+    a diff over nested dicts either reports a whole subtree as changed or has
+    to walk it anyway. Lists are rendered as one value: a camera list that
+    differs, differs as a whole.
+    """
+    import json
+
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    flat: "dict[str, Any]" = {}
+
+    def walk(node: "dict[str, Any]", prefix: str) -> None:
+        for key, value in node.items():
+            name = f"{prefix}{key}"
+            if isinstance(value, dict) and value:
+                walk(value, f"{name}.")
+            elif isinstance(value, (list, tuple)):
+                flat[name] = ", ".join(str(v) for v in value)
+            else:
+                flat[name] = value
+
+    walk(payload, "")
+    return flat
+
+
 _LOG_LINE_RE = re.compile(
-    r"^LOG (?P<path>\S+)/vla_real_long/(?P<run>[^/]+)/logs/train_(?P<policy>[^/.]+)\.log"
-    r" (?P<size>\d+) (?P<mtime>\d+)$"
+    r"^(?P<kind>SIM)?LOG (?P<path>\S+)/(?P<tree>vla_(?:real|sim)_long)/(?P<run>[^/]+)"
+    r"/logs/train_(?P<policy>[^/.]+)\.log (?P<size>\d+) (?P<mtime>\d+)$"
 )
 _CKPT_RE = re.compile(
     r"^CKPT \S+/vla_real_long/(?P<run>[^/]+)/train/(?P<policy>[^/]+)"
     r"/checkpoints/last (?P<step>\S+)$"
 )
+# `CELL <root>/vla_sim_long/<run>/<mode>/<task>/<policy>/`
+_CELL_RE = re.compile(
+    r"^CELL \S+/vla_sim_long/(?P<run>[^/]+)/(?P<mode>[^/]+)/(?P<task>[^/]+)"
+    r"/(?P<policy>[^/]+)/?$"
+)
+_SIM_CKPT_RE = re.compile(
+    r"^SIMCKPT \S+/vla_sim_long/(?P<run>[^/]+)/(?P<mode>[^/]+)/(?P<task>[^/]+)"
+    r"/(?P<policy>[^/]+)/checkpoints/last (?P<step>\S+)$"
+)
 
 
 def parse_discovery(text: str) -> "list[dict[str, Any]]":
-    """The listing -> one entry per (run, policy) found on that machine. Pure."""
+    """The listing -> one entry per (run, policy) found on that machine. Pure.
+
+    A sim cell arrives as a directory rather than as a parsed log name, and is
+    matched to its log by rebuilding the name the driver gives it. That way the
+    three components never have to be split back out of a string in which each
+    of them may contain the separator.
+    """
     sections = parse_sections(text)
     now = None
     try:
@@ -330,8 +538,10 @@ def parse_discovery(text: str) -> "list[dict[str, Any]]":
 
     found: "dict[tuple, dict[str, Any]]" = {}
     for line in body.splitlines():
-        match = _LOG_LINE_RE.match(line.strip())
+        line = line.strip()
+        match = _LOG_LINE_RE.match(line)
         if match:
+            tree = match["tree"]
             key = (match["run"], match["policy"])
             mtime = float(match["mtime"])
             found.setdefault(
@@ -340,6 +550,8 @@ def parse_discovery(text: str) -> "list[dict[str, Any]]":
                     "run": match["run"],
                     "policy": match["policy"],
                     "out_root": match["path"],
+                    "tree": tree,
+                    "sim": tree == SIM_TREE,
                     "size": int(match["size"]),
                     "mtime": mtime,
                     "age_s": (now - mtime) if now else None,
@@ -347,12 +559,28 @@ def parse_discovery(text: str) -> "list[dict[str, Any]]":
                 },
             )
             continue
-        ckpt = _CKPT_RE.match(line.strip())
+        ckpt = _CKPT_RE.match(line)
         if ckpt:
-            key = (ckpt["run"], ckpt["policy"])
-            entry = found.get(key)
+            entry = found.get((ckpt["run"], ckpt["policy"]))
             step = ckpt["step"]
             if entry is not None:
+                entry["checkpoint"] = int(step) if step.isdigit() else step
+            continue
+        cell = _CELL_RE.match(line) or _SIM_CKPT_RE.match(line)
+        if cell:
+            name = f"{cell['mode']}_{cell['task']}_{cell['policy']}"
+            entry = found.get((cell["run"], name))
+            if entry is None:
+                continue
+            entry["cell"] = f"{cell['mode']}/{cell['task']}/{cell['policy']}"
+            entry["mode"] = cell["mode"]
+            entry["task"] = cell["task"]
+            # The log is named for the whole cell; the POLICY is the last part
+            # of it, and it is what the runs table and the ports comparison
+            # actually want to group by.
+            entry["policy_name"] = cell["policy"]
+            step = cell.groupdict().get("step")
+            if step:
                 entry["checkpoint"] = int(step) if step.isdigit() else step
     return sorted(found.values(), key=lambda e: (-(e["mtime"] or 0), e["run"]))
 

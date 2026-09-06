@@ -238,3 +238,44 @@ button.link:hover { opacity:1; }
    needs sizing here. */
 .runcard .pair > figure { min-width: 0; }
 .runcard .pair figcaption { font-size: .78em; }
+
+/* ── Subviews ─────────────────────────────────────────────────────────────── */
+/* The Training pane does two unrelated jobs — starting a run and reading one —
+   so it is split the way the top bar splits the app, one level down. Nothing
+   else uses this yet; it is written generically so the next pane that needs it
+   does not invent a second mechanism. */
+#pane-training { flex-direction: column; }
+.subtabs { display: flex; gap: 8px; padding: 6px 12px;
+           border-bottom: 1px solid var(--bd); }
+.subtab { font-size: 12px; }
+.subtab.sel { border-color: var(--sel); color: var(--sel); }
+.subview { flex: 1; display: flex; overflow: hidden; }
+.subview[hidden] { display: none; }
+
+/* ── Training jobs ────────────────────────────────────────────────────────── */
+#training-projects { width: 220px; }
+#training-runs { min-width: 0; }
+#t-selection, #t-runs { overflow: visible; }
+#training-runs > .pad { overflow: auto; }
+.scroll { overflow-x: auto; max-width: 100%; }
+/* Wide content scrolls inside its own box; the column itself must not, or the
+   whole page slides sideways and the toolbar leaves the screen. */
+#t-table-wrap { overflow: auto; max-height: 44vh; flex: 0 0 auto;
+                border-bottom: 1px solid var(--bd); }
+
+table.runs { border-collapse: collapse; font-size: 12px; width: 100%; }
+table.runs th, table.runs td { padding: 3px 8px; text-align: left;
+                               white-space: nowrap; border-bottom: 1px solid var(--bd); }
+table.runs th { position: sticky; top: 0; background: Canvas; z-index: 1;
+                cursor: pointer; font-weight: 600; }
+table.runs th:not([data-sort]) { cursor: default; }
+table.runs td { font-variant-numeric: tabular-nums; }
+table.runs tr.sel > td { background: color-mix(in srgb, var(--sel) 12%, transparent); }
+table.runs .tick { width: 1.6rem; cursor: default; }
+table.runs tbody tr:hover > td { background: #8881; }
+
+#t-panels .panels { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+#t-panels figure.plot canvas { height: 150px; }
+#t-panels .readout { min-height: 1.1em; }
+#t-smooth { width: 6rem; vertical-align: middle; }
+#t-project-list li.sel .muted { color: #fff; opacity: .8; }

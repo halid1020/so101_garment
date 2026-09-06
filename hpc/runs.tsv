@@ -11,7 +11,10 @@
 # does not name is still reachable from here.
 #
 #   dataset : directory name staged under $HF_LEROBOT_HOME/local/
-#   policy  : act | diffusion | pi05 | fastwam
+#   policy  : act | diffusion | pi05 | fastwam, or one of the ports and models
+#             this repo defines: so101_act | so101_diffusion | so101_pi05 |
+#             so101_flowmatch | so101_dreamzero. A port takes its twin's
+#             defaults, so `so101_act` and `act` differ only in whose code runs.
 #   cameras : `all`, or a comma list of camera names with NO spaces. `all` is
 #             the dataset's own cameras and never a composite; a COMPOSITE
 #             (tactile_quad, which tiles the four fingertip cameras 2x2 into

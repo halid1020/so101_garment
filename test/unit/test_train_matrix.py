@@ -188,6 +188,27 @@ class TestRefusals(unittest.TestCase):
     def test_a_ceiling_only_applies_to_the_machine_that_measured_it(self):
         self.assertEqual(row_refusals(row("pi05", "central", batch=8), INFO, BOX), [])
 
+    def test_a_port_is_refused_exactly_where_its_twin_is(self):
+        # A ceiling is a fact about the model's activations, and a port IS the
+        # model. Looking limits up by the exact policy string let so101_pi05
+        # resolve to batch 8 on the machine where pi05 at batch 8 OOMed.
+        (refusal,) = row_refusals(row("so101_pi05", "central", batch=8), INFO, CREATE)
+        self.assertIn("measured", refusal)
+        self.assertIn("pi05", refusal)
+
+    def test_a_port_takes_its_twin_s_ceiling_for_a_dash(self):
+        self.assertEqual(resolved(row("so101_pi05"), "batch", CREATE), 4)
+
+    def test_a_destination_may_still_name_the_port_outright(self):
+        # If the port ever measures differently, saying so must win over the
+        # fallback rather than being averaged with it.
+        dest = {
+            "name": "create",
+            "kind": "slurm",
+            "limits": {"so101_pi05": {"batch": 2}},
+        }
+        self.assertEqual(resolved(row("so101_pi05"), "batch", dest), 2)
+
     def test_an_unstaged_dataset_is_refused_before_submission(self):
         refusals = row_refusals(row("act"), INFO, CREATE, staged=["other"])
         self.assertTrue(any("staged" in r for r in refusals))

@@ -115,9 +115,41 @@ class TestListing(ConsoleTestCase):
             "/static/app.css",
             "/static/datasets.js",
             "/static/training.js",
+            # The Training tab is three files now: the launch form, the runs
+            # view, and the drawing they share. A page that loads a script the
+            # server does not have fails silently in the browser.
+            "/static/training_jobs.js",
+            "/static/chart.js",
         ):
             resp = await self.client.get(url)
             self.assertEqual(resp.status, 200, url)
+
+    def test_every_element_a_script_reaches_for_exists(self):
+        """A typo'd id kills the whole script at load, silently.
+
+        There is no build step and no module system here: every static script
+        runs at top level against the one page, so `$('#t-refersh')` throws on
+        load and everything after it in that file never runs -- with nothing in
+        the server log and nothing on the page but a tab that does not react.
+        MEASURED as exactly that while the Training tab was split in two.
+
+        An id the script CREATES itself is fine, so a template literal in the
+        same file counts as a definition.
+        """
+        import re
+
+        static = Path(__file__).resolve().parents[2] / "src/common/web/static"
+        markup = set()
+        for page in ("index.html", "policy.html"):
+            markup |= set(re.findall(r'id="([^"]+)"', (static / page).read_text()))
+        for script in sorted(static.glob("*.js")):
+            text = script.read_text()
+            made = set(re.findall(r'id="([^"]+)"', text))
+            used = set(re.findall(r"""\$\(['"]#([\w-]+)['"]\)""", text))
+            used |= set(re.findall(r"""querySelector\(['"]#([\w-]+)['"]\)""", text))
+            self.assertEqual(
+                sorted(used - markup - made), [], f"{script.name} reaches for these"
+            )
 
     async def test_the_page_and_its_scripts_are_revalidated(self):
         # A browser given a validator but no freshness rule may guess one and
@@ -763,6 +795,33 @@ class TestWithoutADirectory(ConsoleTestCase):
             resp = await self.client.get(url)
             self.assertEqual(resp.status, 200, url)
 
+    async def test_the_reading_half_of_the_training_tab_needs_no_drive(self):
+        # This is how the tab is actually used: from a laptop watching a GPU
+        # box, with no collection drive mounted at all. Only the three routes
+        # that read a dataset off the drive require one.
+        #
+        # Pointed at a machine that is THIS one: the checked-in destinations
+        # file names CREATE, and asking it anything from a test means a real
+        # SSH and a real timeout, which put this one test at a hundred seconds.
+        path = Path(self.tmp.name) / "destinations.yaml"
+        path.write_text(
+            "here:\n  kind: local\n"
+            f"  repo: {Path.cwd()}\n"
+            f"  scratch: {Path(self.tmp.name) / 'scratch'}\n"
+            "  stage: '{scratch}/local'\n  limits: {}\n"
+        )
+        self.app["destinations_file"] = path
+        for url in (
+            "/api/training/machines",
+            "/api/training/discovered",
+            "/api/training/runs",
+            "/api/training/projects",
+        ):
+            resp = await self.client.get(url)
+            self.assertEqual(resp.status, 200, url)
+        resp = await self.client.get("/api/training/config")
+        self.assertEqual(resp.status, 409)
+
     async def test_choosing_one_makes_the_datasets_appear(self):
         resp = await self.post("/api/roots/use", {"path": str(self.root)})
         self.assertEqual(resp.status, 200)
@@ -1076,6 +1135,137 @@ class TestWatchingARun(ConsoleTestCase):
         )
         self.assertEqual(response.status, 400)
         self.assertIn("plain name", await response.text())
+
+    async def test_every_metric_in_the_log_comes_back_as_a_series(self):
+        # The page builds its panel grid from `metrics`, so a metric the parser
+        # produced but the payload dropped is a panel that silently never
+        # appears.
+        self._write_run(lines=4)
+        body = await (
+            await self.client.get(
+                "/api/training/progress?dest=here&run=towel__all&policy=act"
+            )
+        ).json()
+        self.assertIn("train/loss", body["metrics"])
+        self.assertIn("train/gpu_mem_gb", body["metrics"])
+        self.assertEqual(
+            [p["step"] for p in body["series"]["train/loss"]],
+            list(range(100, 500, 100)),
+        )
+
+    async def test_a_repo_metric_line_survives_the_whole_route(self):
+        # Emitted by a policy, kept by the far-side grep, parsed, and served --
+        # with no name of it written anywhere in between.
+        from common.training import metrics
+
+        outputs = self._write_run(lines=2)
+        log = outputs / "so101_outputs/vla_real_long/towel__all/logs/train_act.log"
+        log.write_text(
+            log.read_text()
+            + metrics.format_line(200, {"eval/psnr_central": 31.2})
+            + "\n"
+        )
+        body = await (
+            await self.client.get(
+                "/api/training/progress?dest=here&run=towel__all&policy=act"
+            )
+        ).json()
+        self.assertIn("eval/psnr_central", body["metrics"])
+        self.assertEqual(body["series"]["eval/psnr_central"][0]["value"], 31.2)
+
+    async def test_a_real_run_has_no_rollout_success_curve(self):
+        # Per-checkpoint success only exists where a simulator produced it. A
+        # real run showing one would be reporting a measurement nobody made.
+        self._write_run()
+        body = await (
+            await self.client.get(
+                "/api/training/progress?dest=here&run=towel__all&policy=act"
+            )
+        ).json()
+        self.assertNotIn("eval/success_rate", body["metrics"])
+        self.assertIsNone(body["selected"])
+
+    async def test_a_cell_that_is_not_three_segments_is_refused(self):
+        self._write_run()
+        response = await self.client.get(
+            "/api/training/progress?dest=here&run=towel__all&policy=act&cell=a/b"
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("<mode>/<task>/<policy>", await response.text())
+
+    async def test_the_page_is_told_which_policies_are_ours(self):
+        # Without this the operator sees nine unstructured checkboxes and
+        # nothing says `act` and `so101_act` are the same model.
+        body = await (await self.client.get("/api/training/config")).json()
+        by_name = {p["name"]: p for p in body["policies"]}
+        self.assertFalse(by_name["act"]["local"])
+        self.assertTrue(by_name["so101_act"]["local"])
+        self.assertEqual(by_name["so101_act"]["ported_from"], "act")
+        self.assertIsNone(by_name["act"]["ported_from"])
+
+    # ── Projects ────────────────────────────────────────────────────────────
+
+    async def _projects(self):
+        return await (await self.client.get("/api/training/projects")).json()
+
+    async def test_the_built_in_groupings_exist_before_any_project_does(self):
+        # Twenty-one run directories already exist on these machines and none
+        # of them was put in a project by anyone, so the view has to be useful
+        # with the store empty.
+        body = await self._projects()
+        self.assertEqual(body["projects"], [])
+        self.assertEqual(
+            [b["name"] for b in body["builtin"]], ["__all__", "__unassigned__"]
+        )
+
+    async def test_a_project_is_created_and_runs_move_in_and_out(self):
+        self._write_run()
+        created = await self.client.post(
+            "/api/training/projects", json={"name": "port parity"}
+        )
+        self.assertEqual(created.status, 200)
+        key = "here|towel__all|act"
+        await self.client.patch(
+            "/api/training/projects/port%20parity", json={"add": [key]}
+        )
+        body = await self._projects()
+        self.assertEqual(body["projects"][0]["runs"], [key])
+        await self.client.patch(
+            "/api/training/projects/port%20parity", json={"remove": [key]}
+        )
+        self.assertEqual((await self._projects())["projects"][0]["runs"], [])
+
+    async def test_a_duplicate_name_comes_back_as_a_sentence(self):
+        await self.client.post("/api/training/projects", json={"name": "ports"})
+        again = await self.client.post("/api/training/projects", json={"name": "ports"})
+        self.assertEqual(again.status, 400)
+        self.assertIn("already a project", await again.text())
+
+    async def test_deleting_a_project_says_the_runs_are_kept(self):
+        await self.client.post("/api/training/projects", json={"name": "ports"})
+        response = await self.client.delete("/api/training/projects/ports")
+        body = await response.json()
+        self.assertTrue(body["runs_kept"])
+        self.assertEqual((await self._projects())["projects"], [])
+
+    async def test_a_rename_keeps_the_membership(self):
+        await self.client.post("/api/training/projects", json={"name": "ports"})
+        key = "here|towel__all|act"
+        await self.client.patch("/api/training/projects/ports", json={"add": [key]})
+        await self.client.patch(
+            "/api/training/projects/ports", json={"name": "port parity"}
+        )
+        body = await self._projects()
+        self.assertEqual(body["projects"][0]["name"], "port parity")
+        self.assertEqual(body["projects"][0]["runs"], [key])
+
+    async def test_something_that_is_not_a_run_key_is_refused(self):
+        await self.client.post("/api/training/projects", json={"name": "ports"})
+        response = await self.client.patch(
+            "/api/training/projects/ports", json={"add": ["towel__all"]}
+        )
+        self.assertEqual(response.status, 400)
+        self.assertIn("not a run key", await response.text())
 
     async def test_the_answer_is_cached_so_polling_costs_one_read(self):
         outputs = self._write_run()

@@ -31,6 +31,7 @@
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only act --steps 40000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --extra "--policy.optimizer_lr=5e-5"
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --keep-checkpoints 3
+#   bash test/system/long_vla_real.sh --dataset-root <ds> --eval-split 0.1 --eval-steps 2000
 #   bash test/system/long_vla_real.sh --dataset-root <ds> --only pi05 \
 #        --slots central=base,left_arm_left_gripper=left_wrist
 #
@@ -120,6 +121,16 @@ KEEP_CKPTS=2
 EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
+# A held-out validation loss, which lerobot can compute and this driver has
+# never asked it for. Off by default, and that is a decision rather than an
+# oversight: --dataset.eval_split holds out a fraction of the episodes PER TASK
+# (lerobot/datasets/factory.py), so a run with one trains on less data and is
+# not comparable to any run already finished. Turn it on for a new comparison,
+# not to add a line to an old one. The step in the resulting `eval_loss=` line
+# is EXACT, unlike the tracker's rounded `step:`.
+EVAL_SPLIT=""                      # e.g. 0.1 -- fraction of episodes held out
+EVAL_STEPS=""                      # compute it every N steps
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --dataset-root) DATASET_ROOT="$2"; shift 2;;
@@ -144,6 +155,8 @@ while [ $# -gt 0 ]; do
         --save-freq) SAVE_FREQ="$2"; shift 2;;
         --workers) WORKERS="$2"; shift 2;;
         --keep-checkpoints) KEEP_CKPTS="$2"; shift 2;;
+        --eval-split) EVAL_SPLIT="$2"; shift 2;;
+        --eval-steps) EVAL_STEPS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
         --skip-train) SKIP_TRAIN=1; shift;;
         -h|--help) sed -n '2,40p' "$0"; exit 0;;
@@ -381,6 +394,15 @@ train_cell() {
             --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"
             --steps="$steps" --num_workers="$WORKERS"
         )
+        # The ONE exception to "the checkpoint carries everything". Plugin
+        # discovery is read from sys.argv and the package imported BEFORE
+        # draccus opens the config file (lerobot/configs/parser.py), so a
+        # policy type this repo defines is not in the registry by the time the
+        # file naming it is parsed. Leave this out and every so101_* run is
+        # unresumable -- which is exactly the case the resume path exists for.
+        if local_policy "$policy"; then
+            args+=(--policy.discover_packages_path="$SO101_POLICY_PACKAGE")
+        fi
         echo; echo "### resume $policy on $REPO_ID (step $at -> $steps)"
         lerobot-train "${args[@]}" 2>&1 | tee -a "$RUN_DIR/logs/train_${policy}.log" \
             || fail "train ($policy, resumed)"
@@ -396,6 +418,11 @@ train_cell() {
         --policy.device="$DEVICE"
         --steps="$steps" --batch_size="$batch" --save_freq="$save"
     )
+    # lerobot refuses --eval_steps without a split, so the two travel together.
+    if [ -n "$EVAL_SPLIT" ]; then
+        args+=(--dataset.eval_split="$EVAL_SPLIT")
+        [ -n "$EVAL_STEPS" ] && args+=(--eval_steps="$EVAL_STEPS")
+    fi
     if [ "$base" = "pi05" ]; then
         # A finetune names its base instead of a policy type; the type comes
         # from the base's own config. Which is exactly why a REPO-LOCAL pi0.5

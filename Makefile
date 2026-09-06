@@ -11,7 +11,7 @@
 PY := venv/bin/python
 PYTHONPATH := .:src
 
-.PHONY: test test-unit test-integration test-system test-system-vla test-system-vla-real paper lint
+.PHONY: test test-unit test-integration test-system test-system-vla test-system-vla-real test-port-parity paper lint
 
 test: test-unit test-integration
 
@@ -32,6 +32,12 @@ test-system-vla:
 #   make test-system-vla-real DATASET_ROOT=/media/hdd/so101/short_fold
 test-system-vla-real:
 	bash test/system/smoke_vla_real.sh --dataset-root "$(DATASET_ROOT)"
+
+# Does a ported policy train like the LeRobot one it came from? A few hundred
+# CPU steps of each, same seed, compared step for step. Skips with no dataset.
+#   make test-port-parity DATASET_ROOT=/media/hdd/so101/cube-pnp-new
+test-port-parity:
+	bash test/system/test_port_parity.sh --dataset-root "$(DATASET_ROOT)"
 
 paper:
 	cd documents/paper/teleoperation && latexmk -pdf main.tex

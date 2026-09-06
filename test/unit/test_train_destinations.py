@@ -73,10 +73,20 @@ class TestTheShippedFile(unittest.TestCase):
         # 40 GB A100. Losing this number costs a whole reservation.
         self.assertEqual(self.dests["create"]["limits"]["pi05"]["batch"], 4)
 
+    def test_the_measured_pi05_ceiling_is_recorded_for_the_gpu_box_too(self):
+        # MEASURED on the 24.5 GiB card, five months after the CREATE figure
+        # above and on a smaller one: batch 2 raised OutOfMemoryError at 23.45
+        # of 23.55 GiB; batch 1 ran at 20710 MiB for 30 000 steps. Also the
+        # reason there is no gradient-accumulation equivalent to reach for --
+        # lerobot-train has none, so batch 1 is batch 1.
+        self.assertEqual(self.dests["thanos"]["limits"]["pi05"]["batch"], 1)
+
     def test_the_gpu_box_claims_no_ceiling_it_has_not_measured(self):
         # An unmeasured limit written down as if it were measured is worse than
-        # none: it would refuse rows that fit and pass rows that do not.
-        self.assertEqual(self.dests["thanos"].get("limits"), {})
+        # none: it would refuse rows that fit and pass rows that do not. act at
+        # batch 8 leaves better than half this card free, and diffusion less
+        # than a third of it, so neither has one.
+        self.assertEqual(set(self.dests["thanos"]["limits"]), {"pi05"})
 
 
 class TestValidation(unittest.TestCase):

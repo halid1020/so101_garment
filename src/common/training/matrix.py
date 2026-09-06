@@ -311,6 +311,22 @@ def make_row(
     }
 
 
+def limits_for(dest: "dict[str, Any] | None", policy: str) -> "dict[str, Any]":
+    """What a machine has been measured to carry for this policy.
+
+    A port falls back to the policy it was ported from. The two are the same
+    model with the same activations, so a ceiling measured on one holds for the
+    other -- and without this a `so101_pi05` row on CREATE resolves to batch 8
+    and reproduces the OutOfMemoryError that `pi05: batch: 4` was written down
+    to prevent. A destination may still name the port explicitly to override.
+    """
+    limits = (dest or {}).get("limits") or {}
+    if policy in limits:
+        return limits[policy] or {}
+    twin = PORTED_FROM.get(policy)
+    return (limits.get(twin) or {}) if twin else {}
+
+
 def resolved(
     row: "dict[str, str]", key: str, dest: "dict[str, Any] | None" = None
 ) -> "int | None":
@@ -326,7 +342,7 @@ def resolved(
     if value and value != "-":
         return int(value)
     default = (POLICIES.get(row.get("policy", "")) or {}).get(key)
-    cap = ((dest or {}).get("limits") or {}).get(row.get("policy", ""), {}).get(key)
+    cap = limits_for(dest, row.get("policy", "")).get(key)
     if default is None:
         return cap
     return min(default, cap) if cap is not None else default
@@ -464,17 +480,26 @@ def _destination_refusals(
 ) -> "list[str]":
     out: "list[str]" = []
     where = str(dest.get("name") or dest.get("ssh") or "that machine")
-    limits = (dest.get("limits") or {}).get(policy) or {}
+    limits = limits_for(dest, policy)
     for key in ("batch", "steps"):
         cap = limits.get(key)
         if row.get(key, "-") in ("", "-"):
             continue  # `-` already resolves to the ceiling; see resolved()
         want = resolved(row, key)
         if cap is not None and want is not None and want > cap:
+            # Name the twin when the ceiling was measured on it rather than on
+            # the port, so the number can be traced to the run that produced it.
+            twin = PORTED_FROM.get(policy)
+            measured = (
+                f"{cap}, measured on {twin}"
+                if twin and policy not in ((dest.get("limits") or {}))
+                else str(cap)
+            )
             out.append(
                 f"{policy} {key} {want} is over what {where} has been measured "
-                f"to carry ({cap}). Lower it in the {key} column, or measure a "
-                "new ceiling and record it in src/conf/train_destinations.yaml."
+                f"to carry ({measured}). Lower it in the {key} column, or "
+                "measure a new ceiling and record it in "
+                "src/conf/train_destinations.yaml."
             )
     if staged is not None and row.get("dataset") not in set(staged):
         out.append(

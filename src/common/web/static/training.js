@@ -28,22 +28,54 @@ async function loadTrainingConfig() {
     .join('');
   if (chosenDest) dest.value = chosenDest;
 
-  const box = $('#t-policies');
-  box.innerHTML = '<legend>Policies</legend>';
-  for (const p of cfg.policies) {
-    const label = document.createElement('label');
-    label.className = 'row';
-    // A policy the installed LeRobot has never heard of is SHOWN and left
-    // untickable: hiding it would make the gate look like a missing feature,
-    // and the refusal names the two files to change.
-    label.innerHTML = `<input type="checkbox" value="${p.name}"`
-      + `${p.available ? '' : ' disabled'}> ${p.name}`
-      + (p.available ? '' : ' <span class="stream-absent">— not in this LeRobot</span>');
-    if (!p.available) label.title = p.problem;
-    box.appendChild(label);
-  }
+  renderPolicies(cfg.policies || []);
   describeDataset();
   describeDest();
+}
+
+// Two groups, because there are two implementations of the same three models
+// and the choice between them is the experiment. `act` is LeRobot's; `so101_act`
+// is this repo's port of it -- the same module tree moved, so the checkpoints
+// are interchangeable and only the code that runs differs. Nine unstructured
+// checkboxes said none of that, and a port read as a ninth unrelated policy.
+function renderPolicies(policies) {
+  const box = $('#t-policies');
+  const kept = new Set(
+    [...box.querySelectorAll('input:checked')].map(i => i.value));
+  box.innerHTML = '<legend>Policies</legend>';
+
+  const groups = [
+    ['LeRobot', policies.filter(p => !p.local),
+     'the installed LeRobot’s own implementations'],
+    ['This repo', policies.filter(p => p.local),
+     'src/so101_policies/ — trained by the same lerobot-train, through '
+     + '--policy.discover_packages_path'],
+  ];
+  for (const [title, group, note] of groups) {
+    if (!group.length) continue;
+    const heading = document.createElement('h3');
+    heading.className = 'sub';
+    heading.textContent = title;
+    heading.title = note;
+    box.appendChild(heading);
+    for (const p of group) {
+      const label = document.createElement('label');
+      label.className = 'row';
+      // A policy the installed LeRobot has never heard of is SHOWN and left
+      // untickable: hiding it would make the gate look like a missing feature,
+      // and the refusal names the two files to change.
+      label.innerHTML = `<input type="checkbox" value="${p.name}"`
+        + `${p.available ? '' : ' disabled'}`
+        + `${kept.has(p.name) ? ' checked' : ''}> ${p.name}`
+        + (p.ported_from
+            ? ` <span class="muted">— port of ${p.ported_from}</span>` : '')
+        + (p.available
+            ? '' : ` <span class="stream-absent">— ${p.local
+                ? 'not importable here' : 'not in this LeRobot'}</span>`);
+      if (!p.available) label.title = p.problem;
+      box.appendChild(label);
+    }
+  }
 }
 
 function describeDataset() {
@@ -150,7 +182,10 @@ async function startTraining() {
   // Staging outlives this request, so the dock is where it is watched.
   if (window.pollJobs) pollJobs();
   $('#t-state').textContent = `staging ${request.dataset} to ${request.dest}…`;
-  // The run appears in the panel as soon as the machine has a log to show.
+  // The run appears in the panel as soon as the machine has a log to show, so
+  // go and look at it: staging is minutes, and a form that sits there having
+  // apparently done nothing is indistinguishable from a launch that hung.
+  if (window.showSubview) showSubview('training', 'jobs');
   if (window.loadRunList) loadRunList(true).catch(() => {});
 }
 

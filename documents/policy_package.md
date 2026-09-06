@@ -60,6 +60,37 @@ tree moved into this repo unchanged. That is deliberate and it buys two things:
   implementation and plans the *same actions, bit for bit*. That is measured on
   the real file in `test/integration/test_policy_ports_checkpoints.py`, not
   assumed. Nothing already trained was invalidated by the move.
+- **And they train the same.** The action comparison above runs under
+  `torch.no_grad()` in `eval()` mode, so it exercises none of the code that
+  decides how a run *trains* — dropout, ACT's VAE sampling, diffusion's noise
+  and timestep draws, and the loss itself are all on the training branch. The
+  same test therefore also compares `policy.forward(batch)`: the loss, and
+  every gradient it produces, bit for bit on shared weights. MEASURED on the
+  finished ACT checkpoint: loss 0.492358922958374 from both, and 153 identical
+  parameter gradients.
+
+  That still says nothing about what `lerobot-train` assembles *around* the
+  model — the processor pipeline the factory derives from the config class
+  name, the optimiser and scheduler presets, the dataloader, and the plugin
+  discovery that has to resolve one of our type strings before draccus parses
+  anything. So `tool/compare_port_training.py` runs the real trainer twice from
+  the same seed and compares the logged loss step for step. MEASURED on thanos
+  against the real five-camera dataset, 60 steps at batch 2 on the card:
+
+  | policy | vs | agreement |
+  |---|---|---|
+  | `act` | `so101_act` | identical at all 6 logged points |
+  | `diffusion` | `so101_diffusion` | identical at all 6 logged points |
+
+  The log prints the loss at three decimals, so that is an agreement to a
+  thousandth over many steps; the integration test is the other way round — one
+  batch, compared bit for bit. Neither replaces the other.
+  `make test-port-parity DATASET_ROOT=<ds>` is the CPU version, in the system
+  tier.
+
+  `so101_pi05` is covered by the source comparison only: it is a 4.1B model
+  that needs its 14.5 GB base to instantiate at all, which is more than a test
+  tier should reach for.
 - **A LeRobot bump is one command.** Every rule the port applies lives in
   `so101_policies/_port.py`; `tool/port_policies.py` re-derives all nine files
   and `--check` reports drift. `test/unit/test_policy_ports.py` fails the moment

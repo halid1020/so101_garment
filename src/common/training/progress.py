@@ -38,6 +38,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from common.training import metrics
+
 # ── The shapes in the log ────────────────────────────────────────────────────
 
 # The config lerobot pprints before training. Only flat integer keys are taken:
@@ -81,6 +83,16 @@ _TQDM_RE = re.compile(
     r"(?P<done>\d+)/(?P<total>\d+)\s+"
     r"\[(?P<elapsed>[\d:]+)<(?P<eta>[\d:]+|\?),\s*"
     r"(?P<rate>[\d.]+)(?P<unit>step/s|s/step)\]"
+)
+
+# `INFO 2026-09-05 11:02:07 ot_train.py:627 step 12000: eval_loss=0.0421`.
+# lerobot's held-out validation loss, written when --eval_steps and
+# --dataset.eval_split are both set. Note `step 12000`, with a SPACE: this is a
+# different line from the tracker's `step:12K`, and -- unlike it -- the number
+# is exact, because it is an f-string of the integer rather than
+# format_big_number. Nothing here has to reconstruct it.
+_EVAL_LOSS_RE = re.compile(
+    _STAMP + r"[^\n\r]*?\bstep (?P<step>\d+): eval_loss=(?P<loss>[\d.eE+-]+)"
 )
 
 _CHECKPOINT_RE = re.compile(r"Checkpoint policy after step (\d+)")
@@ -214,6 +226,76 @@ def parse_points(text: str) -> "list[dict[str, Any]]":
         if "loss" in point:
             points.append(point)
     return points
+
+
+#: Which of lerobot's tracker fields become curves, and under what name. The
+#: labels (`step_label` and friends) are deliberately absent: they are rounded,
+#: so they are cross-checks rather than series.
+TRAIN_SERIES = {
+    "loss": "train/loss",
+    "grad_norm": "train/grad_norm",
+    "lr": "train/lr",
+    "update_s": "train/update_s",
+    "dataloading_s": "train/dataloading_s",
+    "samples_per_s": "train/samples_per_s",
+    "gpu_mem_gb": "train/gpu_mem_gb",
+    "epochs": "train/epochs",
+}
+
+
+def parse_eval_losses(text: str) -> "list[dict[str, Any]]":
+    """lerobot's own held-out validation loss, where the run was given one.
+
+    Off by default: ``eval_steps`` is 0 unless the driver is asked for it, and
+    it in turn requires ``dataset.eval_split``, which holds out episodes and so
+    changes what is trained. A run without those flags simply has no such line.
+    """
+    out = []
+    for match in _EVAL_LOSS_RE.finditer(text):
+        try:
+            value = float(match.group("loss"))
+        except ValueError:
+            continue
+        out.append(
+            {
+                "at": match.start(),
+                "step": int(match.group("step")),
+                "time": parse_stamp(match.group("stamp")),
+                "values": {"eval/loss": value},
+            }
+        )
+    return out
+
+
+def build_series(
+    points: "list[dict[str, Any]]", extra: "list[dict[str, Any]]"
+) -> "dict[str, list[dict[str, Any]]]":
+    """Every curve in one shape, so the page needs no list of metric names.
+
+    ``points`` are lerobot's tracker lines, whose steps have already been
+    resolved; ``extra`` is everything carrying its own exact step -- the
+    ``so101-metric`` channel and lerobot's eval line. They are merged onto one
+    step axis rather than kept apart, because a panel grid that had to know
+    which parser produced a series would be a fourth place to edit when a
+    policy adds a curve, which is the thing this is for.
+    """
+    series: "dict[str, list[dict[str, Any]]]" = {}
+
+    def add(name: str, step: "int | None", time: "float | None", value: float) -> None:
+        if step is None:
+            return
+        series.setdefault(name, []).append({"step": step, "time": time, "value": value})
+
+    for point in points:
+        for key, name in TRAIN_SERIES.items():
+            if key in point:
+                add(name, point.get("step"), point.get("time"), point[key])
+    for record in extra:
+        for name, value in (record.get("values") or {}).items():
+            add(name, record.get("step"), record.get("time"), value)
+    for entries in series.values():
+        entries.sort(key=lambda e: e["step"])
+    return series
 
 
 def parse_resumes(text: str) -> "list[dict[str, Any]]":
@@ -385,6 +467,20 @@ def parse_log(
             f"counted {len(points)} logged steps, which is past the run's "
             f"{total}: are some lines in the text twice?"
         )
+    # Everything that carries its own exact step, merged onto the same axis.
+    # A `so101-metric` line has no timestamp of its own -- it is a bare print,
+    # not one of lerobot's INFO lines -- so it borrows the time of the nearest
+    # preceding tracker line, which is at most `log_freq` steps away. That is
+    # what makes it plottable against wall-clock; it is a stamp, not a
+    # measurement, and nothing derives a rate from it.
+    extra = metrics.parse(text) + parse_eval_losses(text)
+    stamps = [(p["at"], p.get("time")) for p in points if p.get("time") is not None]
+    offsets = [at for at, _ in stamps]
+    for record in extra:
+        if record.get("time") is None and offsets:
+            index = bisect.bisect_right(offsets, record["at"]) - 1
+            record["time"] = stamps[max(index, 0)][1]
+    series = build_series(points, extra)
     for point in points:
         point.pop("at", None)
     return {
@@ -392,6 +488,8 @@ def parse_log(
         "log_freq": freq,
         "total_steps": total,
         "points": points,
+        "series": series,
+        "metrics": sorted(series),
         "last_frame": frames[-1] if frames else None,
         "problems": problems,
         **markers,
@@ -439,6 +537,13 @@ def summarise(
         "epochs": points[-1].get("epochs") if points else None,
         "checkpoint": max(parsed.get("checkpoints") or [0]) or None,
         "points": len(points),
+        # What this run actually has curves for. The page builds its panel grid
+        # from this rather than from a list of its own, so a policy that emits
+        # a new metric gets a panel without the front end being taught its name.
+        "metrics": parsed.get("metrics") or [],
+        "eval_loss_last": ((parsed.get("series") or {}).get("eval/loss") or [{}])[
+            -1
+        ].get("value"),
         "age_s": age_s,
         # How often the run was picked back up, and what the last interruption
         # cost. A curve with a restart in it is a different thing from a clean

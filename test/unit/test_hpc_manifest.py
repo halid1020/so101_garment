@@ -54,6 +54,17 @@ class TestRunManifest(unittest.TestCase):
         for row in manifest_rows(MANIFEST):
             self.assertIn(row[1], POLICIES, f"unknown policy in {row}")
 
+    def test_the_wrapper_s_own_policy_list_matches_the_registry(self):
+        # submit_real.sh validates a row on a login node, before anything
+        # imports our Python, so it repeats POLICY_NAMES as a shell `case`.
+        # That copy is only allowed to exist because this test holds it to the
+        # registry -- otherwise it drifts the day a policy is added and refuses
+        # a row the console happily offered.
+        text = SUBMIT.read_text(encoding="utf-8")
+        start = text.index('case "$policy" in')
+        alternatives = text[start:].split("\n")[1].strip().rstrip(") ;;")
+        self.assertEqual(set(alternatives.split("|")), POLICIES)
+
     def test_the_cameras_column_never_contains_a_space(self):
         # A space would shift every later column into `extra`, and the row would
         # submit and train something other than what it says.

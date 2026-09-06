@@ -1,12 +1,21 @@
-"""A ported policy reproduces a real trained checkpoint, action for action.
+"""A ported policy reproduces a real trained checkpoint, and trains like it.
 
-This is the claim that decides whether moving the code cost anything: the
-finished 80 000-step ACT run on ``fold-short-from-flattend-tactile`` must plan
-exactly what it planned before. It needs the weights on this machine and about a
-minute of CPU, which is why it is here and not in the unit tier -- the source
-half of the same argument is in ``test/unit/test_policy_ports.py``.
+This is the claim that decides whether moving the code cost anything, and it has
+two halves. The finished 80 000-step ACT run on
+``fold-short-from-flattend-tactile`` must plan exactly what it planned before --
+and it must also compute the same LOSS and the same GRADIENTS, which the action
+comparison cannot see: ``predict_action_chunk`` runs under ``no_grad`` in
+``eval()`` mode, so dropout, ACT's VAE sampling and diffusion's noise draw are
+all on a branch it never enters.
 
-Both tests skip rather than fail when the checkpoint is not on this machine.
+What this still does not cover is everything ``lerobot-train`` assembles around
+the model -- processors, optimiser preset, dataloader, plugin discovery. That is
+``tool/compare_port_training.py``, which runs the real trainer twice; the source
+half of the argument is ``test/unit/test_policy_ports.py``.
+
+Needs the weights on this machine and a couple of minutes of CPU, which is why
+it is here and not in the unit tier. Both tests skip rather than fail when the
+checkpoint is not on this machine.
 """
 
 from __future__ import annotations
@@ -88,6 +97,71 @@ class CheckpointEquivalenceTest(unittest.TestCase):
             torch.equal(plan(upstream), plan(ported)),
             "the two implementations planned different actions from one observation",
         )
+        self._compare_loss(upstream, ported, upstream_config, batch)
+
+    def _compare_loss(self, upstream, ported, config, batch) -> None:
+        """The TRAINING forward, which the inference comparison never touches.
+
+        ``predict_action_chunk`` runs under ``no_grad`` in ``eval()`` mode, so
+        it exercises none of the code that decides how a run trains: dropout,
+        ACT's VAE sampling, diffusion's noise and timestep draws, and the loss
+        itself are all on the training branch only. Without this, "our act
+        trains like LeRobot's act" rests entirely on the two files being the
+        same bytes -- a strong argument, but one that says nothing about the
+        processors and the optimiser preset the factory builds around them.
+        """
+        import torch
+
+        action = config.output_features["action"]
+        horizon = int(
+            getattr(config, "horizon", None) or getattr(config, "chunk_size", 1) or 1
+        )
+        train_batch = dict(batch)
+        train_batch["action"] = torch.rand(1, horizon, *action.shape)
+        train_batch["action_is_pad"] = torch.zeros(1, horizon, dtype=torch.bool)
+
+        # Seeded immediately before each, for the same reason the inference
+        # comparison is: the training branch draws from the global RNG, and the
+        # first call would otherwise leave the second in a different place.
+        def loss(policy):
+            policy.train()
+            torch.manual_seed(0)
+            value, _ = policy.forward(dict(train_batch))
+            return value
+
+        left, right = loss(upstream), loss(ported)
+        self.assertTrue(
+            torch.equal(left, right),
+            f"the two implementations computed different losses "
+            f"({left.item()} vs {right.item()}) from one batch — they would "
+            "train to different places",
+        )
+
+        # And the gradients, which is what the optimiser actually consumes. Two
+        # implementations can agree on a scalar and disagree on where it came
+        # from; only this compares the step that would be taken.
+        def grads(policy):
+            policy.zero_grad(set_to_none=True)
+            policy.train()
+            torch.manual_seed(0)
+            value, _ = policy.forward(dict(train_batch))
+            value.backward()
+            return {
+                name: p.grad.clone()
+                for name, p in policy.named_parameters()
+                if p.grad is not None
+            }
+
+        left_grads, right_grads = grads(upstream), grads(ported)
+        self.assertEqual(
+            set(left_grads), set(right_grads), "different parameters moved"
+        )
+        self.assertTrue(left_grads, "no gradients were produced at all")
+        for name in left_grads:
+            self.assertTrue(
+                torch.equal(left_grads[name], right_grads[name]),
+                f"gradient for {name} differs",
+            )
 
     def test_act_reproduces_the_trained_checkpoint(self) -> None:
         if not _readable(ACT_CHECKPOINT / "model.safetensors"):

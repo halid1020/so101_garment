@@ -180,7 +180,37 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   sentinel-delimited command, discovers run directories rather than listing what
   was launched, and returns **stdout only** — CREATE's stderr is an MFA banner.
   Staleness is judged from the file's mtime against the REMOTE clock, never the
-  timestamps inside (they carry no timezone).
+  timestamps inside (they carry no timezone). `runs.py` knows BOTH trees —
+  `vla_real_long` and `vla_sim_long`, whose cells are `<mode>/<task>/<policy>`
+  rather than `train/<policy>` — and pairs a sim log with its cell by listing
+  the DIRECTORY and rebuilding the log's name from it, since every one of the
+  three parts may itself contain an underscore (`handover_split`, `so101_act`).
+  The same round trip also brings back the resolved `train_config.json` (the
+  runs table diffs it) and, for a sim cell, the per-checkpoint rollout results.
+- `src/common/training/metrics.py` — how a NEW curve gets drawn without editing
+  anything. A number crosses three hops before it can be plotted — the grep
+  that runs on the far machine, the parser, and the panel grid — and each was a
+  closed list. Now a policy prints `so101-metric step=12000 eval/loss=0.0421`
+  and the curve appears: `KEEP_PATTERN` keeps the sentinel, `progress.py` folds
+  it into `series` beside lerobot's own tracker fields, and the page builds its
+  panels from `metrics` rather than from names of its own. The namespace
+  (`train/`, `eval/`, `pred/`) picks the panel block and is REQUIRED, refused
+  where it is emitted rather than guessed at the far end. lerobot's held-out
+  validation loss rides the same channel (`step N: eval_loss=…`, whose step is
+  EXACT, unlike `step:`); it needs `--eval-split`/`--eval-steps` on the driver
+  and is off by default because a validation split holds out episodes and so
+  changes what is trained. **Per-checkpoint rollout success is sim-only** —
+  `long_vla_sim.sh` writes `val/step_<N>.json`; the real rig's equivalent is a
+  person judging trials in `outputs/policy_runs/`, and drawing that on a
+  training axis would report a measurement nobody made.
+- `tool/compare_port_training.py` — does a port TRAIN like its twin? Runs the
+  real `lerobot-train` twice from one seed and compares the logged loss step for
+  step, which is the only thing that covers what the trainer assembles AROUND
+  the model (processors, optimiser preset, dataloader, plugin discovery).
+  MEASURED on thanos: `act`/`so101_act` and `diffusion`/`so101_diffusion` agree
+  at every logged point. `make test-port-parity DATASET_ROOT=<ds>` is the CPU
+  version; `test/integration/test_policy_ports_checkpoints.py` is the other half
+  — one batch, but loss and every gradient compared bit for bit.
 - `src/common/analysis/` — **what each input stream contributes to the actions a
   policy plans**, kept OUT of the inference path (nothing there imports it back)
   and driven by `tool/analyse_policy_inputs.py`. It rests on one verified fact:
@@ -276,7 +306,11 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `common.training` and the launch is `tool/train_launch.py`, so the page
   cannot start a run the terminal would refuse — refusals come back at 200
   inside the plan, and a launch is a `jobs.py` record because staging is
-  minutes),
+  minutes) + `projects.py`/`projects_api.py` (grouping DISCOVERED runs into
+  named experiments: a run is keyed `machine|run|policy` and the membership
+  lives apart from the launch records, because most runs have none. A member no
+  machine answered for is reported as missing rather than dropped — a list that
+  silently shrank is the one way this view could misreport what was run),
   `roots.py` (which collection directory the console works on: name/target
   rules, the sshfs command, `/proc/mounts` parsing, the remembered list —
   pure, unit-tested) + `roots_api.py` (its routes, the `root_required`
@@ -292,8 +326,17 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   torque-off `ArmProbe`) + `sensors_api.py` (its routes; all refused while
   a session runs, and the map path is injectable so a test never rewrites
   the machine's real `sensor_map.yaml`), `util.py`, and the front-end
-  under `static/`
-  (`index.html` + one script per tab, no build step). The same package also
+  under `static/` (`index.html` + one script per tab, no build step). The
+  Training tab is the one pane split into TWO SUBVIEWS, so `app.js` grew a
+  generic `showSubview` over `.subview[data-view]` and the hash addresses one
+  (`#training/jobs`): `training.js` is Start Training (its policy list grouped
+  LeRobot / this repo off `local` and `ported_from`), `training_jobs.js` is
+  Training Jobs (projects, sortable table, config diff, panel-per-metric,
+  smoothing, hover readout) and `chart.js` is the drawing they share. With no
+  build step and no module system every script runs at top level against one
+  page, so a typo'd element id kills that whole file silently —
+  `test_rig_web_routes.py` cross-checks every `$('#id')` in every script
+  against the markup. The same package also
   holds the ROLLOUT view, which is a separate page served by
   `tool/run_policy.py --web` and not a console tab: `policy_view.py`
   (what the policy was shown / planned / did, and the hold·step·run

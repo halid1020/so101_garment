@@ -17,8 +17,9 @@ through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <rig>`), exactly as
 
 The page has four tabs: **Datasets** (review and manage), **Collect**
 (readiness, live view, and one collection session), **Signals** (binding
-devices to stream names), and **Training** (sending a finished dataset to a
-GPU machine, and watching what it does there).
+devices to stream names), and **Training**, which is itself split into **Start
+Training** (sending a finished dataset to a GPU machine) and **Training Jobs**
+(reading what every machine has done).
 
 ## The collection directory
 
@@ -391,11 +392,40 @@ have.
 
 ## Training
 
-The last thing a collection is for. Pick a dataset, some policies and a
+The tab has two subviews, because it does two unrelated jobs.
+
+**Start Training** is the launch form: pick a dataset, some policies and a
 machine; the console stages the dataset there, writes a run matrix, and
 starts it. Nothing here decides whether a run can work — the rules are
 `src/common/training/`, the same ones `tool/train_launch.py` applies from a
 terminal, so the page cannot start a run the command line would refuse.
+
+**Training Jobs** is where a run is read: projects, a sortable table of every
+run on every machine, the configuration difference between the ones selected,
+and a chart per metric. It needs **no collection directory** — only the three
+routes that read a dataset off the drive do — which is how it is actually used:
+from a laptop, watching a GPU box.
+
+### Two implementations of the same three policies
+
+The policy list is in two groups. **LeRobot** is the installed checkout's own
+`act`, `diffusion`, `pi05` and `fastwam`; **This repo** is `src/so101_policies/`
+— the three ports of those, plus `so101_flowmatch` and `so101_dreamzero`, which
+have no upstream twin. A port is shown against the policy it was ported from.
+
+Both are trained by the same `lerobot-train`; a repo policy simply adds
+`--policy.discover_packages_path=so101_policies`, which the driver does for
+itself. A port takes its twin's steps, batch and hours, so `act` and `so101_act`
+differ *only* in whose code runs — which is what makes the comparison a
+comparison. Where a machine has measured a ceiling for a policy, its port is
+held to the same one: the number is a fact about the model's activations, and a
+port is the model.
+
+MEASURED, on thanos with the real five-camera dataset: `act` and `so101_act`,
+and `diffusion` and `so101_diffusion`, logged an identical loss at every point
+over 60 steps from the same seed. `tool/compare_port_training.py` is what does
+that, and `make test-port-parity DATASET_ROOT=<ds>` is the same check on the
+CPU.
 
 **Machines** come from `src/conf/train_destinations.yaml`, and adding one is
 an entry there rather than a code change:
@@ -468,33 +498,89 @@ this destination can raise: **a run that would fall back to the CPU**. Under
 on the CPU anyway* (or pass `--allow-cpu`) if that is really what you mean —
 the box only appears when the machine has said it would.
 
-## Watching a run
+## Training Jobs
 
-The **Runs** panel lists every training run **found on every machine**, not
-just what this console started: nineteen of the twenty-one run directories on
-these machines were started from a terminal, and nine predate the launcher.
-Each card names the run directory, the policy, the machine and when its log was
-last written.
+The table lists every training run **found on every machine**, not just what
+this console started: nineteen of the twenty-one run directories on these
+machines were started from a terminal, and nine predate the launcher. Sort by
+any column; the filter box narrows by run, policy, machine or dataset.
 
-Opening a card reads that log and draws the curve. The list is cheap — one
-call per machine, and the answers are cached — while a log is only fetched for
-what is being watched: the cards you opened, the ones ticked to compare, and
-anything written to in the last few minutes, which is how a live run is
-recognised without reading it. Nothing polls while the tab is off screen.
+The list is cheap — one call per machine, and the answers are cached — while a
+log is only fetched for what is being watched: the rows you opened, the ones
+ticked, and anything written to in the last few minutes, which is how a live
+run is recognised without reading it. Nothing polls while the tab is off
+screen. A run whose log has not been read yet shows no step and no loss, and
+sorts to the end of those columns rather than pretending to be zero.
 
-- **log scale** is on by default. An ACT run here goes 10.1 → 0.075, and on a
-  linear axis everything after the first few hundred steps is one flat line
-  along the floor.
-- **by step / by hours** switches the axis between optimiser steps and
-  wall-clock, which is the one that answers "will this finish tonight".
-- **Ticking two or more** runs overlays their curves on one axis, across
-  machines. That is how a camera ablation, or act-against-diffusion, is read.
+- **Ticking two or more** runs overlays their curves on every panel and shows
+  the **configuration difference** between them: the resolved
+  `train_config.json` of each, reduced to the fields that actually differ. On
+  the three finished thanos runs that is a handful of lines out of 143, which
+  is the whole reason it exists.
+- **A panel per metric**, grouped into *Training*, *Evaluation* and
+  *Prediction* by the metric's own namespace. The grid is built from what the
+  runs actually logged, not from a list in the page — see *Adding a curve*
+  below.
+- **log scale** is on by default, for the metrics that span decades. An ACT run
+  here goes 10.1 → 0.075, and on a linear axis everything after the first few
+  hundred steps is one flat line along the floor. A near-constant metric — the
+  learning rate, the step time — is drawn linear regardless.
+- **Smoothing** is an exponential moving average, with the raw curve ghosted
+  behind it: a smoothed line alone hides how noisy the run was, which for a
+  loss curve is half the reading.
+- **by step / by hours / since start** switches the axis. Wall-clock is the one
+  that answers "will this finish tonight".
+- Hovering reads every selected run at the nearest step, into a row under the
+  chart rather than a floating tooltip — a tooltip clips at the right-hand edge
+  and can only hold one series.
 - The state chip is `running`, `done`, `failed`, `stalled` or `idle`.
   **stalled** is the one worth knowing: a log that has stopped growing relative
   to its own cadence. thanos rebooted under a run in August and nothing said
   so — every count still agreed, the log simply stopped.
 - *Stop* is offered only for runs this console launched, since only those have
   a job id or a pid recorded. It asks first.
+- **Export** writes what is plotted — not what was fetched, which would
+  disagree with the figure it was taken to support.
+
+### Projects
+
+A run directory is named `<dataset>__<cameras>` and lives on one machine, which
+says what it trained on and nothing about why. A **project** is a name you give
+a set of runs; the dataset stays a column. **All runs** and **Unassigned** are
+always there, so the view is useful before anyone creates anything.
+
+Membership is a list of `machine|run|policy` keys in
+`$SO101_OUTPUT_DIR/training_projects.yaml`, kept apart from the launch records
+because most runs have none. A member no machine answered for is **reported as
+missing, not dropped** — a machine off the VPN this morning has not deleted
+anything, and a list that silently shrank would be the one way this view could
+misreport what was run. Deleting a project removes the label only.
+
+### Adding a curve
+
+The driver's log is the only metric record that exists, so a number has to
+survive a grep that runs on the far machine before it can be drawn. One line
+format does that, and nothing else has to be edited:
+
+```python
+from common.training import metrics
+metrics.emit(step, **{"eval/psnr_central": 31.2})
+```
+
+`train/`, `eval/` and `pred/` are the namespaces, and they pick the panel block
+— a name without one is refused where it is emitted rather than landing in a
+group chosen for it by accident. `lerobot`'s own held-out validation loss is
+read too, from the `step N: eval_loss=…` line it writes when `--eval-split` and
+`--eval-steps` are given to the driver. Both are off by default: a validation
+split holds out episodes and therefore changes what is trained, so a run with
+one is not comparable to the runs already finished.
+
+**Per-checkpoint rollout success is a simulation-only curve.** `long_vla_sim.sh`
+rolls every checkpoint out on the validation seeds and writes
+`val/step_<N>.json`, which becomes `eval/success_rate`. The real rig's
+equivalent is a person judging trials afterwards, in `outputs/policy_runs/` —
+a different measurement at a different time, and never drawn on this axis as
+though the training loop had produced it.
 
 Two things about the log decide what the chart can honestly show. Its `step:`
 field is **rounded above a thousand** — 10 500 and 10 600 both print as `10K` —

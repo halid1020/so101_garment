@@ -49,6 +49,7 @@ os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 from common.web.datasets_api import add_dataset_routes
 from common.web.jobs import add_job_routes
 from common.web.lifecycle_api import add_lifecycle_routes
+from common.web.projects_api import add_project_routes
 from common.web.roots_api import (
     add_root_routes,
     initial_root,
@@ -150,6 +151,11 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # live on that machine; this is only the list of them, so a corrupt or
     # missing file costs the page its history and nothing else.
     app["training_file"] = outputs / "training_runs.yaml"
+    # Which runs the operator considers one experiment. Separate from the file
+    # above because a project groups DISCOVERED runs -- nineteen of the run
+    # directories on these machines were started from a terminal and have no
+    # launch record to hang a field on.
+    app["projects_file"] = outputs / "training_projects.yaml"
     app.add_routes(
         [
             web.get("/", handle_index),
@@ -164,6 +170,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     add_session_routes(app)
     add_sensor_routes(app)
     add_training_routes(app)
+    add_project_routes(app)
     return app
 
 

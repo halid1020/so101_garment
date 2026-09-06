@@ -113,13 +113,17 @@ while IFS= read -r line || [ -n "$line" ]; do
         echo "   Put a '-' before the last column: $line" >&2
         exit 2
     fi
-    # The names come from common.training.matrix.POLICY_NAMES, which is the one
-    # registry the console, tool/train_launch.py and this script all read. Asking
-    # it beats a second hardcoded list here that drifts the day a policy is added.
+    # This list MIRRORS common.training.matrix.POLICY_NAMES, which is the one
+    # registry the console and tool/train_launch.py read. It is repeated here
+    # because this runs on a login node before anything imports our Python, and
+    # it drifts the day a policy is added -- so test/unit/test_hpc_manifest.py
+    # asserts the two are the same set, which is the only reason a copy is
+    # allowed to exist.
     case "$policy" in
         act|diffusion|pi05|fastwam|so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero) ;;
         *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy'" >&2
-           echo "   want: act|diffusion|pi05|fastwam, or the so101_ prefixed ports" >&2
+           echo "   want: act|diffusion|pi05|fastwam, or one of the repo-local" >&2
+           echo "   so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero" >&2
            exit 2;;
     esac
     # A space here would silently shift every later column into `extra`, so the

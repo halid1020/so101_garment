@@ -174,8 +174,14 @@
     </section>
 
     <section class="pane" id="pane-training" hidden>
+      <nav class="subtabs">
+        <button class="subtab sel" data-view="start">Start Training</button>
+        <button class="subtab" data-view="jobs">Training Jobs</button>
+      </nav>
+
+      <div class="subview" data-view="start">
       <div class="col" id="training">
-        <h2>Training</h2>
+        <h2>Start training</h2>
         <div class="bar"><span class="grow muted" id="t-state">pick a dataset, some policies and a machine</span></div>
 
         <div class="pad">
@@ -226,24 +232,54 @@
         </div>
       </div>
 
+      </div>
+
+      <div class="subview" data-view="jobs" hidden>
+      <div class="col" id="training-projects">
+        <h2>Projects</h2>
+        <div class="bar"><button id="t-project-new">New project</button></div>
+        <ul class="list" id="t-project-list"></ul>
+        <div class="pad">
+          <p class="muted" id="t-project-detail"></p>
+          <div class="bar wrap" id="t-project-actions" hidden>
+            <button id="t-project-add">Add selected</button>
+            <button id="t-project-remove">Remove selected</button>
+            <button id="t-project-rename">Rename</button>
+            <button class="danger" id="t-project-delete">Delete</button>
+          </div>
+          <p class="muted" id="t-project-missing"></p>
+        </div>
+      </div>
+
       <div class="col grow" id="training-runs">
         <h2>Runs</h2>
         <div class="bar wrap">
           <button id="t-refresh">Refresh</button>
+          <input id="t-filter" placeholder="filter runs" size="16"
+                 autocomplete="off" spellcheck="false">
           <label class="row"><input type="checkbox" id="t-logy" checked>
             log scale</label>
           <select id="t-xaxis">
             <option value="step">by step</option>
             <option value="hours">by hours</option>
+            <option value="elapsed">since start</option>
           </select>
+          <label class="row" title="exponential moving average; the raw curve stays behind it">
+            smoothing <input type="range" id="t-smooth" min="0" max="95" value="0">
+          </label>
           <span class="grow muted" id="t-runstate"></span>
+          <button id="t-export" title="what is plotted, as CSV">Export</button>
         </div>
-        <figure class="plot" id="t-compare" hidden>
-          <figcaption class="bar wrap" id="t-compare-legend"></figcaption>
-          <canvas id="t-compare-canvas"></canvas>
-        </figure>
         <p class="err" id="t-runs-err"></p>
+        <div class="scroll" id="t-table-wrap">
+          <table class="runs" id="t-runs-table"></table>
+        </div>
+        <div class="pad" id="t-selection">
+          <div id="t-diff"></div>
+          <div class="panels" id="t-panels"></div>
+        </div>
         <div class="pad" id="t-runs"></div>
+      </div>
       </div>
     </section>
   </main>
@@ -356,6 +392,7 @@
   <script src="/static/roots.js"></script>
   <script src="/static/collect.js"></script>
   <script src="/static/signals.js"></script>
+  <script src="/static/chart.js"></script>
   <script src="/static/training.js"></script>
-  <script src="/static/training_chart.js"></script>
+  <script src="/static/training_jobs.js"></script>
 </body></html>

@@ -44,8 +44,12 @@ from common.training.matrix import (
     unavailable_message,
 )
 from common.training.runs import (
+    REAL_TREE,
+    SIM_TREE,
     RunsError,
+    cell_path,
     check_name,
+    config_path,
     discover,
     log_path,
     out_roots,
@@ -159,6 +163,13 @@ def _config(app: web.Application, root: Path) -> "dict[str, Any]":
                 "batch": spec.get("batch"),
                 "hours": spec.get("hours"),
                 "max_cameras": spec.get("max_cameras"),
+                # Where the implementation lives, and -- for a port -- which
+                # LeRobot policy it is a port OF. Without these the page shows
+                # nine unstructured checkboxes and nothing says that `act` and
+                # `so101_act` are the same model run by different code, which
+                # is the entire choice this list exists to offer.
+                "local": bool(spec.get("local")),
+                "ported_from": spec.get("ported_from"),
             }
             for name, spec in POLICIES.items()
         ],
@@ -478,6 +489,10 @@ def _discover(app: web.Application, name: str) -> "dict[str, Any]":
             entry["dataset"] = record.get("dataset")
             entry["episodes"] = record.get("episodes")
             entry["started"] = record.get("started")
+        elif entry.get("sim"):
+            # A sim run's directory is a timestamp, so it names no dataset. What
+            # it trained on is the task, which the cell path does name.
+            entry["dataset"] = entry.get("task") or entry["run"]
         else:
             # The directory names the dataset it was built from, which is the
             # only thing a run nobody recorded can still say about itself.
@@ -508,18 +523,51 @@ async def handle_discovered(request: web.Request) -> web.Response:
     return web.json_response({"runs": runs, "problems": problems})
 
 
-def _progress(app: web.Application, name: str, run: str, policy: str) -> "dict":
+def _progress(
+    app: web.Application,
+    name: str,
+    run: str,
+    policy: str,
+    tree: str = REAL_TREE,
+    cell: "str | None" = None,
+) -> "dict":
     dest = _destination(app, name)
     # Both roots are tried because a machine may hold runs in either -- the
     # local one does, since a console started through setup.sh writes into the
     # repo while the launcher stages into the cache.
     last: "dict[str, Any]" = {}
     for root in out_roots(dest):
-        result = read_log(dest, log_path(root, run, policy))
+        result = read_log(
+            dest,
+            log_path(root, run, policy, tree),
+            config=config_path(root, run, cell or policy, tree),
+            cell=cell_path(root, run, cell, tree) if cell else None,
+        )
         if result["ok"]:
             return {**result, "dest": name, "run": run, "policy": policy}
         last = result
     return {**last, "dest": name, "run": run, "policy": policy}
+
+
+def _cell_param(raw: str) -> "str | None":
+    """``mode/task/policy``, each a plain name. Anything else is refused.
+
+    The cell reaches a remote shell inside a command, so it is validated the
+    way run and policy names are rather than escaped -- and it is exactly three
+    segments because that is what ``long_vla_sim.sh`` writes. A caller that
+    sends something else is not describing a cell this rig created.
+    """
+    if not raw:
+        return None
+    parts = raw.split("/")
+    if len(parts) != 3:
+        raise RunsError(
+            f"cell {raw!r} is not <mode>/<task>/<policy>; a sim run's results "
+            "live three directories deep and nowhere else."
+        )
+    for part in parts:
+        check_name(part, "cell segment")
+    return "/".join(parts)
 
 
 async def handle_progress(request: web.Request) -> web.Response:
@@ -531,14 +579,19 @@ async def handle_progress(request: web.Request) -> web.Response:
         # never have created is a bad request, not a server error.
         run = check_name(request.query.get("run") or "", "run directory")
         policy = check_name(request.query.get("policy") or "", "policy")
+        cell = _cell_param(request.query.get("cell") or "")
     except RunsError as exc:
         raise web.HTTPBadRequest(text=str(exc))
+    # The tree is named by the caller because discovery already told it which
+    # one the run is in, and the two are shaped differently enough that
+    # guessing would cost a second SSH per run to find out.
+    tree = SIM_TREE if request.query.get("tree") == SIM_TREE else REAL_TREE
     fresh = request.query.get("refresh") == "1"
     out = await _cached(
         app,
-        ("progress", name, run, policy),
+        ("progress", name, run, policy, tree, cell),
         PROGRESS_TTL_S,
-        _make(_progress, app, name, run, policy),
+        _make(_progress, app, name, run, policy, tree, cell),
         fresh,
     )
     return web.json_response(out)

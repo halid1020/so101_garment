@@ -53,14 +53,25 @@ thanos:
   #                            it reads the cameras far smaller than act does)
   #   diffusion batch 8   -> 7.28 GB, 7.9 step/s, 395 W peak of a 480 W limit,
   #                            59 C, at EIGHT loader workers rather than 24
-  #   pi05      batch ?   -> not yet measured at five cameras. The 21.5-of-23.5
-  #                          GiB figure often quoted for it was taken with
-  #                          THREE, and activations scale with camera count.
-  # Nothing is refused here on memory, because memory has never been the
-  # binding constraint: the largest of these, act at batch 8, leaves better
-  # than half the card free. Add a limit when a real ceiling is observed, not
-  # before -- a guessed number refuses rows that fit and admits rows that do
-  # not.
+  #   pi05      batch 2   -> torch.OutOfMemoryError: 23.45 GiB of 23.55 in use,
+  #                            97 MiB free, asking for 122 MiB more. Killed at
+  #                            about two minutes, inside the Gemma MLP's
+  #                            down_proj under gradient checkpointing, with
+  #                            expandable_segments already on -- so this is
+  #                            capacity, not fragmentation.
+  #   pi05      batch 1   -> 20710 MiB, 365 W, 2.86 step/s, 30000 steps in
+  #                            2h55, final train loss 0.113. THREE cameras
+  #                            (central + the two gripper views), which is all
+  #                            pi0.5 has slots for.
+  # Memory was not the binding constraint for act or diffusion -- the largest of
+  # those, act at batch 8, leaves better than half the card free -- and it is the
+  # binding one for pi0.5. Hence the single limit below and nothing else: a
+  # guessed number refuses rows that fit and admits rows that do not.
+  #
+  # BATCH 1 IS BATCH 1. lerobot-train has no gradient accumulation (there is no
+  # such field in configs/train.py and nothing in the loop steps the optimiser
+  # every N batches), so this run cannot be made equivalent to CREATE's batch 4
+  # by any flag. Compare the two only with that in mind.
   #
   # WHAT DOES BIND HERE IS POWER, and it is a fact about the box rather than
   # the card. Every diffusion run started with the driver's default of one
@@ -68,17 +79,31 @@ thanos:
   # minutes -- at batch 32 in under a minute, at batch 16 in about six -- with
   # no shutdown record, no journal entry, no OOM and no Xid either time, which
   # is what a power cut looks like from software and what a panic or a thermal
-  # trip does not. act at batch 8 never did, and it is the lightest reader
-  # here: roughly 150 video-frame decodes a second against diffusion's 750 at
-  # batch 16. At 8 workers and batch 8 the same diffusion row trained through.
-  # WHICH of the two reductions mattered is NOT isolated -- both were made at
-  # once, deliberately, because a second crash costs a reboot. SO101_LOADER_WORKERS
-  # in test/system/long_vla_real.sh is the knob for varying one alone.
+  # trip does not. The diffusion row that DID train through, at batch 8, ran
+  # with 8 workers.
+  #
+  # WHICH of the two reductions mattered is NOT isolated, and the worker half is
+  # worse than unisolated -- it was not deliberate. The driver on that machine
+  # takes its count from `nproc`, hpc/gpu_box_run.sh never passes --workers, and
+  # SO101_LOADER_WORKERS did not exist there, so the 8 came from the launching
+  # shell's CPU affinity rather than from anything asked for. It is read back
+  # here from the run's OWN train_config.json, which is the only reason it is
+  # known at all.
+  #
+  # Against that, two runs at the full 24 workers did NOT take the box down:
+  # act at batch 8 (80000 steps, 8h34) and pi05 at batch 1 (30000 steps, 2h55).
+  # Both are light readers -- roughly 150 and 9 video-frame decodes a second,
+  # against diffusion's 750 at batch 16 -- so they narrow the suspect to decode
+  # RATE rather than clearing the worker count. SO101_LOADER_WORKERS in
+  # test/system/long_vla_real.sh is the knob for varying one alone, and it
+  # reaches this machine only once that branch is pushed and pulled.
   #
   # This card is also SINGLE-TENANT in practice: hpc/gpu_box_run.sh holds a lock
   # so the matrix runs one row at a time, and a policy server left serving on it
   # takes its memory off the top of whatever these figures allow.
-  limits: {}
+  limits:
+    pi05:
+      batch: 1
 
 local:
   # The machine the console itself is running on. Not a lesser destination: the

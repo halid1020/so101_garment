@@ -157,6 +157,57 @@ class TestReadingALogThatWasResumed(unittest.TestCase):
         self.assertEqual([p["step"] for p in points], [9, 12])
 
 
+class TestAResumedRepoPolicyStillKnowsItsOwnPolicies(unittest.TestCase):
+    """The one thing a resume may NOT take from the checkpoint.
+
+    lerobot/configs/parser.py reads --policy.discover_packages_path off
+    sys.argv and imports the package BEFORE draccus opens the file named by
+    --config_path. So a checkpoint whose train_config.json says `so101_act`
+    is parsed against a registry nobody populated, and the resume dies on a
+    type it wrote itself. Leave the flag out and every repo-local run is
+    unresumable -- on the box whose reboots are the reason resuming exists.
+    """
+
+    def resume_block(self) -> str:
+        text = DRIVER.read_text(encoding="utf-8")
+        start = text.index('if [ "$resume" = "1" ]; then')
+        # The block ends at its own `return 0`; the fresh-start args follow.
+        return text[start : text.index("return 0", start)]
+
+    def test_the_resume_passes_the_discovery_flag(self):
+        self.assertIn("--policy.discover_packages_path", self.resume_block())
+
+    def test_it_is_guarded_by_local_policy(self):
+        # An unconditional flag would put our package on lerobot's own runs.
+        # Harmless today, but it would make `act` and `so101_act` differ by
+        # something other than which implementation ran, which is the whole
+        # point of keeping both.
+        block = self.resume_block()
+        guard = block.index("local_policy")
+        self.assertLess(guard, block.index("--policy.discover_packages_path"))
+
+    def test_local_policy_names_exactly_the_repo_ones(self):
+        script = (
+            f'eval "$(sed -n "/^local_policy()/,/^}}/p" {DRIVER})"\n'
+            "for p in act diffusion pi05 fastwam so101_act so101_dreamzero; do\n"
+            '  if local_policy "$p"; then echo "$p local"; else echo "$p lerobot"; fi\n'
+            "done"
+        )
+        out = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=True
+        )
+        self.assertEqual(
+            out.stdout.split(),
+            # fmt: off
+            [
+                "act", "lerobot", "diffusion", "lerobot", "pi05", "lerobot",
+                "fastwam", "lerobot", "so101_act", "local",
+                "so101_dreamzero", "local",
+            ],
+            # fmt: on
+        )
+
+
 class TestResolveStepsDirectly(unittest.TestCase):
     def test_a_point_before_any_marker_keeps_offset_zero(self):
         points = [{"at": 0}, {"at": 100}]
