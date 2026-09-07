@@ -83,6 +83,14 @@ class WhatItRemovesTest(unittest.TestCase):
         cropped = crop_and_restore(leaky_frame(), 0.7)
         self.assertLess(float(cropped[..., :4, :].mean()), 0.05)
 
+    def test_a_row_only_crop_takes_the_top_and_bottom_rim(self):
+        # What the measured default actually does on this rig.
+        cropped = crop_and_restore(leaky_frame(), (0.7, 1.0))
+        self.assertLess(float(cropped[..., :3, :].mean()), 0.2)
+        # ...and leaves the side rim, because removing it would take the
+        # responsive columns with it.
+        self.assertGreater(float(cropped[..., :, :3].mean()), 0.5)
+
     def test_the_centre_survives(self):
         img = torch.zeros(1, 3, 48, 64)
         img[..., 20:28, 28:36] = 1.0  # a contact patch in the middle
@@ -304,16 +312,45 @@ class MeasuringTheBorderTest(unittest.TestCase):
 
 
 class DefaultsTest(unittest.TestCase):
-    def test_the_default_is_provisional_and_says_so(self):
-        # It stays a config field precisely so the measured value can replace it.
-        self.assertGreater(DEFAULT_CROP, 0.0)
-        self.assertLessEqual(DEFAULT_CROP, 1.0)
+    def test_the_default_crops_rows_and_leaves_columns_alone(self):
+        """The measurement's finding, pinned so it cannot drift back.
+
+        MEASURED on fold-short-from-flattend-tactile: on two of the four
+        fingertip cameras the columns whose temporal variation is in the top
+        quartile run to the frame EDGE, so a centred width crop removes the
+        responsive region along with the bright rim. Rows have room on every
+        camera (0.62 on the tightest). A default that cropped width again would
+        be undoing a measurement, so it is asserted rather than commented.
+        """
+        height, width = DEFAULT_CROP
+        self.assertEqual(width, 1.0)
+        self.assertGreater(height, 0.62)  # the tightest camera's safe bound
+        self.assertLess(height, 1.0)
+
+    def test_a_scalar_is_still_accepted(self):
+        # "Crop both sides by this much" is the obvious thing to reach for.
+        from so101_policies.common.tactile import as_fractions
+
+        self.assertEqual(as_fractions(0.7), (0.7, 0.7))
+        self.assertEqual(as_fractions((0.8, 1.0)), (0.8, 1.0))
+
+    def test_an_axis_left_whole_is_left_untouched(self):
+        img = torch.rand(1, 3, 48, 64)
+        out = crop_and_restore(img, (0.5, 1.0))
+        self.assertEqual(out.shape, img.shape)
+        # Width untouched means the leftmost column survives the round trip;
+        # a resize back from a narrower crop would have blurred it.
+        self.assertTrue(torch.allclose(out[..., 0], out[..., 0]))
+
+    def test_a_pair_of_ones_is_the_identity(self):
+        img = torch.rand(1, 3, 48, 64)
+        self.assertTrue(torch.equal(crop_and_restore(img, (1.0, 1.0)), img))
 
     def test_a_config_carries_the_crop_and_the_camera_list(self):
         from so101_policies.act_crop.configuration_act_crop import So101ActCropConfig
 
         config = So101ActCropConfig(device="cpu")
-        self.assertEqual(config.tactile_crop, DEFAULT_CROP)
+        self.assertEqual(tuple(config.tactile_crop), tuple(DEFAULT_CROP))
         self.assertEqual(tuple(config.tactile_cameras), TACTILE_CAMERAS)
 
 

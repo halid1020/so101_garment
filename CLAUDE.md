@@ -276,9 +276,14 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   (which `analysis/streams.py` requires), diffusion's dummy-sized feature dim
   still matches, and pi0.5's letterbox padding is unchanged. It goes at index 0,
   ahead of the rename step, or pi0.5's slot rename hides the cameras from it.
-  Grad-CAM showing the policy on the sensor EDGES before contact is why; the
-  fraction comes from `tool/measure_tactile_border.py`, not a guess, and
-  `tactile_crop=1.0` is a bit-identical uncropped control.
+  Grad-CAM showing the policy on the sensor EDGES before contact is why. The
+  fraction comes from `tool/measure_tactile_border.py`, and measuring it CHANGED
+  the design: the rim is a smooth vignette (+7 to +22 % brighter at the edge)
+  with no band to find, and HORIZONTALLY the bright rim and the responsive
+  columns are the same pixels — on two of four sensors the top-quartile-variation
+  columns run to the frame edge. So the default crops ROWS ONLY, `(0.80, 1.00)`,
+  inside the 0.62 bound of the tightest camera. `(1.0, 1.0)` is a bit-identical
+  uncropped control.
   `flowmatch` is NOT a port: pi0.5's objective and action
   expert on the diffusion policy's `DiffusionRgbEncoder` (that literal class, so
   "same backbone" is a fact), built as the CONTROL for the world action model --

@@ -27,10 +27,13 @@ from ..pi05.configuration_pi05 import So101Pi05Config
 class So101Pi05CropConfig(So101Pi05Config):
     """So101Pi05Config plus a centred crop on the fingertip cameras."""
 
-    #: Fraction of each side kept, centred, then resized back to the source
-    #: size so no downstream shape changes. 1.0 is the uncropped baseline,
-    #: which makes an ablation a single flag rather than a second policy.
-    tactile_crop: float = DEFAULT_CROP
+    #: Fraction of HEIGHT and of WIDTH kept, centred, then resized back to the
+    #: source size so no downstream shape changes. (1.0, 1.0) is the uncropped
+    #: baseline, which makes an ablation a single field rather than a second
+    #: policy. The default crops rows only, because MEASURED on this rig the
+    #: bright rim and the responsive columns are the same pixels -- see
+    #: `common/tactile.DEFAULT_CROP` for the per-camera numbers.
+    tactile_crop: tuple[float, float] = DEFAULT_CROP
 
     #: Which cameras are tactile. No camera carries a `tactile` flag anywhere
     #: in this repo, so the set is named rather than inferred.

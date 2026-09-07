@@ -164,13 +164,35 @@ uncropped control and is bit-identical to the twin — the crop returns the inpu
 untouched rather than making a no-op interpolation pass, so the control arm is
 the same run and not a third condition.
 
-**The fraction is measured, not chosen.** `tool/measure_tactile_border.py`
-takes the per-pixel temporal standard deviation and mean luminance over sampled
-frames and reports the largest centred box excluding every row and column whose
-variation falls below a fraction of the frame's own median — relative, because
-the four fingertips are not identically lit. It prints the evidence beside the
-answer, and says so explicitly when the border is *not* quieter than the centre,
-in which case the honest fraction is 1.0.
+**The fraction is measured, and measuring it changed the design.**
+`tool/measure_tactile_border.py` takes per-pixel temporal standard deviation and
+mean luminance over sampled frames. Run against
+`fold-short-from-flattend-tactile` (six episodes, one frame in twenty) it found
+two things that the obvious "crop the border" reading does not survive:
+
+| camera | safe row crop | safe col crop | edge brightness rise |
+|---|---|---|---|
+| `left_arm_left_gripper` | 0.62 | **1.00** | +12.2 % |
+| `left_arm_right_gripper` | 0.45 | 0.82 | +10.9 % |
+| `right_arm_left_gripper` | 0.53 | 0.81 | +7.4 % |
+| `right_arm_right_gripper` | 0.55 | **1.00** | +22.2 % |
+
+*Safe* is the tightest centred crop keeping every line whose temporal variation
+is in the frame's top quartile — the lines where the gel actually responds.
+
+1. **The rim is a smooth vignette, not a band.** Luminance falls monotonically
+   from both edges to the middle, so there is no boundary to find and no
+   threshold at which the answer stops moving. The tool prints a sensitivity
+   row for that reason; a fraction quoted without it is an opinion wearing a
+   measurement's clothes.
+2. **Horizontally, the bright rim and the responsive region are the same
+   pixels.** On two of the four sensors the most active columns run to the frame
+   edge. A centred width crop cannot remove the leak without removing signal.
+
+So the default crops **rows only** — `(0.80, 1.00)`, comfortably inside the 0.62
+bound on the tightest camera and removing the brightest rows on all four. The
+first version of this cropped both axes at 0.7; that would have cut away part of
+what the sensors were reporting, and only the measurement said so.
 
 **No contact gate.** Feeding tactile only once contact is established was
 considered and left out: "stable contact" is a temporal predicate, training
