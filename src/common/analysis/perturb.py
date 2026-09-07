@@ -23,6 +23,14 @@ usual choice and is off-manifold -- a policy has never seen a black frame, so
 its reaction says as much about surprise as about dependence. Four are offered
 and every figure names the one it used; where two baselines disagree about a
 stream, that disagreement is the honest answer.
+
+EVERY PLAN HERE IS PINNED. The method compares plans, and a diffusion or
+flow-matching policy plans differently twice from one unchanged observation --
+MEASURED at 32.4 commanded units against an occlusion effect of 32.5, so
+unpinned this measures the sampler and not the input. Each forward pass
+therefore goes through :func:`common.analysis.diffusion.plan`, which seeds the
+global RNG and restores it. On ACT it changes nothing: its latent is sampled
+only ``if self.training``, so the plan was already deterministic.
 """
 
 from __future__ import annotations
@@ -30,6 +38,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+
+from common.analysis.diffusion import DEFAULT_SEED, plan
 
 #: The gripper channels of a 12-D action, from the recorder's own layout:
 #: ``[left5 deg, left_grip, right5 deg, right_grip]`` (``eval_sim_policy
@@ -156,6 +166,21 @@ def _replace(
     return out_state, out_images
 
 
+def plan_of(
+    inference,
+    state: np.ndarray,
+    images: "dict[str, np.ndarray]",
+    seed: int = DEFAULT_SEED,
+) -> np.ndarray:
+    """One plan from one observation, with a stochastic sampler pinned.
+
+    The whole of this module compares plans, so nothing here may call
+    ``Inference.chunk`` directly -- that is the unpinned door, and its own
+    docstring says so.
+    """
+    return plan(inference, inference.batch(state, images), seed)
+
+
 def occlusion(
     inference,
     state: np.ndarray,
@@ -163,6 +188,7 @@ def occlusion(
     baseline: str = "mean",
     alternative: "dict | None" = None,
     direction: str = "leave_one_out",
+    seed: int = DEFAULT_SEED,
 ) -> "dict[str, Any]":
     """Every stream's effect on this one observation's plan.
 
@@ -177,7 +203,7 @@ def occlusion(
     great deal. Read it beside the raw ``l2``.
     """
     names = [s.name for s in inference.streams]
-    reference = inference.chunk(state, images)
+    reference = plan_of(inference, state, images, seed)
     effects: "dict[str, dict]" = {}
     for name in names:
         targets = (
@@ -187,7 +213,7 @@ def occlusion(
             state, images, targets, baseline, alternative
         )
         effects[name] = chunk_delta(
-            reference, inference.chunk(moved_state, moved_images)
+            reference, plan_of(inference, moved_state, moved_images, seed)
         )
 
     total = sum(e["l2"] for e in effects.values())
@@ -196,6 +222,7 @@ def occlusion(
     return {
         "direction": direction,
         "baseline": baseline,
+        "seed": seed,
         "reference": reference,
         "streams": effects,
         # Everything gone at once: the ceiling the individual effects sit under,
@@ -203,7 +230,11 @@ def occlusion(
         # than removing all of them, the baseline is doing something strange.
         "all": chunk_delta(
             reference,
-            inference.chunk(*_replace(state, images, names, baseline, alternative)),
+            plan_of(
+                inference,
+                *_replace(state, images, names, baseline, alternative),
+                seed,
+            ),
         ),
     }
 

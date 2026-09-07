@@ -80,6 +80,46 @@ on the rest of the process. `diffusion.plan()` is the call to use anywhere two
 plans are compared; `sampler_spread()` reports the floor — an effect smaller
 than the sampler's own wobble is not a finding.
 
+**Occlusion went unpinned for a while, and that is worth recording.** The pin
+was first wired into the gradient path only (`Inference.chunk_tensor`), while
+`perturb.py` kept calling the unpinned `Inference.chunk` — so the one method
+that is *behavioural ground truth* was the one measuring the sampler. Every
+forward pass in `perturb.py` now goes through `perturb.plan_of`, and the seed
+is recorded in the result beside the baseline, so a table can say which it was.
+The property this buys is stronger than repeatability: both plans in a
+comparison are drawn under the *same* seed, so the sampler cancels out of the
+difference and the answer does not depend on which seed was chosen.
+
+## Which method runs on which policy
+
+Not every method exists for every architecture, and the reasons are structural
+rather than incidental. Ask for one that cannot run and the payload records why
+instead of failing the run.
+
+| | ACT (`act`, `so101_act`) | diffusion | pi0.5, flow-matching |
+|---|---|---|---|
+| occlusion | yes | yes | yes |
+| integrated gradients | yes | yes | yes |
+| Grad-CAM | yes | yes | **no** |
+| attention | yes | **no** | **no** |
+
+* **Grad-CAM** weights a convolutional feature map, and a token model has none.
+  Where it does run, the trunk is not the same object: ACT calls one
+  `model.backbone` once per camera, while diffusion's `rgb_encoder` is an
+  `nn.ModuleList` of per-camera encoders — the list itself is never called, so
+  hooking it collects nothing. The hook goes on each encoder's `.backbone`,
+  never the encoder, which returns a pooled vector with no spatial dimensions
+  left to draw. `gradients.cam_trunks` is the one place that is decided.
+* **Attention** is ACT's decoder cross-attention; the other two have no
+  equivalent to report. The guard tests the architecture *family*, not the
+  config type string — testing the string silently dropped attention from a
+  ported `so101_act` deck.
+* **pi0.5 carries two `@torch.no_grad()` decorators**, on
+  `predict_action_chunk` and again on the inner `sample_actions`. Unwrapping
+  only the outer one returns a tensor with no graph, and autograd then
+  complains about the input rather than about the decorator. Both come off for
+  the duration of one call and the class is put back exactly as it was found.
+
 ## The four methods
 
 **Occlusion** (`--method occlusion`) replaces one stream and re-infers. It is
@@ -157,9 +197,43 @@ Over recorded episodes — ground truth actions, many frames, no rig needed:
 venv/bin/python tool/analyse_policy_inputs.py \
     --checkpoint outputs/policies/fold-short-from-flattend-tactile__all-act \
     --dataset ~/.cache/huggingface/lerobot/local/fold-short-from-flattend-tactile \
-    --episodes 0-4 --method occlusion,ig,attention \
-    --out outputs/analysis/act-all
+    --episodes 0-5 --method occlusion,ig,gradcam,attention --sanity
 ```
+
+### Where the results go
+
+**Every analysis lands in `outputs/analysis/<YYYY-MM-DD>/<content>/`**, and the
+deck built from it in `<content>/slides/`. `<content>` is
+`<policy>-<camera slug>` — `act-all`, `diffusion-all`,
+`pi05-central+left_arm_left_gripper+right_arm_left_gripper` — using the same
+slug a camera view already carries, so an analysis directory and the run
+directory it analysed are named alike.
+
+The date is the answer to the question the old layout could not answer: *is this
+the current result?* A bare `outputs/analysis/act-all` said nothing about
+whether it came from this week's code or from a checkpoint two retrainings ago.
+It also fixes a quieter fault — the old default was
+`outputs/analysis/<basename of --checkpoint>`, which on a LeRobot checkpoint is
+the literal word `pretrained_model`, so every unnamed analysis overwrote the
+last one. `--out` still overrides, and `--name` sets only the `<content>` half.
+`$SO101_OUTPUT_DIR` is honoured. The rules live in
+`common/analysis/paths.py`.
+
+### Comparing policies
+
+```bash
+venv/bin/python tool/analysis_slides.py \
+    --compare outputs/analysis/<day>/act-all \
+              outputs/analysis/<day>/diffusion-all \
+              outputs/analysis/<day>/pi05-central+left_arm_left_gripper+right_arm_left_gripper
+```
+
+One page, one column per deck. A stream a policy was never given reads `n/a`
+and not `0 %` — those are different claims, and pi0.5's three image slots mean
+it saw two fingertips where ACT saw four. Every difference between the decks
+that stops them being a like-for-like row is printed beside the table, including
+the one that is easy to forget: shares are normalised **within** a deck, so
+compare the ordering across columns, never the magnitudes.
 
 Over a real rollout:
 

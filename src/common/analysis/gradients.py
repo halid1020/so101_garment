@@ -23,7 +23,10 @@ ranking.
 **Grad-CAM** (Selvaraju et al., 2016) weights the last convolutional feature map
 by the gradient flowing into it. It answers *where in this tactile image*, at
 the resolution the network actually reasons at, for the price of one backward
-pass. Both policies here use a ResNet trunk, so it applies to both.
+pass. It needs a convolutional trunk, so it runs on ACT and on diffusion but
+NOT on a token model: pi0.5 and the flow-matching policies have no feature map
+to weight, and integrated gradients is what they get instead. Where the trunk
+is, and how many times it runs, differs between the two -- :func:`cam_trunks`.
 
 Hand-rolled on torch autograd rather than pulled from captum: each is a few
 dozen lines, and this repo's venv is heavy enough already.
@@ -203,6 +206,46 @@ def smoothgrad(
     }
 
 
+def cam_trunks(inference) -> "tuple[list[Any], str]":
+    """The module(s) whose output is a spatial feature map, and how they run.
+
+    Three shapes, because the two architectures reach their trunk differently
+    and diffusion reaches it two ways depending on one config flag:
+
+    ``"per_call"`` -- ACT. ``policy.model.backbone`` is ONE module the encoder
+    calls once per camera in a loop, so the hook fires once per camera in the
+    policy's own order.
+
+    ``"per_module"`` -- diffusion with ``use_separate_rgb_encoder_per_camera``
+    (what this rig trains). ``rgb_encoder`` is an ``nn.ModuleList``, one encoder
+    per camera, and the list itself is never called -- hooking it collects
+    nothing, which is why this used to raise rather than draw. Each encoder's
+    ``.backbone`` is hooked instead.
+
+    ``"interleaved"`` -- diffusion with one shared encoder. It runs ONCE on a
+    batch flattened ``b s n -> (b s n)``, so a single activation carries every
+    camera and has to be de-interleaved.
+
+    Note it is the encoder's ``.backbone`` that is hooked, never the encoder:
+    ``DiffusionRgbEncoder.forward`` returns a pooled ``(B, D)`` vector with no
+    spatial dimensions left to draw.
+    """
+    policy = inference.policy
+    backbone = getattr(getattr(policy, "model", None), "backbone", None)
+    if backbone is not None:
+        return [backbone], "per_call"
+    encoder = getattr(getattr(policy, "diffusion", None), "rgb_encoder", None)
+    if encoder is None:
+        raise RuntimeError(
+            f"no ResNet trunk found on a '{inference.type}' policy. A token model "
+            "(pi0.5, the flow-matching policies) has no convolutional feature map "
+            "for Grad-CAM to weight; use integrated gradients on it instead."
+        )
+    if isinstance(encoder, inference.torch.nn.ModuleList):
+        return [e.backbone for e in encoder], "per_module"
+    return [encoder.backbone], "interleaved"
+
+
 def grad_cam(
     inference,
     batch: dict,
@@ -210,21 +253,18 @@ def grad_cam(
 ) -> "dict[str, np.ndarray]":
     """Where in each camera's frame the plan came from, at feature-map resolution.
 
-    A forward hook on the shared ResNet trunk collects one activation per camera,
-    IN THE ORDER the policy stacks them, and the backward pass gives the matching
+    A forward hook on the ResNet trunk collects one activation per camera, IN
+    THE ORDER the policy stacks them, and the backward pass gives the matching
     gradients. The map is the gradient-weighted channel sum, rectified: the
     negative part answers a different question (what would have increased the
     target had it been absent) and mixing the two makes an unreadable picture.
+
+    See :func:`cam_trunks` for how the trunk is found -- it is not the same
+    object, nor the same number of calls, on ACT and on diffusion.
     """
     if isinstance(target, str):
         target = TARGETS[target]
-    backbone = getattr(getattr(inference.policy, "model", None), "backbone", None)
-    if backbone is None:
-        backbone = getattr(
-            getattr(inference.policy, "diffusion", None), "rgb_encoder", None
-        )
-    if backbone is None:
-        raise RuntimeError(f"no ResNet trunk found on a '{inference.type}' policy")
+    trunks, mode = cam_trunks(inference)
 
     activations: "list[Any]" = []
 
@@ -234,32 +274,67 @@ def grad_cam(
         activations.append(tensor)
         return output
 
-    handle = backbone.register_forward_hook(keep)
+    handles = [trunk.register_forward_hook(keep) for trunk in trunks]
     try:
         live = dict(batch)
         inference.policy.zero_grad(set_to_none=True)
         scalar = target(inference.chunk_tensor(live))
         scalar.backward()
     finally:
-        handle.remove()
+        for handle in handles:
+            handle.remove()
 
     names = [k.split(".")[-1] for k in inference.image_keys()]
-    if len(activations) != len(names):
+    per_camera = _cam_activations(inference, activations, len(names), mode)
+    if len(per_camera) != len(names):
         raise RuntimeError(
-            f"the trunk ran {len(activations)} time(s) for {len(names)} camera(s): "
-            "the map cannot be matched to a camera"
+            f"the trunk ran {len(activations)} time(s) and yielded "
+            f"{len(per_camera)} map(s) for {len(names)} camera(s) in '{mode}' "
+            "mode: the map cannot be matched to a camera"
         )
     maps: "dict[str, np.ndarray]" = {}
-    for name, activation in zip(names, activations):
-        grad = activation.grad
+    for name, (activation, grad) in zip(names, per_camera):
         if grad is None:
             continue
         weights = grad.mean(dim=(-2, -1), keepdim=True)
-        cam = (weights * activation).sum(dim=1).clamp(min=0)
-        cam = cam[0].detach().to("cpu").numpy()
+        cam = (weights * activation).sum(dim=0).clamp(min=0)
+        cam = cam.detach().to("cpu").numpy()
         peak = cam.max()
         maps[name] = (cam / peak) if peak > 0 else cam
     return maps
+
+
+def _cam_activations(inference, activations, n_cameras: int, mode: str):
+    """One ``(activation, gradient)`` pair per camera, each ``(C, H, W)``.
+
+    The leading batch axis is dropped here rather than in the caller because
+    where it comes from differs per mode: ACT and the per-camera encoders are
+    given ``(b*s, C, H, W)`` and the observation window holds copies of one
+    frame, so index 0 is that frame; the shared encoder is given every camera
+    of every step at once and has to be reshaped before any of it means
+    anything.
+    """
+    if mode == "interleaved":
+        if len(activations) != 1:
+            return []
+        whole = activations[0]
+        grad = whole.grad
+        steps = int(inference.n_obs_steps) or 1
+        rest = whole.shape[1:]
+        batch = whole.shape[0] // max(steps * n_cameras, 1)
+        if batch * steps * n_cameras != whole.shape[0]:
+            return []
+        shaped = whole.view(batch, steps, n_cameras, *rest)[0, 0]
+        shaped_grad = (
+            grad.view(batch, steps, n_cameras, *rest)[0, 0]
+            if grad is not None
+            else None
+        )
+        return [
+            (shaped[i], shaped_grad[i] if shaped_grad is not None else None)
+            for i in range(n_cameras)
+        ]
+    return [(a[0], a.grad[0] if a.grad is not None else None) for a in activations]
 
 
 def per_stream(attributions: "dict[str, Any]", inference) -> "dict[str, float]":

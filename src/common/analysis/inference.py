@@ -20,6 +20,7 @@ it step by step, exactly as ``tool/policy_server.py`` does.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -284,7 +285,42 @@ class Inference:
                 "predict_action_chunk is not a torch.no_grad wrapper, so there "
                 "is nothing to unwrap. Occlusion still works and needs no gradient."
             )
-        return inner(self.policy, dict(batch))
+        # ONE wrapper is not enough on pi0.5. `predict_action_chunk` is decorated,
+        # and so is `PI05Pytorch.sample_actions` underneath it, so unwrapping only
+        # the outer one returns a tensor with no graph and autograd.grad raises
+        # "does not require grad" -- which reads as a broken input, not as a
+        # second decorator. Both come off, and the sampler is pinned while they
+        # are off, because it integrates from noise like diffusion does.
+        from common.analysis.diffusion import pinned
+
+        with self._grad_through_sampler(), pinned(self):
+            return inner(self.policy, dict(batch))
+
+    @contextlib.contextmanager
+    def _grad_through_sampler(self):
+        """Take ``@torch.no_grad()`` off the inner sampler for one call.
+
+        Bound onto the instance and deleted afterwards, so the class is left
+        exactly as it was found -- a policy served in the same process must not
+        start building graphs because something asked it for a gradient once.
+        """
+        model = getattr(self.policy, "model", None)
+        sampler = getattr(model, "sample_actions", None)
+        unwrapped = getattr(sampler, "__wrapped__", None)
+        if model is None or unwrapped is None:
+            yield
+            return
+        import types
+
+        setattr(model, "sample_actions", types.MethodType(unwrapped, model))
+        try:
+            yield
+        finally:
+            # Removing the instance attribute uncovers the class's decorated one.
+            try:
+                delattr(model, "sample_actions")
+            except AttributeError:  # pragma: no cover - never bound
+                pass
 
     def image_keys(self) -> "list[str]":
         """The batch keys the cameras arrive under, in the policy's own order."""

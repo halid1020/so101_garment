@@ -19,6 +19,20 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   well-organised file tree.
 - Be surgical: make only the changes the task needs, and don't change
   things that don't need changing.
+- **Ring the bell when you are blocked on the user.** Anything only they can
+  do — a cluster login, a VPN, a drive to plug in, a `git push` — stops the
+  work, so say so immediately rather than at the end of a long report: send a
+  `PushNotification` (desktop, and phone if Remote Control is on) AND print a
+  clearly marked block in the terminal, naming what is blocked and the one
+  action that unblocks it. The notification can be disabled in the host config,
+  so the terminal block is the half that always has to be there. Then carry on
+  with whatever does not depend on the answer.
+- **Analysis results are dated.** Anything `tool/analyse_policy_inputs.py`,
+  `tool/analysis_slides.py` or a future analysis writes goes to
+  `outputs/analysis/<YYYY-MM-DD>/<content>/`, where `<content>` is
+  `<policy>-<camera slug>` and the deck sits in `<content>/slides/`. The rules
+  are `src/common/analysis/paths.py`; keep new analyses on that helper rather
+  than composing a path by hand.
 
 ## Environment & how to run things
 
@@ -241,7 +255,17 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   randomised policy plans the same chunk whatever it is shown, so every share
   falls to zero). `slides.py` + `tool/analysis_slides.py` turn a finished run
   into slide-ready videos (PyAV/H.264, no ffmpeg binary), plots and tables.
-  Runbook: `documents/policy_input_analysis.md`.
+  `paths.py` is the ONE place an analysis decides where it is written
+  (`outputs/analysis/<day>/<policy>-<cameras>/`). Not every method exists for
+  every architecture and the reasons are structural, so `cam_trunks` is the one
+  place Grad-CAM's trunk is found — ACT calls one `model.backbone` per camera,
+  diffusion's `rgb_encoder` is an `nn.ModuleList` whose members are called and
+  whose `.backbone` is what has a spatial map, and a token model has no map at
+  all. pi0.5 carries `@torch.no_grad()` TWICE (on `predict_action_chunk` and
+  again on the inner `sample_actions`), so a gradient needs both off. Occlusion
+  is pinned through `perturb.plan_of`: it was not, for a while, which made it
+  the one method measuring the sampler while being the ground truth everything
+  else is scored against. Runbook: `documents/policy_input_analysis.md`.
 - `src/so101_policies/` — every policy this rig trains, implemented HERE rather
   than in LeRobot. Importing the package registers each one with LeRobot's
   draccus registry, which is the whole mechanism: `lerobot.configs.parser.wrap`
