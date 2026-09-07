@@ -453,6 +453,18 @@ def agreement_section(method_rows) -> str:
             "run: see the note beside the table.\n"
         )
     body = "\n".join(lines)
+    # Only say this where there IS an attention row. On a policy that has no
+    # decoder cross-attention to report -- diffusion, pi0.5 -- the paragraph
+    # would be describing a method the deck never ran, which is the habit this
+    # whole file was rewritten to break.
+    attention_note = (
+        "\nThat is exactly what raw attention does here, and why the *vs "
+        "uniform* row is the one to quote: each camera owns the same number of "
+        "tokens, so raw attention mass says more about token count than about "
+        "the policy.\n"
+        if any(row[0].startswith("attention") for row in method_rows)
+        else ""
+    )
     return (
         "## 6. Do the methods agree? — `table_methods.csv`\n\n"
         "Spearman rank agreement against occlusion, which is the behavioural "
@@ -462,10 +474,7 @@ def agreement_section(method_rows) -> str:
         f"{body}\n\n"
         "**Read the two columns together.** A near-uniform method can still sort "
         "the cameras the same way and so score a high agreement while carrying "
-        "almost no signal — which is exactly what raw attention does, and why "
-        "the *vs uniform* row is the one to quote. Each camera owns the same "
-        "number of tokens, so raw attention mass says more about token count "
-        "than about the policy.\n"
+        "almost no signal.\n" + attention_note
     )
 
 
