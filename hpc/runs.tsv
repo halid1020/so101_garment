@@ -111,6 +111,23 @@ fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_
 # exports HF_HUB_OFFLINE=1, so an unstaged weight fails AFTER the GPU is taken.
 fold-short-from-flattend-tactile so101_fastwam central,tactile_quad             30000   8      36     -       -
 
+# The world action model, and the control it is measured against. Neither has
+# ever been trained; both are launchable today.
+#
+# MEASURED 2026-09-07 on this laptop's CPU, which is the cheap half of the
+# question: so101_dreamzero builds and takes optimiser steps end to end at 59M
+# learnable parameters (loss 3.94 at step 1), so a GPU row will not die on a
+# construction error hours in. What is NOT measured is a batch ceiling on any
+# GPU -- no destination names a limit for either, so the first real run should
+# be a short probe that writes one into src/conf/train_destinations.yaml.
+#
+# STAGE THE VAE FIRST. DreamZero encodes video with a frozen
+# stabilityai/sd-vae-ft-mse (~330 MB) fetched from the Hub, and every launcher
+# exports HF_HUB_OFFLINE=1 -- so on a compute node with no internet an unstaged
+# VAE fails AFTER the GPU is reserved. hpc/README.md has the login-node command.
+fold-short-from-flattend-tactile so101_dreamzero all                           80000   8      36     -       -
+fold-short-from-flattend-tactile so101_flowmatch all                           60000   16     24     -       -
+
 # The tactile CROP arm. The supervisor's reading of the Grad-CAM figures: the
 # policy attends to the EDGES of the fingertip images, including before contact,
 # which is what light leaking in at the gel boundary looks like. These crop the
