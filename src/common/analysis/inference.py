@@ -184,14 +184,31 @@ class Inference:
             per_camera = self.tokens_per_camera()
             spans = act_layout(self.cfg, per_camera)
             total = 1 + sum(s.width for s in spans)
-            return spans, total, check_layout(spans, total, latent=1)
+            return self._named(spans), total, check_layout(spans, total, latent=1)
         if family == "diffusion":
             spans = diffusion_layout(self.cfg, self.camera_feature_dim())
             total = sum(s.width for s in spans)
-            return spans, total, check_layout(spans, total)
+            return self._named(spans), total, check_layout(spans, total)
         spans = token_layout(self.cfg, self.tokens_per_camera_vlm())
         total = sum(s.width for s in spans)
-        return spans, total, check_layout(spans, total)
+        return self._named(spans), total, check_layout(spans, total)
+
+    def _named(self, spans: list) -> list:
+        """Give each span the same stream name everything else here uses.
+
+        The layout functions build their own Streams from the config, so on a
+        checkpoint finetuned onto renamed slots they carry `base_0_rgb` while
+        every per-frame result is keyed `central`. The deck then died on a
+        KeyError naming a camera the operator has never heard of. One naming,
+        decided in one place.
+        """
+        import dataclasses
+
+        by_key = {s.key: s for s in self.streams}
+        return [
+            dataclasses.replace(span, stream=by_key.get(span.stream.key, span.stream))
+            for span in spans
+        ]
 
     def family(self) -> str:
         """Which conditioning layout this checkpoint has: act, diffusion or tokens.
