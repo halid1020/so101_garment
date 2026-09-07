@@ -89,10 +89,15 @@ POLICIES: "dict[str, dict[str, Any]]" = {
 #
 # `local` marks a policy this repo defines. It changes only what an unavailable
 # one is told to do about it: bumping LeRobot cannot fix a module that lives here.
+# so101_fastwam is the odd one: its twin is not in the installed LeRobot at all,
+# because FastWAM landed upstream after LEROBOT_COMMIT. `fastwam` stays in this
+# table and stays refused by the module probe, which is the honest report -- the
+# port is what can actually be trained today.
 for _ported, _from in (
     ("so101_act", "act"),
     ("so101_diffusion", "diffusion"),
     ("so101_pi05", "pi05"),
+    ("so101_fastwam", "fastwam"),
 ):
     POLICIES[_ported] = {
         **POLICIES[_from],

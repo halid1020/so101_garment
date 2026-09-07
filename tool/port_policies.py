@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from so101_policies._port import port_text, ported_files  # noqa: E402
+from so101_policies._port import port_text, ported_files, read_upstream  # noqa: E402
 
 
 def main() -> int:
@@ -28,11 +28,13 @@ def main() -> int:
     args = parser.parse_args()
 
     stale = []
-    for upstream, ours, name, kind in ported_files():
-        if not upstream.is_file():
-            print(f"❌ upstream missing: {upstream}")
+    for relative, ours, name, kind in ported_files():
+        try:
+            source = read_upstream(name, relative)
+        except (FileNotFoundError, OSError) as problem:
+            print(f"❌ {problem}")
             return 2
-        want = port_text(upstream.read_text(), name, kind)
+        want = port_text(source, name, kind)
         have = ours.read_text() if ours.is_file() else None
         if have == want:
             print(f"  = {ours.relative_to(Path.cwd()) if ours.is_absolute() else ours}")
@@ -41,6 +43,7 @@ def main() -> int:
         if args.check:
             print(f"  ✗ out of date: {ours}")
         else:
+            ours.parent.mkdir(parents=True, exist_ok=True)
             ours.write_text(want)
             print(f"  ↻ rewrote: {ours}")
 

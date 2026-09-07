@@ -99,7 +99,17 @@ fold-short-from-flattend-tactile diffusion left_arm_left_gripper,left_arm_right_
 fold-short-from-flattend-tactile pi05      central,left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
 fold-short-from-flattend-tactile pi05      central                          30000   4      36     -       -
 fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
-fold-short-from-flattend-tactile fastwam   central,tactile_quad             30000   8      36     -       -
+# FastWAM now runs as the PORT, not as `fastwam`: it landed upstream after
+# LEROBOT_COMMIT, so the bare name is still refused by the module probe and
+# always will be until the pin moves. The port reads that same code out of a
+# named newer commit without moving the pin -- see src/so101_policies/_port.py.
+#
+# NOT YET LAUNCHED, and check the box before you do: FastWAM pulls a 5B Wan video
+# backbone (Wan-AI/Wan2.2-TI2V-5B) plus a umt5-xxl text encoder, so it is a far
+# bigger model than anything else in this table and the 24.5 GiB box may not hold
+# it at any batch. Both must also be warmed on a login node -- every launcher
+# exports HF_HUB_OFFLINE=1, so an unstaged weight fails AFTER the GPU is taken.
+fold-short-from-flattend-tactile so101_fastwam central,tactile_quad             30000   8      36     -       -
 
 # The tactile CROP arm. The supervisor's reading of the Grad-CAM figures: the
 # policy attends to the EDGES of the fingertip images, including before contact,

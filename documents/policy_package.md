@@ -120,6 +120,47 @@ for no gain. Code we actually write is linted like everything else.
 If a port ever needs a real edit, it stops being a port: take the file out of
 `_port.PORTS` and say why.
 
+## FastWAM — a port from a commit the pin has never seen
+
+`so101_fastwam` is the fourth port, and the only one whose source is not in the
+pinned checkout: FastWAM landed upstream after `LEROBOT_COMMIT` (3dd19d04), so
+`../lerobot` does not contain it. Rather than move the pin — which would change
+act, diffusion and pi05 underneath every finished checkpoint and invalidate the
+byte-comparison the three existing ports rest on, including the port-parity
+measurement on thanos — `_port.PORT_REF` names the commit to read that one
+directory out of. A SHA and not a branch: `origin/main` moves, and a port that
+silently re-derives from a different upstream on every fetch is not a port.
+
+`tool/port_policies.py --check` re-derives it byte for byte exactly as it does
+the others, so it is no less checkable for being read through `git show`.
+
+Two things are particular to it:
+
+* **It carries a subpackage.** FastWAM's model lives in `wan/`, seven files
+  whose imports are already absolute or package-relative, so they are copied
+  unrewritten (`_port.PORT_EXTRA`) — but they are still in `--check`, because
+  being unrewritten is not the same as being unowned. Its `__init__.py` is
+  *not* carried: upstream's re-exports `FastWAMPolicy`, which the port renames
+  without adding an alias, so carrying it verbatim breaks the import.
+* **The pinned `lerobot.processor` is missing exactly two names** —
+  `make_default_policy_processor_steps` and `make_policy_processor_pipelines`,
+  both added to `processor/factory.py` after the pin. Everything else FastWAM
+  touches exists at the pin, name by name, MEASURED. Those two are reproduced
+  line for line in `common/processor_compat.py`, and the port rewrites that one
+  import to point at them — the same mechanical move `_port._RELATIVE` already
+  makes for `..pretrained` and `..utils`. Editing the file instead would stop it
+  being a port at all. A test asserts the pin *still* lacks them, so the day it
+  gains them the shim can be deleted rather than quietly outliving its reason.
+
+The bare `fastwam` name stays in `matrix.POLICIES` and stays refused by the
+module probe, which is the honest report: the port is what can be trained today.
+
+**Before launching one**, note that FastWAM pulls a 5B Wan video backbone
+(`Wan-AI/Wan2.2-TI2V-5B`) and a `umt5-xxl` text encoder. It is a far larger
+model than anything else in the run matrix, the 24.5 GiB box may not hold it at
+any batch, and both weights must be warmed on a login node because every
+launcher exports `HF_HUB_OFFLINE=1`.
+
 ## The cropped-tactile variants
 
 `so101_act_crop`, `so101_diffusion_crop` and `so101_pi05_crop` are each a

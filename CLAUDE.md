@@ -254,8 +254,8 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   class and the processor factory from the config class name, mechanically:
   `<x>/configuration_<x>.py` holds `So101<X>Config` registered as `so101_<x>`,
   `modeling_<x>.py` holds `So101<X>Policy`, `processor_<x>.py` holds
-  `make_so101_<x>_pre_post_processors`. `act`, `diffusion` and `pi05` are
-  **ports**: the upstream module tree MOVED, not rewritten, so `state_dict` keys
+  `make_so101_<x>_pre_post_processors`. `act`, `diffusion`, `pi05` and `fastwam`
+  are **ports**: the upstream module tree MOVED, not rewritten, so `state_dict` keys
   are identical and the finished 80 000-step ACT checkpoint loads into either
   implementation (VERIFIED bitwise, not in principle —
   `test/integration/test_policy_ports_checkpoints.py`). `_port.py` holds every
@@ -264,7 +264,22 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   `test/unit/test_policy_ports.py` immediately. The three ported directories are
   excluded from black/isort/flake8/mypy in `.pre-commit-config.yaml` for that
   reason — reformatting them would destroy the diff against upstream that makes
-  the claim checkable. `loading.py` registers the package for any loader
+  the claim checkable; `mypy.ini` skips them at the IMPORT boundary too, because
+  that exclude covers the file list and not the import graph, so a subclass
+  importing a port drags upstream's type errors in under our name.
+  **`fastwam` is the odd port**: it landed upstream AFTER `LEROBOT_COMMIT`, so
+  `_port.PORT_REF` names a commit to `git show` that one directory out of rather
+  than moving the pin (which would change the other three underneath every
+  finished checkpoint). It also carries a `wan/` subpackage verbatim
+  (`PORT_EXTRA`, still in `--check`) but NOT upstream's `__init__.py`, which
+  re-exports a class the port renames. The pin lacks exactly two names it needs
+  — `make_default_policy_processor_steps`, `make_policy_processor_pipelines` —
+  reproduced in `common/processor_compat.py` with the ONE import rewritten,
+  because editing the file would stop it being a port; a test asserts the pin
+  still lacks them so the shim cannot outlive its reason. Before launching one:
+  FastWAM pulls a 5B Wan video backbone plus a umt5-xxl text encoder, far larger
+  than anything else in the matrix, and may not fit the 24.5 GiB box at any
+  batch. `loading.py` registers the package for any loader
   (`eval_sim_policy.load_policy` calls it), and `tool/retarget_checkpoint.py`
   reads a checkpoint through the other member of a ported pair by symlinking its
   weights and rewriting one field — which is how a repo-local pi0.5 gets a base
