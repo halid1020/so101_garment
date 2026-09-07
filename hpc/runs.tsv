@@ -112,5 +112,13 @@ fold-short-from-flattend-tactile fastwam   central,tactile_quad             3000
 # pi0.5 gets the three-camera set for the same reason it always does: three
 # pretrained image slots, so only two of the four fingertips fit.
 fold-short-from-flattend-tactile so101_act_crop       all                              80000   8      36     -       -
-fold-short-from-flattend-tactile so101_diffusion_crop all                              100000  32     36     -       -
-fold-short-from-flattend-tactile so101_pi05_crop      central,left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
+fold-short-from-flattend-tactile so101_diffusion_crop all                              100000  -      36     -       -
+# pi0.5's batch is `-` where the others are fixed, and that is not sloppiness.
+# lerobot-train has no gradient accumulation, so batch 1 is batch 1, and the two
+# pi0.5 baselines that exist were trained at different sizes: batch 1 on thanos
+# (20 710 MiB, 2h55, final loss 0.113) and batch 4 on CREATE's 40 GB A100, which
+# is the most either box has been MEASURED to carry. `-` resolves to the
+# destination's own ceiling, so the crop arm matches whichever machine it runs
+# on -- and it must therefore be compared against the baseline trained on THAT
+# machine, never across the two.
+fold-short-from-flattend-tactile so101_pi05_crop      central,left_arm_left_gripper,right_arm_left_gripper 30000 - 36 - -

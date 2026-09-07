@@ -104,6 +104,15 @@ thanos:
   limits:
     pi05:
       batch: 1
+    # MEASURED, and the reason is in the comment above: batch 32 took the whole
+    # box down within a minute and batch 16 within about six, both at 24 loader
+    # workers. The run that actually FINISHED here -- 100 000 steps, the
+    # checkpoint every diffusion comparison on this rig is drawn against -- was
+    # batch 8 at 8 workers, read back from its own train_config.json. A crop
+    # variant must match it or the comparison confounds capacity with input, and
+    # a row asking for 32 must be refused rather than merely discouraged.
+    diffusion:
+      batch: 8
 
 local:
   # The machine the console itself is running on. Not a lesser destination: the

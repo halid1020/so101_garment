@@ -81,12 +81,23 @@ class TestTheShippedFile(unittest.TestCase):
         # lerobot-train has none, so batch 1 is batch 1.
         self.assertEqual(self.dests["thanos"]["limits"]["pi05"]["batch"], 1)
 
+    def test_the_measured_diffusion_ceiling_is_recorded_for_the_gpu_box(self):
+        # NOT about VRAM, which is why it took a crash to find. Diffusion at
+        # batch 8 uses under a third of this card -- but batch 32 took the whole
+        # BOX down within a minute and batch 16 within about six, both at 24
+        # loader workers. The run that finished, and which every diffusion
+        # comparison on this rig is drawn against, was batch 8 at 8 workers,
+        # read back from its own train_config.json. A row asking for 32 must be
+        # refused, not merely discouraged by a comment elsewhere in the file.
+        self.assertEqual(self.dests["thanos"]["limits"]["diffusion"]["batch"], 8)
+
     def test_the_gpu_box_claims_no_ceiling_it_has_not_measured(self):
         # An unmeasured limit written down as if it were measured is worse than
         # none: it would refuse rows that fit and pass rows that do not. act at
-        # batch 8 leaves better than half this card free, and diffusion less
-        # than a third of it, so neither has one.
-        self.assertEqual(set(self.dests["thanos"]["limits"]), {"pi05"})
+        # batch 8 leaves better than half this card free and has never taken the
+        # box down, so it has none -- and neither do the policies nobody has run
+        # here yet. Adding a name to this set means someone measured it.
+        self.assertEqual(set(self.dests["thanos"]["limits"]), {"pi05", "diffusion"})
 
 
 class TestValidation(unittest.TestCase):
