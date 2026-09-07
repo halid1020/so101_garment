@@ -52,7 +52,9 @@ def rename_map_of(pre) -> "dict[str, str]":
     return {}
 
 
-def source_cameras(policy_cameras: "list[str]", rename: "dict[str, str]") -> "list[str]":
+def source_cameras(
+    policy_cameras: "list[str]", rename: "dict[str, str]"
+) -> "list[str]":
     """Camera names as the DATASET has them, in the policy's own order.
 
     ``rename`` maps source key -> policy key, so it is inverted here. A camera
