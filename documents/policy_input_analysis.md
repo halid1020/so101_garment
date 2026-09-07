@@ -99,7 +99,7 @@ instead of failing the run.
 | | ACT (`act`, `so101_act`) | diffusion | pi0.5, flow-matching |
 |---|---|---|---|
 | occlusion | yes | yes | yes |
-| integrated gradients | yes | yes | yes |
+| integrated gradients | yes | yes | in principle; OOMs on 24 GB |
 | Grad-CAM | yes | yes | **no** |
 | attention | yes | **no** | **no** |
 
@@ -119,6 +119,16 @@ instead of failing the run.
   only the outer one returns a tensor with no graph, and autograd then
   complains about the input rather than about the decorator. Both come off for
   the duration of one call and the class is put back exactly as it was found.
+
+  **That makes gradients possible on pi0.5, and still not affordable.** MEASURED
+  on the 23.55 GiB card: integrated gradients OOMs at 23.49 GiB with the default
+  64 steps, and again at 23.54 GiB with `--ig-steps 8` and
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. Backpropagating through a
+  4.1B-parameter model's whole flow-matching sampling loop is simply larger than
+  this GPU. So on this hardware pi0.5's deck is **occlusion only** — which is
+  where the gap analysis started, though for a different reason than it thought.
+  A bigger card (CREATE's H200 has 141 GB) would change that; nothing in the
+  code needs to.
 
 ## The four methods
 

@@ -28,6 +28,7 @@ import numpy as np
 from lerobot.utils.constants import OBS_IMAGES
 
 from common.analysis.streams import (
+    CAMERA_PREFIX,
     act_layout,
     camera_names,
     check_layout,
@@ -35,6 +36,55 @@ from common.analysis.streams import (
     streams_of,
     token_layout,
 )
+
+
+def rename_map_of(pre) -> "dict[str, str]":
+    """The observation rename the checkpoint was trained with, if any.
+
+    Read off the saved preprocessor rather than the training config, because the
+    preprocessor is what actually runs -- a config that disagreed with it would
+    be describing a run that did not happen.
+    """
+    for step in getattr(pre, "steps", []) or []:
+        mapping = getattr(step, "rename_map", None)
+        if mapping:
+            return dict(mapping)
+    return {}
+
+
+def source_cameras(policy_cameras: "list[str]", rename: "dict[str, str]") -> "list[str]":
+    """Camera names as the DATASET has them, in the policy's own order.
+
+    ``rename`` maps source key -> policy key, so it is inverted here. A camera
+    the map does not mention is already named the same on both sides, which is
+    every checkpoint that was not finetuned onto pretrained slots.
+    """
+    inverse = {v: k for k, v in rename.items()}
+    out = []
+    for name in policy_cameras:
+        key = CAMERA_PREFIX + name
+        out.append(inverse.get(key, key)[len(CAMERA_PREFIX) :])
+    return out
+
+
+def renamed_streams(streams: list, cameras: "list[str]") -> list:
+    """Report each camera under the rig's name, not the policy's slot name.
+
+    A deck saying `base_0_rgb` names something the operator cannot point at; the
+    same stream is `central` on the rig. Stream is frozen, so this rebuilds
+    rather than mutates. Only the NAME changes -- ``key`` stays the policy-side
+    batch key, which is what the conditioning layout is indexed by.
+    """
+    import dataclasses
+
+    out, i = [], 0
+    for stream in streams:
+        if stream.kind == "camera" and i < len(cameras):
+            out.append(dataclasses.replace(stream, name=cameras[i]))
+            i += 1
+        else:
+            out.append(stream)
+    return out
 
 
 class Inference:
@@ -59,8 +109,16 @@ class Inference:
         self._build_batch = build_batch
         self.task = task
         self.cfg = self.policy.config
-        self.cameras = camera_names(self.cfg)
-        self.streams = streams_of(self.cfg)
+        # A pi0.5 finetune was trained with --rename_map, so its config names
+        # openpi's SLOTS (base_0_rgb, left_wrist_0_rgb, ...) and not the rig's
+        # cameras. Asking the dataset for those fails with "this dataset has no
+        # camera base_0_rgb", which reads as a missing camera rather than as a
+        # renamed one. The checkpoint carries the map in its own preprocessor,
+        # so invert it: fetch under the rig's names, and let `self.pre` rename
+        # them exactly as it did in training.
+        self.rename = rename_map_of(self.pre)
+        self.cameras = source_cameras(camera_names(self.cfg), self.rename)
+        self.streams = renamed_streams(streams_of(self.cfg), self.cameras)
         self.action_dim = int(self.cfg.output_features["action"].shape[0])
         self.n_action_steps = int(getattr(self.cfg, "n_action_steps", 1) or 1)
         self.n_obs_steps = int(getattr(self.cfg, "n_obs_steps", 1) or 1)
