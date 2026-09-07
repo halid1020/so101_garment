@@ -84,6 +84,81 @@ def _pick_device(requested: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+#: What a full checkpoint's weights are called. Any one of them is enough.
+WEIGHT_FILES = (
+    "model.safetensors",
+    "model.safetensors.index.json",
+    "pytorch_model.bin",
+)
+
+
+def _load_weights(checkpoint: str, cfg: Any, policy_cls: Any) -> Any:
+    """Build the policy with its trained weights actually in it.
+
+    THE SILENCE IS THE BUG THIS EXISTS FOR. `from_pretrained` on a directory
+    with no `model.safetensors` logs "Returning model without loading pretrained
+    weights" and hands back a RANDOMLY INITIALISED model. It is a log line, not
+    an exception, so everything downstream runs perfectly and reports numbers
+    about noise. An attribution study did exactly that here -- a pi0.5 deck was
+    produced, plotted, and only caught because two runs of the same analysis
+    disagreed, which they should not have.
+
+    A LoRA finetune is the ordinary way to land in that state: `lerobot-train
+    --peft.r` writes `adapter_model.safetensors` and no full model, because the
+    base is 14 GB and unchanged. So that case is handled, and every other way of
+    having no weights is now an error rather than a shrug.
+    """
+    from pathlib import Path as _Path
+
+    directory = _Path(checkpoint)
+    if any((directory / name).is_file() for name in WEIGHT_FILES):
+        return policy_cls.from_pretrained(checkpoint, config=cfg)
+
+    adapter = directory / "adapter_config.json"
+    if not adapter.is_file():
+        raise SystemExit(
+            f"❌ {checkpoint} holds none of {', '.join(WEIGHT_FILES)} and no "
+            "adapter_config.json, so there are no weights to load. Loading it "
+            "anyway would give a randomly initialised model and numbers about "
+            "nothing."
+        )
+
+    base = _adapter_base(directory)
+    if not base:
+        raise SystemExit(
+            f"❌ {checkpoint} is a PEFT adapter but names no base model, in "
+            "either adapter_config.json or train_config.json. The base is what "
+            "holds the weights; the adapter alone is a few MB of deltas."
+        )
+    import peft
+
+    policy = policy_cls.from_pretrained(base, config=cfg)
+    # merge_and_unload gives back a plain policy object with the deltas folded
+    # in, rather than a PeftModel wrapper -- so `policy.model`, `policy.config`
+    # and predict_action_chunk are reachable exactly as on any other checkpoint.
+    return peft.PeftModel.from_pretrained(policy, str(directory)).merge_and_unload()
+
+
+def _adapter_base(directory: Any) -> str:
+    """Which base model a PEFT adapter was trained on."""
+    import json
+
+    for name, path in (
+        ("adapter_config.json", ("base_model_name_or_path",)),
+        ("train_config.json", ("policy", "pretrained_path")),
+        ("train_config.json", ("policy", "path")),
+    ):
+        try:
+            blob = json.loads((directory / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for key in path:
+            blob = blob.get(key) if isinstance(blob, dict) else None
+        if isinstance(blob, str) and blob:
+            return blob
+    return ""
+
+
 def load_policy(checkpoint: str, device: str) -> tuple[Any, Any, Any, str]:
     """Load a trained policy and its pre/post processors from a checkpoint dir.
 
@@ -104,7 +179,7 @@ def load_policy(checkpoint: str, device: str) -> tuple[Any, Any, Any, str]:
     cfg = PreTrainedConfig.from_pretrained(checkpoint)
     cfg.pretrained_path = checkpoint
     cfg.device = device
-    policy = get_policy_class(cfg.type).from_pretrained(checkpoint, config=cfg)
+    policy = _load_weights(checkpoint, cfg, get_policy_class(cfg.type))
     policy.to(device)
     policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(
