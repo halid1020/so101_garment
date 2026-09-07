@@ -159,6 +159,24 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
     return out
 
 
+def camera_slug(inference, source) -> "str | None":
+    """How the camera set is named in a directory, as a run directory names it.
+
+    ``all`` when the policy reads every camera the source has -- otherwise the
+    joined list, which is what a camera-ablation view is called. Naming the full
+    five-camera set by listing it produces a 78-character directory that says no
+    more than the word does, and stops an analysis directory matching the run
+    directory it analysed.
+    """
+    cameras = list(inference.cameras)
+    if not cameras:
+        return None
+    available = set(getattr(source, "cameras", None) or ())
+    if available and set(cameras) == available:
+        return "all"
+    return "+".join(cameras)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -261,8 +279,9 @@ def main() -> None:
     if args.out:
         out_dir = Path(args.out).expanduser()
     else:
-        cameras = "+".join(inference.cameras) if inference.cameras else None
-        out_dir = analysis_dir(args.name or content_name(inference.type, cameras))
+        out_dir = analysis_dir(
+            args.name or content_name(inference.type, camera_slug(inference, source))
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"📂 {out_dir}")
 

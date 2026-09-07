@@ -290,6 +290,32 @@ Saliency methods are easy to misread, so the toolkit carries its own checks.
   depends on the object and the day's calibration, so an absolute threshold
   would put every frame in one phase.
 
+## Re-measured 2026-09-07, with occlusion pinned
+
+The five-camera ACT checkpoint, re-run on this dataset with all four methods and
+the sanity check, after occlusion was routed through the pin:
+
+| | 2026-08-29 | 2026-09-07 |
+|---|---|---|
+| `central` | 57.1 % | **56.8 %** |
+| proprioception | 36.4 % | **36.5 %** |
+| four fingertips together | 6.5 % | **6.6 %** |
+| IG agreement with occlusion | +0.90 | **+1.00** |
+| attention (raw) agreement | +0.90 | **+0.70** |
+| attention spread | 1.14x | **1.1x** |
+| occlusion spread | 42x | **40.7x** |
+
+The headline shares reproduce, which is the point of repeating it: ACT plans
+deterministically, so pinning was expected to change nothing here and did not.
+What did move is the *agreement* figures, and for a legible reason — the four
+fingertips sit within 1.4–2.2 % of each other, so their ranks are nearly tied
+and a fraction of a percent reorders them. That is another reason to read the
+spread column beside the agreement one: a rank correlation over five points,
+four of which are a near-tie, is not a stable statistic.
+
+The model-randomisation check passes outright again: a randomised policy plans
+the same chunk whatever it is shown, so every share falls to zero.
+
 ## The result so far
 
 On the finished five-camera ACT checkpoint, six episodes of
