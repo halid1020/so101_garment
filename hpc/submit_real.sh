@@ -234,6 +234,11 @@ for hours in $HOURS_SET; do
     range="0-$((n - 1))"
     [ -n "$CONCURRENCY" ] && range="$range%$CONCURRENCY"
 
+    # Slurm does NOT create the directory behind --output, and a job whose log
+    # path does not exist fails before it runs a line. The sbatch files write to
+    # outputs/runs/ so the logs land somewhere gitignored instead of scattering
+    # <job-name>-<id>.out across the repo root, which is where they used to go.
+    mkdir -p "$REPO_ROOT/outputs/runs"
     cmd=(sbatch
         --job-name="$JOB_NAME"
         --array="$range"

@@ -17,7 +17,7 @@
 #SBATCH --gres=gpu:1                        # any >=12 GB GPU suffices for this cell
 #SBATCH --mem=48G
 #SBATCH --time=18:00:00
-#SBATCH --output=%x-%j.out                  # <job-name>-<jobid>.out in the submit dir
+#SBATCH --output=outputs/runs/%x-%j.out   # under outputs/, which is gitignored
 
 set -euo pipefail
 

@@ -26,7 +26,7 @@
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00                     # overridden per group by submit_real.sh
 #SBATCH --array=0                           # overridden by submit_real.sh
-#SBATCH --output=%x-%A_%a.out               # <job-name>-<arrayjob>_<task>.out
+#SBATCH --output=outputs/runs/%x-%A_%a.out   # under outputs/, which is gitignored
 
 set -euo pipefail
 

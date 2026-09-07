@@ -456,6 +456,38 @@ class TestBatchScriptPicksItsRow(unittest.TestCase):
         self.assertFalse(self.captured.exists())
 
 
+class TestWhereTheJobLogsGo(unittest.TestCase):
+    """Slurm logs belong under outputs/, which is gitignored.
+
+    They used to land as `<job-name>-<arrayjob>_<task>.out` in the submit
+    directory, which is the repo root -- so a cluster run left untracked files
+    in a working tree that a later `git checkout` then refused to move past.
+    """
+
+    def test_both_sbatch_files_write_under_outputs(self):
+        for name in ("create_real_vla.sbatch", "create_sim_vla.sbatch"):
+            text = (REPO / "hpc" / name).read_text(encoding="utf-8")
+            line = next(
+                ln for ln in text.splitlines() if ln.startswith("#SBATCH --output=")
+            )
+            self.assertIn("outputs/runs/", line, name)
+
+    def test_the_submitter_creates_that_directory(self):
+        # Slurm does not create it, and a job whose --output path is missing
+        # fails before it runs a line -- so the mkdir is load-bearing, not tidy.
+        text = SUBMIT.read_text(encoding="utf-8")
+        self.assertIn("mkdir -p \"$REPO_ROOT/outputs/runs\"", text)
+        self.assertLess(
+            text.index("mkdir -p \"$REPO_ROOT/outputs/runs\""),
+            text.index("cmd=(sbatch"),
+            "the directory must exist before sbatch is called",
+        )
+
+    def test_outputs_is_ignored_by_git(self):
+        ignored = (REPO / ".gitignore").read_text(encoding="utf-8").split()
+        self.assertIn("outputs", ignored)
+
+
 if __name__ == "__main__":
     unittest.main()
 
