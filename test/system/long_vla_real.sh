@@ -278,7 +278,17 @@ fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 # wants exactly the flags its upstream twin wants, plus the one that makes
 # lerobot-train import our package before it parses anything. Deriving the base
 # instead of repeating every branch is what keeps the two from drifting apart.
-base_policy()  { case "$1" in so101_*) echo "${1#so101_}";; *) echo "$1";; esac; }
+# `_crop` comes off as well as the `so101_` prefix. A cropped variant differs
+# from its twin ONLY in a preprocessor step, so it wants the same steps, the same
+# batch, the same resize_shape, the same pi0.5 base and rename map -- every one
+# of the five per-policy branches below is keyed on this. Deriving it here is
+# what stops a cropped run silently getting a different budget from the run it
+# exists to be compared against. Note the retarget still uses the FULL name, so
+# a cropped pi0.5 gets a base carrying its own type and not its twin's.
+base_policy()  {
+    local name="${1#so101_}"
+    echo "${name%_crop}"
+}
 local_policy() { case "$1" in so101_*) return 0;; *) return 1;; esac; }
 SO101_POLICY_PACKAGE="so101_policies"
 
@@ -352,7 +362,7 @@ train_cell() {
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
         flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
         dreamzero) steps="$DREAMZERO_STEPS"; batch="$DREAMZERO_BATCH"; save="$DREAMZERO_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, or so101_ prefixed)";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, and act|diffusion|pi05 also _crop suffixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.

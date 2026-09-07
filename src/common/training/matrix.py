@@ -133,6 +133,28 @@ POLICIES["so101_dreamzero"] = {
     "module": "so101_policies.dreamzero",
 }
 
+# The supervisor's reading of the Grad-CAM figures: the policy attends to the
+# EDGES of the fingertip images, including before contact, which is what light
+# leaking in at the gel boundary looks like. These crop the tactile cameras to
+# the gel centre and are otherwise their twin exactly -- same model, same steps,
+# same batch. Holding the budget fixed is not tidiness: `hpc/runs.tsv` requires
+# it across an ablation, or capacity confounds input.
+for _crop, _twin in (
+    ("so101_act_crop", "so101_act"),
+    ("so101_diffusion_crop", "so101_diffusion"),
+    ("so101_pi05_crop", "so101_pi05"),
+):
+    POLICIES[_crop] = {
+        **POLICIES[_twin],
+        "local": True,
+        "crop_of": _twin,
+        # NOT `ported_from`: these are not ports, and the port tests would then
+        # demand a byte-identical upstream file that does not exist.
+        "ported_from": None,
+        "module": f"so101_policies.{_crop.removeprefix('so101_')}",
+    }
+del _crop, _twin
+
 POLICY_NAMES = tuple(POLICIES)
 
 #: A repo-local policy and the LeRobot one it was ported from. Their checkpoints
@@ -142,6 +164,18 @@ PORTED_FROM = {
     name: spec["ported_from"]
     for name, spec in POLICIES.items()
     if spec.get("ported_from")
+}
+
+#: Every policy that is a variant of another, and which. A measured ceiling
+#: carries along this map: a port is the same model as its twin, and a cropped
+#: variant is the same model reading an input of the same SHAPE (the crop
+#: resizes back), so neither changes what a machine can hold. Chased
+#: transitively, because `so101_pi05_crop` reaches `pi05` only through
+#: `so101_pi05`.
+TWIN_OF = {
+    name: (spec.get("ported_from") or spec.get("crop_of"))
+    for name, spec in POLICIES.items()
+    if spec.get("ported_from") or spec.get("crop_of")
 }
 
 
@@ -314,17 +348,23 @@ def make_row(
 def limits_for(dest: "dict[str, Any] | None", policy: str) -> "dict[str, Any]":
     """What a machine has been measured to carry for this policy.
 
-    A port falls back to the policy it was ported from. The two are the same
-    model with the same activations, so a ceiling measured on one holds for the
-    other -- and without this a `so101_pi05` row on CREATE resolves to batch 8
-    and reproduces the OutOfMemoryError that `pi05: batch: 4` was written down
-    to prevent. A destination may still name the port explicitly to override.
+    A variant falls back to what it is a variant of, following `TWIN_OF` as far
+    as it goes. A port is the same model with the same activations, and a
+    cropped variant reads an input of the same shape, so a ceiling measured on
+    one holds for the other -- and without this a `so101_pi05` row on CREATE
+    resolves to batch 8 and reproduces the OutOfMemoryError that `pi05: batch: 4`
+    was written down to prevent. `so101_pi05_crop` needs two hops to get there.
+    A destination may still name a variant explicitly to override.
     """
     limits = (dest or {}).get("limits") or {}
-    if policy in limits:
-        return limits[policy] or {}
-    twin = PORTED_FROM.get(policy)
-    return (limits.get(twin) or {}) if twin else {}
+    seen: "set[str]" = set()
+    name: "str | None" = policy
+    while name is not None and name not in seen:
+        if name in limits:
+            return limits[name] or {}
+        seen.add(name)
+        name = TWIN_OF.get(name)
+    return {}
 
 
 def resolved(

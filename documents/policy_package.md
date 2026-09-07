@@ -120,6 +120,66 @@ for no gain. Code we actually write is linted like everything else.
 If a port ever needs a real edit, it stops being a port: take the file out of
 `_port.PORTS` and say why.
 
+## The cropped-tactile variants
+
+`so101_act_crop`, `so101_diffusion_crop` and `so101_pi05_crop` are each a
+two-field subclass of the corresponding port. They exist because Grad-CAM on the
+finished five-camera ACT checkpoint shows the policy attending to the **edges**
+of the fingertip images — `right_arm_right_gripper` saturates along its left
+edge and top-right corner while the gel centre stays cold — and it does so in
+frames where nothing is in contact. That is the signature of light leaking in at
+the gel boundary, a known failure of vision-based tactile sensors: the border is
+bright, it tracks the room rather than the object, and a network will learn it.
+
+**The crop is a processor step, not a model change.** `common/tactile.py` holds
+`So101TactileCropProcessorStep`, registered `so101_tactile_crop`, inserted at
+**index 0** of the twin's preprocessor. Index 0 is load-bearing:
+`RenameObservationsProcessorStep` is step 0 of every one of these pipelines, and
+on pi0.5 it renames the rig's cameras onto openpi's slot names — a crop placed
+after it would look for camera names that no longer exist and silently do
+nothing at all. The preprocessor runs during training as well as inference, so
+this changes what the policy is trained on.
+
+**It crops the centre and resizes straight back**, so no shape anywhere changes.
+That is the decision the whole design rests on:
+
+* ACT's per-camera token count stays 300, so `analysis/streams.py` keeps tiling.
+  It assumes every camera contributes the same token width, and cropping only
+  the fingertips would break that assumption for the very analysis these runs
+  are measured by.
+* The diffusion encoder sizes its feature dimension from a dummy input at
+  construction; an unchanged input shape cannot disagree with it.
+* pi0.5 letterboxes with `resize_with_pad`, so a changed aspect ratio would
+  change how much padding each slot gets — a second, uncontrolled difference
+  between a cropped run and its baseline.
+
+The cost is a little interpolation blur, which is the right trade when the goal
+is removing a border rather than gaining resolution.
+
+**A separate registered type rather than a flag on the twin**, because the crop
+has to travel with the checkpoint: a run trained cropped must be *served*
+cropped, and LeRobot rebuilds the processor pipeline from the policy type. A
+flag would let the two drift apart silently. `tactile_crop = 1.0` is the
+uncropped control and is bit-identical to the twin — the crop returns the input
+untouched rather than making a no-op interpolation pass, so the control arm is
+the same run and not a third condition.
+
+**The fraction is measured, not chosen.** `tool/measure_tactile_border.py`
+takes the per-pixel temporal standard deviation and mean luminance over sampled
+frames and reports the largest centred box excluding every row and column whose
+variation falls below a fraction of the frame's own median — relative, because
+the four fingertips are not identically lit. It prints the evidence beside the
+answer, and says so explicitly when the border is *not* quieter than the centre,
+in which case the honest fraction is 1.0.
+
+**No contact gate.** Feeding tactile only once contact is established was
+considered and left out: "stable contact" is a temporal predicate, training
+shuffles frames, and this repo's own contact segmentation
+(`analysis/phases.py`) needs a whole episode because it thresholds on quantiles
+of that episode's own gripper channels. A training-time gate would have to be
+re-derived from the tactile image against a no-contact reference, with its own
+threshold to justify — separate work, not a flag on this.
+
 ## `flowmatch` — the control for the world model
 
 `so101_flowmatch` is not a port. It is pi0.5's objective and action expert on the

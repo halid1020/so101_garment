@@ -100,3 +100,17 @@ fold-short-from-flattend-tactile pi05      central,left_arm_left_gripper,right_a
 fold-short-from-flattend-tactile pi05      central                          30000   4      36     -       -
 fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -
 fold-short-from-flattend-tactile fastwam   central,tactile_quad             30000   8      36     -       -
+
+# The tactile CROP arm. The supervisor's reading of the Grad-CAM figures: the
+# policy attends to the EDGES of the fingertip images, including before contact,
+# which is what light leaking in at the gel boundary looks like. These crop the
+# tactile cameras to the gel centre and change nothing else -- same cameras,
+# same steps, same batch as the `all` row each is paired with, because varying
+# the budget as well would confound capacity with input. The baseline for each
+# is the plain row above it; the ports being byte-equivalent to their LeRobot
+# twins is what lets a so101_* run be compared against an act/diffusion/pi05 one.
+# pi0.5 gets the three-camera set for the same reason it always does: three
+# pretrained image slots, so only two of the four fingertips fit.
+fold-short-from-flattend-tactile so101_act_crop       all                              80000   8      36     -       -
+fold-short-from-flattend-tactile so101_diffusion_crop all                              100000  32     36     -       -
+fold-short-from-flattend-tactile so101_pi05_crop      central,left_arm_left_gripper,right_arm_left_gripper 30000 4 36 - -

@@ -269,7 +269,17 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   reads a checkpoint through the other member of a ported pair by symlinking its
   weights and rewriting one field — which is how a repo-local pi0.5 gets a base
   to finetune, since `lerobot/pi05_base` says `pi05` and would otherwise quietly
-  load LeRobot's class. `flowmatch` is NOT a port: pi0.5's objective and action
+  load LeRobot's class. Three more — `act_crop`, `diffusion_crop`, `pi05_crop` —
+  are two-field SUBCLASSES of the ports, adding a registered preprocessor step
+  (`common/tactile.py`) that crops the four fingertip cameras to the gel centre
+  and RESIZES BACK, so no shape changes anywhere: ACT keeps 300 tokens a camera
+  (which `analysis/streams.py` requires), diffusion's dummy-sized feature dim
+  still matches, and pi0.5's letterbox padding is unchanged. It goes at index 0,
+  ahead of the rename step, or pi0.5's slot rename hides the cameras from it.
+  Grad-CAM showing the policy on the sensor EDGES before contact is why; the
+  fraction comes from `tool/measure_tactile_border.py`, not a guess, and
+  `tactile_crop=1.0` is a bit-identical uncropped control.
+  `flowmatch` is NOT a port: pi0.5's objective and action
   expert on the diffusion policy's `DiffusionRgbEncoder` (that literal class, so
   "same backbone" is a fact), built as the CONTROL for the world action model --
   it shares DreamZero's loss and shares nothing else. **The two flow-matching

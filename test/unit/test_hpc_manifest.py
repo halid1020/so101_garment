@@ -62,8 +62,17 @@ class TestRunManifest(unittest.TestCase):
         # a row the console happily offered.
         text = SUBMIT.read_text(encoding="utf-8")
         start = text.index('case "$policy" in')
-        alternatives = text[start:].split("\n")[1].strip().rstrip(") ;;")
-        self.assertEqual(set(alternatives.split("|")), POLICIES)
+        accepted: "set[str]" = set()
+        # EVERY accepting arm, not just the first line: the list outgrew one
+        # readable line once the cropped variants arrived, and a reader that
+        # takes only line 1 silently stops checking the rest.
+        for line in text[start:].split("\n")[1:]:
+            line = line.strip()
+            if line.startswith("*)") or line.startswith("esac"):
+                break
+            if line.endswith(") ;;"):
+                accepted |= set(line[: -len(") ;;")].split("|"))
+        self.assertEqual(accepted, POLICIES)
 
     def test_the_cameras_column_never_contains_a_space(self):
         # A space would shift every later column into `extra`, and the row would

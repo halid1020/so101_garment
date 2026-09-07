@@ -26,14 +26,24 @@ holds them to that. The rest are ours.
 
 from so101_policies.act.configuration_act import So101ActConfig
 from so101_policies.act.modeling_act import So101ActPolicy
+from so101_policies.act_crop.configuration_act_crop import So101ActCropConfig
+from so101_policies.act_crop.modeling_act_crop import So101ActCropPolicy
 from so101_policies.diffusion.configuration_diffusion import So101DiffusionConfig
 from so101_policies.diffusion.modeling_diffusion import So101DiffusionPolicy
+from so101_policies.diffusion_crop.configuration_diffusion_crop import (
+    So101DiffusionCropConfig,
+)
+from so101_policies.diffusion_crop.modeling_diffusion_crop import (
+    So101DiffusionCropPolicy,
+)
 from so101_policies.dreamzero.configuration_dreamzero import So101DreamzeroConfig
 from so101_policies.dreamzero.modeling_dreamzero import So101DreamzeroPolicy
 from so101_policies.flowmatch.configuration_flowmatch import So101FlowmatchConfig
 from so101_policies.flowmatch.modeling_flowmatch import So101FlowmatchPolicy
 from so101_policies.pi05.configuration_pi05 import So101Pi05Config
 from so101_policies.pi05.modeling_pi05 import So101Pi05Policy
+from so101_policies.pi05_crop.configuration_pi05_crop import So101Pi05CropConfig
+from so101_policies.pi05_crop.modeling_pi05_crop import So101Pi05CropPolicy
 
 #: Registered type -> the LeRobot type it was ported from. A checkpoint written
 #: by either side of a pair carries the other's name in ``config.json``, and
@@ -47,13 +57,19 @@ PORTED_FROM = {
 __all__ = [
     "PORTED_FROM",
     "So101ActConfig",
+    "So101ActCropConfig",
+    "So101ActCropPolicy",
     "So101ActPolicy",
     "So101DiffusionConfig",
+    "So101DiffusionCropConfig",
+    "So101DiffusionCropPolicy",
     "So101DiffusionPolicy",
     "So101DreamzeroConfig",
     "So101DreamzeroPolicy",
     "So101FlowmatchConfig",
     "So101FlowmatchPolicy",
     "So101Pi05Config",
+    "So101Pi05CropConfig",
+    "So101Pi05CropPolicy",
     "So101Pi05Policy",
 ]
