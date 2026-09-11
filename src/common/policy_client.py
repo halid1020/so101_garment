@@ -10,7 +10,7 @@ which one it has:
 :class:`LocalActionSource` runs the forward pass inline, exactly as it always
 did. :class:`RemoteActionSource` sends the observation window to a GPU host and
 splices the returned chunk into what is already queued, following one of the
-strategies in :mod:`common.chunking`.
+strategies in :mod:`actoris_harena.deploy.chunking`.
 
 ``reset()`` is on the remote source only, and a caller looks for it rather than
 assuming it: a second attempt on the same scene needs the host to forget the
@@ -28,8 +28,7 @@ import time
 from collections import deque
 
 import numpy as np
-
-from common.chunking import (
+from actoris_harena.deploy.chunking import (
     DEFAULT_BLEND_WINDOW,
     DEFAULT_ENSEMBLE_WEIGHT,
     DEFAULT_EXECUTE_RATIO,
@@ -148,7 +147,7 @@ class RemoteActionSource:
     inside the control loop.
 
     THE SPLICE. A chunk lands after the world has moved on, and ``strategy``
-    decides what to do about it -- see :mod:`common.chunking`. The default is
+    decides what to do about it -- see :mod:`actoris_harena.deploy.chunking`. The default is
     ``receding``: half of each chunk is executed and then the next is asked for,
     so the plan being followed is never much older than one round trip, and the
     seams are as far apart as that allows. ``append`` is what this class used to

@@ -28,6 +28,7 @@ import traceback
 from typing import Any, Mapping
 
 import numpy as np
+from actoris_harena.recording.device_faults import bus_gone
 
 from common.configs import (
     GRIPPER_OPEN_MAX_FRAC,
@@ -40,7 +41,6 @@ from common.configs import (
     RIGHT_ARM_HW_TO_URDF_SIGNS,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.device_faults import bus_gone
 
 _BODY_JOINTS = [
     "shoulder_pan",

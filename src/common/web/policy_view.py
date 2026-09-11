@@ -33,9 +33,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from actoris_harena.deploy.chunking import STRATEGIES
 from aiohttp import web  # type: ignore[import]
 
-from common.chunking import STRATEGIES
 from common.policy_log import OUTCOMES
 from common.recording.monitor_server import (
     BOUNDARY,

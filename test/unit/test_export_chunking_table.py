@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from common.sweep_journal import append_row
+from actoris_harena.deploy.sweep_journal import append_row
+
 from tool.export_chunking_table import (
     PROSE,
     latency_of,

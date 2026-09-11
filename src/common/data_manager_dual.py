@@ -12,9 +12,9 @@ from enum import Enum
 from typing import Any, Callable
 
 import numpy as np
+from actoris_harena.sync import TimestampedHistory, interp_pose, lerp, select_interp
 
 from .one_euro_filter import OneEuroFilterTransform
-from .sync import TimestampedHistory, interp_pose, lerp, select_interp
 
 # How long the timestamped stream histories retain samples (seconds). The
 # data-collection recorder aligns every stream to one reference time per frame
@@ -84,7 +84,7 @@ class RobotState:
             "right": None,
         }
         self.activity_state: RobotActivityState = RobotActivityState.DISABLED
-        # Timestamped histories for reference-time alignment (see common.sync).
+        # Timestamped histories for reference-time alignment (see actoris_harena.sync).
         self.joint_history = TimestampedHistory(_HISTORY_MAX_AGE_S)
         self.ee_history: dict[str, TimestampedHistory] = {
             "left": TimestampedHistory(_HISTORY_MAX_AGE_S),

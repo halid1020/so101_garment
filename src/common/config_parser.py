@@ -14,8 +14,7 @@ Two strictness regimes live here on purpose:
 from pathlib import Path
 
 import yaml  # type: ignore[import]
-
-from common.camera_controls import CONTROL_NAMES
+from actoris_harena.recording.camera_controls import CONTROL_NAMES
 
 # Directory holding the teleop parameter YAMLs (this file lives in src/common).
 _IK_CONF_DIR = Path(__file__).resolve().parent.parent / "ik_conf"
@@ -135,7 +134,7 @@ _CAMERA_SCHEMA: frozenset[str] = frozenset(
 # ~18 MB/s EACH) exceed what the shared USB controllers deliver, which starves
 # the wrist cameras to ~10-15 fps and eventually drops the device mid-episode.
 _DEFAULT_CAMERA_FOURCC = "MJPG"
-# Optional per-camera image controls (common.camera_controls). Each
+# Optional per-camera image controls (actoris_harena.recording.camera_controls). Each
 # defaults to None: leave the camera's own setting alone, so an existing
 # recording.yaml behaves exactly as it did. None rather than 0 because 0 is a
 # legitimate value for most of them.

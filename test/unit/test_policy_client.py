@@ -13,8 +13,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
+from actoris_harena.deploy.chunking import ChunkingError
 
-from common.chunking import ChunkingError
 from common.policy_client import RemoteActionSource
 from common.policy_wire import decode_request, encode_chunk
 

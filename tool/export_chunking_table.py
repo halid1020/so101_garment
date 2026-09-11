@@ -29,7 +29,8 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.sweep_journal import load_rows, row_key  # noqa: E402
+from actoris_harena.deploy.sweep_journal import load_rows, row_key  # noqa: E402
+
 from tool.run_policy_sim import _fold, _table  # noqa: E402
 
 #: How a cell label is spelled in prose. The machine-readable labels name a

@@ -21,8 +21,7 @@ confined to the bus boundary, and pi0.5 normalises with dataset statistics.
 from __future__ import annotations
 
 import numpy as np
-
-from common.sync import mat_to_quat
+from actoris_harena.sync import mat_to_quat
 
 # The five actuated body joints per SO-101 arm, in URDF order.
 BODY_JOINTS = [

@@ -11,10 +11,10 @@ import time
 import traceback
 
 import numpy as np
+from actoris_harena.recording.device_faults import bus_gone
 
 from common.configs import GRIPPER_OPEN_MAX_FRAC, JOINT_STATE_STREAMING_RATE
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.device_faults import bus_gone
 from common.joint_frames import HW_TO_URDF_OFFSETS, HW_TO_URDF_SIGNS
 
 _BODY_DOF = 5  # SO101 has 5 actuated body joints per arm

@@ -56,19 +56,24 @@ sys.path.insert(0, str(_root / "src"))
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-from common.chunk_metrics import summarise  # noqa: E402
-from common.chunk_sweep import expand_grid  # noqa: E402
-from common.chunk_sweep import SPEC_HELP, SweepSpecError, cell_label  # noqa: E402
-from common.chunking import STRATEGIES  # noqa: E402
-from common.policy_rig import TwinRig  # noqa: E402
-from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
-from common.sweep_journal import (  # noqa: E402
+from actoris_harena.deploy.chunk_metrics import summarise  # noqa: E402
+from actoris_harena.deploy.chunk_sweep import expand_grid  # noqa: E402
+from actoris_harena.deploy.chunk_sweep import (  # noqa: E402
+    SPEC_HELP,
+    SweepSpecError,
+    cell_label,
+)
+from actoris_harena.deploy.chunking import STRATEGIES  # noqa: E402
+from actoris_harena.deploy.sweep_journal import (  # noqa: E402
     append_row,
     done_keys,
     journal_for,
     load_rows,
     row_key,
 )
+
+from common.policy_rig import TwinRig  # noqa: E402
+from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
 
 #: The twin renders 'scene' where the rig records 'central'; a checkpoint
 #: trained on rig data asks for the latter. Offered as the default so the

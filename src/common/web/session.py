@@ -499,7 +499,8 @@ class PreviewCameras:
             "controls": {},
         }
         try:
-            from common.camera_controls import CONTROL_NAMES
+            from actoris_harena.recording.camera_controls import CONTROL_NAMES
+
             from common.config_parser import load_recording_config
 
             cfg = (load_recording_config()["cameras"] or {}).get(name)

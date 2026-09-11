@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 
 import yaml
+from actoris_harena.recording.camera_controls import CONTROL_NAMES
 
-from common.camera_controls import CONTROL_NAMES
 from common.config_parser import load_recording_config
 from tool.test_sensor_rates import ASSIGNABLE_CAMERA_NAMES, TACTILE_CAMERA_NAMES
 

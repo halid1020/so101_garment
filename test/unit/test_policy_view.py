@@ -63,7 +63,7 @@ class _SpliceSource(StubSource):
         self.params: dict = {}
 
     def set_strategy(self, strategy=None, **params):
-        from common.chunking import STRATEGIES, ChunkingError
+        from actoris_harena.deploy.chunking import STRATEGIES, ChunkingError
 
         if strategy is not None and strategy not in STRATEGIES:
             raise ChunkingError(f"unknown strategy: {strategy}")

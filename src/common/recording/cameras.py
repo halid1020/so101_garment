@@ -25,8 +25,8 @@ import traceback
 
 import cv2  # type: ignore[import]
 import numpy as np
+from actoris_harena.recording.camera_controls import apply_controls
 
-from common.camera_controls import apply_controls
 from common.data_manager_dual import DualDataManager
 
 # How long to wait before each successive FAILED attempt to reopen a device. A
@@ -97,7 +97,7 @@ class CameraCapture:
         self.rotate180 = rotate180
         self.fourcc = fourcc
         # Per-camera image controls; None values are left to the camera. See
-        # common.camera_controls -- exposure among them caps frame rate.
+        # actoris_harena.recording.camera_controls -- exposure among them caps frame rate.
         self.controls = dict(controls or {})
 
         # How many times this device stopped delivering and had to be reopened.

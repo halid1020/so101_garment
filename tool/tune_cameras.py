@@ -34,13 +34,13 @@ from pathlib import Path
 
 import cv2  # type: ignore[import]
 import numpy as np
-
-from common.camera_controls import (
+from actoris_harena.recording.camera_controls import (
     CONTROL_NAMES,
     EXPOSURE_AUTO,
     apply_controls,
     read_controls,
 )
+
 from common.sensor_view import quiet_qt_warnings
 
 _root = Path(__file__).resolve().parent.parent

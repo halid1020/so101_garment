@@ -101,13 +101,14 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.chunk_metrics import compare, summarise  # noqa: E402
-from common.chunking import (  # noqa: E402
+from actoris_harena.deploy.chunk_metrics import compare, summarise  # noqa: E402
+from actoris_harena.deploy.chunking import (  # noqa: E402
     DEFAULT_BLEND_WINDOW,
     DEFAULT_ENSEMBLE_WEIGHT,
     DEFAULT_EXECUTE_RATIO,
     STRATEGIES,
 )
+
 from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
 from common.policy_rig import RAMP_S, parse_camera_map  # noqa: E402
 from common.policy_run import RunControl  # noqa: E402
@@ -157,7 +158,8 @@ def _start_cameras(data_manager):
     """
     from types import SimpleNamespace
 
-    from common.camera_controls import CONTROL_NAMES
+    from actoris_harena.recording.camera_controls import CONTROL_NAMES
+
     from common.config_parser import load_recording_config
     from common.recording.cameras import CameraCapture
     from tool.meta_quest_teleopration import (

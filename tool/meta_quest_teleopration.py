@@ -63,9 +63,10 @@ sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
 import yaml
+from actoris_harena.recording.camera_controls import CONTROL_NAMES
+from actoris_harena.recording.device_faults import bus_gone
 from meta_quest_teleop.reader import MetaQuestReader
 
-from common.camera_controls import CONTROL_NAMES
 from common.configs import (
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
@@ -77,7 +78,6 @@ from common.configs import (
     TRANSLATION_SCALE,
 )
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.device_faults import bus_gone
 from common.keyboard_buttons import KeyboardButtons
 from common.recording import (
     CameraCapture,
