@@ -16,9 +16,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from actoris_harena.recording.dataset_edit import ReadOnlyDatasetError
 from aiohttp import web  # type: ignore[import]
 
-from common.recording.dataset_edit import ReadOnlyDatasetError
 from common.web.jobs import finish, new_job, refuse_while_busy
 from common.web.lifecycle import (
     delete_dataset,

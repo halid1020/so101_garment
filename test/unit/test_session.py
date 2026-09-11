@@ -19,11 +19,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from common.recording.collection_settings import (
+from actoris_harena.recording.collection_settings import (
     SelectionError,
     resolve_new_selection,
     resolve_resume_selection,
 )
+
 from common.web.session import (
     INTERRUPT_GRACE_S,
     QUIT_GRACE_S,

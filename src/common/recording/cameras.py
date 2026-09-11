@@ -101,7 +101,7 @@ class CameraCapture:
         self.controls = dict(controls or {})
 
         # How many times this device stopped delivering and had to be reopened.
-        # Read at the end of the session by common.recording.fault_report, which
+        # Read at the end of the session by actoris_harena.recording.fault_report, which
         # weighs it against the other devices' counts: several failures on one hub
         # mean the hub, one device's failures mean that device.
         self.disconnects = 0

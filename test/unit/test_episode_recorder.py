@@ -408,7 +408,7 @@ class TestSaveThatFails(RecorderTestBase):
 
     This is the fault that leaves a dataset counting an episode nobody wrote,
     which LeRobot cannot open at all: it judges the whole local copy incomplete
-    and goes to the Hub for a version tag (see common.recording.dataset_check).
+    and goes to the Hub for a version tag (see actoris_harena.recording.dataset_check).
     The recorder must therefore not advance its numbering past an episode that
     was not written, nor leave side files named after it.
     """

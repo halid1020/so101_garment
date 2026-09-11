@@ -13,7 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from common.recording.dataset_edit import ReadOnlyDatasetError
+from actoris_harena.recording.dataset_edit import ReadOnlyDatasetError
+
 from common.web.lifecycle import (
     _meta_json_choice,
     delete_dataset,

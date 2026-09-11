@@ -29,7 +29,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from common.recording.collection_settings import (
+from actoris_harena.recording.collection_settings import (
     SelectionError,
     is_resumable_dataset,
     read_existing_streams,
@@ -37,7 +37,8 @@ from common.recording.collection_settings import (
     resolve_resume_selection,
     selection_to_teleop_flags,
 )
-from common.recording.dataset_edit import writability_problem
+from actoris_harena.recording.dataset_edit import writability_problem
+
 from common.web.lifecycle import valid_dataset_name
 
 TELEOP = Path(__file__).resolve().parents[3] / "tool" / "meta_quest_teleopration.py"

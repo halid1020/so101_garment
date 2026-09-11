@@ -64,6 +64,7 @@ sys.path.insert(0, str(_root / "src"))
 
 import yaml
 from actoris_harena.recording.camera_controls import CONTROL_NAMES
+from actoris_harena.recording.depth import DepthWriter
 from actoris_harena.recording.device_faults import bus_gone
 from meta_quest_teleop.reader import MetaQuestReader
 
@@ -88,7 +89,6 @@ from common.recording import (
     load_recording_config,
 )
 from common.recording.controls import control_steps
-from common.recording.depth import DepthWriter
 from common.recording.monitor_server import MonitorServer, allowed_keys_for
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
@@ -551,7 +551,7 @@ def build_recording_stack(
     audio_cfg = rec_cfg.get("audio") or {}
     audio_cue = None
     if audio_cfg.get("enabled", False) and not args.no_sound:
-        from common.recording.audio_cue import AudioCue
+        from actoris_harena.recording.audio_cue import AudioCue
 
         audio_cue = AudioCue(
             enabled=True,

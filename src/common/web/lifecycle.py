@@ -1,6 +1,6 @@
 """Whole-dataset operations for the console: create, rename, delete, merge.
 
-The episode-level curation in ``common.recording.dataset_edit`` works INSIDE one
+The episode-level curation in ``actoris_harena.recording.dataset_edit`` works INSIDE one
 dataset; this module works on the collection directory itself, which until now
 was done by hand with ``mv`` and ``rm -rf`` (and is how a drive ends up holding
 both ``fold_short`` and ``short_fold``).
@@ -29,8 +29,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from common.recording.dataset_check import ensure_loadable
-from common.recording.dataset_edit import (
+from actoris_harena.recording.dataset_check import ensure_loadable
+from actoris_harena.recording.dataset_edit import (
     ReadOnlyDatasetError,
     episode_uid_rel,
     read_soft_deleted,

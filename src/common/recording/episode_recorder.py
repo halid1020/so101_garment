@@ -53,18 +53,18 @@ from enum import Enum
 from typing import Any, Callable
 
 import numpy as np
-
-from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.recording import features as feat
-from common.recording.dataset_edit import (
+from actoris_harena.recording.dataset_edit import (
     commit_episode_metadata,
     new_episode_uid,
     read_episode_lengths,
     write_episode_uid,
 )
-from common.recording.drift import DriftLog
-from common.recording.fault_report import session_fault_report
-from common.recording.usb_topology import device_location, directory_location
+from actoris_harena.recording.drift import DriftLog
+from actoris_harena.recording.fault_report import session_fault_report
+from actoris_harena.recording.usb_topology import device_location, directory_location
+
+from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.recording import features as feat
 
 # The AV1 encoder prints a twenty-line configuration banner every time it starts,
 # which is once per camera per episode: sixty lines an episode, saying the same
@@ -574,7 +574,7 @@ class EpisodeRecorder:
         # describes one: side files named after an index the dataset does not
         # have, and a count one higher than what is on disk. A dataset that
         # counts an episode nobody wrote cannot be opened by LeRobot at all
-        # (see common.recording.dataset_check), so a failure here is treated as
+        # (see actoris_harena.recording.dataset_check), so a failure here is treated as
         # a discard that says so, not as a save.
         saved = True
         try:
@@ -588,7 +588,7 @@ class EpisodeRecorder:
                 # Land this episode's metadata on disk now rather than at exit,
                 # so an interrupted session keeps every episode it announced as
                 # saved and a review tool can open the dataset mid-session. See
-                # common.recording.dataset_edit.commit_episode_metadata.
+                # actoris_harena.recording.dataset_edit.commit_episode_metadata.
                 commit_episode_metadata(self.dataset)
             except Exception:
                 traceback.print_exc()

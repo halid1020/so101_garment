@@ -51,8 +51,12 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.recording.dataset_check import DatasetDamaged, ensure_loadable  # noqa: E402
-from common.recording.dataset_edit import read_soft_deleted  # noqa: E402
+from actoris_harena.recording.dataset_check import (  # noqa: E402
+    DatasetDamaged,
+    ensure_loadable,
+)
+from actoris_harena.recording.dataset_edit import read_soft_deleted  # noqa: E402
+
 from common.training.destinations import (  # noqa: E402
     dataset_dir,
     destination,

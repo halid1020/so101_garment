@@ -33,7 +33,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from common.recording.usb_topology import (
+from actoris_harena.recording.usb_topology import (
     UsbLocation,
     device_location,
     directory_location,

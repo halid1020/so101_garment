@@ -144,7 +144,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _resolve_new(args, known_cameras, default_enabled):
     """(enabled_uvc, depth, record_ee, fps) for a brand-new dataset."""
-    from common.recording.collection_settings import (
+    from actoris_harena.recording.collection_settings import (
         SelectionError,
         resolve_new_selection,
     )
@@ -165,7 +165,7 @@ def _resolve_new(args, known_cameras, default_enabled):
 
 def _resolve_resume(args, settings, rs_rgb_name):
     """(enabled_uvc, depth, record_ee, fps) recovered from an existing dataset."""
-    from common.recording.collection_settings import (
+    from actoris_harena.recording.collection_settings import (
         SelectionError,
         resolve_resume_selection,
     )
@@ -190,12 +190,13 @@ def _resolve_resume(args, settings, rs_rgb_name):
 def main() -> None:
     args = _parse_args()
 
-    from common.config_parser import load_recording_config
-    from common.recording.collection_settings import (
+    from actoris_harena.recording.collection_settings import (
         is_resumable_dataset,
         read_existing_streams,
         selection_to_teleop_flags,
     )
+
+    from common.config_parser import load_recording_config
 
     rec_cfg = load_recording_config()
     known_cameras = set(rec_cfg["cameras"])

@@ -22,7 +22,7 @@ a v3.0 dataset re-encodes and renumbers the whole thing and takes far too long
 to sit behind a click. Deleting MARKS the episode: the row disappears at once
 and the decision is recorded in the dataset, reversibly. "Remove for good" then
 compacts: one rewrite for the whole batch, via
-``common.recording.dataset_edit.compact_dataset``.
+``actoris_harena.recording.dataset_edit.compact_dataset``.
 
 Until a dataset is compacted its marked episodes are still on disk, so anything
 that trains on the dataset would still see them. The pane says so, and the
@@ -47,12 +47,12 @@ from aiohttp import web  # type: ignore[import]
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
-from common.recording.dataset_check import (
+from actoris_harena.recording.dataset_check import (
     DatasetDamaged,
     dataset_integrity,
     repair_phantom_episodes,
 )
-from common.recording.dataset_edit import (
+from actoris_harena.recording.dataset_edit import (
     ReadOnlyDatasetError,
     compact_dataset,
     read_episode_lengths,
@@ -62,6 +62,7 @@ from common.recording.dataset_edit import (
     writability_problem,
     write_soft_deleted,
 )
+
 from common.web.jobs import finish, new_job, refuse_while_busy
 from common.web.lifecycle import directory_size, is_working_dir, read_dataset_meta
 from common.web.util import in_executor
@@ -93,7 +94,7 @@ def list_datasets(root: Path) -> "list[dict]":
     point of managing the drive from the console. The console's own working
     directories are the exception -- they are debris, not datasets.
     """
-    from common.recording.dataset_read import camera_label
+    from actoris_harena.recording.dataset_read import camera_label
 
     out: list[dict] = []
     if not root.is_dir():
@@ -240,15 +241,15 @@ def render_episode_mp4(
     roughly thirty before, of which twenty-four were decoding alone.
     """
     import imageio.v2 as imageio  # type: ignore[import]
-    from cv2 import COLOR_BGR2RGB, cvtColor  # type: ignore[import]
-
-    from common.recording.dataset_read import (
+    from actoris_harena.recording.dataset_read import (
         camera_label,
         decode_episode_frames,
         read_episode_joints,
         read_episode_row,
         video_keys,
     )
+    from cv2 import COLOR_BGR2RGB, cvtColor  # type: ignore[import]
+
     from common.sensor_view import ViewPanel, compose_sensor_view_frame
     from tool.replay_recording import state12_to_side_dicts
     from tool.test_sensor_rates import _camera_short_label
@@ -458,7 +459,7 @@ def episode_playback(
     precision the live view displayed them at, together with the motion
     derivatives (see ``motion_payload``) the dataset does not store.
     """
-    from common.recording.dataset_read import (
+    from actoris_harena.recording.dataset_read import (
         camera_label,
         playable_window,
         read_episode_joints,
@@ -585,7 +586,7 @@ def _peaks(array) -> "list[float]":
 
 def episode_video_file(root: Path, name: str, episode: int, key: str) -> Path:
     """The recorded video file holding ``episode``'s frames for one camera."""
-    from common.recording.dataset_read import (
+    from actoris_harena.recording.dataset_read import (
         episode_video_path,
         read_episode_row,
         video_keys,

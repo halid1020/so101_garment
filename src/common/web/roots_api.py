@@ -14,9 +14,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from actoris_harena.recording.dataset_edit import writability_problem
 from aiohttp import web  # type: ignore[import]
 
-from common.recording.dataset_edit import writability_problem
 from common.web.roots import (
     format_target,
     load_state,
