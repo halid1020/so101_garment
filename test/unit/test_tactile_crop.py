@@ -230,7 +230,7 @@ class RegistrationTest(unittest.TestCase):
     def test_a_variant_carries_its_twin_s_budget(self):
         # runs.tsv holds batch fixed across an ablation, or capacity confounds
         # input -- which is the one thing the ablation exists to separate.
-        from common.training.matrix import POLICIES
+        from actoris_harena.training.matrix import POLICIES
 
         for crop, twin in (
             ("so101_act_crop", "so101_act"),
@@ -243,7 +243,7 @@ class RegistrationTest(unittest.TestCase):
 
     def test_a_measured_ceiling_reaches_a_variant_two_hops_away(self):
         # so101_pi05_crop -> so101_pi05 -> pi05, where the batch-1 figure lives.
-        from common.training.matrix import limits_for
+        from actoris_harena.training.matrix import limits_for
 
         dest = {"limits": {"pi05": {"batch": 1}}}
         self.assertEqual(limits_for(dest, "so101_pi05_crop"), {"batch": 1})
@@ -251,7 +251,7 @@ class RegistrationTest(unittest.TestCase):
     def test_a_variant_is_not_recorded_as_a_port(self):
         # The port tests demand a byte-identical upstream file, and there is no
         # upstream file for a policy this repo invented.
-        from common.training.matrix import PORTED_FROM
+        from actoris_harena.training.matrix import PORTED_FROM
 
         self.assertNotIn("so101_act_crop", PORTED_FROM)
 

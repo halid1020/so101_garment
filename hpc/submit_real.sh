@@ -113,7 +113,7 @@ while IFS= read -r line || [ -n "$line" ]; do
         echo "   Put a '-' before the last column: $line" >&2
         exit 2
     fi
-    # This list MIRRORS common.training.matrix.POLICY_NAMES, which is the one
+    # This list MIRRORS actoris_harena.training.matrix.POLICY_NAMES, which is the one
     # registry the console and tool/train_launch.py read. It is repeated here
     # because this runs on a login node before anything imports our Python, and
     # it drifts the day a policy is added -- so test/unit/test_hpc_manifest.py

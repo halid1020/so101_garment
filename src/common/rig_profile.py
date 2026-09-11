@@ -12,7 +12,10 @@ per-rig profile (rig.yaml) will call the same ``set_profile`` for a rig it
 drives from outside this repo.
 """
 
+from pathlib import Path
+
 from actoris_harena.recording.camera_profile import CameraProfile, set_profile
+from actoris_harena.training.destinations import set_destinations_path
 
 # pi0.5 was pretrained with three fixed camera slots under openpi's names, and
 # a finetune reaches them by renaming rather than by re-deriving features: each
@@ -53,3 +56,12 @@ PROFILE = CameraProfile(
 )
 
 set_profile(PROFILE)
+
+
+# Where this rig's training destinations are declared. The shared module used to
+# derive this from its own location, which was right only while it lived in this
+# repo; now the rig says.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+set_destinations_path(
+    REPO_ROOT / "src" / "conf" / "train_destinations.yaml", repo_root=REPO_ROOT
+)

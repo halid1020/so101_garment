@@ -22,7 +22,7 @@ import time
 import unittest
 from pathlib import Path
 
-from common.training.matrix import POLICY_NAMES
+from actoris_harena.training.matrix import POLICY_NAMES
 
 REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "hpc" / "runs.tsv"

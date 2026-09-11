@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from common.training.matrix import PORTED_FROM  # noqa: E402
+from actoris_harena.training.matrix import PORTED_FROM  # noqa: E402
 
 
 def resolve(checkpoint: str) -> Path:

@@ -1,7 +1,7 @@
 """The Training tab: pick a dataset, some policies and a machine, and start.
 
 Thin, deliberately. Which runs are possible, what a `-` becomes and every
-reason a row cannot work all live in ``common.training``; staging and
+reason a row cannot work all live in ``actoris_harena.training``; staging and
 submission live in ``tool/train_launch``. This module reads a request, runs the
 blocking parts off the event loop and turns an exception into a status code --
 so a run started here is the same run, checked the same way and recorded in the
@@ -24,12 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from actoris_harena.recording.dataset_view import available_camera_names
-from actoris_harena.web.jobs import finish, new_job, refuse_while_busy
-from actoris_harena.web.util import in_executor
-from aiohttp import web  # type: ignore[import]
-
-from common.rig_profile import COMPOSITES
-from common.training.destinations import (
+from actoris_harena.training.destinations import (
     load_destinations,
     load_runs,
     reachable,
@@ -37,7 +32,7 @@ from common.training.destinations import (
     ssh_argv,
     stage_dir,
 )
-from common.training.matrix import (
+from actoris_harena.training.matrix import (
     POLICIES,
     MatrixError,
     make_row,
@@ -46,7 +41,7 @@ from common.training.matrix import (
     row_refusals,
     unavailable_message,
 )
-from common.training.runs import (
+from actoris_harena.training.runs import (
     REAL_TREE,
     SIM_TREE,
     RunsError,
@@ -60,6 +55,11 @@ from common.training.runs import (
     run_dir_names,
     with_measurements,
 )
+from actoris_harena.web.jobs import finish, new_job, refuse_while_busy
+from actoris_harena.web.util import in_executor
+from aiohttp import web  # type: ignore[import]
+
+from common.rig_profile import COMPOSITES
 
 
 def _destinations(app: web.Application) -> "dict[str, dict]":
@@ -70,7 +70,7 @@ def _destination(app: web.Application, name: str) -> "dict[str, Any]":
     """One destination, plus what it said about itself when asked.
 
     Only the local machine is asked, and only because its hardware is the one
-    thing this repo cannot write down -- see common.training.runs.
+    thing this repo cannot write down -- see actoris_harena.training.runs.
     """
     known = _destinations(app)
     if name not in known:
@@ -341,7 +341,7 @@ async def handle_start(request: web.Request) -> web.Response:
 
 
 def _remember(app: web.Application, record: "dict[str, Any]") -> None:
-    from common.training.destinations import remember_run
+    from actoris_harena.training.destinations import remember_run
 
     path = _runs_file(app)
     save_runs(path, remember_run(load_runs(path), record))

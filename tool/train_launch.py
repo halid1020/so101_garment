@@ -56,8 +56,7 @@ from actoris_harena.recording.dataset_check import (  # noqa: E402
     ensure_loadable,
 )
 from actoris_harena.recording.dataset_edit import read_soft_deleted  # noqa: E402
-
-from common.training.destinations import (  # noqa: E402
+from actoris_harena.training.destinations import (  # noqa: E402
     dataset_dir,
     destination,
     load_destinations,
@@ -70,7 +69,7 @@ from common.training.destinations import (  # noqa: E402
     ssh_argv,
     stage_dir,
 )
-from common.training.matrix import (  # noqa: E402
+from actoris_harena.training.matrix import (  # noqa: E402
     POLICY_NAMES,
     MatrixError,
     format_rows,
@@ -79,7 +78,7 @@ from common.training.matrix import (  # noqa: E402
     resolved,
     row_refusals,
 )
-from common.training.runs import view_dir_name, with_measurements  # noqa: E402
+from actoris_harena.training.runs import view_dir_name, with_measurements  # noqa: E402
 
 
 def runs_file() -> Path:

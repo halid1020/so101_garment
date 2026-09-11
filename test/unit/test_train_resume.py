@@ -20,7 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from common.training.progress import parse_log, parse_resumes, resolve_steps
+from actoris_harena.training.progress import parse_log, parse_resumes, resolve_steps
 
 DRIVER = Path(__file__).resolve().parents[2] / "test/system/long_vla_real.sh"
 

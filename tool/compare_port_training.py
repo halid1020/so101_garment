@@ -43,8 +43,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO))
 
-from common.training.matrix import PORTED_FROM  # noqa: E402
-from common.training.progress import parse_log  # noqa: E402
+from actoris_harena.training.matrix import PORTED_FROM  # noqa: E402
+from actoris_harena.training.progress import parse_log  # noqa: E402
 
 #: Everything that has to be pinned for two runs to be comparable at all. The
 #: seed is lerobot's own default, restated because a default that moved would

@@ -176,13 +176,13 @@ class RegistrationTest(unittest.TestCase):
     def test_the_untranslated_twin_is_still_refused(self):
         # `fastwam` proper is genuinely absent from the installed LeRobot, and a
         # row naming it must still be refused -- the port does not paper over it.
-        from common.training.matrix import policy_available
+        from actoris_harena.training.matrix import policy_available
 
         self.assertFalse(policy_available("fastwam"))
         self.assertTrue(policy_available("so101_fastwam"))
 
     def test_it_takes_its_twin_s_budget_and_image_size(self):
-        from common.training.matrix import POLICIES
+        from actoris_harena.training.matrix import POLICIES
 
         port, twin = POLICIES["so101_fastwam"], POLICIES["fastwam"]
         for key in ("steps", "batch", "hours", "image_size"):

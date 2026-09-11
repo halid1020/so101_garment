@@ -1156,7 +1156,7 @@ class TestWatchingARun(ConsoleTestCase):
     async def test_a_repo_metric_line_survives_the_whole_route(self):
         # Emitted by a policy, kept by the far-side grep, parsed, and served --
         # with no name of it written anywhere in between.
-        from common.training import metrics
+        from actoris_harena.training import metrics
 
         outputs = self._write_run(lines=2)
         log = outputs / "so101_outputs/vla_real_long/towel__all/logs/train_act.log"

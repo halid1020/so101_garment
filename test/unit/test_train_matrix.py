@@ -17,9 +17,7 @@ import unittest
 from pathlib import Path
 
 from actoris_harena.recording.dataset_view import PI05_SLOT_ORDER
-
-from common.rig_profile import COMPOSITES
-from common.training.matrix import (
+from actoris_harena.training.matrix import (
     COLUMNS,
     POLICIES,
     POLICY_NAMES,
@@ -34,6 +32,8 @@ from common.training.matrix import (
     row_refusals,
     unavailable_message,
 )
+
+from common.rig_profile import COMPOSITES
 
 REPO = Path(__file__).resolve().parents[2]
 TACTILE = list(COMPOSITES["tactile_quad"])
