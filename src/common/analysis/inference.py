@@ -1,7 +1,7 @@
 """One checkpoint, held open, answering "what would you plan from this?".
 
 The seam every method in this package shares. It is deliberately NOT
-``common.policy_client``: that one owns a queue, a session and a chunking
+``actoris_harena.deploy.policy_client``: that one owns a queue, a session and a chunking
 strategy because a rollout needs them, whereas an attribution needs one
 observation to give one chunk, repeatably, with nothing remembered in between.
 

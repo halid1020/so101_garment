@@ -69,9 +69,12 @@ sys.path.insert(0, str(_root / "src"))
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
+from actoris_harena.deploy.policy_wire import (  # noqa: E402
+    WireError,
+    decode_request,
+    encode_chunk,
+)
 from aiohttp import web  # noqa: E402
-
-from common.policy_wire import WireError, decode_request, encode_chunk  # noqa: E402
 
 _STATE_KEY = "observation.state"
 _IMAGE_PREFIX = "observation.images."
@@ -225,7 +228,15 @@ def build_app(host: PolicyHost) -> web.Application:
             f"infer {timings['infer_s'] * 1e3:5.0f} ms"
         )
         return web.Response(
-            body=encode_chunk(arr, seq=req["seq"], timings=timings),
+            # Pinned to the width this checkpoint actually produces (measured
+            # at load, not assumed), so a reshape that quietly disagreed with
+            # the model would be caught here rather than on the rig.
+            body=encode_chunk(
+                arr,
+                seq=req["seq"],
+                timings=timings,
+                action_dim=host.action_dim,
+            ),
             content_type="application/octet-stream",
         )
 

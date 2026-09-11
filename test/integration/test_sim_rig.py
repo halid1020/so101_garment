@@ -16,7 +16,7 @@ import numpy as np
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-from common.policy_rig import RAMP_S, FrameCache, TwinRig  # noqa: E402
+from actoris_harena.deploy.policy_rig import RAMP_S, FrameCache, TwinRig  # noqa: E402
 
 
 class SimRigTestCase(unittest.TestCase):
@@ -30,6 +30,8 @@ class SimRigTestCase(unittest.TestCase):
         cls.env = PickPlaceTwinEnv("handover")
 
     def rig(self, camera_map=None, fps=30.0):
+        from tool.eval_sim_policy import decode_action
+
         self.env.reset(self._scenario())
         return TwinRig(
             self.env,
@@ -37,6 +39,7 @@ class SimRigTestCase(unittest.TestCase):
             camera_wh=(160, 120),
             camera_map=camera_map,
             fps=fps,
+            decode_action=decode_action,
         )
 
     def _scenario(self):

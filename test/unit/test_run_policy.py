@@ -21,8 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
 import numpy as np
+from actoris_harena.deploy.policy_wire import decode_request, encode_chunk
 
-from common.policy_wire import decode_request, encode_chunk
 from tool.run_policy import (
     RemoteActionSource,
     _hold,

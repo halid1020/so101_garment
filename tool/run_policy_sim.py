@@ -64,6 +64,10 @@ from actoris_harena.deploy.chunk_sweep import (  # noqa: E402
     cell_label,
 )
 from actoris_harena.deploy.chunking import STRATEGIES  # noqa: E402
+from actoris_harena.deploy.policy_rig import TwinRig  # noqa: E402
+from actoris_harena.deploy.policy_rig import (  # noqa: E402
+    parse_camera_map as _parse_camera_map,
+)
 from actoris_harena.deploy.sweep_journal import (  # noqa: E402
     append_row,
     done_keys,
@@ -71,9 +75,6 @@ from actoris_harena.deploy.sweep_journal import (  # noqa: E402
     load_rows,
     row_key,
 )
-
-from common.policy_rig import TwinRig  # noqa: E402
-from common.policy_rig import parse_camera_map as _parse_camera_map  # noqa: E402
 
 #: The twin renders 'scene' where the rig records 'central'; a checkpoint
 #: trained on rig data asks for the latter. Offered as the default so the
@@ -126,7 +127,7 @@ def make_source(args, cell: dict, hz: float):
     this cell actually saw rather than the last one's.
     """
     if args.server:
-        from common.policy_client import RemoteActionSource
+        from actoris_harena.deploy.policy_client import RemoteActionSource
 
         # The flags are the floor; the cell overrides whatever it names. A cell
         # only ever names parameters its own strategy reads, so a flag that does
@@ -151,7 +152,7 @@ def make_source(args, cell: dict, hz: float):
             ),
             **knobs,
         )
-    from common.policy_client import LocalActionSource
+    from actoris_harena.deploy.policy_client import LocalActionSource
 
     return LocalActionSource(args.checkpoint, args.device, args.task_string)
 
@@ -267,7 +268,7 @@ def rehandshake(source) -> None:
 
 def run_episode(env, source, scenario, args, label: str, composer=None) -> dict:
     """One rollout. Returns the metrics row for this episode."""
-    from tool.eval_sim_policy import _released
+    from tool.eval_sim_policy import _released, decode_action
 
     env.reset(scenario)
     rehandshake(source)
@@ -276,6 +277,7 @@ def run_episode(env, source, scenario, args, label: str, composer=None) -> dict:
         cameras=list(args.camera_names),
         camera_wh=(args.camera_width, args.camera_height),
         camera_map=parse_camera_map(args.camera_map) if args.server else {},
+        decode_action=decode_action,
     )
 
     executed: "list[np.ndarray]" = []

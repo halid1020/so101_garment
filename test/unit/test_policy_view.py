@@ -17,9 +17,9 @@ import unittest
 import warnings
 
 import numpy as np
+from actoris_harena.deploy.policy_run import RunControl
 from aiohttp.test_utils import AioHTTPTestCase
 
-from common.policy_run import RunControl
 from common.web.policy_view import PolicyView, chunk_payload, pending_payload
 
 CAMERAS = ["central", "wrist_camera_left"]

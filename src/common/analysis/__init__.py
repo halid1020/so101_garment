@@ -1,7 +1,7 @@
 """What each input stream contributes to the actions a policy plans.
 
 Separate from the inference pipeline on purpose. This package imports from
-``common.policy_client`` and from the LeRobot policies; nothing on the inference
+``actoris_harena.deploy.policy_client`` and from the LeRobot policies; nothing on the inference
 path imports it back, so an attribution study cannot slow a rollout down or
 change what the arms do.
 

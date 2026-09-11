@@ -8,7 +8,7 @@ conversion the recorder and ``tool/replay_on_robot.py`` use. So the action
 definition the dataset froze is what drives the arms — no separate
 real-inference code path.
 
-``--sim`` puts the digital twin where the bench stands (``common.policy_rig``),
+``--sim`` puts the digital twin where the bench stands (``actoris_harena.deploy.policy_rig``),
 with no camera, no bus and no motor anywhere. Everything else is identical — the
 page, the arming handshake, the throttle, the splice, the stall ladder, the run
 log — so a procedure rehearsed in simulation is the procedure the arms will run,
@@ -108,10 +108,13 @@ from actoris_harena.deploy.chunking import (  # noqa: E402
     DEFAULT_EXECUTE_RATIO,
     STRATEGIES,
 )
+from actoris_harena.deploy.policy_client import (  # noqa: E402
+    LocalActionSource,
+    RemoteActionSource,
+)
+from actoris_harena.deploy.policy_rig import RAMP_S, parse_camera_map  # noqa: E402
+from actoris_harena.deploy.policy_run import RunControl  # noqa: E402
 
-from common.policy_client import LocalActionSource, RemoteActionSource  # noqa: E402
-from common.policy_rig import RAMP_S, parse_camera_map  # noqa: E402
-from common.policy_run import RunControl  # noqa: E402
 from tool.replay_on_robot import (  # noqa: E402
     _connect_followers,
     _ramp_to,
@@ -221,7 +224,7 @@ def _gather_images(data_manager, names: "list[str]", timeout_s: float = 5.0) -> 
 
 
 class BenchRig:
-    """The physical followers behind ``common.policy_rig.Rig``.
+    """The physical followers behind ``actoris_harena.deploy.policy_rig.Rig``.
 
     Everything that can move a motor or open a camera lives here, and the
     control loop above talks only to the protocol -- which is what lets the twin
@@ -301,9 +304,10 @@ def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]", hz: float 
     page spawns the same objects in the same places, so a second attempt is
     compared against the first rather than against a different problem.
     """
-    from common.policy_rig import TwinRig
+    from actoris_harena.deploy.policy_rig import TwinRig
+
     from sim_datagen.env import CAMERAS, PickPlaceTwinEnv
-    from tool.eval_sim_policy import _scenario_for_seed
+    from tool.eval_sim_policy import _scenario_for_seed, decode_action
 
     scenario = _scenario_for_seed(task, seed)
     # Stepped at the rate it is driven at: the control tick is a whole number of
@@ -311,7 +315,13 @@ def build_sim_rig(task: str, seed: int, camera_map: "dict[str, str]", hz: float 
     # another rate advances a different amount of simulated time per action.
     env = PickPlaceTwinEnv(task, fps=hz)
     env.reset(scenario)
-    rig = TwinRig(env, cameras=list(CAMERAS), camera_map=camera_map, fps=hz)
+    rig = TwinRig(
+        env,
+        cameras=list(CAMERAS),
+        camera_map=camera_map,
+        fps=hz,
+        decode_action=decode_action,
+    )
     return rig, env, scenario
 
 
@@ -778,7 +788,7 @@ def main() -> None:
             print(f"📝 task: “{task}”")
 
         if not args.no_log:
-            from common.policy_log import RunLog
+            from actoris_harena.deploy.policy_log import RunLog
 
             run_log = RunLog.create(
                 task=task,

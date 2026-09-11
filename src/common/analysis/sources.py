@@ -130,7 +130,7 @@ class RunSource:
                 "(tool/run_policy.py); it is off by default because the frames are "
                 "the largest part of an observation."
             )
-        from common.policy_log import read_jsonl
+        from actoris_harena.deploy.policy_log import read_jsonl
 
         self.chunks = {int(c["seq"]): c for c in read_jsonl(self.root / "chunks.jsonl")}
         self.plans = sorted(

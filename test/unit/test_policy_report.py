@@ -14,7 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from common.policy_log import RunLog
+from actoris_harena.deploy.policy_log import RunLog
+
 from tool.policy_report import by_checkpoint, collect, describe_checkpoint
 
 CKPT = (

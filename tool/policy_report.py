@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What the rollouts say, across every run on this machine.
 
-A rollout leaves a directory behind (``common.policy_log``); a comparison
+A rollout leaves a directory behind (``actoris_harena.deploy.policy_log``); a comparison
 between two checkpoints needs many of them read together. This is that reader:
 it walks ``$SO101_OUTPUT_DIR/policy_runs/`` and prints one row per run, then one
 row per CHECKPOINT -- which is the number an ablation is actually reported from.
@@ -35,7 +35,11 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.policy_log import runs_root, score, trial_verdicts  # noqa: E402
+from actoris_harena.deploy.policy_log import (  # noqa: E402
+    runs_root,
+    score,
+    trial_verdicts,
+)
 
 
 def read_meta(run: Path) -> dict:

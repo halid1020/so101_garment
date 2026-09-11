@@ -10,7 +10,7 @@ It is a window onto a run, not a controller of the rig. It never touches a
 camera or a bus: frames come from the data manager the control loop already
 publishes into, numbers come from the snapshot that loop posts every tick, and
 the only thing it can change is what the run is asked to do
-(``common.policy_run``). It can hold the arms, advance them one chunk, resume,
+(``actoris_harena.deploy.policy_run``). It can hold the arms, advance them one chunk, resume,
 end the trial, or end it and begin another -- every one of which asks for LESS
 motion than the terminal already authorised. Torque is enabled by the loop, at
 the confirmation prompt or at the arming button, and nothing here can enable it.
@@ -34,9 +34,9 @@ from typing import Any
 
 import numpy as np
 from actoris_harena.deploy.chunking import STRATEGIES
+from actoris_harena.deploy.policy_log import OUTCOMES
 from aiohttp import web  # type: ignore[import]
 
-from common.policy_log import OUTCOMES
 from common.recording.monitor_server import (
     BOUNDARY,
     DEFAULT_MAX_WIDTH,
