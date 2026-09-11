@@ -21,13 +21,14 @@ from __future__ import annotations
 import importlib.util
 from typing import Any, Iterable, Sequence
 
-from common.recording.dataset_view import (
-    COMPOSITES,
+from actoris_harena.recording.dataset_view import (
     PI05_SLOT_ORDER,
     available_camera_names,
     camera_keys,
     short_name,
 )
+
+from common.rig_profile import COMPOSITES
 
 # The columns of hpc/runs.tsv, in order. `extra` is last because it is the only
 # one that may contain spaces -- everything before it is read field by field.

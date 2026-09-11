@@ -123,7 +123,7 @@ def view_dir_name(dataset: str, cameras: str, info: "dict[str, Any] | None") -> 
     """
     if info is None:
         return f"{dataset}__{cameras.replace(',', '+')}"
-    from common.recording.dataset_view import split_selection, view_slug
+    from actoris_harena.recording.dataset_view import split_selection, view_slug
 
     keep, composites = split_selection(info, str(cameras or "all").split(","))
     slug = "+".join(filter(None, [view_slug(info, keep) if keep else "", *composites]))

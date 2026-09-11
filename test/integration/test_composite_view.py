@@ -23,8 +23,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-
-from common.recording.dataset_view import (
+from actoris_harena.recording.dataset_view import (
     CAMERA_PREFIX,
     ViewError,
     build_composite_video,
@@ -197,7 +196,7 @@ class TestCompositeViewIsAnOrdinaryDataset(unittest.TestCase):
             raise unittest.SkipTest("no tactile dataset on this machine")
 
     def test_the_view_names_the_composite_and_gives_it_a_shape(self):
-        from common.recording.dataset_view import filtered_info, split_selection
+        from actoris_harena.recording.dataset_view import filtered_info, split_selection
 
         info = json.loads((self.src / "meta" / "info.json").read_text())
         keep, composites = split_selection(info, ["central", "tactile_quad"])

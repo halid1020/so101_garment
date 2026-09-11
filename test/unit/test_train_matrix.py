@@ -16,7 +16,9 @@ Run:  PYTHONPATH=.:src python -m unittest test.unit.test_train_matrix
 import unittest
 from pathlib import Path
 
-from common.recording.dataset_view import COMPOSITES, PI05_SLOT_ORDER
+from actoris_harena.recording.dataset_view import PI05_SLOT_ORDER
+
+from common.rig_profile import COMPOSITES
 from common.training.matrix import (
     COLUMNS,
     POLICIES,

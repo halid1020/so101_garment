@@ -28,9 +28,8 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.recording.dataset_view import (  # noqa: E402
+from actoris_harena.recording.dataset_view import (  # noqa: E402
     COMPOSITE_SIZE,
-    COMPOSITES,
     ViewError,
     build_view,
     camera_keys,
@@ -39,6 +38,8 @@ from common.recording.dataset_view import (  # noqa: E402
     split_selection,
     view_slug,
 )
+
+from common.rig_profile import COMPOSITES  # noqa: E402
 
 
 def parse_slots(text: "str | None") -> "dict[str, str] | None":

@@ -23,11 +23,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from actoris_harena.recording.dataset_view import available_camera_names
 from actoris_harena.web.jobs import finish, new_job, refuse_while_busy
 from actoris_harena.web.util import in_executor
 from aiohttp import web  # type: ignore[import]
 
-from common.recording.dataset_view import COMPOSITES, available_camera_names
+from common.rig_profile import COMPOSITES
 from common.training.destinations import (
     load_destinations,
     load_runs,
