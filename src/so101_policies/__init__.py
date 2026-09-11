@@ -38,6 +38,8 @@ from so101_policies.diffusion_crop.modeling_diffusion_crop import (
 )
 from so101_policies.dreamzero.configuration_dreamzero import So101DreamzeroConfig
 from so101_policies.dreamzero.modeling_dreamzero import So101DreamzeroPolicy
+from so101_policies.fastwam.configuration_fastwam import So101FastwamConfig
+from so101_policies.fastwam.modeling_fastwam import So101FastwamPolicy
 from so101_policies.flowmatch.configuration_flowmatch import So101FlowmatchConfig
 from so101_policies.flowmatch.modeling_flowmatch import So101FlowmatchPolicy
 from so101_policies.pi05.configuration_pi05 import So101Pi05Config
@@ -52,6 +54,10 @@ PORTED_FROM = {
     "so101_act": "act",
     "so101_diffusion": "diffusion",
     "so101_pi05": "pi05",
+    # Ported from a commit newer than LEROBOT_COMMIT, so its twin does not exist
+    # in the installed LeRobot at all -- `matrix.policy_available` refuses a bare
+    # `fastwam` row for exactly that reason, while this one runs.
+    "so101_fastwam": "fastwam",
 }
 
 __all__ = [
@@ -66,6 +72,8 @@ __all__ = [
     "So101DiffusionPolicy",
     "So101DreamzeroConfig",
     "So101DreamzeroPolicy",
+    "So101FastwamConfig",
+    "So101FastwamPolicy",
     "So101FlowmatchConfig",
     "So101FlowmatchPolicy",
     "So101Pi05Config",

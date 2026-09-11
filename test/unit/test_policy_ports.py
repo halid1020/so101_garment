@@ -32,31 +32,55 @@ class PortedSourceTest(unittest.TestCase):
     """Nothing was edited by hand."""
 
     def setUp(self) -> None:
-        from so101_policies._port import UPSTREAM, port_text, ported_files
+        from so101_policies._port import (
+            UPSTREAM,
+            port_text,
+            ported_files,
+            read_upstream,
+        )
 
         if not UPSTREAM.is_dir():
             self.skipTest(f"no LeRobot checkout at {UPSTREAM}")
         self.ported_files = ported_files
         self.port_text = port_text
+        self.read_upstream = read_upstream
+
+    def _source(self, name: str, relative: str) -> "str | None":
+        """Upstream's text, or None if this checkout cannot produce it.
+
+        A ref-sourced port needs the commit fetched; a detached collection drive
+        makes even a working-tree read raise. Neither is a drifted port, so
+        neither should read as one.
+        """
+        try:
+            return self.read_upstream(name, relative)
+        except (FileNotFoundError, OSError):
+            return None
 
     def test_every_ported_file_matches_upstream(self) -> None:
-        for upstream, ours, name, kind in self.ported_files():
+        for relative, ours, name, kind in self.ported_files():
             with self.subTest(file=ours.name):
-                self.assertTrue(_readable(upstream), f"upstream gone: {upstream}")
+                source = self._source(name, relative)
+                if source is None:
+                    self.skipTest(f"upstream unavailable for {name}/{relative}")
                 self.assertTrue(_readable(ours), f"port missing: {ours}")
                 self.assertEqual(
                     ours.read_text(),
-                    self.port_text(upstream.read_text(), name, kind),
+                    self.port_text(source, name, kind),
                     f"{ours} has drifted from upstream; re-run tool/port_policies.py "
                     "or, if the edit was deliberate, take this file out of _port.PORTS",
                 )
 
     def test_port_is_not_a_no_op(self) -> None:
         """A rule that silently stopped matching would make the test above vacuous."""
-        for upstream, _ours, name, kind in self.ported_files():
-            with self.subTest(file=upstream.name):
-                text = upstream.read_text()
-                self.assertNotEqual(text, self.port_text(text, name, kind))
+        for relative, _ours, name, kind in self.ported_files():
+            if kind == "verbatim":
+                continue  # carried unchanged on purpose; see _port.PORT_EXTRA
+            with self.subTest(file=relative):
+                source = self._source(name, relative)
+                if source is None:
+                    self.skipTest(f"upstream unavailable for {name}/{relative}")
+                self.assertNotEqual(source, self.port_text(source, name, kind))
 
 
 class RegistrationTest(unittest.TestCase):

@@ -122,10 +122,11 @@ while IFS= read -r line || [ -n "$line" ]; do
     case "$policy" in
         act|diffusion|pi05|fastwam) ;;
         so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero) ;;
+        so101_fastwam) ;;
         so101_act_crop|so101_diffusion_crop|so101_pi05_crop) ;;
         *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy'" >&2
            echo "   want: act|diffusion|pi05|fastwam, or one of the repo-local" >&2
-           echo "   so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero," >&2
+           echo "   so101_act|so101_diffusion|so101_pi05|so101_flowmatch|so101_dreamzero|so101_fastwam," >&2
            echo "   or a cropped-tactile variant so101_act_crop|so101_diffusion_crop|so101_pi05_crop" >&2
            exit 2;;
     esac
