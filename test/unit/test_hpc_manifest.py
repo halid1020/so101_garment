@@ -476,9 +476,9 @@ class TestWhereTheJobLogsGo(unittest.TestCase):
         # Slurm does not create it, and a job whose --output path is missing
         # fails before it runs a line -- so the mkdir is load-bearing, not tidy.
         text = SUBMIT.read_text(encoding="utf-8")
-        self.assertIn("mkdir -p \"$REPO_ROOT/outputs/runs\"", text)
+        self.assertIn('mkdir -p "$REPO_ROOT/outputs/runs"', text)
         self.assertLess(
-            text.index("mkdir -p \"$REPO_ROOT/outputs/runs\""),
+            text.index('mkdir -p "$REPO_ROOT/outputs/runs"'),
             text.index("cmd=(sbatch"),
             "the directory must exist before sbatch is called",
         )
