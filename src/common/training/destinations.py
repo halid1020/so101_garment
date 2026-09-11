@@ -21,8 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-from common.web.roots import parse_ssh_host
+from actoris_harena.web.roots import parse_ssh_host
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DESTINATIONS_PATH = REPO_ROOT / "src" / "conf" / "train_destinations.yaml"
@@ -310,7 +309,7 @@ def reachable(dest: "dict[str, Any]", timeout: float = REACH_TIMEOUT_S) -> "str 
 
 # ── Remembering what was launched ────────────────────────────────────────────
 #
-# Copied in shape from common.web.roots: a corrupt or missing file reads empty
+# Copied in shape from actoris_harena.web.roots: a corrupt or missing file reads empty
 # and a failed write is not fatal, because this is a convenience -- the runs
 # themselves live on the destination, and losing this record loses only the
 # console's list of them, which `--status` can rebuild by asking the machine.

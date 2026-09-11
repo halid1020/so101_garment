@@ -46,8 +46,10 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 # works or is reported by us. Must be set before cv2 is first imported.
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
+from actoris_harena.web.jobs import add_job_routes
+from actoris_harena.web.util import preinit_tqdm_lock, revalidate_assets
+
 from common.web.datasets_api import add_dataset_routes
-from common.web.jobs import add_job_routes
 from common.web.lifecycle_api import add_lifecycle_routes
 from common.web.projects_api import add_project_routes
 from common.web.roots_api import (
@@ -60,7 +62,6 @@ from common.web.sensors_api import add_sensor_routes
 from common.web.session import PreviewArms, PreviewCameras, SessionSupervisor
 from common.web.session_api import add_session_routes
 from common.web.training_api import add_training_routes
-from common.web.util import preinit_tqdm_lock, revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "static"
 

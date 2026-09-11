@@ -1,11 +1,11 @@
 """Routes for the whole-dataset operations: create, rename, delete, merge.
 
-The rules all live in ``common.web.lifecycle``; this layer only reads the
+The rules all live in ``actoris_harena.web.lifecycle``; this layer only reads the
 request and runs the slow parts off the event loop.
 
 A merge re-encodes every episode of every source, and freeing the bytes of a
 deleted dataset takes about as long, so both outlive their request as JOBS
-(``common.web.jobs``): the POST returns a record and the browser's dock watches
+(``actoris_harena.web.jobs``): the POST returns a record and the browser's dock watches
 it.
 """
 
@@ -17,10 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from actoris_harena.recording.dataset_edit import ReadOnlyDatasetError
-from aiohttp import web  # type: ignore[import]
-
-from common.web.jobs import finish, new_job, refuse_while_busy
-from common.web.lifecycle import (
+from actoris_harena.web.jobs import finish, new_job, refuse_while_busy
+from actoris_harena.web.lifecycle import (
     delete_dataset,
     directory_size,
     is_working_dir,
@@ -31,7 +29,8 @@ from common.web.lifecycle import (
     rename_dataset,
     valid_dataset_name,
 )
-from common.web.util import in_executor
+from actoris_harena.web.util import in_executor
+from aiohttp import web  # type: ignore[import]
 
 
 def _body_name(body: "dict[str, Any]", key: str) -> str:

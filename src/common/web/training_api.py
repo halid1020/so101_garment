@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from actoris_harena.web.jobs import finish, new_job, refuse_while_busy
+from actoris_harena.web.util import in_executor
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.dataset_view import COMPOSITES, available_camera_names
@@ -57,8 +59,6 @@ from common.training.runs import (
     run_dir_names,
     with_measurements,
 )
-from common.web.jobs import finish, new_job, refuse_while_busy
-from common.web.util import in_executor
 
 
 def _destinations(app: web.Application) -> "dict[str, dict]":

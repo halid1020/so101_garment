@@ -38,8 +38,7 @@ from actoris_harena.recording.collection_settings import (
     selection_to_teleop_flags,
 )
 from actoris_harena.recording.dataset_edit import writability_problem
-
-from common.web.lifecycle import valid_dataset_name
+from actoris_harena.web.lifecycle import valid_dataset_name
 
 TELEOP = Path(__file__).resolve().parents[3] / "tool" / "meta_quest_teleopration.py"
 

@@ -22,12 +22,12 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp  # type: ignore[import]
+from actoris_harena.web.util import in_executor
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.controls import control_steps
 from common.recording.monitor_server import encode_frame_batch, encode_jpeg, mjpeg_part
 from common.web.session import resolve_plan
-from common.web.util import in_executor
 
 # The live view is polled by an image element, so a slow or absent monitor must
 # fail fast rather than hold the browser's connection open.

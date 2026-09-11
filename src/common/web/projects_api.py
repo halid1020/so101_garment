@@ -1,6 +1,6 @@
 """Routes for the Training tab's projects.
 
-Thin, like ``training_api``: the rules are ``common.web.projects`` and are
+Thin, like ``training_api``: the rules are ``actoris_harena.web.projects`` and are
 unit-tested directly. This layer reads a request, keeps the file work off the
 event loop, and turns a :class:`ProjectError` into a 400 with the sentence it
 carries.
@@ -16,11 +16,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from actoris_harena.web import projects
+from actoris_harena.web.projects import ProjectError
+from actoris_harena.web.util import in_executor
 from aiohttp import web  # type: ignore[import]
-
-from common.web import projects
-from common.web.projects import ProjectError
-from common.web.util import in_executor
 
 
 def _file(app: web.Application) -> Path:

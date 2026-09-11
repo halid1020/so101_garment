@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from actoris_harena.web.util import in_executor
 from aiohttp import web  # type: ignore[import]
 
 from common.web.sensors import (
@@ -34,7 +35,6 @@ from common.web.sensors import (
     stable_device_path,
     write_map,
 )
-from common.web.util import in_executor
 
 
 def _map_path(app: web.Application):

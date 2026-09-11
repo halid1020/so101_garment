@@ -22,10 +22,10 @@ import warnings
 from pathlib import Path
 from unittest import mock
 
+from actoris_harena.web.jobs import MAX_JOBS, prune_jobs
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-from common.web.jobs import MAX_JOBS, prune_jobs
 from tool.rig_web import build_app
 
 _FEATURES = {

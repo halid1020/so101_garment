@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 from actoris_harena.deploy.chunking import STRATEGIES
 from actoris_harena.deploy.policy_log import OUTCOMES
+from actoris_harena.web.util import revalidate_assets
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.monitor_server import (
@@ -45,7 +46,6 @@ from common.recording.monitor_server import (
     encode_jpeg,
     mjpeg_part,
 )
-from common.web.util import revalidate_assets
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

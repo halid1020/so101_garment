@@ -1,6 +1,6 @@
 """Routes for choosing the collection directory, and the guard for having none.
 
-The rules are in ``common.web.roots``; this layer reads the request, keeps the
+The rules are in ``actoris_harena.web.roots``; this layer reads the request, keeps the
 blocking parts (mounting, walking a directory, asking the filesystem how much
 room is left) off the event loop, and applies the one rule that belongs here:
 the directory may not change under a running session or a running job, both of
@@ -15,9 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from actoris_harena.recording.dataset_edit import writability_problem
-from aiohttp import web  # type: ignore[import]
-
-from common.web.roots import (
+from actoris_harena.web.roots import (
     format_target,
     load_state,
     looks_like_collection,
@@ -31,7 +29,8 @@ from common.web.roots import (
     sshfs_mounts,
     unmount,
 )
-from common.web.util import in_executor
+from actoris_harena.web.util import in_executor
+from aiohttp import web  # type: ignore[import]
 
 # Requests that mean nothing without a collection directory. Everything else --
 # the page itself, the job dock, the signal map, a session's status -- answers
