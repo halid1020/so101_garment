@@ -20,6 +20,7 @@ it step by step, exactly as ``tool/policy_server.py`` does.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -27,6 +28,7 @@ import numpy as np
 from lerobot.utils.constants import OBS_IMAGES
 
 from common.analysis.streams import (
+    CAMERA_PREFIX,
     act_layout,
     camera_names,
     check_layout,
@@ -34,6 +36,57 @@ from common.analysis.streams import (
     streams_of,
     token_layout,
 )
+
+
+def rename_map_of(pre) -> "dict[str, str]":
+    """The observation rename the checkpoint was trained with, if any.
+
+    Read off the saved preprocessor rather than the training config, because the
+    preprocessor is what actually runs -- a config that disagreed with it would
+    be describing a run that did not happen.
+    """
+    for step in getattr(pre, "steps", []) or []:
+        mapping = getattr(step, "rename_map", None)
+        if mapping:
+            return dict(mapping)
+    return {}
+
+
+def source_cameras(
+    policy_cameras: "list[str]", rename: "dict[str, str]"
+) -> "list[str]":
+    """Camera names as the DATASET has them, in the policy's own order.
+
+    ``rename`` maps source key -> policy key, so it is inverted here. A camera
+    the map does not mention is already named the same on both sides, which is
+    every checkpoint that was not finetuned onto pretrained slots.
+    """
+    inverse = {v: k for k, v in rename.items()}
+    out = []
+    for name in policy_cameras:
+        key = CAMERA_PREFIX + name
+        out.append(inverse.get(key, key)[len(CAMERA_PREFIX) :])
+    return out
+
+
+def renamed_streams(streams: list, cameras: "list[str]") -> list:
+    """Report each camera under the rig's name, not the policy's slot name.
+
+    A deck saying `base_0_rgb` names something the operator cannot point at; the
+    same stream is `central` on the rig. Stream is frozen, so this rebuilds
+    rather than mutates. Only the NAME changes -- ``key`` stays the policy-side
+    batch key, which is what the conditioning layout is indexed by.
+    """
+    import dataclasses
+
+    out, i = [], 0
+    for stream in streams:
+        if stream.kind == "camera" and i < len(cameras):
+            out.append(dataclasses.replace(stream, name=cameras[i]))
+            i += 1
+        else:
+            out.append(stream)
+    return out
 
 
 class Inference:
@@ -58,8 +111,16 @@ class Inference:
         self._build_batch = build_batch
         self.task = task
         self.cfg = self.policy.config
-        self.cameras = camera_names(self.cfg)
-        self.streams = streams_of(self.cfg)
+        # A pi0.5 finetune was trained with --rename_map, so its config names
+        # openpi's SLOTS (base_0_rgb, left_wrist_0_rgb, ...) and not the rig's
+        # cameras. Asking the dataset for those fails with "this dataset has no
+        # camera base_0_rgb", which reads as a missing camera rather than as a
+        # renamed one. The checkpoint carries the map in its own preprocessor,
+        # so invert it: fetch under the rig's names, and let `self.pre` rename
+        # them exactly as it did in training.
+        self.rename = rename_map_of(self.pre)
+        self.cameras = source_cameras(camera_names(self.cfg), self.rename)
+        self.streams = renamed_streams(streams_of(self.cfg), self.cameras)
         self.action_dim = int(self.cfg.output_features["action"].shape[0])
         self.n_action_steps = int(getattr(self.cfg, "n_action_steps", 1) or 1)
         self.n_obs_steps = int(getattr(self.cfg, "n_obs_steps", 1) or 1)
@@ -125,14 +186,31 @@ class Inference:
             per_camera = self.tokens_per_camera()
             spans = act_layout(self.cfg, per_camera)
             total = 1 + sum(s.width for s in spans)
-            return spans, total, check_layout(spans, total, latent=1)
+            return self._named(spans), total, check_layout(spans, total, latent=1)
         if family == "diffusion":
             spans = diffusion_layout(self.cfg, self.camera_feature_dim())
             total = sum(s.width for s in spans)
-            return spans, total, check_layout(spans, total)
+            return self._named(spans), total, check_layout(spans, total)
         spans = token_layout(self.cfg, self.tokens_per_camera_vlm())
         total = sum(s.width for s in spans)
-        return spans, total, check_layout(spans, total)
+        return self._named(spans), total, check_layout(spans, total)
+
+    def _named(self, spans: list) -> list:
+        """Give each span the same stream name everything else here uses.
+
+        The layout functions build their own Streams from the config, so on a
+        checkpoint finetuned onto renamed slots they carry `base_0_rgb` while
+        every per-frame result is keyed `central`. The deck then died on a
+        KeyError naming a camera the operator has never heard of. One naming,
+        decided in one place.
+        """
+        import dataclasses
+
+        by_key = {s.key: s for s in self.streams}
+        return [
+            dataclasses.replace(span, stream=by_key.get(span.stream.key, span.stream))
+            for span in spans
+        ]
 
     def family(self) -> str:
         """Which conditioning layout this checkpoint has: act, diffusion or tokens.
@@ -284,7 +362,42 @@ class Inference:
                 "predict_action_chunk is not a torch.no_grad wrapper, so there "
                 "is nothing to unwrap. Occlusion still works and needs no gradient."
             )
-        return inner(self.policy, dict(batch))
+        # ONE wrapper is not enough on pi0.5. `predict_action_chunk` is decorated,
+        # and so is `PI05Pytorch.sample_actions` underneath it, so unwrapping only
+        # the outer one returns a tensor with no graph and autograd.grad raises
+        # "does not require grad" -- which reads as a broken input, not as a
+        # second decorator. Both come off, and the sampler is pinned while they
+        # are off, because it integrates from noise like diffusion does.
+        from common.analysis.diffusion import pinned
+
+        with self._grad_through_sampler(), pinned(self):
+            return inner(self.policy, dict(batch))
+
+    @contextlib.contextmanager
+    def _grad_through_sampler(self):
+        """Take ``@torch.no_grad()`` off the inner sampler for one call.
+
+        Bound onto the instance and deleted afterwards, so the class is left
+        exactly as it was found -- a policy served in the same process must not
+        start building graphs because something asked it for a gradient once.
+        """
+        model = getattr(self.policy, "model", None)
+        sampler = getattr(model, "sample_actions", None)
+        unwrapped = getattr(sampler, "__wrapped__", None)
+        if model is None or unwrapped is None:
+            yield
+            return
+        import types
+
+        setattr(model, "sample_actions", types.MethodType(unwrapped, model))
+        try:
+            yield
+        finally:
+            # Removing the instance attribute uncovers the class's decorated one.
+            try:
+                delattr(model, "sample_actions")
+            except AttributeError:  # pragma: no cover - never bound
+                pass
 
     def image_keys(self) -> "list[str]":
         """The batch keys the cameras arrive under, in the policy's own order."""

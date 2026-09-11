@@ -170,7 +170,7 @@ def method_table(payload: dict) -> "tuple[list[str], list[list[str]]]":
             }
 
     reference = pooled.get("occlusion", {})
-    headers = ["method", *cameras, "agreement with occlusion"]
+    headers = ["method", *cameras, "spread", "agreement with occlusion"]
     rows = []
     for method, shares in pooled.items():
         agreement = (
@@ -178,8 +178,35 @@ def method_table(payload: dict) -> "tuple[list[str], list[list[str]]]":
             if method == "occlusion"
             else f"{rank_agreement(shares, reference):+.2f}"
         )
-        rows.append([method, *[f"{shares[c]:.1%}" for c in cameras], agreement])
+        rows.append(
+            [
+                method,
+                *[f"{shares[c]:.1%}" for c in cameras],
+                (f"{spread(shares):.1f}x" if spread(shares) else "—"),
+                agreement,
+            ]
+        )
     return headers, rows
+
+
+def spread(shares: "dict[str, float]") -> float:
+    """Largest camera share over smallest. The column rank agreement cannot show.
+
+    MEASURED on the finished ACT checkpoint, and the reason this column exists:
+    attention's pooled shares run 0.192-0.219 -- a **1.14x** spread against
+    occlusion's **42x** -- yet its rank agreement is +0.90, because with five
+    cameras a near-uniform vector can still happen to sort the same way. Report
+    the agreement alone and a reader concludes attention measures importance.
+    It does not: per FRAME it agrees at only +0.17, with 35 % of frames negative.
+    """
+    values = list(shares.values())
+    # A ratio only means anything for a non-negative quantity. The `vs uniform`
+    # row is a DEVIATION and goes negative by construction, so reporting a ratio
+    # for it would invent a number -- dropping the negatives quietly gave it a
+    # flattering 1.0x from the single camera left standing.
+    if not values or min(values) <= 0:
+        return 0.0
+    return float(max(values) / min(values))
 
 
 def headline_numbers(payload: dict, tactile_prefix: str = "") -> "dict[str, Any]":
@@ -328,3 +355,89 @@ def figure_to_array(fig) -> np.ndarray:
     fig.canvas.draw()
     buffer = np.asarray(fig.canvas.buffer_rgba())
     return buffer[:, :, :3].copy()
+
+
+# -- comparing decks -----------------------------------------------------------
+
+
+def pooled_shares(payload: dict) -> "dict[str, float]":
+    """Each stream's mean occlusion share over every analysed frame of a deck."""
+    streams = payload["streams"]
+    totals: "dict[str, list[float]]" = {s: [] for s in streams}
+    for episode in payload["episodes"].values():
+        for frame in episode["frames"]:
+            block = frame.get("occlusion")
+            if not block:
+                continue
+            for name, effect in block["streams"].items():
+                if name in totals:
+                    totals[name].append(effect["share"])
+    return {k: (float(np.mean(v)) if v else 0.0) for k, v in totals.items()}
+
+
+def compare_table(payloads: "list[dict]") -> "tuple[list[str], list[list[str]]]":
+    """One row per stream, one column per deck.
+
+    The union of the streams, not the intersection: pi0.5 has three image slots
+    and so was trained on two fingertips where ACT had four, and a table that
+    silently dropped the two it lacks would read as though every policy saw the
+    same rig. A stream a deck does not have is `n/a`, which is a different
+    statement from 0 %.
+    """
+    names: "list[str]" = []
+    for payload in payloads:
+        for stream in payload["streams"]:
+            if stream not in names:
+                names.append(stream)
+    shares = [pooled_shares(p) for p in payloads]
+    headers = ["stream", *[p["policy"] for p in payloads]]
+    rows = []
+    for name in names:
+        cells = []
+        for payload, share in zip(payloads, shares):
+            cells.append(f"{share[name]:.1%}" if name in payload["streams"] else "n/a")
+        rows.append([name, *cells])
+    return headers, rows
+
+
+def compare_caveats(payloads: "list[dict]") -> "list[str]":
+    """Everything that stops these columns being a like-for-like comparison.
+
+    Written out rather than left to the reader, because the differences here are
+    not cosmetic: a policy given three cameras and one given five are answering
+    different questions, and the shares are normalised WITHIN a deck so they
+    cannot be compared as magnitudes at all -- only as orderings.
+    """
+    notes = []
+    sets = {tuple(p["cameras"]) for p in payloads}
+    if len(sets) > 1:
+        for payload in payloads:
+            notes.append(
+                f"`{payload['policy']}` saw {len(payload['cameras'])} camera(s): "
+                + ", ".join(payload["cameras"])
+            )
+        notes.append(
+            "The camera sets differ, so these columns are NOT a like-for-like "
+            "row. pi0.5 has three pretrained image slots, so it cannot be given "
+            "the five this rig records."
+        )
+    baselines = {p.get("baseline") for p in payloads}
+    if len(baselines) > 1:
+        notes.append(
+            "The decks used different baselines ("
+            + ", ".join(sorted(str(b) for b in baselines))
+            + "); the baseline is part of the result, so this alone makes the "
+            "numbers incomparable."
+        )
+    frames = {len(p["episodes"]) for p in payloads}
+    if len(frames) > 1:
+        notes.append(
+            "The decks cover different numbers of episodes: "
+            + ", ".join(f"{p['policy']} {len(p['episodes'])}" for p in payloads)
+        )
+    notes.append(
+        "Shares are normalised within a deck, so a column sums to one. Compare "
+        "the ORDER of the streams across columns, never the size of a number in "
+        "one column against a number in another."
+    )
+    return notes

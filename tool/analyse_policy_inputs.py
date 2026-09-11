@@ -10,11 +10,15 @@ rig is switched off.
     venv/bin/python tool/analyse_policy_inputs.py \\
         --checkpoint outputs/policies/<run> \\
         --dataset ~/.cache/huggingface/lerobot/local/fold-short-from-flattend-tactile \\
-        --episodes 0-4 --out outputs/analysis/act-all
+        --episodes 0-5
 
     # over a real rollout, recorded with tool/run_policy.py --log-frames
     venv/bin/python tool/analyse_policy_inputs.py \\
         --checkpoint outputs/policies/<run> --run outputs/policy_runs/<stamp>
+
+Results land in `outputs/analysis/<YYYY-MM-DD>/<policy>-<camera slug>/` unless
+`--out` says otherwise -- see `common/analysis/paths.py` for why the day is part
+of the path.
 
 WHAT IT ASKS, and why more than one method. `occlusion` replaces a stream and
 re-infers: it is behaviour, and it is the ground truth the others are scored
@@ -47,6 +51,7 @@ from common.analysis import attention as attn  # noqa: E402
 from common.analysis import gradients as grads  # noqa: E402
 from common.analysis import phases, report  # noqa: E402
 from common.analysis.inference import Inference  # noqa: E402
+from common.analysis.paths import analysis_dir, content_name  # noqa: E402
 from common.analysis.perturb import (  # noqa: E402
     BASELINES,
     baseline_frame,
@@ -126,7 +131,10 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             "completeness_error": result["completeness_error"],
             "steps": result["steps"],
         }
-    if "attention" in args.method and inference.type == "act":
+    # family(), not type: a ported `so101_act` checkpoint is ACT in every way
+    # that matters here, and testing the config string silently dropped
+    # attention from its deck while layout() still treated it as ACT.
+    if "attention" in args.method and inference.family() == "act":
         spans, total, _ = inference.layout()
         weights = attn.cross_attention(inference, batch)
         if weights is not None:
@@ -139,10 +147,34 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
                 "uniform": attn.uniform_share(spans, total),
             }
     if "gradcam" in args.method:
-        out["gradcam"] = {
-            k: v.tolist() for k, v in grads.grad_cam(inference, batch).items()
-        }
+        # A token model has no convolutional feature map to weight. Say so in the
+        # payload rather than raising: a deck that is missing a method should
+        # record why it is missing, so a slide cannot imply the method agreed.
+        try:
+            out["gradcam"] = {
+                k: v.tolist() for k, v in grads.grad_cam(inference, batch).items()
+            }
+        except RuntimeError as problem:
+            out["gradcam_unavailable"] = str(problem)
     return out
+
+
+def camera_slug(inference, source) -> "str | None":
+    """How the camera set is named in a directory, as a run directory names it.
+
+    ``all`` when the policy reads every camera the source has -- otherwise the
+    joined list, which is what a camera-ablation view is called. Naming the full
+    five-camera set by listing it produces a 78-character directory that says no
+    more than the word does, and stops an analysis directory matching the run
+    directory it analysed.
+    """
+    cameras = list(inference.cameras)
+    if not cameras:
+        return None
+    available = set(getattr(source, "cameras", None) or ())
+    if available and set(cameras) == available:
+        return "all"
+    return "+".join(cameras)
 
 
 def main() -> None:
@@ -197,7 +229,17 @@ def main() -> None:
     parser.add_argument(
         "--task", default="", help="Language task, if the policy reads one"
     )
-    parser.add_argument("--out", default=None, help="Output directory")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output directory (default: outputs/analysis/<today>/<name>)",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="The <content> half of the default output directory, normally "
+        "<policy>-<camera slug> (default: derived from the policy and cameras)",
+    )
     parser.add_argument(
         "--sanity",
         action="store_true",
@@ -229,8 +271,19 @@ def main() -> None:
     )
     print(f"📁 {source.describe()}")
 
-    out_dir = Path(args.out or (Path("outputs/analysis") / Path(args.checkpoint).name))
+    # The convention: outputs/analysis/<YYYY-MM-DD>/<policy>-<camera slug>/.
+    # The old default was `outputs/analysis/<basename of --checkpoint>`, which on
+    # a LeRobot checkpoint is the literal word "pretrained_model" -- so every
+    # analysis anyone forgot to name landed in one directory and overwrote the
+    # last one.
+    if args.out:
+        out_dir = Path(args.out).expanduser()
+    else:
+        out_dir = analysis_dir(
+            args.name or content_name(inference.type, camera_slug(inference, source))
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"📂 {out_dir}")
 
     started = time.time()
     episodes: "dict[str, dict]" = {}

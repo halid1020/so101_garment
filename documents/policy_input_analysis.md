@@ -80,6 +80,56 @@ on the rest of the process. `diffusion.plan()` is the call to use anywhere two
 plans are compared; `sampler_spread()` reports the floor — an effect smaller
 than the sampler's own wobble is not a finding.
 
+**Occlusion went unpinned for a while, and that is worth recording.** The pin
+was first wired into the gradient path only (`Inference.chunk_tensor`), while
+`perturb.py` kept calling the unpinned `Inference.chunk` — so the one method
+that is *behavioural ground truth* was the one measuring the sampler. Every
+forward pass in `perturb.py` now goes through `perturb.plan_of`, and the seed
+is recorded in the result beside the baseline, so a table can say which it was.
+The property this buys is stronger than repeatability: both plans in a
+comparison are drawn under the *same* seed, so the sampler cancels out of the
+difference and the answer does not depend on which seed was chosen.
+
+## Which method runs on which policy
+
+Not every method exists for every architecture, and the reasons are structural
+rather than incidental. Ask for one that cannot run and the payload records why
+instead of failing the run.
+
+| | ACT (`act`, `so101_act`) | diffusion | pi0.5, flow-matching |
+|---|---|---|---|
+| occlusion | yes | yes | yes |
+| integrated gradients | yes | yes | in principle; OOMs on 24 GB |
+| Grad-CAM | yes | yes | **no** |
+| attention | yes | **no** | **no** |
+
+* **Grad-CAM** weights a convolutional feature map, and a token model has none.
+  Where it does run, the trunk is not the same object: ACT calls one
+  `model.backbone` once per camera, while diffusion's `rgb_encoder` is an
+  `nn.ModuleList` of per-camera encoders — the list itself is never called, so
+  hooking it collects nothing. The hook goes on each encoder's `.backbone`,
+  never the encoder, which returns a pooled vector with no spatial dimensions
+  left to draw. `gradients.cam_trunks` is the one place that is decided.
+* **Attention** is ACT's decoder cross-attention; the other two have no
+  equivalent to report. The guard tests the architecture *family*, not the
+  config type string — testing the string silently dropped attention from a
+  ported `so101_act` deck.
+* **pi0.5 carries two `@torch.no_grad()` decorators**, on
+  `predict_action_chunk` and again on the inner `sample_actions`. Unwrapping
+  only the outer one returns a tensor with no graph, and autograd then
+  complains about the input rather than about the decorator. Both come off for
+  the duration of one call and the class is put back exactly as it was found.
+
+  **That makes gradients possible on pi0.5, and still not affordable.** MEASURED
+  on the 23.55 GiB card: integrated gradients OOMs at 23.49 GiB with the default
+  64 steps, and again at 23.54 GiB with `--ig-steps 8` and
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. Backpropagating through a
+  4.1B-parameter model's whole flow-matching sampling loop is simply larger than
+  this GPU. So on this hardware pi0.5's deck is **occlusion only** — which is
+  where the gap analysis started, though for a different reason than it thought.
+  A bigger card (CREATE's H200 has 141 GB) would change that; nothing in the
+  code needs to.
+
 ## The four methods
 
 **Occlusion** (`--method occlusion`) replaces one stream and re-infers. It is
@@ -157,9 +207,43 @@ Over recorded episodes — ground truth actions, many frames, no rig needed:
 venv/bin/python tool/analyse_policy_inputs.py \
     --checkpoint outputs/policies/fold-short-from-flattend-tactile__all-act \
     --dataset ~/.cache/huggingface/lerobot/local/fold-short-from-flattend-tactile \
-    --episodes 0-4 --method occlusion,ig,attention \
-    --out outputs/analysis/act-all
+    --episodes 0-5 --method occlusion,ig,gradcam,attention --sanity
 ```
+
+### Where the results go
+
+**Every analysis lands in `outputs/analysis/<YYYY-MM-DD>/<content>/`**, and the
+deck built from it in `<content>/slides/`. `<content>` is
+`<policy>-<camera slug>` — `act-all`, `diffusion-all`,
+`pi05-central+left_arm_left_gripper+right_arm_left_gripper` — using the same
+slug a camera view already carries, so an analysis directory and the run
+directory it analysed are named alike.
+
+The date is the answer to the question the old layout could not answer: *is this
+the current result?* A bare `outputs/analysis/act-all` said nothing about
+whether it came from this week's code or from a checkpoint two retrainings ago.
+It also fixes a quieter fault — the old default was
+`outputs/analysis/<basename of --checkpoint>`, which on a LeRobot checkpoint is
+the literal word `pretrained_model`, so every unnamed analysis overwrote the
+last one. `--out` still overrides, and `--name` sets only the `<content>` half.
+`$SO101_OUTPUT_DIR` is honoured. The rules live in
+`common/analysis/paths.py`.
+
+### Comparing policies
+
+```bash
+venv/bin/python tool/analysis_slides.py \
+    --compare outputs/analysis/<day>/act-all \
+              outputs/analysis/<day>/diffusion-all \
+              outputs/analysis/<day>/pi05-central+left_arm_left_gripper+right_arm_left_gripper
+```
+
+One page, one column per deck. A stream a policy was never given reads `n/a`
+and not `0 %` — those are different claims, and pi0.5's three image slots mean
+it saw two fingertips where ACT saw four. Every difference between the decks
+that stops them being a like-for-like row is printed beside the table, including
+the one that is easy to forget: shares are normalised **within** a deck, so
+compare the ordering across columns, never the magnitudes.
 
 Over a real rollout:
 
@@ -215,6 +299,32 @@ Saliency methods are easy to misread, so the toolkit carries its own checks.
   episode's own values: these grippers work in a narrow band whose position
   depends on the object and the day's calibration, so an absolute threshold
   would put every frame in one phase.
+
+## Re-measured 2026-09-07, with occlusion pinned
+
+The five-camera ACT checkpoint, re-run on this dataset with all four methods and
+the sanity check, after occlusion was routed through the pin:
+
+| | 2026-08-29 | 2026-09-07 |
+|---|---|---|
+| `central` | 57.1 % | **56.8 %** |
+| proprioception | 36.4 % | **36.5 %** |
+| four fingertips together | 6.5 % | **6.6 %** |
+| IG agreement with occlusion | +0.90 | **+1.00** |
+| attention (raw) agreement | +0.90 | **+0.70** |
+| attention spread | 1.14x | **1.1x** |
+| occlusion spread | 42x | **40.7x** |
+
+The headline shares reproduce, which is the point of repeating it: ACT plans
+deterministically, so pinning was expected to change nothing here and did not.
+What did move is the *agreement* figures, and for a legible reason — the four
+fingertips sit within 1.4–2.2 % of each other, so their ranks are nearly tied
+and a fraction of a percent reorders them. That is another reason to read the
+spread column beside the agreement one: a rank correlation over five points,
+four of which are a near-tie, is not a stable statistic.
+
+The model-randomisation check passes outright again: a randomised policy plans
+the same chunk whatever it is shown, so every share falls to zero.
 
 ## The result so far
 
