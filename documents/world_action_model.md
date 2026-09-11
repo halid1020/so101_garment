@@ -124,3 +124,27 @@ baseline**, and both of those are load-bearing:
 into one frame for the model, and split back out for scoring, with prediction and
 ground truth both compared at cell resolution so neither is upscaled to meet the
 other.
+
+## Status: builds and trains, never trained at scale
+
+MEASURED 2026-09-07 on a laptop CPU, which answers the cheap half of the
+question before any GPU time is spent: `so101_dreamzero` constructs from the
+run matrix's own path and takes optimiser steps end to end — **58 638 924
+learnable parameters**, loss 3.94 at step 1 — on a three-camera dataset at
+30 fps with the default `chunk_size=48`, `latent_frames_per_chunk=2`,
+`frame_stride=24`. So a GPU row will not die on a construction error hours in.
+
+What that does **not** establish is anything about learning, or a batch ceiling.
+No destination in `src/conf/train_destinations.yaml` names a limit for
+`so101_dreamzero`, so the first real run should be a short probe that measures
+VRAM, step rate and power and writes them down beside the figures already there
+— on thanos especially, where that file records diffusion taking the whole box
+down at 24 loader workers with VRAM to spare, so power is a constraint as much
+as capacity.
+
+**Stage the VAE before submitting anywhere.** The frozen
+`stabilityai/sd-vae-ft-mse` (~330 MB) is fetched from the Hub on first use and
+deliberately kept out of the checkpoint, while every launcher exports
+`HF_HUB_OFFLINE=1`. On a compute node with no internet that fails *after* the
+GPU is reserved. `hpc/README.md` has the login-node command; the smoke run above
+worked only because the VAE was already in this machine's cache.
