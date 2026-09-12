@@ -66,6 +66,7 @@ import yaml
 from actoris_harena.recording.camera_controls import CONTROL_NAMES
 from actoris_harena.recording.depth import DepthWriter
 from actoris_harena.recording.device_faults import bus_gone
+from actoris_harena.recording.monitor_wire import allowed_keys_for
 from meta_quest_teleop.reader import MetaQuestReader
 
 from common.configs import (
@@ -89,7 +90,7 @@ from common.recording import (
     load_recording_config,
 )
 from common.recording.controls import control_steps
-from common.recording.monitor_server import MonitorServer, allowed_keys_for
+from common.recording.monitor_server import MonitorServer
 from common.robot_schema import SCHEMA
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack

@@ -47,21 +47,21 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
 from actoris_harena.web.jobs import add_job_routes
-from actoris_harena.web.util import preinit_tqdm_lock, revalidate_assets
-
-from common.web.datasets_api import add_dataset_routes
-from common.web.lifecycle_api import add_lifecycle_routes
-from common.web.projects_api import add_project_routes
-from common.web.roots_api import (
+from actoris_harena.web.lifecycle_api import add_lifecycle_routes
+from actoris_harena.web.projects_api import add_project_routes
+from actoris_harena.web.roots_api import (
     add_root_routes,
     initial_root,
     root_required,
     unmount_own,
 )
+from actoris_harena.web.training_api import add_training_routes
+from actoris_harena.web.util import preinit_tqdm_lock, revalidate_assets
+
+from common.web.datasets_api import add_dataset_routes
 from common.web.sensors_api import add_sensor_routes
 from common.web.session import PreviewArms, PreviewCameras, SessionSupervisor
 from common.web.session_api import add_session_routes
-from common.web.training_api import add_training_routes
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "common" / "web" / "static"
 
@@ -170,6 +170,16 @@ def build_app(args: argparse.Namespace) -> web.Application:
     add_lifecycle_routes(app)
     add_session_routes(app)
     add_sensor_routes(app)
+
+    # The launcher is this rig's: staging and submitting need this repo's layout
+    # and its Slurm scripts. Looked up when it is CALLED, not captured here, so
+    # the name stays the one thing a test patches.
+    def _launch(*args, **kwargs):
+        from tool.train_launch import launch
+
+        return launch(*args, **kwargs)
+
+    app["launch"] = _launch
     add_training_routes(app)
     add_project_routes(app)
     return app

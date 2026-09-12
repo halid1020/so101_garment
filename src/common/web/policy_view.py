@@ -35,16 +35,14 @@ from typing import Any
 import numpy as np
 from actoris_harena.deploy.chunking import STRATEGIES
 from actoris_harena.deploy.policy_log import OUTCOMES
+from actoris_harena.recording.monitor_wire import BOUNDARY, encode_jpeg, mjpeg_part
 from actoris_harena.web.util import revalidate_assets
 from aiohttp import web  # type: ignore[import]
 
 from common.recording.monitor_server import (
-    BOUNDARY,
     DEFAULT_MAX_WIDTH,
     DEFAULT_QUALITY,
     DEFAULT_VIEW_FPS,
-    encode_jpeg,
-    mjpeg_part,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"

@@ -12,19 +12,18 @@ import unittest
 from dataclasses import dataclass
 
 import numpy as np
-from aiohttp.test_utils import AioHTTPTestCase
-
-from common.recording.controls import control_steps
-from common.recording.monitor_server import (
+from actoris_harena.recording.monitor_wire import (
     BOUNDARY,
-    MonitorServer,
     allowed_keys_for,
     encode_frame_batch,
     encode_jpeg,
-    joint_snapshot,
     key_refusal,
     mjpeg_part,
 )
+from aiohttp.test_utils import AioHTTPTestCase
+
+from common.recording.controls import control_steps
+from common.recording.monitor_server import MonitorServer, joint_snapshot
 
 
 @dataclass

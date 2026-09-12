@@ -667,7 +667,7 @@ class TestJobs(ConsoleTestCase):
             write_dataset(Path(root), out_name, episodes=5)
             return Path(root) / out_name
 
-        with mock.patch("common.web.lifecycle_api.merge_datasets", fake_merge):
+        with mock.patch("actoris_harena.web.lifecycle_api.merge_datasets", fake_merge):
             started = await (
                 await self.post(
                     "/api/datasets/merge",
@@ -688,7 +688,7 @@ class TestJobs(ConsoleTestCase):
         def angry_merge(root, names, out_name, progress=None):
             raise RuntimeError("no room on the drive")
 
-        with mock.patch("common.web.lifecycle_api.merge_datasets", angry_merge):
+        with mock.patch("actoris_harena.web.lifecycle_api.merge_datasets", angry_merge):
             started = await (
                 await self.post(
                     "/api/datasets/merge",
@@ -963,7 +963,7 @@ class TestTrainingTab(ConsoleTestCase):
             return {"id": "run-1", "dest": dest["name"], "dataset": dataset}
 
         with mock.patch("tool.train_launch.launch", fake_launch), mock.patch(
-            "common.web.training_api.reachable", return_value=None
+            "actoris_harena.web.training_api.reachable", return_value=None
         ):
             response = await self.post(
                 "/api/training/start",
@@ -993,7 +993,7 @@ class TestTrainingTab(ConsoleTestCase):
             raise OSError("the machine said no")
 
         with mock.patch("tool.train_launch.launch", boom), mock.patch(
-            "common.web.training_api.reachable", return_value=None
+            "actoris_harena.web.training_api.reachable", return_value=None
         ):
             response = await self.post(
                 "/api/training/start",
@@ -1013,7 +1013,8 @@ class TestTrainingTab(ConsoleTestCase):
     async def test_an_unreachable_machine_stops_a_launch_before_it_stages(self):
         self._dest_file()
         with mock.patch(
-            "common.web.training_api.reachable", return_value="are you on the VPN?"
+            "actoris_harena.web.training_api.reachable",
+            return_value="are you on the VPN?",
         ):
             response = await self.post(
                 "/api/training/start",

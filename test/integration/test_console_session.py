@@ -31,7 +31,8 @@ FAKE_RECORDER = '''
 import sys, time
 import numpy as np
 sys.path[:0] = [{repo!r}, {src!r}]
-from common.recording.monitor_server import MonitorServer, allowed_keys_for
+from actoris_harena.recording.monitor_wire import allowed_keys_for
+from common.recording.monitor_server import MonitorServer
 
 class Stub:
     def __init__(self):

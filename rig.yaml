@@ -1,0 +1,50 @@
+# What the shared console needs to know to drive THIS rig.
+#
+# The console (`actoris-harena console`) imports no hardware code: it browses a
+# collection drive and plans training runs in its own process, and runs anything
+# that touches a device as a subprocess started with the `python` below. That is
+# what lets one console serve this rig and a UR3e whose environment cannot even
+# be installed alongside this one.
+#
+# Every path is relative to this file's directory.
+
+name: so101
+title: Dual SO-101 garment rig
+
+# This repo's venv. The console never imports from it -- it execs it.
+python: venv/bin/python
+
+# The devices, in that interpreter: camera previews, the arm probe, the wiggle
+# test. Speaks the loopback monitor protocol the collection session already uses.
+agent: tool/rig_agent.py
+
+# The collection session the Collect tab supervises.
+teleop: tool/meta_quest_teleopration.py
+
+conf: src/conf
+sensor_map: src/conf/sensor_map.yaml
+
+# The streams this rig can record. `scene` and the two wrist cameras are
+# configured but currently disabled -- see the USB BUDGET note in
+# src/conf/recording.yaml for why only five run at once.
+cameras:
+  - central
+  - wrist_camera_left
+  - wrist_camera_right
+  - left_arm_left_gripper
+  - left_arm_right_gripper
+  - right_arm_left_gripper
+  - right_arm_right_gripper
+  - scene
+
+# The state/action layout, which must agree with common/robot_schema.py. Written
+# here as well because the console reads it without importing this repo.
+schema:
+  limbs: [left, right]
+  body_joints:
+    - shoulder_pan
+    - shoulder_lift
+    - elbow_flex
+    - wrist_flex
+    - wrist_roll
+  gripper: true
