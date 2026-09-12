@@ -66,7 +66,7 @@ _SIGNS = {
     "left": np.array(LEFT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
     "right": np.array(RIGHT_ARM_HW_TO_URDF_SIGNS, dtype=np.float64),
 }
-# 12-channel action/state layout (common.recording.features.STATE_NAMES):
+# 12-channel action/state layout (actoris_harena.recording.features.STATE_NAMES):
 # left 5 body + left gripper, then right 5 body + right gripper.
 _SIDE_ACTION_SLICE = {"left": (slice(0, 5), 5), "right": (slice(6, 11), 11)}
 

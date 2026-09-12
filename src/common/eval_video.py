@@ -12,7 +12,7 @@ Each frame stacks two blocks:
   the two gripper channels below, scrolling over a trailing time window.
 
 The 12-channel state/action layout is the recorder's
-(``common.recording.features``): per side the five body joints then the
+(``actoris_harena.recording.features``): per side the five body joints then the
 gripper, left arm first. Kept import-light (matplotlib Agg + OpenCV) so it
 unit-tests without a sim or a GPU.
 
@@ -36,14 +36,14 @@ import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from common.recording.features import BODY_JOINTS
+from common.robot_schema import BODY_JOINTS
 
 # Camera panels, left to right. The first three are policy inputs; "overview"
 # is the free third-person view rendered separately by the caller.
 CAMERA_ORDER = ("scene", "wrist_camera_left", "wrist_camera_right", "overview")
 
 # 12-D state/action channel indices for each side (5 body joints + gripper),
-# matching common.recording.features.STATE_NAMES (side outer, gripper last).
+# matching actoris_harena.recording.features.STATE_NAMES (side outer, gripper last).
 _BODY_IDX = {"left": [0, 1, 2, 3, 4], "right": [6, 7, 8, 9, 10]}
 _GRIP_IDX = {"left": 5, "right": 11}
 

@@ -17,10 +17,11 @@ from typing import Any
 
 import numpy as np
 import pinocchio as pin
+from actoris_harena.recording.features import build_observation_state
 
 from common.configs import GRIPPER_OPEN_MAX_FRAC
-from common.recording.features import SIDES as FEATURE_SIDES
-from common.recording.features import build_observation_state
+from common.robot_schema import SCHEMA
+from common.robot_schema import SIDES as FEATURE_SIDES
 from sim_benchmark.constants import (
     ARM_JOINT_SUFFIXES,
     DUAL_URDF_PATH,
@@ -188,7 +189,7 @@ class PickPlaceTwinEnv:
         gripper_open = {
             side: self.sim.gripper_open_frac(side) for side in FEATURE_SIDES
         }
-        state = build_observation_state(joints_deg, gripper_open)
+        state = build_observation_state(joints_deg, gripper_open, SCHEMA)
         images = {
             name: np.ascontiguousarray(
                 self.sim.render_camera(cam, width=width, height=height)

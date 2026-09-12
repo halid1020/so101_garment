@@ -49,6 +49,12 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from actoris_harena.recording.features import (  # noqa: E402
+    assemble_frame,
+    build_dataset_features,
+    build_observation_state,
+)
+
 from common.configs import (  # noqa: E402
     CONTROLLER_BETA,
     CONTROLLER_D_CUTOFF,
@@ -60,11 +66,7 @@ from common.configs import (  # noqa: E402
     ROTATION_SCALE,
     TRANSLATION_SCALE,
 )
-from common.recording.features import (  # noqa: E402
-    assemble_frame,
-    build_dataset_features,
-    build_observation_state,
-)
+from common.robot_schema import SCHEMA
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack  # noqa: E402
 from sim_benchmark.constants import SIDES  # noqa: E402
 from sim_datagen.env import (  # noqa: E402
@@ -348,7 +350,7 @@ def run_episode_direct(
         # Action gripper channels store the capped full-range command, exactly
         # like the real recorder ((1 - trigger) x GRIPPER_OPEN_MAX_FRAC).
         cmd_grips = {s: g * GRIPPER_OPEN_MAX_FRAC for s, g in grips.items()}
-        action = build_observation_state(np.rad2deg(q_cmd), cmd_grips)
+        action = build_observation_state(np.rad2deg(q_cmd), cmd_grips, SCHEMA)
         sink.add(state, action, images, env.sim.data, t)
 
         bar_z = env.sim.payload_pos()[2]
@@ -416,7 +418,7 @@ def run_episode_teleop(
         target_deg = data_manager.get_target_joint_angles()
         if data_manager.get_teleop_active() and target_deg is not None:
             cmd_grips = {s: g * GRIPPER_OPEN_MAX_FRAC for s, g in grip_frac.items()}
-            action = build_observation_state(np.asarray(target_deg), cmd_grips)
+            action = build_observation_state(np.asarray(target_deg), cmd_grips, SCHEMA)
         else:
             action = state.copy()
         sink.add(state, action, images, env.sim.data, sink.count * dt)

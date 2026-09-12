@@ -21,15 +21,15 @@ import time
 import unittest
 
 import numpy as np
-
-from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.recording.episode_recorder import EpisodeRecorder, RecorderState
-from common.recording.features import (
+from actoris_harena.recording.features import (
     ACTION_FRESH_S,
-    STATE_NAMES,
     TELEOP_ACTIVE_KEY,
     build_action,
 )
+
+from common.data_manager_dual import DualDataManager, RobotActivityState
+from common.recording.episode_recorder import EpisodeRecorder, RecorderState
+from common.robot_schema import SCHEMA, STATE_NAMES
 
 _CAMERAS = ["cam_a", "cam_b"]
 _FPS = 100  # fast ticks so tests stay quick
@@ -253,7 +253,7 @@ class TestEpisodeRecorder(RecorderTestBase):
             "left": (np.full(5, 7.0), 0.5, now - 0.001),  # fresh
             "right": (np.full(5, 3.0), 0.2, now - 1.0),  # stale
         }
-        action = build_action(state, cmds, now)
+        action = build_action(state, cmds, SCHEMA, now)
         np.testing.assert_allclose(action[:5], 7.0)
         self.assertAlmostEqual(float(action[5]), 0.5)
         np.testing.assert_allclose(action[6:], state[6:])

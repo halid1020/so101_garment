@@ -3,17 +3,15 @@
 import unittest
 
 import numpy as np
-
-from common.recording.features import (
+from actoris_harena.recording.features import (
     ACTION_EE_KEY,
-    EE_DOF,
-    EE_NAMES,
     OBS_EE_KEY,
-    STATE_NAMES,
     assemble_frame,
     build_dataset_features,
     pose_to_vec7,
 )
+
+from common.robot_schema import EE_DOF, EE_NAMES, SCHEMA, STATE_NAMES
 
 
 class TestPoseToVec7(unittest.TestCase):
@@ -47,12 +45,12 @@ class TestPoseToVec7(unittest.TestCase):
 
 class TestBuildFeaturesEe(unittest.TestCase):
     def test_ee_off_by_default(self):
-        feats = build_dataset_features([("scene", 480, 640)])
+        feats = build_dataset_features([("scene", 480, 640)], SCHEMA)
         self.assertNotIn(OBS_EE_KEY, feats)
         self.assertNotIn(ACTION_EE_KEY, feats)
 
     def test_ee_features_added(self):
-        feats = build_dataset_features([("scene", 480, 640)], include_ee=True)
+        feats = build_dataset_features([("scene", 480, 640)], SCHEMA, include_ee=True)
         for key in (OBS_EE_KEY, ACTION_EE_KEY):
             self.assertIn(key, feats)
             self.assertEqual(feats[key]["shape"], (EE_DOF,))

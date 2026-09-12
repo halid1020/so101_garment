@@ -53,6 +53,7 @@ from enum import Enum
 from typing import Any, Callable
 
 import numpy as np
+from actoris_harena.recording import features as feat
 from actoris_harena.recording.dataset_edit import (
     commit_episode_metadata,
     new_episode_uid,
@@ -64,7 +65,7 @@ from actoris_harena.recording.fault_report import session_fault_report
 from actoris_harena.recording.usb_topology import device_location, directory_location
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.recording import features as feat
+from common.robot_schema import SCHEMA
 
 # The AV1 encoder prints a twenty-line configuration banner every time it starts,
 # which is once per camera per episode: sixty lines an episode, saying the same
@@ -473,19 +474,19 @@ class EpisodeRecorder:
         if joints_res is None:
             return  # no joint state yet; skip this tick
         measured, joint_drift = joints_res
-        if len(measured) < feat.BODY_DOF * len(feat.SIDES):
+        if len(measured) < SCHEMA.body_dof * len(SCHEMA.limbs):
             return
         drifts["joints"] = joint_drift
 
         gripper_open: dict[str, float] = {}
-        for side in feat.SIDES:
+        for side in SCHEMA.limbs:
             g = dm.get_current_gripper_open_value_at(side, t_ref)
             gripper_open[side] = 0.0 if g is None else g[0]
             drifts[f"grip_{side}"] = float("nan") if g is None else g[1]
 
-        state = feat.build_observation_state(measured, gripper_open)
-        last_commands = {side: dm.get_last_sent_command(side) for side in feat.SIDES}
-        action = feat.build_action(state, last_commands, t_ref)
+        state = feat.build_observation_state(measured, gripper_open, SCHEMA)
+        last_commands = {side: dm.get_last_sent_command(side) for side in SCHEMA.limbs}
+        action = feat.build_action(state, last_commands, SCHEMA, t_ref)
 
         images = {}
         for name in self.camera_names:
@@ -530,8 +531,8 @@ class EpisodeRecorder:
         # Alignment telemetry + action-fallback tally (a stale/missing command
         # while teleoperating means the action fell back to the measured state).
         self._drift.add(frame_idx, t_ref, drifts)
-        if teleop_active and len(feat.fresh_sides(last_commands, t_ref)) < len(
-            feat.SIDES
+        if teleop_active and len(feat.fresh_limbs(last_commands, SCHEMA, t_ref)) < len(
+            SCHEMA.limbs
         ):
             self._fallback_frames += 1
 
@@ -547,7 +548,7 @@ class EpisodeRecorder:
         """
         pose_vecs: dict = {}
         target_vecs: dict = {}
-        for side in feat.SIDES:
+        for side in SCHEMA.limbs:
             m = dm.get_current_end_effector_pose_at(side, t_ref)
             if m is None:
                 return None

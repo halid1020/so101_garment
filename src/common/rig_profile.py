@@ -19,6 +19,8 @@ from actoris_harena.recording.camera_profile import CameraProfile, set_profile
 from actoris_harena.recording.config import set_recording_config_path
 from actoris_harena.training.destinations import set_destinations_path
 
+from common.robot_schema import GRIPPER_COLUMNS
+
 # pi0.5 was pretrained with three fixed camera slots under openpi's names, and
 # a finetune reaches them by renaming rather than by re-deriving features: each
 # slot carries what it learned about that viewpoint, so a rig camera should land
@@ -68,12 +70,10 @@ set_destinations_path(
     REPO_ROOT / "src" / "conf" / "train_destinations.yaml", repo_root=REPO_ROOT
 )
 
-# Columns 5 and 11 of the 12-D action are the two grippers -- the recorder's own
-# layout, five body joints then a gripper, per arm. The analyses need this and
-# cannot derive it: phases segments a grasp by it, and perturb EXCLUDES those
-# columns when it occludes a stream, because perturbing a gripper command
-# measures something other than what the study asks.
-GRIPPER_COLUMNS = (5, 11)
+# The two gripper columns, DERIVED from this rig's schema rather than written
+# down again. The analyses need them and cannot work them out: phases segments a
+# grasp by them, and perturb EXCLUDES them when it occludes a stream, because
+# perturbing a gripper command measures something other than what the study asks.
 set_gripper_columns(GRIPPER_COLUMNS)
 
 set_recording_config_path(REPO_ROOT / "src" / "conf" / "recording.yaml")

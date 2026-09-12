@@ -192,7 +192,7 @@ PY="$REPO_ROOT/venv/bin/python"
 # operator threw away. Ask the marker itself rather than parsing it here.
 "$PY" - "$DATASET_ROOT" <<'PY' || exit 2
 import sys
-from common.recording.dataset_edit import read_soft_deleted
+from actoris_harena.recording.dataset_edit import read_soft_deleted
 
 marked = read_soft_deleted(sys.argv[1])
 if marked:

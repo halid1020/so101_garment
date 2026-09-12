@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from actoris_harena.training.matrix import PORTED_FROM  # noqa: E402
+from actoris_harena.training.matrix import TWIN_OF  # noqa: E402
 
 
 def resolve(checkpoint: str) -> Path:
@@ -55,10 +55,40 @@ def resolve(checkpoint: str) -> Path:
         ) from exc
 
 
+def _ancestry(policy: str) -> "list[str]":
+    """A policy and everything it is a variant of, nearest first.
+
+    `so101_pi05_crop -> so101_pi05 -> pi05`. The `seen` guard is not paranoia:
+    a mis-typed entry pointing a name at itself would otherwise hang here rather
+    than fail.
+    """
+    chain, seen = [policy], {policy}
+    while True:
+        nxt = TWIN_OF.get(chain[-1])
+        if nxt is None or nxt in seen:
+            return chain
+        chain.append(nxt)
+        seen.add(nxt)
+
+
 def compatible(source_type: str, target_type: str) -> bool:
-    """Are these two names the same policy under two implementations?"""
-    pairs = {(ported, upstream) for ported, upstream in PORTED_FROM.items()}
-    return (target_type, source_type) in pairs or (source_type, target_type) in pairs
+    """Are these two names the same model, whatever the config is called?
+
+    Walks TWIN_OF rather than testing a flat pair list, because a variant
+    may be several hops from the policy whose weights it loads. That is not a
+    hypothetical: `so101_pi05_crop` carries `ported_from: None` -- it is a
+    subclass, not a port -- so a membership test refused it, and a cropped pi0.5
+    run died on the cluster before it trained a step.
+
+    One direction is a real restriction and is kept. A config may be rebuilt as
+    something FURTHER along its own chain or nearer to its root, because a
+    variant only ever ADDS fields to its twin (the crop adds `tactile_crop` and
+    `tactile_cameras`), and `loading.config_as` refuses a field the target does
+    not declare. Two names on different chains share no weights and are refused.
+    """
+    return target_type in _ancestry(source_type) or source_type in _ancestry(
+        target_type
+    )
 
 
 def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> Path:
@@ -71,10 +101,16 @@ def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> 
     if source_type == target_type:
         return source
     if not compatible(source_type, target_type):
+        # Name what IS accepted, which is every chain and not just the ported
+        # pairs -- quoting the narrower list would send a reader looking for a
+        # missing port when what they have is a variant of something else.
         raise SystemExit(
-            f"❌ {source_type} and {target_type} are not two implementations of "
-            f"one policy, so the weights would not fit. Ported pairs: "
-            + ", ".join(f"{a}<->{b}" for a, b in sorted(PORTED_FROM.items()))
+            f"❌ {source_type} and {target_type} are not the same model, so the "
+            f"weights would not fit. {source_type} belongs to "
+            + " <- ".join(reversed(_ancestry(source_type)))
+            + f", and {target_type} to "
+            + " <- ".join(reversed(_ancestry(target_type)))
+            + ". A checkpoint may be retargeted along one chain, never across two."
         )
 
     if out.exists() and not force:

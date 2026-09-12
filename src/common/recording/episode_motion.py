@@ -36,7 +36,7 @@ from typing import Any
 
 import numpy as np
 
-from common.recording.features import BODY_DOF, SIDES
+from common.robot_schema import BODY_DOF, SIDES
 
 # Channel layout of ``observation.state``: per side the five body joints then
 # the gripper, left arm first (see common/recording/features.py).

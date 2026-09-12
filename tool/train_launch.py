@@ -80,6 +80,16 @@ from actoris_harena.training.matrix import (  # noqa: E402
 )
 from actoris_harena.training.runs import view_dir_name, with_measurements  # noqa: E402
 
+# The rig declares itself to the package -- where its destinations file is, its
+# camera profile, its gripper columns -- in common/rig_profile.py, which runs on
+# import of `common`. Nothing below reaches it by any other route, so without
+# this line every subcommand here dies on "no train_destinations.yaml has been
+# declared" and the camera profile silently reads empty: `all` would expand
+# wrongly and a run directory would be slugged differently from the one the
+# console and the cluster drivers produce. tool/make_camera_view.py imports it
+# for the same reason.
+import common  # noqa: E402,F401  -- imported for the rig_profile side effect
+
 
 def runs_file() -> Path:
     out = Path(os.environ.get("SO101_OUTPUT_DIR", _root / "outputs")).expanduser()

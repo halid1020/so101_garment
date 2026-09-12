@@ -90,6 +90,7 @@ from common.recording import (
 )
 from common.recording.controls import control_steps
 from common.recording.monitor_server import MonitorServer, allowed_keys_for
+from common.robot_schema import SCHEMA
 from common.sensor_view import CollectionStatus, run_sensor_view_loop
 from common.teleop_setup import add_teleop_cli_args, create_teleop_stack
 from common.threads.dual_ik_solver import dual_ik_solver_thread
@@ -357,7 +358,7 @@ def write_action_space_meta(root: Path, fps: int, record_ee: bool) -> None:
     import json
 
     from common.configs import GRIPPER_OPEN_MAX_FRAC, ROTATION_SCALE, TRANSLATION_SCALE
-    from common.recording.features import EE_NAMES, STATE_NAMES
+    from common.robot_schema import EE_NAMES, STATE_NAMES
 
     meta_dir = root / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -509,6 +510,7 @@ def build_recording_stack(
             )
         features = build_dataset_features(
             [(c.name, c.height, c.width) for c in all_captures],
+            SCHEMA,
             include_phase=True,
             include_ee=record_ee,
         )

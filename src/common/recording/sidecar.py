@@ -32,7 +32,7 @@ from common.configs import (
 )
 from common.data_manager_dual import DualDataManager
 from common.joint_frames import urdf_to_hw
-from common.recording.features import BODY_JOINTS, SIDES
+from common.robot_schema import BODY_JOINTS, SIDES
 
 _NAN = float("nan")
 _BASE_FRAMES = {

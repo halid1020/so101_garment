@@ -50,7 +50,7 @@ _IMAGE_PREFIX = "observation.images."
 def state12_to_side_dicts(vec12) -> dict:
     """Split a 12-channel state/action vector into per-side joint dicts.
 
-    Layout (``common.recording.features.STATE_NAMES``): left five body joints
+    Layout (``actoris_harena.recording.features.STATE_NAMES``): left five body joints
     then the left gripper, then the right arm. Returns ``{"left": {...},
     "right": {...}}`` with each side's five joints plus its gripper. Pure —
     unit-tested.

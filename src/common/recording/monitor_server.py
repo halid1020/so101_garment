@@ -28,9 +28,10 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 
+from actoris_harena.recording.features import ACTION_FRESH_S
 from aiohttp import web  # type: ignore[import]
 
-from common.recording.features import ACTION_FRESH_S, BODY_DOF, BODY_JOINTS, SIDES
+from common.robot_schema import BODY_DOF, BODY_JOINTS, SIDES
 
 # The live view is a monitor, not a recording: a low rate and a small frame keep
 # it far below the cost of the capture threads it watches, and JPEG at this

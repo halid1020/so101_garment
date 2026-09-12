@@ -64,7 +64,7 @@ for ds in "${DATASETS[@]}"; do
     fi
     "$PY" - "$root" <<'PY' || exit 2
 import sys
-from common.recording.dataset_edit import read_soft_deleted
+from actoris_harena.recording.dataset_edit import read_soft_deleted
 
 marked = read_soft_deleted(sys.argv[1])
 if marked:

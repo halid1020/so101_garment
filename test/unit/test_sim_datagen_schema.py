@@ -7,8 +7,9 @@ the 12-D observation-state layout the collector and eval harness share.
 import unittest
 
 import numpy as np
+from actoris_harena.recording.features import build_observation_state
 
-from common.recording.features import build_observation_state
+from common.robot_schema import SCHEMA
 from sim_datagen.seeds import EVAL_SEEDS, TRAIN_SEEDS, VAL_SEEDS
 
 
@@ -31,7 +32,7 @@ class TestObservationSchema(unittest.TestCase):
     def test_state_layout(self):
         joints = np.arange(10, dtype=np.float64)  # left 0-4, right 5-9
         grip = {"left": 0.3, "right": 0.7}
-        state = build_observation_state(joints, grip)
+        state = build_observation_state(joints, grip, SCHEMA)
         self.assertEqual(state.shape, (12,))
         self.assertEqual(state.dtype, np.float32)
         # Layout: [left5, left_grip, right5, right_grip].

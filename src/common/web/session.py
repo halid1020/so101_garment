@@ -718,7 +718,7 @@ class PreviewArms:
         import numpy as np
 
         from common.joint_frames import hw_to_urdf
-        from common.recording.features import BODY_JOINTS
+        from common.robot_schema import BODY_JOINTS
 
         period = 1.0 / self.RATE_HZ
         bus = self._buses[side]
