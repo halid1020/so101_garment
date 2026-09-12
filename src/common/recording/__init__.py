@@ -7,8 +7,9 @@ Modules:
 * ``episode_recorder`` — the fps-paced state machine owning the dataset writer.
 """
 
+from actoris_harena.recording.cameras import CameraCapture
+
 from common.config_parser import load_recording_config
-from common.recording.cameras import CameraCapture
 from common.recording.episode_recorder import EpisodeRecorder, RecorderState
 from common.recording.features import (
     ACTION_FRESH_S,

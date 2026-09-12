@@ -10,8 +10,8 @@ import argparse
 import unittest
 
 import cv2  # type: ignore[import]
+from actoris_harena.recording.cameras import CameraCapture
 
-from common.recording.cameras import CameraCapture
 from tool.meta_quest_teleopration import (
     build_realsense_capture,
     overlay_sensor_map_devices,

@@ -456,7 +456,7 @@ class TestPreviewCameras(unittest.TestCase):
 
     def _start(self, preview, specs=None):
         with mock.patch(
-            "common.recording.cameras.CameraCapture", _FakeCapture
+            "actoris_harena.recording.cameras.CameraCapture", _FakeCapture
         ), mock.patch(
             "tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path
         ), mock.patch(

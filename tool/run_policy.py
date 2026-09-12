@@ -162,9 +162,9 @@ def _start_cameras(data_manager):
     from types import SimpleNamespace
 
     from actoris_harena.recording.camera_controls import CONTROL_NAMES
+    from actoris_harena.recording.cameras import CameraCapture
 
     from common.config_parser import load_recording_config
-    from common.recording.cameras import CameraCapture
     from tool.meta_quest_teleopration import (
         build_realsense_capture,
         overlay_sensor_map_devices,

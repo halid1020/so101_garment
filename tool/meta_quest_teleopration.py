@@ -291,7 +291,7 @@ def build_realsense_capture(
         wanted = wanted or assigned
     if not wanted:
         return None
-    from common.recording.realsense_camera import RealSenseCapture
+    from actoris_harena.recording.realsense_camera import RealSenseCapture
 
     return RealSenseCapture(
         rgb_name=rs_cfg["rgb_name"],

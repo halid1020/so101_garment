@@ -543,8 +543,9 @@ class PreviewCameras:
         are the console's own captures, and they are released before a session
         starts.
         """
+        from actoris_harena.recording.cameras import CameraCapture
+
         from common.data_manager_dual import DualDataManager
-        from common.recording.cameras import CameraCapture
         from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
         asked = specs is not None
