@@ -460,7 +460,7 @@ class TestPreviewCameras(unittest.TestCase):
         ), mock.patch(
             "tool.test_sensor_rates.SENSOR_MAP_PATH", self.map_path
         ), mock.patch(
-            "common.config_parser.load_recording_config", self._config
+            "actoris_harena.recording.config.load_recording_config", self._config
         ):
             return preview.start(specs)
 

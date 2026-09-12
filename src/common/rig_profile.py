@@ -16,6 +16,7 @@ from pathlib import Path
 
 from actoris_harena.action_layout import set_gripper_columns
 from actoris_harena.recording.camera_profile import CameraProfile, set_profile
+from actoris_harena.recording.config import set_recording_config_path
 from actoris_harena.training.destinations import set_destinations_path
 
 # pi0.5 was pretrained with three fixed camera slots under openpi's names, and
@@ -74,3 +75,5 @@ set_destinations_path(
 # measures something other than what the study asks.
 GRIPPER_COLUMNS = (5, 11)
 set_gripper_columns(GRIPPER_COLUMNS)
+
+set_recording_config_path(REPO_ROOT / "src" / "conf" / "recording.yaml")

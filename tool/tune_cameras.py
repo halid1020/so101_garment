@@ -216,7 +216,8 @@ def _tile(cam: TunedCamera, selected: bool) -> np.ndarray:
 
 def _resolve_cameras(only: "list[str]") -> list:
     """Enabled cameras from recording.yaml, resolved to their assigned devices."""
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
+
     from tool.meta_quest_teleopration import overlay_sensor_map_devices
     from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 

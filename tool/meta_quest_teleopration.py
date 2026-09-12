@@ -618,7 +618,8 @@ def build_sensor_view_captures(
     shows here without --record. Only NO camera being configured at all is an
     error.
     """
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
+
     from tool.test_sensor_rates import (
         SENSOR_MAP_PATH,
         load_sensor_map,

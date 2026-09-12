@@ -14,7 +14,6 @@ Two strictness regimes live here on purpose:
 from pathlib import Path
 
 import yaml  # type: ignore[import]
-from actoris_harena.recording.camera_controls import CONTROL_NAMES
 
 # Directory holding the teleop parameter YAMLs (this file lives in src/common).
 _IK_CONF_DIR = Path(__file__).resolve().parent.parent / "ik_conf"
@@ -22,8 +21,6 @@ _DEFAULT_SHARED_PATH = _IK_CONF_DIR / "teleop_shared.yaml"
 _METHODS_DIR = _IK_CONF_DIR / "methods"
 
 # Directory holding the data-collection (recording) YAML.
-_CONF_DIR = Path(__file__).resolve().parent.parent / "conf"
-_DEFAULT_RECORDING_PATH = _CONF_DIR / "recording.yaml"
 
 # Frozen schema for teleop_shared.yaml: section -> exact set of allowed keys.
 # Kept in lock-step with the YAML and with the constant bindings in
@@ -118,73 +115,6 @@ _METHOD_SCHEMA: dict[str, frozenset[str]] = {
 }
 
 
-# Frozen schema for recording.yaml. The top-level sections and their keys are
-# fixed; the "cameras" section is a map of arbitrary stream names, each of whose
-# value must match _CAMERA_SCHEMA exactly. Guarded by
-# test/unit/test_recording_config.py.
-_RECORDING_SCHEMA: dict[str, frozenset[str]] = {
-    "dataset": frozenset({"fps", "image_writer_threads_per_camera", "robot_type"}),
-    "sidecar": frozenset({"enabled", "rate_hz", "include_hw_frame_goal"}),
-}
-_CAMERA_SCHEMA: frozenset[str] = frozenset(
-    {"enabled", "device", "width", "height", "fps", "rotate180"}
-)
-# Default capture pixel format. MJPG (compressed on the wire) is required, not a
-# preference: several 640x480@30 streams in an uncompressed format (YUYV needs
-# ~18 MB/s EACH) exceed what the shared USB controllers deliver, which starves
-# the wrist cameras to ~10-15 fps and eventually drops the device mid-episode.
-_DEFAULT_CAMERA_FOURCC = "MJPG"
-# Optional per-camera image controls (actoris_harena.recording.camera_controls). Each
-# defaults to None: leave the camera's own setting alone, so an existing
-# recording.yaml behaves exactly as it did. None rather than 0 because 0 is a
-# legitimate value for most of them.
-#
-# Exposure is the one that is not merely cosmetic: it caps frame rate, since no
-# camera delivers frames faster than it exposes them. MEASURED on the wrist
-# cameras -- every exposure up to 300 sustains 27.4 fps, 400 gives 22.8, and 500
-# (what automatic exposure chose under collection lighting) gives 18.2, which is
-# the rate those streams had been recording at. Below 300, brightness is free.
-_CAMERA_DEFAULTS: dict[str, object] = {
-    "fourcc": _DEFAULT_CAMERA_FOURCC,
-    **{name: None for name in CONTROL_NAMES},
-}
-# Optional central RGB-D (RealSense) section. Absent in older maps (validated
-# only when present, so existing recording.yaml files stay valid).
-_REALSENSE_SCHEMA: frozenset[str] = frozenset(
-    {
-        "enabled",
-        "serial",
-        "width",
-        "height",
-        "fps",
-        "align_to_color",
-        "rgb_name",
-        "depth_name",
-        "lock_auto_exposure",
-    }
-)
-# Optional audible record-cue section. Absent in older maps (validated only when
-# present, so existing recording.yaml files stay valid).
-_AUDIO_SCHEMA: frozenset[str] = frozenset({"enabled", "start_sound", "stop_sound"})
-
-
-def load_ik_config(config_path: str) -> dict:
-    """Loads the teleoperation and IK parameters from a YAML file.
-
-    Permissive: a missing file yields an empty dict so callers can fall back to
-    their own defaults. Used by tool/tune_teleop.py.
-    """
-    path = Path(config_path)
-    if not path.exists():
-        print(
-            f"⚠️ Warning: Config file not found at {path}. Using safe fallback defaults."
-        )
-        return {}
-
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
-
-
 def _load_yaml_strict(path: Path) -> dict:
     """Load a YAML file, raising a clear error if it is missing or not a mapping."""
     if not path.exists():
@@ -252,60 +182,4 @@ def load_method_params(method_name: str) -> dict:
     cfg_path = _METHODS_DIR / f"{method_name}.yaml"
     data = _load_yaml_strict(cfg_path)
     _validate_keys(cfg_path, method_name, data, _METHOD_SCHEMA[method_name])
-    return data
-
-
-def load_recording_config(path: str | None = None) -> dict:
-    """Load and strictly validate the data-collection (recording) config.
-
-    Validates the top-level sections (``dataset``, ``sidecar``, ``cameras``)
-    and every key within each. The ``cameras`` section is a map of arbitrary
-    stream names, each of which must be keyed exactly by the camera schema.
-    Same loud-failure regime as ``load_teleop_shared``: any missing file,
-    missing key, or unknown key raises a clear error naming the offending key.
-    """
-    cfg_path = Path(path) if path is not None else _DEFAULT_RECORDING_PATH
-    data = _load_yaml_strict(cfg_path)
-    # Required top-level sections plus an OPTIONAL ``realsense`` one: older maps
-    # (no central RGB-D camera) omit it and must still load.
-    required_top = frozenset(_RECORDING_SCHEMA) | {"cameras"}
-    optional_top = {"realsense", "audio"}
-    keys = set(data)
-    missing = required_top - keys
-    unknown = keys - required_top - optional_top
-    if missing:
-        raise ValueError(
-            f"{cfg_path}: top-level is missing required key(s): {sorted(missing)}"
-        )
-    if unknown:
-        raise ValueError(f"{cfg_path}: top-level has unknown key(s): {sorted(unknown)}")
-    for section, expected in _RECORDING_SCHEMA.items():
-        _validate_keys(cfg_path, section, data[section], expected)
-    if "realsense" in data:
-        _validate_keys(cfg_path, "realsense", data["realsense"], _REALSENSE_SCHEMA)
-    if "audio" in data:
-        _validate_keys(cfg_path, "audio", data["audio"], _AUDIO_SCHEMA)
-
-    cameras = data["cameras"]
-    if not isinstance(cameras, dict):
-        raise ValueError(f"{cfg_path}: section 'cameras' must be a mapping")
-    if not cameras:
-        raise ValueError(f"{cfg_path}: section 'cameras' must not be empty")
-    optional_cam = frozenset(_CAMERA_DEFAULTS)
-    for cam_name, cam_cfg in cameras.items():
-        _validate_keys(
-            cfg_path, f"cameras.{cam_name}", cam_cfg, _CAMERA_SCHEMA, optional_cam
-        )
-        for key, default in _CAMERA_DEFAULTS.items():
-            cam_cfg.setdefault(key, default)
-        # A -1 device is the file's own marker for "nothing wired here", so it is
-        # only meaningful on a disabled stream. Enabled, it used to be accepted
-        # and then failed much later as an opaque camera-open error at session
-        # start; the config is the place that knows it is wrong.
-        if cam_cfg.get("enabled") and cam_cfg.get("device") == -1:
-            raise ValueError(
-                f"{cfg_path}: camera '{cam_name}' is enabled but has device -1 "
-                "— set its /dev/videoN index (or assign it a stable node in "
-                "src/conf/sensor_map.yaml), or disable the stream"
-            )
     return data

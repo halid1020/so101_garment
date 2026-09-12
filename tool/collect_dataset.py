@@ -195,8 +195,7 @@ def main() -> None:
         read_existing_streams,
         selection_to_teleop_flags,
     )
-
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
 
     rec_cfg = load_recording_config()
     known_cameras = set(rec_cfg["cameras"])

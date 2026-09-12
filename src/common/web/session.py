@@ -500,8 +500,7 @@ class PreviewCameras:
         }
         try:
             from actoris_harena.recording.camera_controls import CONTROL_NAMES
-
-            from common.config_parser import load_recording_config
+            from actoris_harena.recording.config import load_recording_config
 
             cfg = (load_recording_config()["cameras"] or {}).get(name)
         except Exception:  # noqa: BLE001 — a broken config must not stop a preview
@@ -528,7 +527,7 @@ class PreviewCameras:
         poll, and not offered as a tile no session would record.
         """
         try:
-            from common.config_parser import load_recording_config
+            from actoris_harena.recording.config import load_recording_config
 
             cameras = load_recording_config()["cameras"] or {}
         except Exception:  # noqa: BLE001 — a broken config must not stop a preview

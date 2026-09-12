@@ -247,7 +247,7 @@ def check_pose_configs() -> CheckResult:
 
 
 def check_recording_config() -> CheckResult:
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
 
     try:
         cfg = load_recording_config()
@@ -323,7 +323,8 @@ def check_usb_budget() -> CheckResult:
     loses is random -- so an operator who learns this at collection time learns
     it as a flaky camera instead of a budget.
     """
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
+
     from common.recording.usb_budget import (
         BUS_CAPACITY_UNITS,
         bus_units,
@@ -399,8 +400,8 @@ def check_load_advisory() -> CheckResult:
 
 def check_cameras() -> list[CheckResult]:
     import cv2  # type: ignore[import]
+    from actoris_harena.recording.config import load_recording_config
 
-    from common.config_parser import load_recording_config
     from tool.meta_quest_teleopration import overlay_sensor_map_devices
     from tool.test_sensor_rates import SENSOR_MAP_PATH, load_sensor_map
 
@@ -444,7 +445,7 @@ def check_cameras() -> list[CheckResult]:
 
 
 def check_realsense() -> CheckResult | None:
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
 
     rs_cfg = load_recording_config().get("realsense")
     if not rs_cfg or not rs_cfg["enabled"]:

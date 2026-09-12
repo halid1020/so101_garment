@@ -51,7 +51,7 @@ async def monitor_get(app: web.Application, path: str) -> "dict[str, Any] | None
 
 
 def _recording_config() -> "dict[str, Any]":
-    from common.config_parser import load_recording_config
+    from actoris_harena.recording.config import load_recording_config
 
     return load_recording_config()
 
