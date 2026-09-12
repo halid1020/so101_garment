@@ -14,6 +14,7 @@ drives from outside this repo.
 
 from pathlib import Path
 
+from actoris_harena.action_layout import set_gripper_columns
 from actoris_harena.recording.camera_profile import CameraProfile, set_profile
 from actoris_harena.training.destinations import set_destinations_path
 
@@ -65,3 +66,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 set_destinations_path(
     REPO_ROOT / "src" / "conf" / "train_destinations.yaml", repo_root=REPO_ROOT
 )
+
+# Columns 5 and 11 of the 12-D action are the two grippers -- the recorder's own
+# layout, five body joints then a gripper, per arm. The analyses need this and
+# cannot derive it: phases segments a grasp by it, and perturb EXCLUDES those
+# columns when it occludes a stream, because perturbing a gripper command
+# measures something other than what the study asks.
+GRIPPER_COLUMNS = (5, 11)
+set_gripper_columns(GRIPPER_COLUMNS)

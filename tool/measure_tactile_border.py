@@ -181,7 +181,7 @@ def main() -> None:
     parser.add_argument("--json", default=None, help="Also write the numbers here")
     args = parser.parse_args()
 
-    from common.analysis.sources import DatasetSource
+    from actoris_harena.analysis.sources import DatasetSource
 
     cameras = [c.strip() for c in args.cameras.split(",") if c.strip()]
     source = DatasetSource(args.dataset, args.episodes, args.every, cameras)

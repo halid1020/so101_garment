@@ -44,9 +44,9 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.analysis import slides  # noqa: E402
-from common.analysis.phases import spans_of  # noqa: E402
-from common.analysis.report import PHASE_INK  # noqa: E402
+from actoris_harena.analysis import slides  # noqa: E402
+from actoris_harena.analysis.phases import spans_of  # noqa: E402
+from actoris_harena.analysis.report import PHASE_INK  # noqa: E402
 
 
 def load(path: Path) -> dict:
@@ -59,14 +59,14 @@ def load(path: Path) -> dict:
 def source_for(args, payload):
     """The frames the video needs, or None if this run is numbers only."""
     if args.dataset:
-        from common.analysis.sources import DatasetSource
+        from actoris_harena.analysis.sources import DatasetSource
 
         first = next(iter(payload["episodes"]))
         indices = [f["index"] for f in payload["episodes"][first]["frames"]]
         every = max(1, (indices[1] - indices[0]) if len(indices) > 1 else 1)
         return DatasetSource(args.dataset, first, every, payload["cameras"])
     if args.run:
-        from common.analysis.sources import RunSource
+        from actoris_harena.analysis.sources import RunSource
 
         return RunSource(args.run, payload["cameras"])
     return None

@@ -47,18 +47,18 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 sys.path.insert(0, str(_root / "src"))
 
-from common.analysis import attention as attn  # noqa: E402
-from common.analysis import gradients as grads  # noqa: E402
-from common.analysis import phases, report  # noqa: E402
-from common.analysis.inference import Inference  # noqa: E402
-from common.analysis.paths import analysis_dir, content_name  # noqa: E402
-from common.analysis.perturb import (  # noqa: E402
+from actoris_harena.analysis import attention as attn  # noqa: E402
+from actoris_harena.analysis import gradients as grads  # noqa: E402
+from actoris_harena.analysis import phases, report  # noqa: E402
+from actoris_harena.analysis.inference import Inference  # noqa: E402
+from actoris_harena.analysis.paths import analysis_dir, content_name  # noqa: E402
+from actoris_harena.analysis.perturb import (  # noqa: E402
     BASELINES,
     baseline_frame,
     occlusion,
     ranking,
 )
-from common.analysis.sources import DatasetSource, RunSource  # noqa: E402
+from actoris_harena.analysis.sources import DatasetSource, RunSource  # noqa: E402
 
 METHODS = ("occlusion", "ig", "gradcam", "attention")
 JOINT_NAMES = [
@@ -257,7 +257,19 @@ def main() -> None:
     if bool(args.dataset) == bool(args.run):
         raise SystemExit("❌ pass exactly one of --dataset or --run")
 
-    inference = Inference(args.checkpoint, args.device, args.task)
+    # The checkpoint loader and the batch assembler are this rig's: one knows
+    # which policy package registers a type, the other knows this rig's camera
+    # keys and state width. The analysis package takes them rather than
+    # importing them, so it does not depend on any one repo's tools.
+    from tool.eval_sim_policy import build_batch, load_policy
+
+    inference = Inference(
+        args.checkpoint,
+        args.device,
+        args.task,
+        load_policy=load_policy,
+        build_batch=build_batch,
+    )
     print(f"📦 {inference.describe()}")
     spans, total, problems = inference.layout()
     for problem in problems:
