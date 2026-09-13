@@ -1196,12 +1196,12 @@ class TestWatchingARun(ConsoleTestCase):
 
     async def test_the_page_is_told_which_policies_are_ours(self):
         # Without this the operator sees nine unstructured checkboxes and
-        # nothing says `act` and `so101_act` are the same model.
+        # nothing says `act` and `harena_act` are the same model.
         body = await (await self.client.get("/api/training/config")).json()
         by_name = {p["name"]: p for p in body["policies"]}
         self.assertFalse(by_name["act"]["local"])
-        self.assertTrue(by_name["so101_act"]["local"])
-        self.assertEqual(by_name["so101_act"]["ported_from"], "act")
+        self.assertTrue(by_name["harena_act"]["local"])
+        self.assertEqual(by_name["harena_act"]["ported_from"], "act")
         self.assertIsNone(by_name["act"]["ported_from"])
 
     # ── Projects ────────────────────────────────────────────────────────────

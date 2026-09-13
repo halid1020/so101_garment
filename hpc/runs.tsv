@@ -12,9 +12,9 @@
 #
 #   dataset : directory name staged under $HF_LEROBOT_HOME/local/
 #   policy  : act | diffusion | pi05 | fastwam, or one of the ports and models
-#             this repo defines: so101_act | so101_diffusion | so101_pi05 |
-#             so101_flowmatch | so101_dreamzero. A port takes its twin's
-#             defaults, so `so101_act` and `act` differ only in whose code runs.
+#             this repo defines: harena_act | harena_diffusion | harena_pi05 |
+#             harena_flowmatch | harena_dreamzero. A port takes its twin's
+#             defaults, so `harena_act` and `act` differ only in whose code runs.
 #   cameras : `all`, or a comma list of camera names with NO spaces. `all` is
 #             the dataset's own cameras and never a composite; a COMPOSITE
 #             (tactile_quad, which tiles the four fingertip cameras 2x2 into
@@ -109,13 +109,13 @@ fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_
 # bigger model than anything else in this table and the 24.5 GiB box may not hold
 # it at any batch. Both must also be warmed on a login node -- every launcher
 # exports HF_HUB_OFFLINE=1, so an unstaged weight fails AFTER the GPU is taken.
-fold-short-from-flattend-tactile so101_fastwam central,tactile_quad             30000   8      36     -       -
+fold-short-from-flattend-tactile harena_fastwam central,tactile_quad             30000   8      36     -       -
 
 # The world action model, and the control it is measured against. Neither has
 # ever been trained; both are launchable today.
 #
 # MEASURED 2026-09-07 on this laptop's CPU, which is the cheap half of the
-# question: so101_dreamzero builds and takes optimiser steps end to end at 59M
+# question: harena_dreamzero builds and takes optimiser steps end to end at 59M
 # learnable parameters (loss 3.94 at step 1), so a GPU row will not die on a
 # construction error hours in. What is NOT measured is a batch ceiling on any
 # GPU -- no destination names a limit for either, so the first real run should
@@ -125,8 +125,8 @@ fold-short-from-flattend-tactile so101_fastwam central,tactile_quad             
 # stabilityai/sd-vae-ft-mse (~330 MB) fetched from the Hub, and every launcher
 # exports HF_HUB_OFFLINE=1 -- so on a compute node with no internet an unstaged
 # VAE fails AFTER the GPU is reserved. hpc/README.md has the login-node command.
-fold-short-from-flattend-tactile so101_dreamzero all                           80000   8      36     -       -
-fold-short-from-flattend-tactile so101_flowmatch all                           60000   16     24     -       -
+fold-short-from-flattend-tactile harena_dreamzero all                           80000   8      36     -       -
+fold-short-from-flattend-tactile harena_flowmatch all                           60000   16     24     -       -
 
 # The tactile CROP arm. The supervisor's reading of the Grad-CAM figures: the
 # policy attends to the EDGES of the fingertip images, including before contact,
@@ -138,11 +138,11 @@ fold-short-from-flattend-tactile so101_flowmatch all                           6
 # twins is what lets a so101_* run be compared against an act/diffusion/pi05 one.
 # pi0.5 gets the three-camera set for the same reason it always does: three
 # pretrained image slots, so only two of the four fingertips fit.
-fold-short-from-flattend-tactile so101_act_crop       all                              80000   8      36     -       -
-fold-short-from-flattend-tactile so101_diffusion_crop all                              100000  8      36     -       -
+fold-short-from-flattend-tactile harena_act_crop       all                              80000   8      36     -       -
+fold-short-from-flattend-tactile harena_diffusion_crop all                              100000  8      36     -       -
 # EVERY crop row's batch is pinned to its BASELINE's, not to what the machine
 # could carry. `-` would resolve to the destination's ceiling, which is how a
-# comparison quietly breaks: run on CREATE, so101_diffusion_crop resolves to 32
+# comparison quietly breaks: run on CREATE, harena_diffusion_crop resolves to 32
 # while the finished diffusion checkpoint it is measured against was trained on
 # thanos at 8, and lerobot-train has no gradient accumulation, so those are not
 # the same run at a different speed -- they are different runs. Read back from
@@ -153,4 +153,4 @@ fold-short-from-flattend-tactile so101_diffusion_crop all                       
 # All three sit under both machines' measured ceilings, so these rows run
 # anywhere. Underusing a 40 GB A100 at batch 1 is the cost of an answerable
 # comparison, and it is the right trade.
-fold-short-from-flattend-tactile so101_pi05_crop      central,left_arm_left_gripper,right_arm_left_gripper 30000 1 36 - -
+fold-short-from-flattend-tactile harena_pi05_crop      central,left_arm_left_gripper,right_arm_left_gripper 30000 1 36 - -

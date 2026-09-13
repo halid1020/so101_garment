@@ -8,7 +8,7 @@ finetune.
 The gate deciding whether that is legitimate used to test membership of a flat
 pair list, which held only the four ports. A cropped variant carries
 `ported_from: None` -- it is a subclass, not a port -- so it was refused, and
-`so101_pi05_crop` died on the cluster at setup, before it trained a step.
+`harena_pi05_crop` died on the cluster at setup, before it trained a step.
 
 It walks the variant chain now. The direction restriction is real and kept: a
 variant only ever ADDS fields to its twin, and `loading.config_as` refuses a
@@ -32,11 +32,11 @@ from tool.retarget_checkpoint import _ancestry, compatible
 class AncestryTest(unittest.TestCase):
     def test_a_crop_reaches_its_upstream_in_two_hops(self):
         self.assertEqual(
-            _ancestry("so101_pi05_crop"), ["so101_pi05_crop", "so101_pi05", "pi05"]
+            _ancestry("harena_pi05_crop"), ["harena_pi05_crop", "harena_pi05", "pi05"]
         )
 
     def test_a_port_reaches_it_in_one(self):
-        self.assertEqual(_ancestry("so101_act"), ["so101_act", "act"])
+        self.assertEqual(_ancestry("harena_act"), ["harena_act", "act"])
 
     def test_a_root_is_its_own_chain(self):
         self.assertEqual(_ancestry("act"), ["act"])
@@ -48,32 +48,32 @@ class AncestryTest(unittest.TestCase):
 
 class CompatibilityTest(unittest.TestCase):
     def test_the_case_that_failed_on_the_cluster(self):
-        self.assertTrue(compatible("pi05", "so101_pi05_crop"))
+        self.assertTrue(compatible("pi05", "harena_pi05_crop"))
 
     def test_every_variant_reaches_its_upstream(self):
         for upstream, variant in (
-            ("act", "so101_act"),
-            ("act", "so101_act_crop"),
-            ("diffusion", "so101_diffusion_crop"),
-            ("pi05", "so101_pi05_crop"),
-            ("fastwam", "so101_fastwam"),
+            ("act", "harena_act"),
+            ("act", "harena_act_crop"),
+            ("diffusion", "harena_diffusion_crop"),
+            ("pi05", "harena_pi05_crop"),
+            ("fastwam", "harena_fastwam"),
         ):
             with self.subTest(f"{upstream}->{variant}"):
                 self.assertTrue(compatible(upstream, variant))
                 self.assertTrue(compatible(variant, upstream), "symmetric")
 
     def test_a_variant_reaches_its_sibling_through_their_shared_twin(self):
-        # so101_act_crop and so101_act share a chain, so the weights do fit.
-        self.assertTrue(compatible("so101_act", "so101_act_crop"))
+        # harena_act_crop and harena_act share a chain, so the weights do fit.
+        self.assertTrue(compatible("harena_act", "harena_act_crop"))
 
     def test_two_chains_are_still_refused(self):
         # The loosening must not become "anything goes" -- these share no weights.
         for a, b in (
-            ("act", "so101_pi05"),
-            ("pi05", "so101_act_crop"),
-            ("diffusion", "so101_act"),
-            ("so101_act_crop", "so101_diffusion_crop"),
-            ("act", "so101_dreamzero"),
+            ("act", "harena_pi05"),
+            ("pi05", "harena_act_crop"),
+            ("diffusion", "harena_act"),
+            ("harena_act_crop", "harena_diffusion_crop"),
+            ("act", "harena_dreamzero"),
         ):
             with self.subTest(f"{a}->{b}"):
                 self.assertFalse(compatible(a, b))
@@ -90,7 +90,7 @@ class CompatibilityTest(unittest.TestCase):
         from lerobot.configs import PreTrainedConfig
 
         source = PreTrainedConfig.get_choice_class("pi05")
-        target = PreTrainedConfig.get_choice_class("so101_pi05_crop")
+        target = PreTrainedConfig.get_choice_class("harena_pi05_crop")
         ours = {f.name for f in dataclasses.fields(source) if f.init}
         theirs = {f.name for f in dataclasses.fields(target) if f.init}
         self.assertEqual(
@@ -109,10 +109,10 @@ class RefusalMessageTest(unittest.TestCase):
         source = Path(tempfile.mkdtemp())
         (source / "config.json").write_text(json.dumps({"type": "pi05"}))
         with self.assertRaises(SystemExit) as caught:
-            retarget(source, "so101_act_crop", Path(tempfile.mkdtemp()) / "out")
+            retarget(source, "harena_act_crop", Path(tempfile.mkdtemp()) / "out")
         message = str(caught.exception)
         # The reader needs to see WHY, which is that these are two chains.
-        self.assertIn("so101_act", message)
+        self.assertIn("harena_act", message)
         self.assertIn("never across two", message)
 
 

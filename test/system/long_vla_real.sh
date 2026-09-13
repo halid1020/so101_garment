@@ -278,18 +278,23 @@ fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 # wants exactly the flags its upstream twin wants, plus the one that makes
 # lerobot-train import our package before it parses anything. Deriving the base
 # instead of repeating every branch is what keeps the two from drifting apart.
-# `_crop` comes off as well as the `so101_` prefix. A cropped variant differs
+# `_crop` comes off as well as the package prefix. A cropped variant differs
 # from its twin ONLY in a preprocessor step, so it wants the same steps, the same
 # batch, the same resize_shape, the same pi0.5 base and rename map -- every one
 # of the five per-policy branches below is keyed on this. Deriving it here is
 # what stops a cropped run silently getting a different budget from the run it
 # exists to be compared against. Note the retarget still uses the FULL name, so
 # a cropped pi0.5 gets a base carrying its own type and not its twin's.
+# Both prefixes are stripped: harena_ is what the package registers now, and
+# so101_ is what it registered before it was shared. A run matrix row or a
+# resubmitted job may still carry the old one, and a driver that failed to route
+# it would kill a resume at the point it was meant to recover.
 base_policy()  {
-    local name="${1#so101_}"
+    local name="${1#harena_}"
+    name="${name#so101_}"
     echo "${name%_crop}"
 }
-local_policy() { case "$1" in so101_*) return 0;; *) return 1;; esac; }
+local_policy() { case "$1" in harena_*|so101_*) return 0;; *) return 1;; esac; }
 SO101_POLICY_PACKAGE="actoris_harena.policies"
 
 # lerobot-train writes a checkpoint every --save_freq steps and never removes an
