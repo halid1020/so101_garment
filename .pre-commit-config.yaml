@@ -1,20 +1,8 @@
 # FILE: .pre-commit-config.yaml
-
-# The four ported policies under src/so101_policies/{act,diffusion,pi05,fastwam}/
-# are upstream LeRobot modules moved into this repo so we own and can edit them.
-# They are deliberately kept byte-comparable to their source: that is what lets
-# `diff` against ../lerobot stay reviewable, and what guarantees a checkpoint
-# trained by either implementation loads into the other (identical module tree
-# => identical state_dict keys). Reformatting them to this repo's black profile
-# would destroy both properties for no gain, so the formatters skip them.
-# Code we actually write -- so101_policies/{common,flowmatch,dreamzero}/ -- is
-# linted like everything else.
-# fastwam is here for the same reason and one more: it is ported from a commit
-# NEWER than the pin, so its formatting is the only evidence that
-# tool/port_policies.py --check is comparing like with like. black reformatted
-# nine of its files the first time it was committed, and --check went red
-# immediately -- which is the system working, but only because the check exists.
-exclude: '^src/so101_policies/(act|diffusion|pi05|fastwam)/'
+#
+# The ported policies moved to actoris_harena, and so did the exclusion that
+# keeps formatters off them: reformatting a port destroys the diff against
+# upstream that makes the port claim checkable. See that repo's own config.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

@@ -88,7 +88,7 @@ def train_once(
         *DETERMINISM,
     ]
     if policy in PORTED_FROM or policy.startswith("so101_"):
-        args.append("--policy.discover_packages_path=so101_policies")
+        args.append("--policy.discover_packages_path=actoris_harena.policies")
     if policy.endswith("diffusion"):
         # The torchvision ImageNet weights come off a CDN whose hash check is
         # flaky, and an initialisation that differs between the two runs would

@@ -172,14 +172,76 @@ def report(name: str, block: "dict") -> None:
     )
 
 
+def compare(paths: "list[str]") -> "tuple[list[str], list[list[str]]]":
+    """Several runs' numbers in one table, one column per run.
+
+    Rows are the ones that survive being compared: RMSE overall, joints and
+    grippers apart, and the first and last step of the chunk so a reader can see
+    whether a policy degrades along its horizon. Training LOSS is deliberately
+    absent -- the arms minimise different objectives on different inputs, so
+    putting it here would invite exactly the comparison it cannot support.
+    """
+    blobs = [json.loads(Path(path).read_text(encoding="utf-8")) for path in paths]
+
+    def cell(blob: dict, section: str, key: str) -> str:
+        value = (blob.get(section) or {}).get(key)
+        return "-" if value is None else f"{value:.4f}"
+
+    names = [b.get("name") or Path(p).parent.name for b, p in zip(blobs, paths)]
+    rows = [["policy", *[b["policy"] for b in blobs]]]
+    for label, section, key in (
+        ("RMSE (train)", "train", "rmse"),
+        ("joints", "train", "mse_joints"),
+        ("grippers", "train", "mse_grippers"),
+        ("step 1", "train", "first_step_mse"),
+        ("last step", "train", "last_step_mse"),
+        ("RMSE (val)", "validation", "rmse"),
+    ):
+        rows.append([label, *[cell(b, section, key) for b in blobs]])
+    rows.append(
+        [
+            "sampler floor",
+            *[
+                "-" if b.get("sampler_spread") is None else f"{b['sampler_spread']:.4f}"
+                for b in blobs
+            ],
+        ]
+    )
+    rows.append(
+        [
+            "held out?",
+            *["no" if not b["episodes"]["validation"] else "yes" for b in blobs],
+        ]
+    )
+    return ["", *names], rows
+
+
+def render(headers: "list[str]", rows: "list[list[str]]") -> str:
+    widths = [
+        max(len(str(r[i])) for r in [headers, *rows]) for i in range(len(headers))
+    ]
+
+    def line(cells):
+        return "| " + " | ".join(str(c).ljust(w) for c, w in zip(cells, widths)) + " |"
+
+    out = [line(headers), "|" + "|".join("-" * (w + 2) for w in widths) + "|"]
+    out.extend(line(r) for r in rows)
+    return "\n".join(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--checkpoint", required=True, help="A trained policy directory"
+        "--compare",
+        nargs="+",
+        default=None,
+        help="Several action_mse.json files, tabulated side by side instead of "
+        "scoring a checkpoint",
     )
-    parser.add_argument("--dataset", required=True, help="The LeRobotDataset root")
+    parser.add_argument("--checkpoint", help="A trained policy directory")
+    parser.add_argument("--dataset", help="The LeRobotDataset root")
     parser.add_argument("--every", type=int, default=20, help="Sample 1 frame in N")
     parser.add_argument("--episodes", default="", help="e.g. 0-9; default all")
     parser.add_argument(
@@ -197,6 +259,12 @@ def main() -> None:
     parser.add_argument("--name", default=None, help="Output directory name")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
+
+    if args.compare:
+        print(render(*compare(args.compare)))
+        return
+    if not (args.checkpoint and args.dataset):
+        raise SystemExit("❌ pass --checkpoint and --dataset, or --compare <json>...")
 
     from tool.eval_sim_policy import build_batch, load_policy
 
@@ -224,6 +292,7 @@ def main() -> None:
         )
 
     out: "dict" = {
+        "name": args.name,
         "checkpoint": args.checkpoint,
         "policy": inference.type,
         "dataset": str(Path(args.dataset).name),

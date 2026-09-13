@@ -13,9 +13,8 @@ from __future__ import annotations
 import unittest
 
 import torch
-
-from so101_policies.common import flow
-from so101_policies.common.smoothing import smooth_chunk
+from actoris_harena.policies.common import flow
+from actoris_harena.policies.common.smoothing import smooth_chunk
 
 
 class FlashScheduleTest(unittest.TestCase):

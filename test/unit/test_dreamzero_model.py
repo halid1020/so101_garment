@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import unittest
 
+from actoris_harena.policies.dreamzero.configuration_dreamzero import (
+    So101DreamzeroConfig,
+)
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_STATE
-
-from so101_policies.dreamzero.configuration_dreamzero import So101DreamzeroConfig
 
 
 def tiny_config(**overrides) -> So101DreamzeroConfig:

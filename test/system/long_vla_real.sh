@@ -273,7 +273,7 @@ echo "   NOTE: on-robot evaluation is a rig step (tool/run_policy.py)."
 echo "======================================================================"
 
 fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
-# A policy implemented in THIS repo (src/so101_policies/) rather than in LeRobot.
+# A policy implemented in THIS repo (actoris_harena/policies/) rather than in LeRobot.
 # These are ports -- the upstream module tree moved, not rewritten -- so each one
 # wants exactly the flags its upstream twin wants, plus the one that makes
 # lerobot-train import our package before it parses anything. Deriving the base
@@ -290,7 +290,7 @@ base_policy()  {
     echo "${name%_crop}"
 }
 local_policy() { case "$1" in so101_*) return 0;; *) return 1;; esac; }
-SO101_POLICY_PACKAGE="so101_policies"
+SO101_POLICY_PACKAGE="actoris_harena.policies"
 
 # lerobot-train writes a checkpoint every --save_freq steps and never removes an
 # older one, so a 100k-step diffusion run parks ten ~3.3 GB copies and an 80k-step

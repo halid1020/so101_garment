@@ -13,10 +13,11 @@ from __future__ import annotations
 import unittest
 
 import torch
+from actoris_harena.policies.dreamzero.configuration_dreamzero import (
+    So101DreamzeroConfig,
+)
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_STATE
-
-from so101_policies.dreamzero.configuration_dreamzero import So101DreamzeroConfig
 
 
 def tiny_config(**overrides) -> So101DreamzeroConfig:
@@ -64,7 +65,9 @@ def tiny_batch(config: So101DreamzeroConfig, batch_size: int = 2) -> dict:
 
 
 def make_policy(config):
-    from so101_policies.dreamzero.modeling_dreamzero import So101DreamzeroPolicy
+    from actoris_harena.policies.dreamzero.modeling_dreamzero import (
+        So101DreamzeroPolicy,
+    )
 
     return So101DreamzeroPolicy(config)
 

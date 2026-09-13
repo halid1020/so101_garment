@@ -36,8 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
-
-from so101_policies.dreamzero import metrics  # noqa: E402
+from actoris_harena.policies.dreamzero import metrics  # noqa: E402
 
 
 def parse_range(text: str) -> "list[int]":

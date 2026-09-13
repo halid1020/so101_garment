@@ -16,8 +16,7 @@ from __future__ import annotations
 import unittest
 
 import torch
-
-from so101_policies.dreamzero.masking import (
+from actoris_harena.policies.dreamzero.masking import (
     ChunkLayout,
     inference_mask,
     matches_training,

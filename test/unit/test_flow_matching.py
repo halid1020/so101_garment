@@ -13,15 +13,16 @@ from __future__ import annotations
 import unittest
 
 import torch
+from actoris_harena.policies.common import flow
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_STATE
-
-from so101_policies.common import flow
 
 
 def tiny_config():
     """A model small enough to build in a unit test, shaped like the real one."""
-    from so101_policies.flowmatch.configuration_flowmatch import So101FlowmatchConfig
+    from actoris_harena.policies.flowmatch.configuration_flowmatch import (
+        So101FlowmatchConfig,
+    )
 
     config = So101FlowmatchConfig(
         chunk_size=4,
@@ -120,7 +121,9 @@ class FlowObjectiveTest(unittest.TestCase):
 
 class FlowmatchPolicyTest(unittest.TestCase):
     def setUp(self):
-        from so101_policies.flowmatch.modeling_flowmatch import So101FlowmatchPolicy
+        from actoris_harena.policies.flowmatch.modeling_flowmatch import (
+            So101FlowmatchPolicy,
+        )
 
         torch.manual_seed(0)
         self.config = tiny_config()

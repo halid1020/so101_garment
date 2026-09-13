@@ -1,6 +1,6 @@
 """The three ported policies are still the upstream ones (source and registry).
 
-Every ported file must be exactly what ``so101_policies._port`` derives from the
+Every ported file must be exactly what ``actoris_harena.policies._port`` derives from the
 LeRobot checkout. That is fast and exact, and it catches a hand-edit the moment
 it happens -- including in pi0.5, which is far too large to instantiate here.
 
@@ -32,7 +32,7 @@ class PortedSourceTest(unittest.TestCase):
     """Nothing was edited by hand."""
 
     def setUp(self) -> None:
-        from so101_policies._port import (
+        from actoris_harena.policies._port import (
             UPSTREAM,
             port_text,
             ported_files,
@@ -93,10 +93,9 @@ class RegistrationTest(unittest.TestCase):
             self.skipTest("LeRobot not installed")
 
     def test_policy_and_processor_resolve(self) -> None:
+        from actoris_harena.policies.loading import ensure_registered
         from lerobot.configs import PreTrainedConfig
         from lerobot.policies.factory import get_policy_class
-
-        from so101_policies.loading import ensure_registered
 
         ensure_registered()
         for name, policy_cls in (
@@ -116,22 +115,22 @@ class RegistrationTest(unittest.TestCase):
 
     def test_both_implementations_coexist(self) -> None:
         """The port must not displace the original: the equivalence test loads both."""
+        from actoris_harena.policies.loading import ensure_registered
         from lerobot.policies.factory import get_policy_class
-
-        from so101_policies.loading import ensure_registered
 
         ensure_registered()
         self.assertTrue(get_policy_class("act").__module__.startswith("lerobot."))
         self.assertTrue(
-            get_policy_class("so101_act").__module__.startswith("so101_policies.")
+            get_policy_class("so101_act").__module__.startswith(
+                "actoris_harena.policies."
+            )
         )
 
 
 class ConfigAsTest(unittest.TestCase):
     def test_refuses_a_pair_that_is_not_one(self) -> None:
+        from actoris_harena.policies.loading import config_as, ensure_registered
         from lerobot.configs import PreTrainedConfig
-
-        from so101_policies.loading import config_as, ensure_registered
 
         ensure_registered()
         act = PreTrainedConfig.get_choice_class("so101_act")()
@@ -140,9 +139,8 @@ class ConfigAsTest(unittest.TestCase):
         self.assertIn("not a ported pair", str(caught.exception))
 
     def test_round_trips_every_init_field(self) -> None:
+        from actoris_harena.policies.loading import config_as, ensure_registered
         from lerobot.configs import PreTrainedConfig
-
-        from so101_policies.loading import config_as, ensure_registered
 
         ensure_registered()
         original = PreTrainedConfig.get_choice_class("act")(

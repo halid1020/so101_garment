@@ -2,7 +2,7 @@
 """Re-derive the ported policies from the LeRobot checkout.
 
 Run after bumping ``LEROBOT_COMMIT``. Every rule lives in
-``so101_policies._port``; this only applies them and reports what moved.
+``actoris_harena.policies._port``; this only applies them and reports what moved.
 
     venv/bin/python tool/port_policies.py [--check]
 
@@ -19,7 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from so101_policies._port import port_text, ported_files, read_upstream  # noqa: E402
+from actoris_harena.policies._port import (  # noqa: E402
+    port_text,
+    ported_files,
+    read_upstream,
+)
 
 
 def main() -> int:

@@ -23,14 +23,14 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-PORT = REPO / "src" / "so101_policies" / "fastwam"
+PORT = REPO / "src" / "actoris_harena.policies" / "fastwam"
 
 
 class PortShapeTest(unittest.TestCase):
     def test_it_is_sourced_from_a_commit_and_not_a_branch(self):
         # `origin/main` moves. A port that silently re-derives from a different
         # upstream on every fetch is not a port.
-        from so101_policies._port import PORT_REF
+        from actoris_harena.policies._port import PORT_REF
 
         ref = PORT_REF["fastwam"]
         self.assertEqual(len(ref), 40, ref)
@@ -50,14 +50,14 @@ class PortShapeTest(unittest.TestCase):
     def test_the_init_is_ours_not_upstreams(self):
         # Upstream's re-exports FastWAMPolicy, which the port renames without
         # adding an alias -- carrying it verbatim breaks the import outright.
-        from so101_policies._port import PORT_EXTRA
+        from actoris_harena.policies._port import PORT_EXTRA
 
         self.assertNotIn("__init__.py", PORT_EXTRA["fastwam"])
         text = (PORT / "__init__.py").read_text()
         self.assertNotIn("import FastWAMPolicy", text)
 
     def test_every_file_re_derives(self):
-        from so101_policies._port import port_text, ported_files, read_upstream
+        from actoris_harena.policies._port import port_text, ported_files, read_upstream
 
         checked = 0
         for relative, ours, name, kind in ported_files():
@@ -79,20 +79,19 @@ class TheOneGapTest(unittest.TestCase):
         # If this ever fails, the pin has moved and the shim can be deleted --
         # which is the point of asserting it rather than assuming it.
         import lerobot.processor as processor
-
-        from so101_policies._port import MISSING_FROM_PIN
+        from actoris_harena.policies._port import MISSING_FROM_PIN
 
         for name in MISSING_FROM_PIN:
             self.assertFalse(
                 hasattr(processor, name),
                 f"lerobot.processor now exports {name}: delete the shim in "
-                "so101_policies/common/processor_compat.py and the rewrite rule "
+                "actoris_harena.policies/common/processor_compat.py and the rewrite rule "
                 "beside it, then re-run tool/port_policies.py",
             )
 
     def test_the_shim_supplies_them(self):
-        from so101_policies._port import MISSING_FROM_PIN
-        from so101_policies.common import processor_compat
+        from actoris_harena.policies._port import MISSING_FROM_PIN
+        from actoris_harena.policies.common import processor_compat
 
         for name in MISSING_FROM_PIN:
             self.assertTrue(hasattr(processor_compat, name), name)
@@ -110,13 +109,12 @@ class TheOneGapTest(unittest.TestCase):
 
     def test_the_shim_builds_the_same_pipeline_pair_lerobot_would(self):
         import torch
-        from lerobot.configs.types import FeatureType, PolicyFeature
-
-        from so101_policies.act.configuration_act import So101ActConfig
-        from so101_policies.common.processor_compat import (
+        from actoris_harena.policies.act.configuration_act import So101ActConfig
+        from actoris_harena.policies.common.processor_compat import (
             make_default_policy_processor_steps,
             make_policy_processor_pipelines,
         )
+        from lerobot.configs.types import FeatureType, PolicyFeature
 
         config = So101ActConfig(device="cpu")
         config.input_features = {
@@ -156,9 +154,8 @@ class TheOneGapTest(unittest.TestCase):
 
 class RegistrationTest(unittest.TestCase):
     def test_lerobot_resolves_the_policy_by_its_registered_name(self):
+        import actoris_harena.policies  # noqa: F401
         from lerobot.policies.factory import _get_policy_cls_from_policy_name
-
-        import so101_policies  # noqa: F401
 
         self.assertEqual(
             _get_policy_cls_from_policy_name("so101_fastwam").__name__,
@@ -168,7 +165,7 @@ class RegistrationTest(unittest.TestCase):
     def test_the_whole_module_tree_imports_on_the_pin(self):
         # The question the port exists to answer: does upstream's newer code run
         # against the LeRobot we actually have installed?
-        import so101_policies.fastwam.wan as wan
+        import actoris_harena.policies.fastwam.wan as wan
 
         for name in ("ActionDiT", "FastWAM", "MoT", "WanVideoDiT", "WanVideoVAE38"):
             self.assertTrue(hasattr(wan, name), name)

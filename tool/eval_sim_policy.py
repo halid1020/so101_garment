@@ -166,13 +166,12 @@ def load_policy(checkpoint: str, device: str) -> tuple[Any, Any, Any, str]:
     checkpoint's own config carries the input/output feature shapes and the
     normalisation statistics, so no dataset metadata is needed here.
     """
+    from actoris_harena.policies.loading import ensure_registered
     from lerobot.configs import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
-    from so101_policies.loading import ensure_registered
-
     # A checkpoint trained by one of this repo's own policies names a type that
-    # only exists once so101_policies has been imported. Without this the load
+    # only exists once actoris_harena.policies has been imported. Without this the load
     # fails as "unknown policy", which says nothing about the real cause.
     ensure_registered()
 
@@ -182,8 +181,19 @@ def load_policy(checkpoint: str, device: str) -> tuple[Any, Any, Any, str]:
     policy = _load_weights(checkpoint, cfg, get_policy_class(cfg.type))
     policy.to(device)
     policy.eval()
+    # The saved pipeline carries the device it was TRAINED on -- cuda, for every
+    # checkpoint here -- and `device_processor` fails at CONSTRUCTION on a
+    # machine that has no such device. That is not a hypothetical: reading these
+    # checkpoints on a cluster LOGIN node, which is where an offline evaluation
+    # naturally runs, died with "Failed to instantiate processor step
+    # 'device_processor'". Overriding it is what lerobot_eval.py does for the
+    # same reason, and it is why this returns a pipeline that agrees with the
+    # weights about where they are.
     preprocessor, postprocessor = make_pre_post_processors(
-        cfg, pretrained_path=checkpoint
+        cfg,
+        pretrained_path=checkpoint,
+        preprocessor_overrides={"device_processor": {"device": str(device)}},
+        postprocessor_overrides={"device_processor": {"device": "cpu"}},
     )
     return policy, preprocessor, postprocessor, cfg.type
 

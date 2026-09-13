@@ -102,7 +102,7 @@ fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_
 # FastWAM now runs as the PORT, not as `fastwam`: it landed upstream after
 # LEROBOT_COMMIT, so the bare name is still refused by the module probe and
 # always will be until the pin moves. The port reads that same code out of a
-# named newer commit without moving the pin -- see src/so101_policies/_port.py.
+# named newer commit without moving the pin -- see actoris_harena/policies/_port.py.
 #
 # NOT YET LAUNCHED, and check the box before you do: FastWAM pulls a 5B Wan video
 # backbone (Wan-AI/Wan2.2-TI2V-5B) plus a umt5-xxl text encoder, so it is a far

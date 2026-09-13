@@ -24,8 +24,12 @@ TRAIN_STEPS = 600
 
 
 def _policy_and_batch():
-    from so101_policies.flowmatch.configuration_flowmatch import So101FlowmatchConfig
-    from so101_policies.flowmatch.modeling_flowmatch import So101FlowmatchPolicy
+    from actoris_harena.policies.flowmatch.configuration_flowmatch import (
+        So101FlowmatchConfig,
+    )
+    from actoris_harena.policies.flowmatch.modeling_flowmatch import (
+        So101FlowmatchPolicy,
+    )
 
     torch.manual_seed(0)
     config = So101FlowmatchConfig(
@@ -103,7 +107,9 @@ class FlowmatchLearnsTest(unittest.TestCase):
     def test_integrating_the_other_way_is_far_worse(self):
         """The control. Without it the tests above could pass a broken direction
         that merely happens to land near zero."""
-        from so101_policies.common import flow  # noqa: F401  (documents the pairing)
+        from actoris_harena.policies.common import (  # noqa: F401  (documents the pairing)
+            flow,
+        )
 
         torch.manual_seed(1)
         noise = torch.randn(2, 6, 12)

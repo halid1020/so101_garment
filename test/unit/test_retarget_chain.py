@@ -86,9 +86,8 @@ class CompatibilityTest(unittest.TestCase):
         for. If a crop config ever gained a field its twin lacks in the OTHER
         direction, the gate would admit a retarget that then failed at load.
         """
+        import actoris_harena.policies  # noqa: F401  -- the import IS the registration
         from lerobot.configs import PreTrainedConfig
-
-        import so101_policies  # noqa: F401  -- the import IS the registration
 
         source = PreTrainedConfig.get_choice_class("pi05")
         target = PreTrainedConfig.get_choice_class("so101_pi05_crop")

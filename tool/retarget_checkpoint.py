@@ -2,7 +2,7 @@
 """Point a checkpoint at the other implementation of the same policy.
 
 A checkpoint names the policy type that trained it, and that name decides which
-class loads it. The ports in ``src/so101_policies/`` keep the upstream module
+class loads it. The ports in ``actoris_harena/policies/`` keep the upstream module
 tree, so the WEIGHTS fit either class -- only the name in ``config.json``
 disagrees. This rewrites just that name.
 

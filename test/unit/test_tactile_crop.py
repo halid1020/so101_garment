@@ -16,8 +16,7 @@ import unittest
 
 import numpy as np
 import torch
-
-from so101_policies.common.tactile import (
+from actoris_harena.policies.common.tactile import (
     DEFAULT_CROP,
     TACTILE_CAMERAS,
     So101TactileCropProcessorStep,
@@ -176,9 +175,8 @@ class RegistrationTest(unittest.TestCase):
     )
 
     def test_each_variant_resolves_end_to_end(self):
+        import actoris_harena.policies  # noqa: F401  -- the import IS the registration
         from lerobot.policies.factory import _get_policy_cls_from_policy_name
-
-        import so101_policies  # noqa: F401  -- the import IS the registration
 
         for typ, config_name, policy_name, _ in self.CASES:
             with self.subTest(typ):
@@ -190,7 +188,7 @@ class RegistrationTest(unittest.TestCase):
         for typ, _, _, directory in self.CASES:
             with self.subTest(typ):
                 module = importlib.import_module(
-                    f"so101_policies.{directory}.processor_{directory}"
+                    f"actoris_harena.policies.{directory}.processor_{directory}"
                 )
                 self.assertTrue(hasattr(module, f"make_{typ}_pre_post_processors"))
 
@@ -198,12 +196,13 @@ class RegistrationTest(unittest.TestCase):
         # RenameObservationsProcessorStep is step 0 of every twin's pipeline, and
         # on pi0.5 it renames the rig's cameras onto openpi's slots. A crop after
         # it would look for names that no longer exist and silently do nothing.
-        from lerobot.configs.types import FeatureType, PolicyFeature
-
-        from so101_policies.act_crop.configuration_act_crop import So101ActCropConfig
-        from so101_policies.act_crop.processor_act_crop import (
+        from actoris_harena.policies.act_crop.configuration_act_crop import (
+            So101ActCropConfig,
+        )
+        from actoris_harena.policies.act_crop.processor_act_crop import (
             make_so101_act_crop_pre_post_processors,
         )
+        from lerobot.configs.types import FeatureType, PolicyFeature
 
         config = So101ActCropConfig(device="cpu")
         config.input_features = {
@@ -329,7 +328,7 @@ class DefaultsTest(unittest.TestCase):
 
     def test_a_scalar_is_still_accepted(self):
         # "Crop both sides by this much" is the obvious thing to reach for.
-        from so101_policies.common.tactile import as_fractions
+        from actoris_harena.policies.common.tactile import as_fractions
 
         self.assertEqual(as_fractions(0.7), (0.7, 0.7))
         self.assertEqual(as_fractions((0.8, 1.0)), (0.8, 1.0))
@@ -347,7 +346,9 @@ class DefaultsTest(unittest.TestCase):
         self.assertTrue(torch.equal(crop_and_restore(img, (1.0, 1.0)), img))
 
     def test_a_config_carries_the_crop_and_the_camera_list(self):
-        from so101_policies.act_crop.configuration_act_crop import So101ActCropConfig
+        from actoris_harena.policies.act_crop.configuration_act_crop import (
+            So101ActCropConfig,
+        )
 
         config = So101ActCropConfig(device="cpu")
         self.assertEqual(tuple(config.tactile_crop), tuple(DEFAULT_CROP))

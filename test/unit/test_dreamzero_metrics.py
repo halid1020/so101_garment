@@ -11,8 +11,7 @@ from __future__ import annotations
 import unittest
 
 import torch
-
-from so101_policies.dreamzero import metrics
+from actoris_harena.policies.dreamzero import metrics
 
 
 def frames(batch: int = 2, steps: int = 4, size: int = 32) -> torch.Tensor:

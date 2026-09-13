@@ -54,7 +54,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from so101_policies.common.tactile import TACTILE_CAMERAS  # noqa: E402
+from actoris_harena.policies.common.tactile import TACTILE_CAMERAS  # noqa: E402
 
 
 def profiles(frames: np.ndarray) -> "dict[str, np.ndarray]":

@@ -46,10 +46,9 @@ class CheckpointEquivalenceTest(unittest.TestCase):
 
     def _compare(self, checkpoint: Path, upstream_type: str, ported_type: str) -> None:
         import torch
+        from actoris_harena.policies.loading import config_as, ensure_registered
         from lerobot.configs import PreTrainedConfig
         from lerobot.policies.factory import get_policy_class
-
-        from so101_policies.loading import config_as, ensure_registered
 
         ensure_registered()
         path = str(checkpoint)
