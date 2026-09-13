@@ -21,6 +21,7 @@ import time
 import unittest
 
 import numpy as np
+from actoris_harena.recording.episode_recorder import EpisodeRecorder, RecorderState
 from actoris_harena.recording.features import (
     ACTION_FRESH_S,
     TELEOP_ACTIVE_KEY,
@@ -28,7 +29,7 @@ from actoris_harena.recording.features import (
 )
 
 from common.data_manager_dual import DualDataManager, RobotActivityState
-from common.recording.episode_recorder import EpisodeRecorder, RecorderState
+from common.recording.observations import DualArmObservations
 from common.robot_schema import SCHEMA, STATE_NAMES
 
 _CAMERAS = ["cam_a", "cam_b"]
@@ -118,7 +119,8 @@ class RecorderTestBase(unittest.TestCase):
 
         self.recorder = EpisodeRecorder(
             dataset=self.dataset,
-            data_manager=self.dm,
+            frames=self.dm,
+            observations=DualArmObservations(self.dm),
             task="fold the towel",
             fps=_FPS,
             camera_names=list(_CAMERAS),
@@ -286,7 +288,8 @@ class TestSaveOnQuit(unittest.TestCase):
             dataset.save_gate = threading.Event()
         recorder = EpisodeRecorder(
             dataset=dataset,
-            data_manager=dm,
+            frames=dm,
+            observations=DualArmObservations(dm),
             task="t",
             fps=_FPS,
             camera_names=list(_CAMERAS),
@@ -476,7 +479,8 @@ class TestDepthWiring(unittest.TestCase):
         self.depth_writer = FakeDepthWriter()
         self.recorder = EpisodeRecorder(
             dataset=self.dataset,
-            data_manager=self.dm,
+            frames=self.dm,
+            observations=DualArmObservations(self.dm),
             task="t",
             fps=_FPS,
             camera_names=list(_CAMERAS),
@@ -540,7 +544,8 @@ class TestEeWiring(unittest.TestCase):
         dataset = FakeDataset()
         recorder = EpisodeRecorder(
             dataset=dataset,
-            data_manager=dm,
+            frames=dm,
+            observations=DualArmObservations(dm),
             task="t",
             fps=_FPS,
             camera_names=list(_CAMERAS),

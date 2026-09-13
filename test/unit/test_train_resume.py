@@ -175,7 +175,21 @@ class TestAResumedRepoPolicyStillKnowsItsOwnPolicies(unittest.TestCase):
         return text[start : text.index("return 0", start)]
 
     def test_the_resume_passes_the_discovery_flag(self):
-        self.assertIn("--policy.discover_packages_path", self.resume_block())
+        self.assertIn("--discover_packages_path", self.resume_block())
+
+    def test_the_flag_is_bare_and_not_policy_prefixed(self):
+        """The prefix is not cosmetic; it decides whether pi0.5 runs at all.
+
+        `parse_plugin_args` matches any argument CONTAINING the suffix, so both
+        spellings import the package. But a pi0.5 finetune uses `--policy.path`,
+        and `filter_path_args` then strips the `policy.` from every remaining
+        `--policy.*` argument and hands the rest to the policy's own parser,
+        which has never heard of `discover_packages_path`. MEASURED on thanos:
+        prefixed works in type mode and dies in path mode; bare works in both.
+        So one spelling is correct everywhere, and it is the bare one.
+        """
+        for block in (self.resume_block(), DRIVER.read_text(encoding="utf-8")):
+            self.assertNotIn("--policy.discover_packages_path", block)
 
     def test_it_is_guarded_by_local_policy(self):
         # An unconditional flag would put our package on lerobot's own runs.
@@ -184,7 +198,7 @@ class TestAResumedRepoPolicyStillKnowsItsOwnPolicies(unittest.TestCase):
         # point of keeping both.
         block = self.resume_block()
         guard = block.index("local_policy")
-        self.assertLess(guard, block.index("--policy.discover_packages_path"))
+        self.assertLess(guard, block.index("--discover_packages_path"))
 
     def test_local_policy_names_exactly_the_repo_ones(self):
         script = (

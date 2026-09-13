@@ -9,6 +9,7 @@ Modules:
 
 from actoris_harena.recording.cameras import CameraCapture
 from actoris_harena.recording.config import load_recording_config
+from actoris_harena.recording.episode_recorder import EpisodeRecorder, RecorderState
 from actoris_harena.recording.features import (
     ACTION_FRESH_S,
     assemble_frame,
@@ -17,13 +18,14 @@ from actoris_harena.recording.features import (
     build_observation_state,
 )
 
-from common.recording.episode_recorder import EpisodeRecorder, RecorderState
+from common.recording.observations import DualArmObservations  # noqa: F401
 from common.recording.sidecar import SidecarSampler, compute_world_base_transforms
 from common.robot_schema import STATE_NAMES
 
 __all__ = [
     "ACTION_FRESH_S",
     "CameraCapture",
+    "DualArmObservations",
     "EpisodeRecorder",
     "RecorderState",
     "STATE_NAMES",

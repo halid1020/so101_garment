@@ -411,7 +411,7 @@ train_cell() {
         # file naming it is parsed. Leave this out and every so101_* run is
         # unresumable -- which is exactly the case the resume path exists for.
         if local_policy "$policy"; then
-            args+=(--policy.discover_packages_path="$SO101_POLICY_PACKAGE")
+            args+=(--discover_packages_path="$SO101_POLICY_PACKAGE")
         fi
         echo; echo "### resume $policy on $REPO_ID (step $at -> $steps)"
         lerobot-train "${args[@]}" 2>&1 | tee -a "$RUN_DIR/logs/train_${policy}.log" \
@@ -470,8 +470,17 @@ train_cell() {
     # lerobot.configs.parser.wrap loads this package before draccus parses, which
     # is what puts our policy in the registry that --policy.type is looked up in.
     # Without it the run dies on an unknown policy type having reserved the GPU.
+    #
+    # BARE, not --policy.-prefixed, and that is load-bearing. parse_plugin_args
+    # matches any argument CONTAINING the suffix, so both spellings load the
+    # package -- but a pi0.5 finetune uses --policy.path, and filter_path_args
+    # then strips the `policy.` from every remaining --policy.* argument and
+    # hands the rest to the policy's own parser, which has never heard of
+    # discover_packages_path and refuses the run. MEASURED on thanos: prefixed
+    # dies with "unrecognized arguments: --discover_packages_path" in path mode
+    # and works in type mode; bare works in both.
     if local_policy "$policy"; then
-        args+=(--policy.discover_packages_path="$SO101_POLICY_PACKAGE")
+        args+=(--discover_packages_path="$SO101_POLICY_PACKAGE")
         echo "  policy package: $SO101_POLICY_PACKAGE (implemented in this repo)"
     fi
     if [ "$base" = "diffusion" ]; then

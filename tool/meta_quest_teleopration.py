@@ -83,6 +83,7 @@ from common.data_manager_dual import DualDataManager, RobotActivityState
 from common.keyboard_buttons import KeyboardButtons
 from common.recording import (
     CameraCapture,
+    DualArmObservations,
     EpisodeRecorder,
     RecorderState,
     SidecarSampler,
@@ -564,7 +565,8 @@ def build_recording_stack(
 
     return EpisodeRecorder(
         dataset=dataset,
-        data_manager=data_manager,
+        frames=data_manager,
+        observations=DualArmObservations(data_manager),
         task=args.task,
         fps=fps,
         camera_names=[c.name for c in all_captures],
