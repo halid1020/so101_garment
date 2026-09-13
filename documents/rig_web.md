@@ -1,14 +1,35 @@
-# The rig console (`tool/rig_web.py`)
+# The rig console
 
 One browser page for the collection drive: review what was recorded, and
 manage the datasets themselves. It replaces `tool/dataset_web.py`, which
 did the reviewing half only.
 
+**THERE ARE TWO WAYS IN, and they serve the same routes.**
+
 ```bash
 source setup.sh
+
+# This repo's own, which preselects this rig:
 venv/bin/python tool/rig_web.py --dir /mnt/seagate/so101
 venv/bin/python tool/rig_web.py                 # opens on the last drive used
+
+# The SHARED console, which serves every robot on this machine and lets you
+# choose between them in the page:
+venv/bin/actoris-harena rigs add ~/Projects/so101_garment
+venv/bin/actoris-harena console --dir /mnt/seagate/so101
 ```
+
+The shared console imports **no hardware code at all** — it cannot, because this
+venv needs feetech and mujoco while the UR3e's needs ur-rtde, and pip cannot
+satisfy both at once. Anything that touches a device runs as a subprocess
+started with the selected rig's own interpreter, through `tool/rig_agent.py`.
+That is not a new mechanism: the collection session already worked exactly that
+way, supervised as a subprocess and read back over a loopback monitor.
+
+Which rig is selected is chosen in the page, and switching is refused while a job
+is running — the same rule that already governs changing the collection
+directory, and for the same reason: a job holds state belonging to the rig it
+started under.
 
 Then open <http://127.0.0.1:8000/>. The console binds the loopback
 interface only, like every other tool here; from another machine, reach it

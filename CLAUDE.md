@@ -42,11 +42,19 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   (`.:src`), MuJoCo render backend, `HF_LEROBOT_HOME`, `SO101_OUTPUT_DIR`,
   serial access, Quest/adb check, and a GPU/disk readout.
 - **`bash install.sh`** is the one-shot installer (idempotent).
-- **LeRobot is a source checkout** at `../lerobot` (parallel to this
-  repo), installed editable at a pinned commit with extras
-  `feetech,dataset,pi,libero,pusht,training,diffusion,peft`. To inspect the real
-  train/eval API, read `../lerobot/src/lerobot/...` — do not guess CLI
-  flags.
+- **TWO SIBLING CHECKOUTS are required**, both shared with `../ur3e_raven`:
+  - `../lerobot` — a source checkout, installed editable at a pinned commit with
+    extras `feetech,dataset,pi,libero,pusht,training,diffusion,peft`. To inspect
+    the real train/eval API, read `../lerobot/src/lerobot/...` — do not guess CLI
+    flags.
+  - `../actoris_harena` — the shared pipeline, installed `[rig]` and never
+    `[sim]`. The two extras cannot coexist: LeRobot pins `numpy>=2.0,<2.3` and
+    the simulation stack pins `numpy<2.0`.
+
+  INSTALL ORDER MATTERS, and the reason is easy to trip over: actoris_harena is
+  installed EDITABLE, so whatever branch is checked out there is what this repo
+  imports. A `git checkout` in that repo changes this one's behaviour with no
+  warning.
 - **Hardware varies by machine — check, don't assume.** `source setup.sh`
   prints the live GPU/VRAM readout; trust that over any note here. Two
   machines seen so far: a laptop with an RTX 3050 (4 GB VRAM, too small
@@ -57,68 +65,63 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
 
 ## Layout
 
-- `src/common/` — teleop pipeline: `configs.py` (all tuning constants),
-  `threads/dual_ik_solver.py` (the production IK loop),
-  `workspace_envelope.py` (analytic reach envelope + out-of-envelope
-  policies), `pink_ik_solver.py`, `one_euro_filter.py`,
-  `data_manager_dual.py`, `utils.py` (operator control frame),
-  `sync.py` (pure timestamped-history buffers + nearest/interpolated
-  sample selection used to align every stream to one reference time per
-  recorded frame), and `recording/` (LeRobot episode recorder behind
-  `--record` on the real teleop tool: 30 fps dataset + ~100 Hz sidecar
-  parquet + UVC camera threads; `realsense_camera.py` adds a central
-  RGB-D camera (`--central-depth`: RGB video feature + aligned 16-bit
-  depth written by `depth.py` as PNG16 under `<root>/extra/depth/`, with
-  intrinsics/scale in `<root>/meta/realsense.json`); `drift.py` logs
-  per-frame per-stream temporal drift to `<root>/extra/`; EE-space
-  features (`ee_pose` measured + `ee_target` projected+constrained,
-  neutral keys the LeRobot classifier ignores so the joint policy is
-  untouched) let either a joint- or EE-space policy train from the same
-  episodes (quest mode only; `--no-record-ee` opts out), with the
-  action-definition constants in `<root>/meta/action_space.json`; the
-  `--sensor-view` monitor shows live per-stream drift + drop counts (the
-  streams the recorder actually opened, whatever those are — it reuses the
-  recorder's captures rather than opening a device twice);
-  `monitor_server.py` serves the same frames + recorder status + both
-  arms' measured-vs-last-sent joints over loopback for the rig console
-  when the recorder is given `--monitor-port` (off by default; its
-  control surface is a per-mode allow-list — `allowed_keys_for`: the episode
-  and quit keys with a headset on, plus ENABLE for a leader session, whose
-  keys are otherwise read from a terminal the console-started session does
-  not have; park and home stay physical in both);
-  `controls.py` is the ONE list of operator steps, printed by the teleop
-  tool and shown by the console; config in `src/conf/recording.yaml`,
-  device indices are per-machine placeholders).
-- `tool/` — runnable entry points: `meta_quest_teleopration.py` (real
-  arms), `quest_sim_teleop.py` (sim rehearsal, same stack + rig +
-  cameras), `telegrip_native.py` (drive the arms with the *unmodified
-  upstream* Telegrip checkout — see `documents/telegrip_native.md`),
-  `check_mirror.py` / `fit_joint_offsets.py` (arm-side/offset checks),
-  `collect_preflight.py` (green/red rig-readiness table before data
-  collection: sensor map, calibrations, poses, cameras/RealSense, disk,
-  CPU governor, USB autosuspend; `--no-hardware` for config-only),
-  `view_twin.py` (`--payload` shows the collection scene), `part_drawings.py`,
-  the sim-VLA pair `collect_sim_dataset.py` (oracle demonstrations in the
-  twin; only verified successes are saved) / `eval_sim_policy.py` (policy
-  rollouts in the same env — see `documents/long_vla_sim_guide.md`), plus
-  policy train/eval helpers (`sim_pipeline_pi05.py`, `train_vla_lerobot.py`,
-  `send_middle_and_rest.py`), and the policy-deployment pair
-  `run_policy.py` (cameras + buses + safety; `--server` sends observation
-  windows out and executes the action chunks that come back, spliced by
-  `--strategy`, default `receding` at `--execute-ratio 0.5`; `--sim [task]`
-  puts the twin behind the same `common/policy_rig.py` seam so the WHOLE
-  procedure — page, arming, throttle, splice, log — can be rehearsed with no
-  robot. Not to be confused with `run_policy_sim.py`, which is the BATCH
-  chunking-strategy sweep over many scored seeds — its `--grid` expands a
-  strategy x hyper-parameter grid via `common/chunk_sweep.py`) /
-  `policy_server.py` (loads a checkpoint on a GPU box and answers with chunks;
-  wire format in `src/common/policy_wire.py`, runbook in
-  `documents/remote_policy_inference.md`), and `rig_web.py` (the browser
-  console — see below), plus the two that read a deployment back:
-  `policy_report.py` (every rollout's verdicts, pooled per checkpoint — the row
-  an ablation is reported from), `analyse_policy_inputs.py` (what each input
-  stream contributed; see `src/common/analysis/`) and `analysis_slides.py` (the
-  same, as videos, plots and tables for a talk).
+**THE PIPELINE IS NOT IN THIS REPO.** Data collection, dataset curation,
+training, deployment, the browser console and every policy this project trains
+live in `actoris_harena` (`../actoris_harena`, installed `[rig]`), shared with
+the single-arm UR3e rig in `../ur3e_raven`. What is here is what is actually
+about THESE ARMS.
+
+Where to look for what:
+
+| In `actoris_harena` | In this repo |
+|---|---|
+| `recording/` — the recorder, the captures, dataset integrity, camera views | `common/recording/{observations,sidecar,episode_motion,monitor_server,controls,usb_budget}.py` |
+| `training/` — destinations, the run matrix, the log parser | `hpc/`, the run matrix's rows, the drivers under `test/system/` |
+| `analysis/` — the whole attribution study | `tool/analyse_policy_inputs.py`, `tool/analysis_slides.py` |
+| `deploy/` — chunking, the wire, the client, the Rig protocol | `BenchRig` in `tool/run_policy.py`, `tool/replay_on_robot.py` |
+| `web/` — the console and its rig-independent tabs | `common/web/{datasets_api,session,sensors,policy_view,policy_ghost}.py`, `tool/rig_web.py` |
+| `policies/` — all nine, ports and originals | nothing; `src/so101_policies/` is a SHIM (see below) |
+
+- `common/rig_profile.py` — **the one place this rig hands the shared pipeline
+  its facts**, run as a side effect of importing `common`: the camera profile
+  (pi0.5 slots, the `tactile_quad` composite, the slug elisions), the recording
+  config path, the destinations file and this checkout, and the gripper columns.
+  Load-bearing, and its failure mode is not always loud — a tool that reaches
+  `actoris_harena` without importing `common` gets an unconfigured pipeline, and
+  an empty camera profile produces a DIFFERENT run-directory slug rather than an
+  error, so a run trains fine and lands where nothing looks for it.
+  `test/unit/test_migration_seams.py` guards it.
+- `common/robot_schema.py` — twelve channels: five body joints then a gripper,
+  per arm. `GRIPPER_COLUMNS` is `(5, 11)` and is DERIVED from the schema, never
+  written down, so the layout and the columns cannot drift apart.
+- `common/recording/observations.py` — `DualArmObservations`, this rig's answer
+  to the shared recorder's three questions (state and action, EE, armed). Its
+  world-to-base transforms are computed lazily: they build a pinocchio model,
+  which costs a second, and a session not recording EE should not pay for it.
+- `src/so101_policies/` — **a shim**. The policies are
+  `actoris_harena.policies`, registered under `harena_*` with every legacy
+  `so101_*` name kept as an alias. The shim exists because
+  `--policy.discover_packages_path=so101_policies` is written into Slurm scripts
+  already submitted and into `train_config.json` files a resuming job reads. Its
+  docstring says what must be true before it can be deleted.
+- `src/common/` — teleop: `configs.py` (all tuning constants),
+  `threads/dual_ik_solver.py` (the production IK loop), `workspace_envelope.py`,
+  `pink_ik_solver.py`, `one_euro_filter.py`, `data_manager_dual.py`, `utils.py`
+  (the two-handed operator control frame), and `recording/` (this rig's half of
+  collection: the sidecar, the EE motion model, the monitor's joint rows, the
+  operator control list, the measured USB budget).
+- `tool/` — runnable entry points: `meta_quest_teleopration.py` (real arms, with
+  `--record`), `quest_sim_teleop.py` (sim rehearsal), `rig_agent.py` (this rig's
+  devices, for the shared console, in this venv), `rig_web.py` (this repo's own
+  way into the console), `telegrip_native.py`, `check_mirror.py` /
+  `fit_joint_offsets.py`, `collect_preflight.py`, `view_twin.py`,
+  `collect_sim_dataset.py` / `eval_sim_policy.py`, `run_policy.py` /
+  `policy_server.py`, `policy_report.py`, `analyse_policy_inputs.py`,
+  `analysis_slides.py`, `train_launch.py`.
+- `rig.yaml` — what the shared console needs to drive this rig WITHOUT importing
+  it: the interpreter, the agent, the teleop entry point, the cameras and the
+  schema. A unit test checks its schema block agrees with `robot_schema.py`.
+
 - `src/common/recording/usb_budget.py` — how many camera streams fit on each USB
   controller, and which selection does not. Pure string work over the by-path
   aliases in `sensor_map.yaml` (no device is opened), so the console and the
@@ -139,84 +142,6 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   (both wrist cameras unplugged and disabled) run as `central` alone on
   `pci-0000:06:00.3` plus a tactile pair on each of `05:00.4` and `06:00.4` —
   see `documents/rig_web.md`.
-- `src/common/recording/dataset_check.py` — is a dataset whole? The counted
-  episodes against the ones in `meta/episodes/`, `data/` and `extra/`, the
-  offset invariant, and the repair for an episode nobody wrote. Pure parquet +
-  JSON, no LeRobot import, so it can describe a dataset LeRobot refuses to open.
-- `src/common/recording/dataset_view.py` — camera-ablation **views**: a dataset
-  directory naming only some cameras, with the video files symlinked from the
-  source (a few MB, not a copy). `meta/info.json` drives
-  `LeRobotDatasetMetadata.video_keys`, so an unnamed camera is never decoded AND
-  never reaches the policy — no `--policy.input_features` override to keep in
-  step. Also collapses a dataset's task strings onto the one covering the most
-  frames (position is no guide: on `cube-pnp-new` the typo is registered first).
-  Two policies here take a FIXED number of views, and this rig has five cameras,
-  so both get an answer here. **pi0.5** has three slots: a camera whose viewpoint
-  it knows takes that slot by name (`PI05_SLOTS`), one it has never seen — every
-  tactile camera — takes the next free slot in `PI05_SLOT_ORDER`, more cameras
-  than slots is refused, and the `slots` column of `runs.tsv` pins it outright.
-  **FastWAM** concatenates its cameras into one frame, so `COMPOSITES` tiles the
-  four fingertip cameras 2x2 into ONE 224x224 feature (`tactile_quad`); `all`
-  never includes a composite, and a composite is the one thing a view cannot
-  symlink — it decodes its parts in lockstep and encodes one video with PyAV
-  (not the ffmpeg CLI: a compute node has neither). Built by
-  `tool/make_camera_view.py`; the cluster job builds one per `cameras` row.
-- `src/common/training/` — where a training run may be sent, whether it can
-  work there, and how it is going. `destinations.py` (pure:
-  `src/conf/train_destinations.yaml` validated, the ssh/rsync argv, and what an
-  unreachable machine should be told — its paths reach the REMOTE shell
-  unquoted so `~`/`$USER` mean the remote home and user, which is why what may
-  appear in them is checked at load; `kind: local` is the machine the console
-  is on, and `ssh_argv` returning `bash -lc` is the ONE place that kind is
-  consulted, so staging, the manifest, the dispatch, the status and the stop
-  all work on it unchanged) + `matrix.py` (the `runs.tsv` row model in Python,
-  and `row_refusals`, the ONE place a run is judged: unknown policy, a camera
-  the dataset lacks, more cameras than the policy has slots, a batch over a
-  MEASURED ceiling, a policy this LeRobot has never heard of, and a run that
-  would fall back to the CPU) + `progress.py`/`runs.py` (below). Two front
-  ends: `tool/train_launch.py` and the console's Training tab, so a run started
-  in the browser is the same run. A `-` in the steps/batch column means
-  "whatever fits here" and takes the destination's measured ceiling; an
-  explicit number is refused if it is over.
-- `src/common/training/progress.py` + `runs.py` — how far a run has got. The
-  driver's LOG is the only metric record that exists (`--wandb.enable=false` is
-  unconditional, this LeRobot ships no `SummaryWriter`, and
-  `MetricsTracker.to_dict()` returns exactly the right numbers and is never
-  called). Two measured facts shape the parser: **`step:` is abbreviated**
-  (`format_big_number` prints 10 500 and 10 600 alike as `10K`, so it is a
-  label and cannot be a curve's x-axis), and **tqdm is disabled inside Slurm**
-  (a thanos/local log is a `\r`-blob whose frames carry the exact step; a
-  CREATE log has no exact step at all). So the step is the preceding tqdm
-  frame's where there is one, else the line's ordinal x `log_freq` — exact,
-  because lerobot logs at `step % log_freq == 0` and nowhere else, and both
-  `log_freq` and the total are in the config dump at the head of the log.
-  `runs.py` filters the log ON THE FAR SIDE (5.8 MB of frames -> 190 KB) in one
-  sentinel-delimited command, discovers run directories rather than listing what
-  was launched, and returns **stdout only** — CREATE's stderr is an MFA banner.
-  Staleness is judged from the file's mtime against the REMOTE clock, never the
-  timestamps inside (they carry no timezone). `runs.py` knows BOTH trees —
-  `vla_real_long` and `vla_sim_long`, whose cells are `<mode>/<task>/<policy>`
-  rather than `train/<policy>` — and pairs a sim log with its cell by listing
-  the DIRECTORY and rebuilding the log's name from it, since every one of the
-  three parts may itself contain an underscore (`handover_split`, `so101_act`).
-  The same round trip also brings back the resolved `train_config.json` (the
-  runs table diffs it) and, for a sim cell, the per-checkpoint rollout results.
-- `src/common/training/metrics.py` — how a NEW curve gets drawn without editing
-  anything. A number crosses three hops before it can be plotted — the grep
-  that runs on the far machine, the parser, and the panel grid — and each was a
-  closed list. Now a policy prints `so101-metric step=12000 eval/loss=0.0421`
-  and the curve appears: `KEEP_PATTERN` keeps the sentinel, `progress.py` folds
-  it into `series` beside lerobot's own tracker fields, and the page builds its
-  panels from `metrics` rather than from names of its own. The namespace
-  (`train/`, `eval/`, `pred/`) picks the panel block and is REQUIRED, refused
-  where it is emitted rather than guessed at the far end. lerobot's held-out
-  validation loss rides the same channel (`step N: eval_loss=…`, whose step is
-  EXACT, unlike `step:`); it needs `--eval-split`/`--eval-steps` on the driver
-  and is off by default because a validation split holds out episodes and so
-  changes what is trained. **Per-checkpoint rollout success is sim-only** —
-  `long_vla_sim.sh` writes `val/step_<N>.json`; the real rig's equivalent is a
-  person judging trials in `outputs/policy_runs/`, and drawing that on a
-  training axis would report a measurement nobody made.
 - `tool/compare_port_training.py` — does a port TRAIN like its twin? Runs the
   real `lerobot-train` twice from one seed and compares the logged loss step for
   step, which is the only thing that covers what the trainer assembles AROUND
@@ -225,125 +150,6 @@ teleoperation, data collection, and VLA policy training/eval (LeRobot,
   at every logged point. `make test-port-parity DATASET_ROOT=<ds>` is the CPU
   version; `test/integration/test_policy_ports_checkpoints.py` is the other half
   — one batch, but loss and every gradient compared bit for bit.
-- `src/common/analysis/` — **what each input stream contributes to the actions a
-  policy plans**, kept OUT of the inference path (nothing there imports it back)
-  and driven by `tool/analyse_policy_inputs.py`. It rests on one verified fact:
-  both policies reduce their inputs to a vector in which each stream owns a
-  CONTIGUOUS piece — ACT's encoder tokens are `[latent, state, cam x H*W, ...]`
-  in `config.image_features` order (300 tokens a camera at 480x640, 1 502 in
-  total, MEASURED against the loaded backbone), diffusion concatenates
-  per-camera features once per observation step — so `streams.py` is that map,
-  pure and GPU-free, and `check_layout` asserts it tiles. Four methods, because
-  each answers something the others cannot: `perturb.py` (occlusion — behaviour,
-  and the ground truth the rest are SCORED against; leave-one-out measures
-  redundancy, only-one-in measures sufficiency; the baseline is part of the
-  result and every figure names it), `gradients.py` (integrated gradients,
-  whose completeness axiom makes per-stream shares parts of one whole;
-  SmoothGrad; Grad-CAM), `attention.py` (ACT only, per action of the chunk) and
-  `diffusion`'s differences. MEASURED over 206 frames of six episodes on the
-  finished ACT checkpoint: **central 57.1 %, proprioception 36.4 %, the four
-  fingertips 6.5 % together** — but tactile is not flat, running 0.6 % while the
-  arms travel and peaking 21–31 % in every episode, so a mean over an episode
-  hides the whole point. During `opening` proprioception rises to 74.7 %. IG
-  agrees with occlusion at **+0.90**. ACT's cross-attention has almost no
-  DYNAMIC RANGE (pooled shares 0.192–0.219, a 1.14x spread, against occlusion's
-  42x) and per FRAME agrees at only +0.17 with 35 % of frames negative — so the
-  raw mass is dominated by token count and only the deviation from uniform is
-  reported. IG's completeness error at 64 steps averages 0.20 over real frames
-  (0.87 worst) though the shares converge by then. `--sanity` is Adebayo et
-  al.'s model-randomisation test, which this checkpoint passes outright (a
-  randomised policy plans the same chunk whatever it is shown, so every share
-  falls to zero). `slides.py` + `tool/analysis_slides.py` turn a finished run
-  into slide-ready videos (PyAV/H.264, no ffmpeg binary), plots and tables.
-  `paths.py` is the ONE place an analysis decides where it is written
-  (`outputs/analysis/<day>/<policy>-<cameras>/`). Not every method exists for
-  every architecture and the reasons are structural, so `cam_trunks` is the one
-  place Grad-CAM's trunk is found — ACT calls one `model.backbone` per camera,
-  diffusion's `rgb_encoder` is an `nn.ModuleList` whose members are called and
-  whose `.backbone` is what has a spatial map, and a token model has no map at
-  all. pi0.5 carries `@torch.no_grad()` TWICE (on `predict_action_chunk` and
-  again on the inner `sample_actions`), so a gradient needs both off. Occlusion
-  is pinned through `perturb.plan_of`: it was not, for a while, which made it
-  the one method measuring the sampler while being the ground truth everything
-  else is scored against. Runbook: `documents/policy_input_analysis.md`.
-- `src/so101_policies/` — every policy this rig trains, implemented HERE rather
-  than in LeRobot. Importing the package registers each one with LeRobot's
-  draccus registry, which is the whole mechanism: `lerobot.configs.parser.wrap`
-  loads whatever `--policy.discover_packages_path` names BEFORE draccus parses,
-  and `get_policy_class` then resolves our names by the same route as its own
-  (`policies/factory.py:606`). So one policy defined here is trainable by
-  `lerobot-train`, servable by `policy_server.py`, fetchable by
-  `fetch_policies.sh` and analysable by `common/analysis/` with no change to any
-  of them. The naming is a CONTRACT, not a style — LeRobot derives the policy
-  class and the processor factory from the config class name, mechanically:
-  `<x>/configuration_<x>.py` holds `So101<X>Config` registered as `so101_<x>`,
-  `modeling_<x>.py` holds `So101<X>Policy`, `processor_<x>.py` holds
-  `make_so101_<x>_pre_post_processors`. `act`, `diffusion`, `pi05` and `fastwam`
-  are **ports**: the upstream module tree MOVED, not rewritten, so `state_dict` keys
-  are identical and the finished 80 000-step ACT checkpoint loads into either
-  implementation (VERIFIED bitwise, not in principle —
-  `test/integration/test_policy_ports_checkpoints.py`). `_port.py` holds every
-  rule the port applies and `tool/port_policies.py --check` re-derives them, so
-  a LeRobot bump is one command and a hand-edit fails
-  `test/unit/test_policy_ports.py` immediately. The three ported directories are
-  excluded from black/isort/flake8/mypy in `.pre-commit-config.yaml` for that
-  reason — reformatting them would destroy the diff against upstream that makes
-  the claim checkable; `mypy.ini` skips them at the IMPORT boundary too, because
-  that exclude covers the file list and not the import graph, so a subclass
-  importing a port drags upstream's type errors in under our name.
-  **`fastwam` is the odd port**: it landed upstream AFTER `LEROBOT_COMMIT`, so
-  `_port.PORT_REF` names a commit to `git show` that one directory out of rather
-  than moving the pin (which would change the other three underneath every
-  finished checkpoint). It also carries a `wan/` subpackage verbatim
-  (`PORT_EXTRA`, still in `--check`) but NOT upstream's `__init__.py`, which
-  re-exports a class the port renames. The pin lacks exactly two names it needs
-  — `make_default_policy_processor_steps`, `make_policy_processor_pipelines` —
-  reproduced in `common/processor_compat.py` with the ONE import rewritten,
-  because editing the file would stop it being a port; a test asserts the pin
-  still lacks them so the shim cannot outlive its reason. Before launching one:
-  FastWAM pulls a 5B Wan video backbone plus a umt5-xxl text encoder, far larger
-  than anything else in the matrix, and may not fit the 24.5 GiB box at any
-  batch. `loading.py` registers the package for any loader
-  (`eval_sim_policy.load_policy` calls it), and `tool/retarget_checkpoint.py`
-  reads a checkpoint through the other member of a ported pair by symlinking its
-  weights and rewriting one field — which is how a repo-local pi0.5 gets a base
-  to finetune, since `lerobot/pi05_base` says `pi05` and would otherwise quietly
-  load LeRobot's class. Three more — `act_crop`, `diffusion_crop`, `pi05_crop` —
-  are two-field SUBCLASSES of the ports, adding a registered preprocessor step
-  (`common/tactile.py`) that crops the four fingertip cameras to the gel centre
-  and RESIZES BACK, so no shape changes anywhere: ACT keeps 300 tokens a camera
-  (which `analysis/streams.py` requires), diffusion's dummy-sized feature dim
-  still matches, and pi0.5's letterbox padding is unchanged. It goes at index 0,
-  ahead of the rename step, or pi0.5's slot rename hides the cameras from it.
-  Grad-CAM showing the policy on the sensor EDGES before contact is why. The
-  fraction comes from `tool/measure_tactile_border.py`, and measuring it CHANGED
-  the design: the rim is a smooth vignette (+7 to +22 % brighter at the edge)
-  with no band to find, and HORIZONTALLY the bright rim and the responsive
-  columns are the same pixels — on two of four sensors the top-quartile-variation
-  columns run to the frame edge. So the default crops ROWS ONLY, `(0.80, 1.00)`,
-  inside the 0.62 bound of the tightest camera. `(1.0, 1.0)` is a bit-identical
-  uncropped control.
-  `flowmatch` is NOT a port: pi0.5's objective and action
-  expert on the diffusion policy's `DiffusionRgbEncoder` (that literal class, so
-  "same backbone" is a fact), built as the CONTROL for the world action model --
-  it shares DreamZero's loss and shares nothing else. **The two flow-matching
-  time conventions run OPPOSITE ways** and a model trained in one and sampled in
-  the other trains perfectly and emits noise: pi0.5 puts noise at t=1 and
-  integrates DOWN, DreamZero's Eq. 2 puts the clean sample at t=1 and integrates
-  UP. `common/flow.py` implements pi0.5's and says so; MEASURED 9.1 % of target
-  scale the right way against 359.9 % the wrong way. `dreamzero` is the WORLD
-  ACTION MODEL (arXiv 2602.15922) at rig scale: video latents and actions
-  denoised together under one flow-matching objective, chunk-wise teacher
-  forcing, a between-chunk causal mask (`masking.py`, Fig. 14 — printable and
-  tested, because the first draft LEAKED a chunk's own clean twin, which is the
-  answer it predicts), KV-cache rollout, Flash's decoupled schedules and
-  Savitzky-Golay smoothing. It trains from scratch with NO video pretraining, on
-  a per-frame VAE rather than Wan's temporal one, at ~1/100th the parameters —
-  so it tests the paper's CLAIMS, not its numbers. A chunk's frames and actions
-  must span the same interval; `frame_stride` subsamples to make that true and a
-  `chunk_size` that will not divide is refused. The frozen VAE is fetched from
-  the Hub and kept OUT of the checkpoint. See `documents/policy_package.md` and
-  `documents/world_action_model.md`.
 - `src/common/joint_frames.py` — the servo↔URDF sign/offset tables (values
   in `configs.py`) and the conversion, shared by the joint-state thread, the
   sidecar writer and the console's idle arm reader.

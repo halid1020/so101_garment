@@ -155,3 +155,31 @@ whether the end-effector channels were stored, and the frame rate --- and
 follows them, rather than trusting flags typed afresh each time. The operator
 therefore names the dataset and the task; the schema comes from the dataset
 itself, and every episode in it shares one definition.
+
+\paragraph{One recording system, two arms.} Everything described in this section
+is implemented once and shared between two physically different robots: the
+bimanual platform this paper measures, and a single six-axis arm with a parallel
+gripper and a wrist-mounted depth camera. That is not an incidental engineering
+choice; it is what lets the replicability claim in
+Section~\ref{sec:replicability} mean more than one bench. The recorder does not
+know how many arms it is serving. What it asks of a robot is three questions ---
+the state and action vectors at the reference time, the end-effector pose and its
+target, and whether the arm is still enabled --- and what it asks of the cameras
+is a frame at the reference time and the drift of that frame from it. The width
+of a state vector, the names of its channels and the frame the end-effector pose
+is expressed in are all derived from a declared schema rather than written into
+the recorder, so the bimanual platform records twelve channels and the single arm
+records seven through the same code path, the same alignment rule and the same
+integrity checks.
+
+The consequence worth stating is a negative one. A recording system written
+against one robot accumulates assumptions that are invisible until a second
+robot arrives, and several of ours did: an end-effector pose expressed in an
+arm's own base frame needed a transform the single-arm case does not require, and
+the two channels holding the gripper commands were written down as a pair of
+column indices rather than derived. Both would have produced a dataset that
+trained without complaint and meant something other than it claimed. We report
+them because the general point holds beyond this platform: the cost of a
+single-robot recording system is not paid when it is written, but when it is
+asked to serve a second robot, and by then the datasets it has already produced
+are the thing at risk.
