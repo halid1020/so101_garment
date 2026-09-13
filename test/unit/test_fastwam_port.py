@@ -23,7 +23,23 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-PORT = REPO / "src" / "actoris_harena.policies" / "fastwam"
+
+
+def _port_dir() -> Path:
+    """Where the ported package actually lives, asked of the import system.
+
+    The policies moved out of this repo into `actoris_harena`, and a hardcoded
+    path did not survive it -- a bulk rename turned `src/so101_policies` into
+    the literal `src/actoris_harena.policies`, a dotted module name spliced into
+    a filesystem path, and the tests failed on a directory that could never
+    exist. Asking the installed package where it is cannot drift.
+    """
+    import actoris_harena.policies as policies
+
+    return Path(policies.__file__).resolve().parent / "fastwam"
+
+
+PORT = _port_dir()
 
 
 class PortShapeTest(unittest.TestCase):
@@ -109,14 +125,14 @@ class TheOneGapTest(unittest.TestCase):
 
     def test_the_shim_builds_the_same_pipeline_pair_lerobot_would(self):
         import torch
-        from actoris_harena.policies.act.configuration_act import So101ActConfig
+        from actoris_harena.policies.act.configuration_act import HarenaActConfig
         from actoris_harena.policies.common.processor_compat import (
             make_default_policy_processor_steps,
             make_policy_processor_pipelines,
         )
         from lerobot.configs.types import FeatureType, PolicyFeature
 
-        config = So101ActConfig(device="cpu")
+        config = HarenaActConfig(device="cpu")
         config.input_features = {
             "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(12,))
         }
@@ -159,7 +175,7 @@ class RegistrationTest(unittest.TestCase):
 
         self.assertEqual(
             _get_policy_cls_from_policy_name("so101_fastwam").__name__,
-            "So101FastwamPolicy",
+            "HarenaFastwamPolicy",
         )
 
     def test_the_whole_module_tree_imports_on_the_pin(self):

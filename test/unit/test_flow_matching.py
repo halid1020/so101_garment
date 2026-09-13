@@ -21,10 +21,10 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 def tiny_config():
     """A model small enough to build in a unit test, shaped like the real one."""
     from actoris_harena.policies.flowmatch.configuration_flowmatch import (
-        So101FlowmatchConfig,
+        HarenaFlowmatchConfig,
     )
 
-    config = So101FlowmatchConfig(
+    config = HarenaFlowmatchConfig(
         chunk_size=4,
         n_action_steps=4,
         dim_model=32,
@@ -122,12 +122,12 @@ class FlowObjectiveTest(unittest.TestCase):
 class FlowmatchPolicyTest(unittest.TestCase):
     def setUp(self):
         from actoris_harena.policies.flowmatch.modeling_flowmatch import (
-            So101FlowmatchPolicy,
+            HarenaFlowmatchPolicy,
         )
 
         torch.manual_seed(0)
         self.config = tiny_config()
-        self.policy = So101FlowmatchPolicy(self.config)
+        self.policy = HarenaFlowmatchPolicy(self.config)
 
     def test_forward_returns_a_scalar_loss(self):
         loss, parts = self.policy.forward(tiny_batch())

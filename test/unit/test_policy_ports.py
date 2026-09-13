@@ -99,9 +99,9 @@ class RegistrationTest(unittest.TestCase):
 
         ensure_registered()
         for name, policy_cls in (
-            ("so101_act", "So101ActPolicy"),
-            ("so101_diffusion", "So101DiffusionPolicy"),
-            ("so101_pi05", "So101Pi05Policy"),
+            ("so101_act", "HarenaActPolicy"),
+            ("so101_diffusion", "HarenaDiffusionPolicy"),
+            ("so101_pi05", "HarenaPi05Policy"),
         ):
             with self.subTest(policy=name):
                 self.assertEqual(get_policy_class(name).__name__, policy_cls)

@@ -19,7 +19,7 @@ import torch
 from actoris_harena.policies.common.tactile import (
     DEFAULT_CROP,
     TACTILE_CAMERAS,
-    So101TactileCropProcessorStep,
+    HarenaTactileCropProcessorStep,
     crop_and_restore,
     crop_box,
 )
@@ -99,7 +99,7 @@ class WhatItRemovesTest(unittest.TestCase):
 
 class ProcessorStepTest(unittest.TestCase):
     def setUp(self):
-        self.step = So101TactileCropProcessorStep(fraction=0.7)
+        self.step = HarenaTactileCropProcessorStep(fraction=0.7)
 
     def test_only_the_tactile_cameras_change(self):
         obs = {
@@ -157,21 +157,26 @@ class ProcessorStepTest(unittest.TestCase):
     def test_a_bad_fraction_is_refused_at_construction(self):
         # Not at the first batch, hours into a run that reserved a GPU.
         with self.assertRaises(ValueError):
-            So101TactileCropProcessorStep(fraction=0.0)
+            HarenaTactileCropProcessorStep(fraction=0.0)
 
 
 class RegistrationTest(unittest.TestCase):
     """LeRobot resolves these by string surgery on the config class name."""
 
     CASES = (
-        ("so101_act_crop", "So101ActCropConfig", "So101ActCropPolicy", "act_crop"),
+        ("so101_act_crop", "HarenaActCropConfig", "HarenaActCropPolicy", "act_crop"),
         (
             "so101_diffusion_crop",
-            "So101DiffusionCropConfig",
-            "So101DiffusionCropPolicy",
+            "HarenaDiffusionCropConfig",
+            "HarenaDiffusionCropPolicy",
             "diffusion_crop",
         ),
-        ("so101_pi05_crop", "So101Pi05CropConfig", "So101Pi05CropPolicy", "pi05_crop"),
+        (
+            "so101_pi05_crop",
+            "HarenaPi05CropConfig",
+            "HarenaPi05CropPolicy",
+            "pi05_crop",
+        ),
     )
 
     def test_each_variant_resolves_end_to_end(self):
@@ -197,14 +202,14 @@ class RegistrationTest(unittest.TestCase):
         # on pi0.5 it renames the rig's cameras onto openpi's slots. A crop after
         # it would look for names that no longer exist and silently do nothing.
         from actoris_harena.policies.act_crop.configuration_act_crop import (
-            So101ActCropConfig,
+            HarenaActCropConfig,
         )
         from actoris_harena.policies.act_crop.processor_act_crop import (
             make_so101_act_crop_pre_post_processors,
         )
         from lerobot.configs.types import FeatureType, PolicyFeature
 
-        config = So101ActCropConfig(device="cpu")
+        config = HarenaActCropConfig(device="cpu")
         config.input_features = {
             "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(12,)),
             "observation.images.central": PolicyFeature(
@@ -223,7 +228,7 @@ class RegistrationTest(unittest.TestCase):
             },
         }
         pre, _ = make_so101_act_crop_pre_post_processors(config, stats)
-        self.assertIsInstance(pre.steps[0], So101TactileCropProcessorStep)
+        self.assertIsInstance(pre.steps[0], HarenaTactileCropProcessorStep)
         self.assertEqual(type(pre.steps[1]).__name__, "RenameObservationsProcessorStep")
 
     def test_a_variant_carries_its_twin_s_budget(self):
@@ -347,10 +352,10 @@ class DefaultsTest(unittest.TestCase):
 
     def test_a_config_carries_the_crop_and_the_camera_list(self):
         from actoris_harena.policies.act_crop.configuration_act_crop import (
-            So101ActCropConfig,
+            HarenaActCropConfig,
         )
 
-        config = So101ActCropConfig(device="cpu")
+        config = HarenaActCropConfig(device="cpu")
         self.assertEqual(tuple(config.tactile_crop), tuple(DEFAULT_CROP))
         self.assertEqual(tuple(config.tactile_cameras), TACTILE_CAMERAS)
 

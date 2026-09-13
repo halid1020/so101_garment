@@ -14,13 +14,13 @@ from __future__ import annotations
 import unittest
 
 from actoris_harena.policies.dreamzero.configuration_dreamzero import (
-    So101DreamzeroConfig,
+    HarenaDreamzeroConfig,
 )
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
-def tiny_config(**overrides) -> So101DreamzeroConfig:
+def tiny_config(**overrides) -> HarenaDreamzeroConfig:
     settings = dict(
         chunk_size=8,
         n_action_steps=8,
@@ -37,7 +37,7 @@ def tiny_config(**overrides) -> So101DreamzeroConfig:
         device="cpu",
     )
     settings.update(overrides)
-    config = So101DreamzeroConfig(**settings)  # type: ignore[arg-type]
+    config = HarenaDreamzeroConfig(**settings)  # type: ignore[arg-type]
     config.input_features = {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(12,)),
         "observation.images.scene": PolicyFeature(
