@@ -352,7 +352,9 @@ def main() -> None:
     from actoris_harena.analysis.paths import analysis_dir
 
     families = collect(args.results)
-    out_dir = Path(args.out).expanduser() if args.out else analysis_dir("crop-comparison")
+    out_dir = (
+        Path(args.out).expanduser() if args.out else analysis_dir("crop-comparison")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     drawn = [
