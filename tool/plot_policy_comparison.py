@@ -25,6 +25,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -321,7 +322,7 @@ def draw_absolute(families, out: Path) -> "Path | None":
     return out
 
 
-def stream_shares(path: Path) -> "dict[str, float]":
+def stream_shares(path: Path) -> "dict[str, Any]":
     """Each stream's mean occlusion share over every analysed frame of a deck."""
     import numpy as np
 
