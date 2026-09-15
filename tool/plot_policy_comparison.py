@@ -418,6 +418,53 @@ def draw_streams(decks: "list[str]", out: Path) -> "Path | None":
     return out
 
 
+def draw_gradcam_pair(
+    baseline: Path, crop: Path, title: str, out: Path
+) -> "Path | None":
+    """One policy's Grad-CAM, uncropped above cropped.
+
+    Both panels are figures `analyse_policy_inputs.py` already drew, stacked
+    rather than redrawn -- the heat maps are the measurement and nothing here
+    should re-render them. The two passes are run with IDENTICAL arguments so
+    the middle frame each picks is the same frame; comparing two different
+    moments of an episode would show the scene changing and read as the crop
+    changing something.
+
+    The lower panel's label names the vertical stretch on purpose. The crop
+    keeps the central 80% of ROWS and then resizes back to the original shape,
+    so nothing downstream changes size -- but the resize is anisotropic, 1.25x
+    vertical against 1.00x horizontal. A reader comparing the two panels is
+    therefore looking at two differences at once, the removed rim and the
+    aspect ratio, and the figure must not let the second pass as the first.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.image as mpimg
+    import matplotlib.pyplot as plt
+
+    if not (baseline.is_file() and crop.is_file()):
+        return None
+
+    fig, axes = plt.subplots(2, 1, figsize=(13, 6.4))
+    for axis, path, label in (
+        (axes[0], baseline, "uncropped"),
+        (
+            axes[1],
+            crop,
+            "cropped: central 80% of rows, then stretched back (1.25x vertical)",
+        ),
+    ):
+        axis.imshow(mpimg.imread(path))
+        axis.set_axis_off()
+        axis.set_title(label, fontsize=11, color=INK, loc="left", pad=4)
+    fig.suptitle(title, fontsize=14, color=INK, x=0.012, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.savefig(out, dpi=170, facecolor="white")
+    plt.close(fig)
+    return out
+
+
 def table(families) -> str:
     rows = [
         "| policy | arm | RMSE | joints | grippers | step 1 | last step | frames |",
@@ -444,6 +491,12 @@ def main() -> None:
     )
     parser.add_argument("results", nargs="+", help="action_mse.json files")
     parser.add_argument(
+        "--gradcam",
+        nargs="+",
+        default=None,
+        help="Triples of POLICY BASELINE_PNG CROP_PNG, stacked for comparison",
+    )
+    parser.add_argument(
         "--decks",
         nargs="+",
         default=None,
@@ -459,6 +512,18 @@ def main() -> None:
         Path(args.out).expanduser() if args.out else analysis_dir("crop-comparison")
     )
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    gradcam = args.gradcam or []
+    for i in range(0, len(gradcam) - 2, 3):
+        name, base_png, crop_png = gradcam[i : i + 3]
+        made = draw_gradcam_pair(
+            Path(base_png),
+            Path(crop_png),
+            f"Grad-CAM — {name}: what the policy looks at",
+            out_dir / f"gradcam_{name.lower().replace('.', '').replace(' ', '_')}.png",
+        )
+        if made:
+            print(f"🖼️  {made}")
 
     drawn = [
         draw_streams(args.decks or [], out_dir / "stream_shares.png"),

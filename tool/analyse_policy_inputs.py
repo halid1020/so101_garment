@@ -154,7 +154,10 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             out["gradcam"] = {
                 k: v.tolist() for k, v in grads.grad_cam(inference, batch).items()
             }
-        except RuntimeError as problem:
+        except grads.NoFeatureMap as problem:
+            # Deliberately NOT `RuntimeError`: an out-of-memory error is one of
+            # those, and recording a full GPU as "unavailable" tells a reader
+            # the method does not apply to this policy. It does; let it raise.
             out["gradcam_unavailable"] = str(problem)
     return out
 
