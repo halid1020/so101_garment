@@ -148,3 +148,54 @@ deliberately kept out of the checkpoint, while every launcher exports
 `HF_HUB_OFFLINE=1`. On a compute node with no internet that fails *after* the
 GPU is reserved. `hpc/README.md` has the login-node command; the smoke run above
 worked only because the VAE was already in this machine's cache.
+
+## The other world model, and why it could not be compared
+
+`harena_fastwam` is the opposite trade. It is a real ~6 B Wan-class model with a
+genuine pretrained video prior, where DreamZero is 59 M parameters trained from
+scratch — so between them they bracket the question this rig actually wants
+answered: does a video prior buy anything at rig scale, or does the data do it?
+
+That comparison was not possible, for a reason that had nothing to do with either
+model. `wan.modular.infer_joint` decodes both future video and actions and
+returns `{"video": …, "action": …}` — and **nothing in the policy API ever called
+it**. `predict_action_chunk` reaches `infer_action` and only that. So the port
+owned a video prediction it could not be asked for, while DreamZero could be
+asked and owned no prior. `tool/eval_world_model.py` rejected FastWAM outright.
+
+`harena_fastwam_predict` closes that: a subclass in a sibling package, the same
+shape as the crop variants, so the ported files stay byte-identical to upstream
+and `tool/port_policies.py --check` stays green at 18 files. It adds the three
+calls the scorer makes — `predict_future_frames`, `tile_cameras`,
+`untile_cameras` — plus the two context fields it reads. FastWAM already tiles
+its cameras by concatenating them along width, so the tiling pair is a rename of
+what it does, not a new representation.
+
+Two details in it are load-bearing, and both would be quiet rather than loud if
+they were wrong:
+
+- **The first predicted frame is dropped.** `infer_joint` pins
+  `latents_video[:, :, 0:1]` to the conditioning frame's latents at every
+  denoising step, so frame zero of the output is the input reproduced. Scoring it
+  would measure the model on an image it was handed, and would flatter every
+  horizon curve at step one — exactly where the held-last-frame baseline is
+  already strongest.
+- **The sampler is pinned** (`predict_seed`, `predict_inference_steps`).
+  `infer_joint` samples, so two passes over one observation disagree; an arm
+  compared against another arm under an unpinned sampler measures the sampler.
+  Same reasoning as `analysis.diffusion.plan`, and the same mistake was made
+  there first.
+
+The context arithmetic differs between the two and the scorer has to know which:
+DreamZero counts context in latent CHUNKS, FastWAM conditions on a single first
+frame. `n_context_chunks` and `latent_frames_per_chunk` are both 1 on the
+subclass — not a convention chosen for convenience, but the number of observed
+frames the prediction is conditioned on, which is what the scorer slices off
+before comparing.
+
+**Still untrained.** The subclass makes FastWAM *scoreable*; it does not make it
+*trained*. That needs ~20 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
+Diffusers VAE, UMT5-XXL, `lerobot/fastwam_base`) and a card larger than thanos's
+24.5 GiB — CREATE with `SBATCH_CONSTRAINT=h200`, where `freeze_video_expert`
+leaves only the ~1 B action expert training. If it does not fit even there, that
+is a measurement to record as a ceiling, not something to retry blind.

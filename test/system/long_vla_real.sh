@@ -290,9 +290,14 @@ fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 # resubmitted job may still carry the old one, and a driver that failed to route
 # it would kill a resume at the point it was meant to recover.
 base_policy()  {
+    # A variant takes its twin's budget on purpose. `_crop` reads a narrower
+    # input of the same shape and `_predict` only exposes a prediction the twin
+    # already computes, so neither is a reason to change the number of steps --
+    # and a comparison that moved the budget would not be a comparison.
     local name="${1#harena_}"
     name="${name#so101_}"
-    echo "${name%_crop}"
+    name="${name%_crop}"
+    echo "${name%_predict}"
 }
 local_policy() { case "$1" in harena_*|so101_*) return 0;; *) return 1;; esac; }
 SO101_POLICY_PACKAGE="actoris_harena.policies"
@@ -367,7 +372,7 @@ train_cell() {
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
         flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
         dreamzero) steps="$DREAMZERO_STEPS"; batch="$DREAMZERO_BATCH"; save="$DREAMZERO_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, and act|diffusion|pi05 also _crop suffixed)";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, act|diffusion|pi05 also _crop suffixed, and fastwam also _predict suffixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.
