@@ -321,6 +321,102 @@ def draw_absolute(families, out: Path) -> "Path | None":
     return out
 
 
+def stream_shares(path: Path) -> "dict[str, float]":
+    """Each stream's mean occlusion share over every analysed frame of a deck."""
+    import numpy as np
+
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    totals: "dict[str, list[float]]" = {}
+    for episode in blob["episodes"].values():
+        for frame in episode["frames"]:
+            block = frame.get("occlusion")
+            if not block:
+                continue
+            for name, effect in block["streams"].items():
+                totals.setdefault(name, []).append(effect["share"])
+    shares = {k: float(np.mean(v)) for k, v in totals.items() if v}
+    return {
+        "policy": blob["policy"],
+        "cameras": len([k for k in shares if "gripper" in k]),
+        "proprioception": shares.get("state", 0.0),
+        "vision": shares.get("central", 0.0),
+        "tactile": sum(v for k, v in shares.items() if "gripper" in k),
+    }
+
+
+def draw_streams(decks: "list[str]", out: Path) -> "Path | None":
+    """What each policy actually leans on, as a share of its own plan.
+
+    Stacked to 100 % because the shares are normalised WITHIN a policy -- they
+    answer "of what moved this plan, how much was touch?", not "how much touch
+    is there". Comparing the bands across policies is legitimate; comparing a
+    band's absolute size to another policy's is not, and stacking to a common
+    height is the honest way to show that.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    rows = [stream_shares(Path(d)) for d in decks]
+    rows = [r for r in rows if r["vision"] or r["tactile"]]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: ORDER.index(FAMILY.get(r["policy"], "ACT")))
+
+    labels = [
+        f"{FAMILY.get(r['policy'], r['policy'])}\n({r['cameras']} fingertip cams)"
+        for r in rows
+    ]
+    bands = [
+        ("proprioception", "#4a3aa7"),
+        ("vision (central)", BASELINE),
+        ("touch (fingertips)", CROP),
+    ]
+    keys = ["proprioception", "vision", "tactile"]
+
+    fig, axis = plt.subplots(figsize=(2.3 * len(rows) + 3.4, 4.6))
+    bottom = np.zeros(len(rows))
+    for (label, colour), key in zip(bands, keys):
+        values = np.array([r[key] for r in rows]) * 100
+        axis.bar(labels, values, 0.55, bottom=bottom, color=colour, label=label)
+        for i, (v, b) in enumerate(zip(values, bottom)):
+            if v >= 4:
+                axis.annotate(
+                    f"{v:.0f}%",
+                    (i, b + v / 2),
+                    ha="center",
+                    va="center",
+                    fontsize=10,
+                    color="white",
+                    fontweight="bold",
+                )
+        bottom += values
+    style(axis)
+    axis.set_ylim(0, 100)
+    axis.set_ylabel("share of what moved the plan (%)", color=MUTED, fontsize=10)
+    axis.legend(
+        frameon=False,
+        fontsize=9,
+        labelcolor=MUTED,
+        ncol=3,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.08),
+    )
+    axis.set_title(
+        "The three policies do not use the rig the same way",
+        fontsize=13,
+        color=INK,
+        pad=12,
+        loc="left",
+    )
+    fig.tight_layout()
+    fig.savefig(out, dpi=200, facecolor="white")
+    plt.close(fig)
+    return out
+
+
 def table(families) -> str:
     rows = [
         "| policy | arm | RMSE | joints | grippers | step 1 | last step | frames |",
@@ -346,6 +442,12 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("results", nargs="+", help="action_mse.json files")
+    parser.add_argument(
+        "--decks",
+        nargs="+",
+        default=None,
+        help="attribution.json files, for the stream-contribution figure",
+    )
     parser.add_argument("--out", default=None, help="Output directory")
     args = parser.parse_args()
 
@@ -358,6 +460,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     drawn = [
+        draw_streams(args.decks or [], out_dir / "stream_shares.png"),
         draw_change(families, out_dir / "crop_change.png"),
         draw_absolute(families, out_dir / "crop_rmse.png"),
         draw_horizon(families, out_dir / "crop_horizon.png"),

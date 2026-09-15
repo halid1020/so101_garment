@@ -26,6 +26,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[2]
+
 from tool.retarget_checkpoint import _ancestry, compatible
 
 
@@ -220,6 +222,44 @@ class RetargetCarriesTheCropStepTest(unittest.TestCase):
         self.assertEqual(
             json.loads((out / "config.json").read_text())["type"], "so101_pi05_crop"
         )
+
+    def test_print_path_emits_the_path_and_nothing_else(self):
+        """The driver captures this in a command substitution.
+
+        `base_path="$(retarget_checkpoint.py ... --print-path)"` takes ALL of
+        stdout, so one informational line here becomes part of the path. It did:
+        the run died with `Repo id must be in the form 'repo_name': '  preprocessor:
+        added so101_tactile_crop...'` after the GPU was already reserved.
+        """
+        import subprocess
+        import sys
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "tool" / "retarget_checkpoint.py"),
+                "--checkpoint",
+                str(self.base()),
+                "--to",
+                "harena_pi05_crop",
+                "--out",
+                str(out),
+                "--print-path",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO),
+            env={
+                "PYTHONPATH": f"{REPO}:{REPO / 'src'}",
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(Path.home()),
+            },
+        )
+        self.assertEqual(result.stdout.strip(), str(out))
+        self.assertEqual(len(result.stdout.strip().splitlines()), 1)
+        # The note is not lost -- it just belongs on the other stream.
+        self.assertIn("preprocessor: added", result.stderr)
 
     def test_the_step_carries_the_measured_fraction(self):
         from tool.retarget_checkpoint import retarget

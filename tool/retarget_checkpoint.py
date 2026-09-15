@@ -203,7 +203,15 @@ def _carry_extra_processor_steps(source: Path, out: Path, target_type: str) -> N
         config_file.unlink()  # do not write through into the shared base
     config_file.write_text(json.dumps(pipeline, indent=4) + "\n")
     names = ", ".join(s["registry_name"] for s in additions)
-    print(f"  preprocessor: added {names} ahead of the base's own steps")
+    # STDERR. --print-path exists so a shell can capture the path in a
+    # command substitution, and anything else on stdout is captured with it --
+    # which is how a chatty line here became part of a Hub repo id and killed
+    # the run: "Repo id must be in the form 'repo_name'...: '  preprocessor:
+    # added so101_tactile_crop...'".
+    print(
+        f"  preprocessor: added {names} ahead of the base's own steps",
+        file=sys.stderr,
+    )
 
 
 def _target_only_steps(target_type: str) -> "list[dict]":
