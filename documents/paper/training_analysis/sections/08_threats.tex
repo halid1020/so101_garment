@@ -1,0 +1,67 @@
+\section{Threats to validity}
+\label{sec:threats}
+
+This section collects what would have to be true for the conclusions above to
+be wrong. They are gathered here rather than scattered through the report so
+that a reader can weigh them together, and each names a specific confound and
+the measurement that would settle it, rather than hedging.
+
+\paragraph{The split is temporal, not random.}
+The recordings held back are the last seven of a single session, because that is
+what the trainer withholds. Any property that drifted over the session sits
+entirely in the held-back set: the lighting, where the garment was placed
+between takes, wear and residue on the tactile gels. The generalisation gap
+reported in Section~\ref{sec:results} is therefore a gap in time as well as a
+gap in familiarity, and the two cannot be separated from these runs. What would
+settle it is one further retraining per family on a randomly chosen seven, with
+everything else held fixed; if the gap persists it is overfitting, and if it
+collapses it was drift. This is the single largest open question in the report,
+and it bears on its largest effect.
+
+\paragraph{The crop changes two things at once.}
+Cropping removes the outer rows of the tactile image and then resizes what is
+left back to the original shape, which stretches it vertically by a quarter.
+Every statement in this report about cropping is therefore a statement about
+rim removal \emph{and} anisotropic stretching together. An arm that crops
+without resizing would separate them. Until that exists, a null result is a
+null result for this operation, and not evidence that the rim carries no
+information.
+
+\paragraph{The families do not read the same cameras.}
+One family finetunes a pretrained model with a fixed number of image slots,
+fewer than the rig has cameras, so it sees the overhead view and two of the
+four tactile sensors while the others see all five. Its row is consequently not
+an ablation of the same input as the rows above it, and a difference between
+that family and the others confounds architecture with input set.
+
+\paragraph{The held-out sample is small.}
+The held-out errors rest on \num{111} scored frames. A difference of a few per
+cent across that sample is not distinguishable from sampling noise, which
+covers the crop effects reported in Section~\ref{sec:cropping}; a difference of
+severalfold is far outside it, which covers the generalisation gaps. Where a
+claim falls on the wrong side of that line, Section~\ref{sec:findings} says so
+rather than reporting the number as though its size were established.
+
+\paragraph{Attribution measures a difference, not an importance.}
+Suppressing an input and measuring how much the planned action changes says how
+much that input is being used by this trained policy on these frames. It does
+not say the input is necessary for the task, nor that a policy trained without
+it would do worse --- a stream can be ignored because a correlated one carries
+the same information. Retraining with the stream removed is what answers the
+second question, and it costs a training run per stream rather than minutes.
+
+\paragraph{One family's numbers are still pending.}
+The matched retraining of the third family had not finished when this was
+written, so its rows are dashes. Every cross-family statement here is therefore
+a statement about two families, and the third may not follow the same pattern:
+it differs in the cameras it reads, in being a finetune of a pretrained model
+rather than a model trained from scratch, and in planning a different distance
+ahead again.
+
+\paragraph{None of this is an on-robot result.}
+Error against recorded commands measures agreement with one demonstrator on
+recordings that demonstrator produced. It cannot measure whether a policy
+recovers from a state the demonstrator never entered, and a lower error is not
+the same as a higher chance of folding the garment. Only trials on the rig
+settle that, and they would not replace these numbers --- they would bound what
+the numbers are evidence for.

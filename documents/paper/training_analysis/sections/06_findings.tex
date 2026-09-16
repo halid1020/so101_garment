@@ -1,0 +1,66 @@
+\section{Findings}
+\label{sec:findings}
+
+Each finding below is stated in bold, followed by the evidence already
+presented and the bound on what it establishes. Nothing appears here that
+cannot be read off a table or figure earlier in the report, and nothing is
+stated more strongly than the sample behind it allows.
+
+\paragraph{\textbf{On recordings it never saw, the diffusion family beats the
+action-chunking family --- by far less than the obvious comparison suggests.}}
+Over the horizon the two share, the margin is under a tenth; over their own
+horizons it appears to be roughly a third. The direction survives the
+correction and the magnitude does not. \emph{Bound:} the two families differ in
+architecture and in planning horizon at once, and only the second has been
+controlled for here.
+
+\paragraph{\textbf{The two families differ more in how much they degrade than
+in how well they perform.}} On familiar recordings the action-chunking family
+is the more accurate of the two; on unfamiliar ones it is the less accurate. Its
+error grows roughly fourfold between the two halves against under twofold for
+the diffusion family. \emph{Bound:} this is the largest and most robust effect
+in the report, being a ratio within each policy and immune to the horizon
+problem --- but the held-out recordings are the last of the session, so part of
+it may be drift rather than overfitting.
+
+\paragraph{\textbf{Cropping the tactile rim buys nothing that this experiment
+can detect.}} On held-out recordings both families move by about one per cent
+or less, in opposite directions, on a sample too small to resolve either.
+\emph{Bound:} a null result for \emph{this} crop, which removes the rim and
+stretches the remainder together; it is not evidence that the rim carries no
+information.
+
+\paragraph{\textbf{The crop's effect changes sign with horizon.}} For the
+action-chunking family, cropping is better over the first thirty-two steps of
+the chunk and worse over the full hundred. \emph{Bound:} this is visible only
+because the error is reported as a curve; both numbers come from the same pair
+of runs, which is the point.
+
+\paragraph{\textbf{Neither family over-reads the gel rim, and cropping moves
+attention toward it.}} Gradient mass in the outer band sits at two thirds to
+four fifths of what an indifferent model would place there, at every band width
+tested, and rises for both families after cropping. This contradicts the
+observation that motivated the crop. \emph{Bound:} measured on training
+recordings, and the rise after cropping is partly mechanical, since removing
+the outer rows moves the surviving pixels closer to the new edge.
+
+\paragraph{\textbf{The families do not use the rig the same way, and the
+tactile channels rank last for two of the three.}} The action-chunking family
+leans on the overhead camera, the diffusion family on proprioception, and the
+third ranks touch above proprioception --- the only one to do so.
+\emph{Bound:} shares are normalised within a policy, so this is a claim about
+ordering and never about magnitudes; and the third family reads half as many
+tactile cameras as the others.
+
+\paragraph{\textbf{A policy can be flat across its entire planning horizon on
+recordings it trained on.}} The action-chunking family predicts the hundredth
+step of a familiar recording about as accurately as the first. That is what
+reproducing a memorised trajectory looks like, and it is not what planning
+looks like. \emph{Bound:} a statement about behaviour on training data, not
+about competence on the rig.
+
+The two findings that bear most on what to do next are the second and the
+third. The generalisation gap is large, robust, and currently confounded with
+session drift; the crop --- the change actually under test --- does nothing
+measurable. Together they point away from preprocessing the tactile input and
+toward the amount and variety of data behind these policies.
