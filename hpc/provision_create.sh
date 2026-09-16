@@ -101,6 +101,36 @@ CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     echo "⚠️  egl_probe pre-build skipped (already satisfied)."
 pip install -e ".[${LEROBOT_EXTRAS}]"
 
+# 2b. The shared pipeline (parallel ../actoris_harena), EDITABLE ---------
+# THE PIPELINE IS NOT IN THIS REPO. Training, the policies, the run matrix
+# and the analysis all live in actoris_harena, so a cluster without it can
+# clone this repo, build a venv, and still fail at `import` the moment a
+# job starts -- after the GPU has been reserved.
+#
+# It was a hand step on every machine until now, which is exactly the kind
+# of step that is remembered on the machine you are looking at and
+# forgotten on the next one. MEASURED 2026-09-16: a fresh Viking checkout
+# had LeRobot and this repo and no pipeline at all.
+#
+# `[rig]` and NEVER `[sim]`: the two extras cannot coexist, because LeRobot
+# pins numpy>=2.0,<2.3 and the simulation stack pins numpy<2.0. On a shared
+# cluster the sim extra may already be what that checkout was used for, so
+# this is a real hazard here and not a theoretical one.
+#
+# EDITABLE, deliberately: whatever branch is checked out there is what this
+# repo imports, so a `git pull` on the cluster updates the pipeline without
+# a reinstall -- and a `git checkout` changes this repo's behaviour with no
+# warning, which is why the branch is printed below rather than assumed.
+HARENA_DIR="${SO101_HARENA_DIR:-$REPO_ROOT/../actoris_harena}"
+echo "=> Installing the shared pipeline from ${HARENA_DIR}..."
+if [ ! -d "$HARENA_DIR" ]; then
+    echo "=> Cloning actoris_harena..."
+    git clone https://github.com/halid1020/actoris_harena.git "$HARENA_DIR"
+fi
+pip install -e "${HARENA_DIR}[rig]"
+echo "   pipeline branch: $(git -C "$HARENA_DIR" rev-parse --abbrev-ref HEAD) \
+($(git -C "$HARENA_DIR" rev-parse --short HEAD))"
+
 # 3. This repo's extra requirements ------------------------------------
 cd "$REPO_ROOT"
 echo "=> Installing project requirements..."
