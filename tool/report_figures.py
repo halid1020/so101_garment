@@ -97,9 +97,25 @@ def draw_horizon(results: "dict[str, dict]", out: Path) -> Path:
     roughly fifty times ACT's, so on a linear axis ACT and Diffusion collapse
     onto the floor as one indistinguishable line and the figure answers nothing
     about the two arms the report is mostly about.
+
+    THE POLICIES DO NOT SHARE A HORIZON, and this figure is where that stops
+    being invisible. ACT predicts a hundred steps and Diffusion thirty-two, so
+    a mean error over each policy's own chunk compares one that must guess three
+    times further ahead against one that need not. MEASURED: over their native
+    horizons Diffusion beats ACT on held-out data by 35 %, and over the common
+    first thirty-two steps by 9 %. The shaded band marks the shortest horizon
+    any drawn arm has -- everything left of it is like-for-like, everything
+    right of it is one policy being asked a harder question.
     """
     figure, axes = plt.subplots(1, 2, figsize=(11, 4.4), sharey=True)
     drawn = 0
+    horizons = [
+        len(r[h]["mse_per_step"])
+        for r in results.values()
+        for h in ("train", "validation")
+        if r.get(h, {}).get("mse_per_step")
+    ]
+    common = min(horizons) if horizons else 0
     for panel, half in zip(axes, ("train", "validation")):
         for arm, label, _crop in ARMS:
             result = results.get(arm)
@@ -111,6 +127,16 @@ def draw_horizon(results: "dict[str, dict]", out: Path) -> Path:
             steps = np.arange(1, len(per_step) + 1)
             panel.plot(steps, per_step, label=label, **style_for(arm))
             drawn += 1
+        if common:
+            panel.axvspan(0.5, common + 0.5, color=GRID, alpha=0.55, zorder=0)
+            panel.annotate(
+                f"shared horizon\n(first {common} steps)",
+                xy=(common / 2, 0.02),
+                xycoords=("data", "axes fraction"),
+                ha="center",
+                fontsize=8,
+                color=MUTED,
+            )
         panel.set_yscale("log")
         panel.set_xlabel("step within the predicted chunk")
         tidy(panel)
@@ -128,8 +154,14 @@ def draw_horizon(results: "dict[str, dict]", out: Path) -> Path:
         bbox_to_anchor=(0.5, -0.06),
         fontsize=9,
     )
+    # The title says what the curves show and not what a headline would prefer.
+    # ACT's error is FLAT across its whole chunk on recordings it trained on --
+    # about 6 at the first step and 11 at the hundredth -- which is not "a plan
+    # decays with horizon" at all, and an earlier draft of this title said
+    # exactly that and was wrong about half the figure.
     figure.suptitle(
-        "A plan is most wrong at its far end, and the gap widens on unseen data",
+        "ACT is flat across its own chunk on recordings it memorised, "
+        "and steep on recordings it did not",
         color=INK,
         fontsize=12,
     )
@@ -149,12 +181,18 @@ def draw_gap(results: "dict[str, dict]", out: Path) -> Path:
     present = [(a, lab) for a, lab, _c in ARMS if a in results]
     if not present:
         raise SystemExit("no arms on disk to draw")
-    figure, axis = plt.subplots(figsize=(9, 4.6))
+    figure, axis = plt.subplots(figsize=(9, 4.8))
     x = np.arange(len(present))
     width = 0.38
 
-    train = [results[a]["train"]["rmse"] for a, _ in present]
-    held = [results[a]["validation"]["rmse"] for a, _ in present]
+    # EVERY bar over the same number of steps. The recorded `rmse` averages
+    # over each policy's own horizon, and ACT's is a hundred steps against
+    # Diffusion's thirty-two -- so plotting the recorded numbers side by side
+    # shows ACT losing partly because it was asked to plan three times further
+    # ahead. An earlier draft of this figure did exactly that.
+    common = min(r["validation"]["horizon"] for r in results.values())
+    train = [rmse_over(results[a], "train", common) for a, _ in present]
+    held = [rmse_over(results[a], "validation", common) for a, _ in present]
     colours = [FAMILY[family_of(a)] for a, _ in present]
 
     axis.bar(x - width / 2, train, width, color=colours, alpha=0.45, label="trained on")
@@ -181,6 +219,19 @@ def draw_gap(results: "dict[str, dict]", out: Path) -> Path:
         color=INK,
         fontsize=12,
     )
+    natives = ", ".join(
+        f"{lab} {results[a]['validation']['horizon']}" for a, lab in present
+    )
+    figure.text(
+        0.5,
+        -0.04,
+        f"Every bar is scored over the first {common} steps of the chunk, which "
+        f"is the longest horizon every arm shares.\nNative horizons differ "
+        f"({natives}); scoring each over its own would compare unequal questions.",
+        ha="center",
+        fontsize=8.5,
+        color=MUTED,
+    )
     tidy(axis)
     figure.tight_layout()
     figure.savefig(out, dpi=150, bbox_inches="tight")
@@ -189,26 +240,45 @@ def draw_gap(results: "dict[str, dict]", out: Path) -> Path:
     return out
 
 
-def table_rows(results: "dict[str, dict]") -> "list[list[str]]":
+def rmse_over(result: dict, half: str, steps: "int | None" = None) -> float:
+    """RMSE over the first `steps` of the chunk, or over all of it.
+
+    The reason this exists rather than reading `rmse` straight out of the file:
+    the recorded number averages over each policy's OWN horizon, and the
+    horizons differ — a hundred steps for ACT, thirty-two for Diffusion. Read
+    without care that makes a policy asked to plan three times further ahead
+    look worse at planning, which is a different claim entirely.
+    """
+    per_step = np.array(result[half]["mse_per_step"], dtype=float)
+    if steps:
+        per_step = per_step[:steps]
+    return float(np.sqrt(per_step.mean()))
+
+
+def table_rows(
+    results: "dict[str, dict]", common: "int | None" = None
+) -> "list[list[str]]":
     """The cross-policy table, as cells. Shared by the LaTeX and the console."""
     rows = []
     for arm, label, _crop in ARMS:
         result = results.get(arm)
         if not result:
-            rows.append([label, "--", "--", "--", "--", "--", "--"])
+            # A pending arm is a row of dashes and never an omitted line: a
+            # table that silently lost pi0.5 reads as a complete comparison.
+            rows.append([label, "--", "--", "--", "--", "--"])
             continue
         train, held = result["train"], result["validation"]
         rows.append(
             [
                 label,
-                f"{train['rmse']:.3f}",
-                f"{held['rmse']:.3f}",
-                f"{held['rmse'] / train['rmse']:.1f}",
-                f"{held['first_step_mse']:.1f}",
-                f"{held['last_step_mse']:.1f}",
-                f"{held['mse_grippers']:.5f}",
+                str(held["horizon"]),
+                f"{rmse_over(result, 'train'):.3f}",
+                f"{rmse_over(result, 'validation'):.3f}",
+                f"{rmse_over(result, 'validation') / rmse_over(result, 'train'):.1f}",
+                f"{rmse_over(result, 'validation', common):.3f}" if common else "--",
             ]
         )
+        del train, held
     return rows
 
 
@@ -219,17 +289,18 @@ def write_table(results: "dict[str, dict]", out: Path) -> Path:
     into prose drifts from the run it came from the first time anything is
     retrained, and nothing catches it.
     """
+    horizons = [r["validation"]["horizon"] for r in results.values()]
+    common = min(horizons) if horizons else None
     header = (
-        "policy & train RMSE & held-out RMSE & gap & first step & last step "
-        "& grippers \\\\"
+        "policy & horizon & train & held-out & gap & " f"held-out, first {common} \\\\"
     )
     lines = [
-        "\\begin{tabular}{lrrrrrr}",
+        "\\begin{tabular}{lrrrrr}",
         "\\toprule",
         header,
         "\\midrule",
     ]
-    for row in table_rows(results):
+    for row in table_rows(results, common):
         lines.append(" & ".join(row) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
     out.write_text("\n".join(lines) + "\n")
