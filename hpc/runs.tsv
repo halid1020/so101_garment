@@ -111,15 +111,21 @@ fold-short-from-flattend-tactile pi05      left_arm_left_gripper,right_arm_left_
 # exports HF_HUB_OFFLINE=1, so an unstaged weight fails AFTER the GPU is taken.
 fold-short-from-flattend-tactile harena_fastwam central,tactile_quad             30000   8      36     -       -
 
-# The world action model, and the control it is measured against. Neither has
-# ever been trained; both are launchable today.
+# The world action model, and the control it is measured against.
 #
-# MEASURED 2026-09-07 on this laptop's CPU, which is the cheap half of the
-# question: harena_dreamzero builds and takes optimiser steps end to end at 59M
-# learnable parameters (loss 3.94 at step 1), so a GPU row will not die on a
-# construction error hours in. What is NOT measured is a batch ceiling on any
-# GPU -- no destination names a limit for either, so the first real run should
-# be a short probe that writes one into src/conf/train_destinations.yaml.
+# MEASURED 2026-09-15 on thanos: harena_dreamzero at batch 2, 4 and 8 all
+# survived 400 steps at 3.35, 5.56 and 9.89 GB, so the sweep never found a
+# ceiling on a 24.5 GiB card and no `limits` entry names one -- a guessed
+# number refuses rows that fit. The VRAM figures are lerobot's own mem_gb
+# field; the probe's nvidia-smi query ran after each arm exited and measured an
+# idle card.
+#
+# WHAT BINDS IT IS TIME AND POWER, not memory. 0.77 step/s makes this row about
+# 25 hours of the 36 it asks for. And at EIGHT loader workers it drew 404 W of
+# a 480 W limit and took thanos down 50 minutes in -- above the 395 W peak of
+# the diffusion arm that trained through. Four workers did not lower the peak
+# (415 W) or change the step rate, so the protection is a short save_freq and a
+# loop that resumes, not a smaller worker count.
 #
 # STAGE THE VAE FIRST. DreamZero encodes video with a frozen
 # stabilityai/sd-vae-ft-mse (~330 MB) fetched from the Hub, and every launcher
