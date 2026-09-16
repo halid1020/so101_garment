@@ -1,0 +1,73 @@
+\section{How each figure was made}
+\label{sec:provenance}
+
+This section describes how every figure and table in the report was produced,
+so that a reader can judge what each one can support. The descriptions are of
+what was computed and from what. They name no software, because the report
+describes the experiment rather than the code that ran it.
+
+One principle governs all of them. Every figure is regenerated from the result
+files the experiments wrote, and no number is transcribed by hand at any point.
+A figure therefore cannot drift away from the run it describes: when a policy is
+retrained, the figures are redrawn and the numbers follow. The tables are
+produced the same way and inserted whole, so a value in a table and the same
+value in the text cannot disagree.
+
+\paragraph{The recordings, Figure~\ref{fig:contact}.}
+One frame is taken from the temporal midpoint of every recording, using the
+overhead camera, and the frames are laid out in recording order. The midpoint
+rather than the opening frame, because every recording begins with the same
+flattened garment and a sheet of opening frames would be sixty-five copies of
+one picture. The outline marks the recordings the trainer withheld, read from
+the trained model's own configuration rather than assumed, so the figure cannot
+disagree with the split that was actually used.
+
+\paragraph{The action error, Table~\ref{tab:policies} and
+Figures~\ref{fig:gap} and~\ref{fig:horizon}.}
+Every twentieth frame of a recording is given to the policy as an observation.
+The policy plans a chunk of future commands, and that chunk is compared step by
+step against what the demonstrator actually commanded next. Squaring and
+averaging those differences over all sampled frames, separately at each position
+within the chunk, gives the curve in Figure~\ref{fig:horizon}; averaging that
+curve over its whole length and taking the square root gives one number per
+policy. The shared-horizon column is the same curve averaged over only its first
+thirty-two positions, which is why the two columns can differ for the same
+policy and why both are reported. Policies whose output is sampled have their
+sampler fixed to a recorded seed, so that rerunning the scoring reproduces the
+number rather than redrawing it.
+
+\paragraph{The input contributions, Figure~\ref{fig:streams}.}
+For each sampled frame the policy plans once with all inputs present. Each input
+group is then replaced in turn by an uninformative substitute --- the average of
+that input across the dataset, so the substitution carries no information rather
+than introducing an artificial edge --- and the policy plans again. The size of
+the change between the two plans is that group's contribution on that frame.
+Contributions are summed over frames and normalised to sum to one within each
+policy, which is what restricts the figure to statements about ordering.
+
+\paragraph{The rim measure, Figure~\ref{fig:rim}.}
+Gradient maps are computed for the tactile cameras, giving one map per camera
+per frame. A band is defined around the edge of each map in \emph{normalised}
+coordinates --- a fraction of the image, not a count of cells --- because the
+policy families produce maps at different resolutions and a fixed number of
+cells would mean a different fraction of the image for each. The mass falling
+inside the band is divided by the mass a completely flat map of the same
+resolution would place there, which is what makes a value comparable across
+resolutions and gives the dashed reference line its meaning. Three band widths
+are reported so that the conclusion cannot depend on one arbitrary choice.
+
+\paragraph{The videos --- pending at the time of writing.}
+The recordings the report scores are held-out ones, while every attribution run
+completed so far covers recordings the policies trained on. Drawing a saliency
+video from training frames and placing it beside error measured on held-out
+frames would invite precisely the comparison this report is careful to avoid
+elsewhere, so the videos wait for attribution on a held-out recording. What
+follows describes how they are built, not what they show.
+The saliency videos are built from the same per-frame contributions as
+Figure~\ref{fig:streams}, computed on one held-out recording and drawn as one
+panel per policy in a single frame, so that the policies are compared on
+identical input at identical moments. Every panel of a cropped policy is drawn
+from the cropped image that policy actually receives, not from the full image,
+because showing an input the policy never saw would misrepresent what it was
+attending to. The still strips in this report are frames sampled from those
+videos at regular intervals.
