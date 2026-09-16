@@ -1,0 +1,46 @@
+\section{The recordings and the split}
+\label{sec:recordings}
+
+This section describes the corpus, how it is divided into recordings used for
+training and recordings held back, and how much of it the reported numbers
+actually rest on. Figure~\ref{fig:contact} shows the corpus and the division
+visually; Section~\ref{sec:results} then uses that division throughout.
+
+The corpus is a single task recorded in one session: a garment, already
+flattened, is folded once by two arms under teleoperation. It holds
+\num{65} recordings and \num{30141} frames at \SI{30}{\hertz}, giving a little
+over sixteen minutes of demonstration. Every frame carries five camera images
+and the commanded joint positions of both arms. Four of the five cameras are
+tactile, so most of the visual input is gel imagery that changes very little
+until the grippers close on cloth.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{recordings.png}
+  \caption{Every recording in the corpus, one frame from the middle of each,
+  ordered as they were recorded. The seven outlined in the second colour are
+  held back from training. They are the last seven, not a random seven, which
+  is a property of the trainer rather than a choice made here and is what
+  Section~\ref{sec:threats} returns to.}
+  \label{fig:contact}
+\end{figure}
+
+The division is made by the trainer and not by hand, so that the recordings
+held back are exactly those the trainer withheld. Asked to hold back a tenth,
+it takes the \emph{last} tenth of the recordings of each task, rounded upward:
+here, \num{58} recordings for training and the final \num{7} held back. This
+matters more than the proportion does. Anything that drifted over the course of
+the session --- the lighting, where the garment was placed, wear on the gel ---
+sits entirely inside the held-back set. A difference between the two halves is
+therefore a difference in time as well as a difference in familiarity, and no
+number in this report can separate the two. Section~\ref{sec:threats} says what
+would.
+
+The reported errors rest on a sample of those frames rather than all of them,
+because each scored frame requires a full forward pass and a comparison against
+the recorded future. Sampling one frame in twenty gives \num{1127} scored
+frames from the training recordings and \num{111} from the held-back ones. The
+second number is small, and it bounds what can be claimed: an effect of a few
+per cent on \num{111} frames is not distinguishable from sampling noise, while
+a difference of several fold is. Section~\ref{sec:findings} marks which of its
+claims fall on each side of that line.

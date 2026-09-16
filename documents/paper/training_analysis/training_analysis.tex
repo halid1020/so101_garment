@@ -1,0 +1,56 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage[numbers]{natbib}
+
+% Guideline convention: flag design choices that lack a solid reason.
+\newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
+
+% Figures are kept beside this document rather than referenced out of the
+% results tree, because that tree is not version controlled and the report must
+% rebuild on a machine that has never run the experiments.
+\graphicspath{{figures/}}
+
+\title{Cropped Tactile Inputs and Held-Out Behaviour:\\
+A Comparison of Three Visuomotor Policy Families on a Bimanual
+Garment-Folding Rig}
+
+\author{so101\_garment project\thanks{A report, not a living paper. It records
+one comparison and the evidence behind it. Claims that graduate from here into
+the real-world training paper must be copied there in the same branch, under
+that paper's living-document rule. The repository's writing guideline governs
+its style.}}
+
+\date{Last updated: \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A bimanual rig fitted with fingertip tactile cameras learns garment folding
+from teleoperated demonstrations. Gradient attribution computed on training
+recordings placed weight at the edges of the tactile images, including before
+contact, which is consistent with light entering at the boundary of the
+sensing gel rather than with contact being sensed. This report evaluates the
+remedy that follows from that reading: cropping each tactile image to its
+centre. Every policy is retrained with a held-out split so that behaviour can
+be measured on recordings it never saw, and each cropped policy is matched to
+its uncropped twin in architecture, optimisation budget and data. The
+comparison reverses several conclusions that had been drawn from training
+recordings alone, and two of those reverse a second time once the families are
+compared over a planning horizon they share rather than over their own. We give
+the provenance of every figure so that each claim can be checked, and we state
+the confounds that remain open, including one that the present split cannot
+separate.
+\end{abstract}
+
+\input{sections/01_scope}
+\input{sections/02_recordings}
+\input{sections/03_results}
+
+\end{document}

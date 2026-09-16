@@ -1,0 +1,85 @@
+\section{What the policies do, trained and unseen}
+\label{sec:results}
+
+This section compares the families on recordings they trained on and recordings
+they never saw. Table~\ref{tab:policies} carries the headline numbers,
+Figure~\ref{fig:gap} shows the distance between the two halves, and
+Figure~\ref{fig:horizon} shows the shape that the single numbers hide. One
+property of the comparison has to be settled before any number is quoted, and
+it is the subject of the next paragraph.
+
+\paragraph{The families do not plan the same distance ahead.}
+Each policy emits a chunk of future commands from one observation, and the
+length of that chunk is a property of the family. One emits a hundred steps,
+another thirty-two. An error averaged over each policy's own chunk therefore
+compares a policy that must commit to more than three seconds of future motion
+against one that commits to one second, and reports the difference as skill.
+This is not a small correction. Over their own horizons the shorter-horizon
+family appears to beat the longer-horizon one by roughly a third; over the
+thirty-two steps they share, the margin falls to under a tenth. Every
+cross-family claim in this report therefore rests on the shared-horizon figure,
+which Table~\ref{tab:policies} reports in its own column beside the native one
+so neither can be quoted without the other.
+
+\begin{table}[t]
+  \centering
+  \caption{Action error against the recorded commands, as a root-mean-square
+  deviation. \emph{Horizon} is the number of future steps the family commits to
+  from one observation. The left group scores each policy over its own horizon;
+  the right group rescores every policy over the shortest horizon any of them
+  uses, and is the only group safe to read across rows. \emph{Gap} is held-out
+  error divided by trained-on error. It appears in both groups because it
+  differs between them: the longer-horizon family's ratio falls from
+  \num{5.3} to \num{4.1} when the far end of its chunk --- where its held-out
+  error grows fastest --- is excluded. The dashes are the policy family whose
+  matched retraining had not finished when this was written.}
+  \label{tab:policies}
+  \small
+  \input{tables/policy_table}
+\end{table}
+
+Read across the shared-horizon column, the two families that have completed
+differ by less than a tenth, with the diffusion family ahead. Read down the gap
+column, they differ by more than twofold: the action-chunking family is roughly
+four times worse on recordings it never saw than on recordings it trained on,
+while the diffusion family is under twice as bad. The gap is a ratio computed
+within a single policy, so it is immune to the horizon problem that governs the
+rest of the table, and it is the largest and most robust effect reported here.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\textwidth]{train_vs_heldout.png}
+  \caption{Trained-on against held-out error, every bar scored over the shared
+  horizon. The annotation above each pair is the ratio between them. What the
+  figure is for is the distance between the two bars of a pair, not the height
+  of any bar: the heights depend on the units of the commanded joints, while
+  the ratio does not.}
+  \label{fig:gap}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{horizon_decay.png}
+  \caption{Error against position within the predicted chunk, on a logarithmic
+  axis because the families differ by more than an order of magnitude and a
+  linear axis collapses two of them onto the floor. The shaded band is the
+  shared horizon. The trained-on panel shows the finding that the averaged
+  numbers hide: the action-chunking family is almost flat across its entire
+  chunk on recordings it trained on, and steep on recordings it did not.}
+  \label{fig:horizon}
+\end{figure}
+
+Figure~\ref{fig:horizon} shows why a single number per policy is not enough. On
+recordings it trained on, the action-chunking family's error barely grows from
+the first step of the chunk to the hundredth --- it predicts the far future of a
+familiar recording about as accurately as the near future, which is what
+reproducing a memorised trajectory looks like and is not what planning looks
+like. On recordings it never saw, the same family's error climbs steeply with
+distance into the chunk. The diffusion family climbs steeply in both panels,
+which is the ordinary and expected behaviour: predictions further ahead are
+worse.
+
+\unjustified{} the sampling rate of one frame in twenty was chosen to keep the
+scoring of six policies within a working day and has not been shown to leave
+the reported errors unchanged. A denser sample would tighten the held-out
+figures, whose frame count Section~\ref{sec:recordings} gives as small.

@@ -265,20 +265,32 @@ def table_rows(
         if not result:
             # A pending arm is a row of dashes and never an omitted line: a
             # table that silently lost pi0.5 reads as a complete comparison.
-            rows.append([label, "--", "--", "--", "--", "--"])
+            rows.append([label, "--", "--", "--", "--", "--", "--"])
             continue
-        train, held = result["train"], result["validation"]
+        held = result["validation"]
+        native_gap = rmse_over(result, "validation") / rmse_over(result, "train")
+        shared_held: "float | None" = None
+        shared_gap: "float | None" = None
+        if common:
+            shared_held = rmse_over(result, "validation", common)
+            shared_gap = shared_held / rmse_over(result, "train", common)
+        # BOTH gaps, because they are different numbers and neither can be
+        # labelled honestly on its own: over its native hundred steps the
+        # action-chunking family's ratio is 5.3, and over the thirty-two it
+        # shares with the diffusion family it is 4.1. The bar figure annotates
+        # the shared one, so a table showing only the native one would look
+        # like one of the two was simply wrong.
         rows.append(
             [
                 label,
                 str(held["horizon"]),
                 f"{rmse_over(result, 'train'):.3f}",
                 f"{rmse_over(result, 'validation'):.3f}",
-                f"{rmse_over(result, 'validation') / rmse_over(result, 'train'):.1f}",
-                f"{rmse_over(result, 'validation', common):.3f}" if common else "--",
+                f"{native_gap:.1f}",
+                f"{shared_held:.3f}" if shared_held is not None else "--",
+                f"{shared_gap:.1f}" if shared_gap is not None else "--",
             ]
         )
-        del train, held
     return rows
 
 
@@ -291,12 +303,20 @@ def write_table(results: "dict[str, dict]", out: Path) -> Path:
     """
     horizons = [r["validation"]["horizon"] for r in results.values()]
     common = min(horizons) if horizons else None
-    header = (
-        "policy & horizon & train & held-out & gap & " f"held-out, first {common} \\\\"
+    # TWO groups of columns, headed so they cannot be confused. The gap over a
+    # policy's own horizon and over the shared one are different numbers -- 5.3
+    # against 4.1 for the longer-horizon family -- and a table showing one while
+    # a figure annotates the other reads as an error in one of them.
+    subhead = (
+        "& & \\multicolumn{3}{c}{over its own horizon} & "
+        f"\\multicolumn{{2}}{{c}}{{over the shared first {common}}} \\\\"
     )
+    header = "policy & horizon & train & held-out & gap & held-out & gap \\\\"
     lines = [
-        "\\begin{tabular}{lrrrrr}",
+        "\\begin{tabular}{lrrrrrr}",
         "\\toprule",
+        subhead,
+        "\\cmidrule(lr){3-5}\\cmidrule(lr){6-7}",
         header,
         "\\midrule",
     ]
@@ -343,3 +363,90 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def draw_contact_sheet(dataset: Path, out: Path, held_out: "list[int]") -> Path:
+    """One frame from the middle of every recording, with the held-back ones marked.
+
+    The point is to make the split concrete. "58 training and 7 held out" is two
+    integers a reader nods at; a sheet of sixty-five frames shows how similar the
+    recordings are to one another, which is the thing that decides whether
+    holding out the last seven is a mild or a severe test.
+
+    Frames come from the overhead camera, at the midpoint of each recording. The
+    midpoint rather than the first frame on purpose: the first frame of every
+    recording shows the same flattened garment before either arm has moved, so a
+    sheet of first frames would look identical sixty-five times over and show
+    nothing at all.
+    """
+    import av
+    import pandas as pd
+
+    key = "observation.images.central"
+    episodes = pd.read_parquet(next((dataset / "meta" / "episodes").rglob("*.parquet")))
+    held = set(held_out)
+
+    # Column names here contain dots (`videos/observation.images.central/...`),
+    # and itertuples renames those into attributes that no longer match. Index
+    # the columns by their real names instead.
+    thumbs: "list[tuple[int, np.ndarray]]" = []
+    for position in range(len(episodes)):
+        row = episodes.iloc[position]
+        index = int(row["episode_index"])
+        chunk = int(row[f"videos/{key}/chunk_index"])
+        file_index = int(row[f"videos/{key}/file_index"])
+        start = float(row[f"videos/{key}/from_timestamp"])
+        end = float(row[f"videos/{key}/to_timestamp"])
+        path = (
+            dataset
+            / "videos"
+            / key
+            / f"chunk-{chunk:03d}"
+            / f"file-{file_index:03d}.mp4"
+        )
+        middle = (start + end) / 2.0
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            container.seek(int(middle / stream.time_base), stream=stream)
+            frame = next(container.decode(stream))
+            image = frame.to_ndarray(format="rgb24")
+        thumbs.append((index, image[::8, ::8]))
+
+    columns = 9
+    rows = int(np.ceil(len(thumbs) / columns))
+    figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.35, rows * 1.1))
+    for axis in np.ravel(axes):
+        axis.axis("off")
+    for axis, (index, image) in zip(np.ravel(axes), thumbs):
+        axis.imshow(image)
+        axis.axis("off")
+        marked = index in held
+        for spine in ("top", "bottom", "left", "right"):
+            axis.spines[spine].set_visible(False)
+        axis.set_title(
+            f"{index}", fontsize=6, color=FAMILY["diffusion"] if marked else MUTED
+        )
+        if marked:
+            # An outline and a colour, never colour alone: this has to survive a
+            # greyscale print and a reader who cannot separate the two hues.
+            axis.add_patch(
+                plt.Rectangle(
+                    (0, 0),
+                    image.shape[1] - 1,
+                    image.shape[0] - 1,
+                    fill=False,
+                    edgecolor=FAMILY["diffusion"],
+                    linewidth=2.5,
+                )
+            )
+    figure.suptitle(
+        f"{len(thumbs)} recordings, one frame from the middle of each — "
+        f"the {len(held)} outlined are held back from training",
+        color=INK,
+        fontsize=11,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  contact sheet: {len(thumbs)} recordings -> {out}")
+    return out
