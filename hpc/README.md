@@ -353,6 +353,45 @@ HF_HUB_OFFLINE=1 venv/bin/python -c \
 Skip all this and a `pi05` row fails at startup; `act` and `diffusion` rows are
 unaffected either way.
 
+#### What a `fastwam` row needs
+
+FastWAM is a Wan2.2-class video model that assembles itself from **four**
+separate repos, none of which a compute node can reach. Same rule as pi0.5,
+four times over — stage it once, on the login node:
+
+```bash
+SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
+```
+
+| Repo | What it is | How much |
+|------|-----------|----------|
+| `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | most of the ~20 GB |
+| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | several GB |
+| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | ~5 MB |
+| `lerobot/fastwam_base` | the action expert's starting weights | ~4 GB |
+
+None of the four is licence-gated, so unlike pi0.5's tokenizer this needs no
+token — only bandwidth and a login node that will not kill the download.
+
+Two more things a `fastwam` row needs, and neither is about staging:
+
+- **Exactly two camera features**, `central,tactile_quad`. The Wan backbone
+  concatenates image features into one tensor of 224×448, so their widths must
+  sum to 448 — the 2×2 fingertip composite exists for this reason. The run
+  matrix refuses any other camera set before anything is reserved.
+- **An H200, not an A100.** It is roughly 6 B parameters; `freeze_video_expert`
+  leaves about 1 B of action expert training, which is what makes a finetune
+  feasible at all.
+
+```bash
+SBATCH_CONSTRAINT=h200 bash hpc/submit_real.sh --only harena_fastwam
+```
+
+`harena_fastwam_predict` is the same model with its predicted future exposed,
+so it stages and trains identically — see
+[the world action model](../documents/world_action_model.md).
+
+
 ### 2. Stage the datasets — *collection box (NOT CREATE)*
 
 ```bash

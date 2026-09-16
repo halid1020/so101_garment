@@ -277,6 +277,76 @@ else
     echo "   Training a pi05 row needs both: re-run with SO101_STAGE_PI05=1"
 fi
 
+# 6. Pre-stage FastWAM's four repos (only if a fastwam row is trained) -------
+# FastWAM is a Wan2.2-class video model and it assembles itself from FOUR
+# separate places, none of which a compute node can reach behind
+# HF_HUB_OFFLINE=1. About 20 GB in total, so this is opt-in as pi0.5 is:
+# `SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh`.
+#
+# The four, and why each is separate -- read off the loaders in
+# actoris_harena/policies/fastwam/wan/components.py rather than guessed:
+#   * Wan-AI/Wan2.2-TI2V-5B -- the MoT DiT shards ALONE. `load_wan_dit_paths`
+#     passes allow_patterns=["diffusion_pytorch_model*.safetensors"], so the
+#     rest of that repo is never read and staging it whole would cost hours of
+#     login-node bandwidth for files nothing opens.
+#   * Wan-AI/Wan2.2-TI2V-5B-Diffusers -- TWO subfolders from one repo: `vae`
+#     (AutoencoderKLWan) and `text_encoder` (UMT5-XXL, the big one).
+#   * google/umt5-xxl -- the TOKENIZER only. It is a different repo from the
+#     encoder above and it must stay compatible with it: the encoder's
+#     embedding table is indexed by this vocabulary.
+#   * lerobot/fastwam_base -- the action expert's starting weights, which is
+#     what makes a finetune of this size feasible at all.
+#
+# The same whole-snapshot assertion as pi0.5, for the same measured reason: a
+# login-node watchdog that kills a multi-gigabyte download leaves a stale
+# `.incomplete` blob, huggingface_hub picks a new temp name next time so it
+# does NOT resume, and nothing complains until a compute node opens it.
+if [ "${SO101_STAGE_FASTWAM:-0}" = "1" ]; then
+    echo "=> Pre-staging FastWAM's four repos (~20 GB) into the HF cache..."
+    python - <<'FASTWAM_PY' || exit 1
+import sys
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+# (repo, allow_patterns or None, what it is)
+WANTED = [
+    (
+        "Wan-AI/Wan2.2-TI2V-5B",
+        ["diffusion_pytorch_model*.safetensors"],
+        "the MoT DiT shards",
+    ),
+    (
+        "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        ["vae/*", "text_encoder/*", "*.json"],
+        "the VAE and the UMT5-XXL encoder",
+    ),
+    ("google/umt5-xxl", ["*.json", "*.model", "spiece.model"], "the tokenizer"),
+    ("lerobot/fastwam_base", None, "the action expert's base weights"),
+]
+
+for repo, patterns, what in WANTED:
+    print(f"   -> {repo}: {what}")
+    path = Path(snapshot_download(repo_id=repo, allow_patterns=patterns))
+    repo_dir = path.parent.parent          # .../models--<org>--<name>
+    stale = sorted(repo_dir.glob("blobs/*.incomplete"))
+    if stale:
+        print(
+            f"❌ {repo} is only PART-downloaded: {len(stale)} unfinished blob(s)\n"
+            f"   under {repo_dir / 'blobs'}. Delete them and re-run; huggingface_hub\n"
+            "   renames its temp file each attempt, so it will NOT resume on its own.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"   ✓ {repo} at {path}")
+
+print("✓ FastWAM's four repos staged; a compute node can build it offline.")
+FASTWAM_PY
+else
+    echo "=> Skipping FastWAM's four repos (~20 GB)."
+    echo "   Training a fastwam row needs all four: re-run with SO101_STAGE_FASTWAM=1"
+fi
+
 echo "=================================================="
 echo "✓ CREATE provisioning complete (sim-only subset)."
 echo "  Next: stage the dataset to scratch, then submit the job."
