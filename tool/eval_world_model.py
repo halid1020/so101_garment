@@ -79,8 +79,30 @@ def load_dataset(policy, root: str, episodes: "list[int]"):
 
 
 @torch.no_grad()
-def evaluate_frame(policy, batch: dict) -> "dict[str, dict[str, list[float]]]":
-    """Predicted vs actual for one observation, per camera, per horizon step."""
+def evaluate_frame(
+    policy, batch: dict, seed: "int | None" = None
+) -> "dict[str, dict[str, list[float]]]":
+    """Predicted vs actual for one observation, per camera, per horizon step.
+
+    ``seed`` pins the sampler. It is not optional in spirit, only in signature:
+    DreamZero integrates its flow from ``torch.randn`` and FastWAM's
+    ``infer_joint`` samples too, so two passes over ONE observation disagree and
+    a run scored twice reports two different answers.
+
+    MEASURED 2026-09-16, by accident -- two copies of the same scoring script
+    ran over the same step-2000 checkpoint and wrote in turn. Per-camera PSNR
+    moved by up to 0.05 dB (5.77 against 5.82 on one fingertip) while every
+    held-last-frame baseline was identical to the digit, which is what locates
+    the difference in the sampler rather than in frame selection: holding a
+    frame involves no sampling. 0.05 dB is small beside the 13 dB that separates
+    this checkpoint from its baseline, and it is NOT small beside the difference
+    two trained arms would be compared on.
+    """
+    if seed is not None:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
     config = policy.config
     context_frames = config.n_context_chunks * config.latent_frames_per_chunk
 
@@ -186,6 +208,13 @@ def main() -> int:
     parser.add_argument("--every", type=int, default=20, help="sample one frame in N")
     parser.add_argument("--max-frames", type=int, default=40)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="pins the sampler; --seed -1 leaves it free, which makes the run "
+        "irreproducible and is only useful for measuring the sampler's own spread",
+    )
     parser.add_argument("--out", default=None)
     parser.add_argument("--no-figures", action="store_true")
     args = parser.parse_args()
@@ -200,6 +229,7 @@ def main() -> int:
             "observations, so there is no future to score."
         )
 
+    pinned = None if args.seed < 0 else args.seed
     episodes = parse_range(args.episodes)
     dataset = load_dataset(policy, args.dataset, episodes)
     print(f"checkpoint : {args.checkpoint}\npolicy     : {policy_type}")
@@ -216,7 +246,10 @@ def main() -> int:
             if isinstance(value, torch.Tensor)
         }
         try:
-            collected.append(evaluate_frame(policy, batch))
+            # The SAME seed for every frame, not seed+index: each frame is an
+            # independent prediction, and what has to be reproducible is the
+            # noise this observation is integrated from.
+            collected.append(evaluate_frame(policy, batch, seed=pinned))
         except ValueError as exc:  # a frame too near an episode edge to pad
             print(f"  skipped frame {index}: {exc}")
         print(f"\r  {len(collected)} frames", end="", flush=True)
@@ -231,6 +264,7 @@ def main() -> int:
         "dataset": str(args.dataset),
         "episodes": episodes,
         "frames": len(collected),
+        "seed": pinned,
         "per_camera": summary,
     }
     (out_dir / "prediction.json").write_text(json.dumps(payload, indent=2) + "\n")
