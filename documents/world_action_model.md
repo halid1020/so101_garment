@@ -244,3 +244,19 @@ Diffusers VAE, UMT5-XXL, `lerobot/fastwam_base`) and a card larger than thanos's
 24.5 GiB — CREATE with `SBATCH_CONSTRAINT=h200`, where `freeze_video_expert`
 leaves only the ~1 B action expert training. If it does not fit even there, that
 is a measurement to record as a ceiling, not something to retry blind.
+
+**Training the port, scoring the variant.** Stage 6 trains `harena_fastwam`, not
+`harena_fastwam_predict`, and that is not a compromise: the two are the same
+model with the same weights, so a checkpoint from either loads into the other.
+`TWIN_OF` carries `harena_fastwam_predict → harena_fastwam` and
+`tool/retarget_checkpoint.py` walks it, which is the same mechanism that let
+`harena_pi05_crop` reach `pi05` two hops away. So the run can be launched from
+whatever branch a cluster happens to be on, and the prediction asked for
+afterwards from a checkout that has the subclass.
+
+MEASURED on CREATE 2026-09-16: `policy_available("harena_fastwam")` is true
+there and `policy_available("fastwam")` is false, which is the honest report --
+the port is what can be trained today, because FastWAM landed upstream after
+`LEROBOT_COMMIT`. `h200` is a real node feature on that cluster
+(`erc-hpc-comp[244-245,247,250]`, partition `gpu`), so the constraint in the
+command above selects something that exists rather than queueing for ever.
