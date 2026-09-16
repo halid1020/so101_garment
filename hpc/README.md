@@ -373,6 +373,25 @@ SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
 None of the four is licence-gated, so unlike pi0.5's tokenizer this needs no
 token — only bandwidth and a login node that will not kill the download.
 
+**Why the script sets `HF_HUB_DISABLE_XET=1`.** MEASURED 2026-09-16: a CREATE
+login node caps each user at **2 GiB** of memory
+(`/sys/fs/cgroup/user.slice/user-<uid>.slice/memory.max`), and `hf-xet` — the
+default download backend in `huggingface_hub` 1.27 — buffers a multi-gigabyte
+file well past that and is **SIGKILLed with no traceback and no message**. Only
+large files are affected, so the 5 MB tokenizer repo downloads perfectly and the
+failure presents as a flaky network. On the plain HTTP path the same file holds
+86 MB resident and arrives at ~80 MB/s. If a big `snapshot_download` on a login
+node dies silently, this is why.
+
+Two smaller things about that node, both of which cost time here:
+
+- `ssh <create-alias>` **round-robins between `erc-hpc-login1` and `login2`**, so
+  a process started on one is invisible from the other. `$HOME` is shared
+  cephfs, so write a log and read *that* rather than looking for the process.
+- A pipeline like `python stage.py | tail` reports **`tail`'s** exit code. A
+  download killed by the cgroup then looks like a clean success. Capture the
+  status of the thing you actually ran.
+
 Two more things a `fastwam` row needs, and neither is about staging:
 
 - **Exactly two camera features**, `central,tactile_quad`. The Wan backbone

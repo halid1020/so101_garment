@@ -301,8 +301,19 @@ fi
 # login-node watchdog that kills a multi-gigabyte download leaves a stale
 # `.incomplete` blob, huggingface_hub picks a new temp name next time so it
 # does NOT resume, and nothing complains until a compute node opens it.
+#
+# AND SET HF_HUB_DISABLE_XET=1, which is the difference between this working and
+# not. MEASURED 2026-09-16: a CREATE login node caps each user at 2 GiB
+# (/sys/fs/cgroup/user.slice/user-<uid>.slice/memory.max), and hf-xet 1.6.0 --
+# the default backend in huggingface_hub 1.27 -- buffers a multi-gigabyte file
+# far past that and is SIGKILLed with no traceback and no message. Only LARGE
+# files are affected, so the 5 MB tokenizer repo downloaded perfectly and the
+# failure looked like a flaky network. On the plain HTTP path the same file
+# holds 86 MB resident and arrives at about 80 MB/s, so this is faster as well
+# as survivable.
 if [ "${SO101_STAGE_FASTWAM:-0}" = "1" ]; then
     echo "=> Pre-staging FastWAM's four repos (~20 GB) into the HF cache..."
+    export HF_HUB_DISABLE_XET=1
     python - <<'FASTWAM_PY' || exit 1
 import sys
 from pathlib import Path
