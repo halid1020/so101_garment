@@ -365,7 +365,7 @@ SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
 
 | Repo | What it is | How much |
 |------|-----------|----------|
-| `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | most of the ~20 GB |
+| `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | **19 GB** (9.8 + 10.0 + 0.2) |
 | `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | several GB |
 | `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | ~5 MB |
 | `lerobot/fastwam_base` | the action expert's starting weights | ~4 GB |
