@@ -279,3 +279,11 @@ table.runs tbody tr:hover > td { background: #8881; }
 #t-panels .readout { min-height: 1.1em; }
 #t-smooth { width: 6rem; vertical-align: middle; }
 #t-project-list li.sel .muted { color: #fff; opacity: .8; }
+
+/* The share of horizon steps on which a world model beat holding the last
+   frame. A bar and not a colour: the verdict is a proportion, it sits beside
+   the numbers it summarises, and the figure has to survive a print-out and a
+   forced-colours theme, where a red/green cell would say nothing. */
+.predbar { display:inline-block; width:56px; height:6px; border-radius:3px;
+  background:#8883; vertical-align:middle; margin-left:6px; overflow:hidden; }
+.predbar > span { display:block; height:100%; background:var(--sel, #2a78d6); }

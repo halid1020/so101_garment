@@ -63,6 +63,33 @@ thanos:
   #                            2h55, final train loss 0.113. THREE cameras
   #                            (central + the two gripper views), which is all
   #                            pi0.5 has slots for.
+  #   dreamzero batch 2   -> mem_gb 3.35, 400 steps in 4:26
+  #   dreamzero batch 4   -> mem_gb 5.56, 400 steps in 8:11
+  #   dreamzero batch 8   -> mem_gb 9.89, 400 steps in 16:00 (0.42 step/s)
+  # The dreamzero figures come from lerobot's own metric lines and NOT from
+  # nvidia-smi. The probe script queried the card after each arm exited and so
+  # recorded an idle 4 MiB three times; `mem_gb` is logged per metric line at
+  # full precision and was there all along. A measurement taken after the
+  # process it measures has ended is not a measurement.
+  #
+  # Nothing above batch 8 was tried, so the ceiling is a lower bound rather
+  # than a ceiling. It is not worth finding, because memory is not what stops
+  # this policy on this box. TWO other things do.
+  #
+  # TIME: 0.42 step/s in the probe, 0.72 step/s in the real run once startup is
+  # excluded, so the matrix's 80000-step default is between 31 and 53 hours
+  # against the 36 the row budgets. The probe's figure includes model build and
+  # the first dataloader fill inside only 400 steps; the run's is the one to
+  # plan with.
+  #
+  # POWER: dreamzero at batch 8 with EIGHT loader workers drew 404 W of a 480 W
+  # limit and the machine went down at 13:54 on 2026-09-16, 50 minutes in, at
+  # about step 2200. No traceback, no OOM, no Xid, no journal entry -- `who -b`
+  # was the only record, which is the same signature the diffusion cuts left.
+  # 404 W is ABOVE the 395 W peak of the diffusion arm that trained through, so
+  # this is the established power ceiling reached by a new policy rather than a
+  # new fault. Rerun at FOUR workers. There is no sudo on this box, so the power
+  # limit cannot be lowered and the only lever is to stop feeding the card.
   # Memory was not the binding constraint for act or diffusion -- the largest of
   # those, act at batch 8, leaves better than half the card free -- and it is the
   # binding one for pi0.5. Hence the single limit below and nothing else: a

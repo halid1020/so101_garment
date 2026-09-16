@@ -396,9 +396,66 @@ function renderDiff(entries) {
           + 'written to disk, so they are not in this comparison.</p>' : '');
 }
 
+// ── What the world model predicts ───────────────────────────────────────────
+
+// Only a world model has this section, so for ACT, diffusion and pi0.5 the
+// panel is simply absent -- they predict actions and not observations, and an
+// empty "prediction" heading over every run would read as a missing result
+// rather than an inapplicable question.
+//
+// The column that matters is `beats holding`, NOT PSNR. Holding the last
+// observed frame is a strong predictor of a scene that barely changes, and
+// four of this rig's five cameras are gel images that do exactly that until
+// contact. A tactile camera at 40 dB that loses to holding on every horizon
+// step has taught the model nothing; the overhead camera at 30 dB that wins
+// has. Sorting or colouring by PSNR would put those two in the wrong order,
+// so the table is ordered by the verdict and PSNR rides behind it.
+function renderPrediction(entries) {
+  const node = $('#t-prediction');
+  const scored = entries
+    .map((entry) => [entry, (runDetail.get(runKey(entry)) || {}).predictions || []])
+    .filter(([, list]) => list.length);
+  if (!scored.length) { node.innerHTML = ''; return; }
+
+  node.innerHTML = scored.map(([entry, list]) => {
+    // The last checkpoint scored: parse_predictions sorts them forwards, and
+    // an older score is kept in the file rather than shown, because two rows
+    // for one camera with no step beside them would be unreadable.
+    const latest = list[list.length - 1];
+    const at = latest.step === null ? 'an unnumbered checkpoint' : `step ${latest.step}`;
+    const cameras = Object.entries(latest.cameras)
+      .sort((a, b) => (b[1].beats / b[1].horizon) - (a[1].beats / a[1].horizon));
+    const rows = cameras.map(([camera, v]) => {
+      const won = v.horizon ? v.beats / v.horizon : 0;
+      const bar = `<span class="predbar"><span style="width:${(won * 100).toFixed(0)}%"></span></span>`;
+      return `<tr><td>${camera}</td>`
+        + `<td>${v.beats}/${v.horizon} ${bar}</td>`
+        + `<td>${mean(v.psnr).toFixed(2)}</td><td>${mean(v.psnr_baseline).toFixed(2)}</td>`
+        + `<td>${mean(v.ssim).toFixed(3)}</td><td>${mean(v.ssim_baseline).toFixed(3)}</td></tr>`;
+    }).join('');
+    const total = cameras.reduce((n, [, v]) => n + (v.beats ? 1 : 0), 0);
+    return `<h3 class="sub">Future prediction — ${entry.policy} at ${at}</h3>`
+      + '<div class="scroll"><table class="runs"><thead><tr>'
+      + '<th>camera</th><th>beats holding</th><th>PSNR</th><th>held</th>'
+      + '<th>SSIM</th><th>held</th></tr></thead><tbody>'
+      + rows + '</tbody></table></div>'
+      + `<p class="muted">${total} of ${cameras.length} cameras beat the held-last-frame `
+      + `baseline on at least one horizon step, over ${latest.frames} frames of `
+      + `episode(s) ${latest.episodes.join(', ') || '—'}. “held” is that baseline: `
+      + 'the last observed frame repeated. A camera that does not beat it has not '
+      + 'been learned, whatever its PSNR says.</p>';
+  }).join('');
+}
+
+function mean(values) {
+  if (!values || !values.length) return NaN;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
 function renderSelection() {
   const entries = selected();
   renderDiff(entries);
+  renderPrediction(entries);
   const grid = $('#t-panels');
   if (!entries.length) {
     grid.innerHTML = '<p class="muted">Tick a run to draw its curves; tick '
