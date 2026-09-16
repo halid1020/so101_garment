@@ -353,6 +353,100 @@ HF_HUB_OFFLINE=1 venv/bin/python -c \
 Skip all this and a `pi05` row fails at startup; `act` and `diffusion` rows are
 unaffected either way.
 
+#### What a `fastwam` row needs
+
+FastWAM is a Wan2.2-class video model that assembles itself from **four**
+separate repos, none of which a compute node can reach. Same rule as pi0.5,
+four times over — stage it once, on the login node:
+
+```bash
+SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
+```
+
+| Repo | What it is | How much |
+|------|-----------|----------|
+| `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | **19 GB** (9.8 + 10.0 + 0.2) |
+| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | several GB |
+| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | ~5 MB |
+| `lerobot/fastwam_base` | the action expert's starting weights | ~4 GB |
+
+None of the four is licence-gated, so unlike pi0.5's tokenizer this needs no
+token — only bandwidth and a login node that will not kill the download.
+
+**Why the script sets `HF_HUB_DISABLE_XET=1`.** MEASURED 2026-09-16: a CREATE
+login node caps each user at **2 GiB** of memory
+(`/sys/fs/cgroup/user.slice/user-<uid>.slice/memory.max`), and `hf-xet` — the
+default download backend in `huggingface_hub` 1.27 — buffers a multi-gigabyte
+file well past that and is **SIGKILLed with no traceback and no message**. Only
+large files are affected, so the 5 MB tokenizer repo downloads perfectly and the
+failure presents as a flaky network. On the plain HTTP path the same file holds
+86 MB resident and arrives at ~80 MB/s. If a big `snapshot_download` on a login
+node dies silently, this is why.
+
+Two smaller things about that node, both of which cost time here:
+
+- `ssh <create-alias>` **round-robins between `erc-hpc-login1` and `login2`**, so
+  a process started on one is invisible from the other. `$HOME` is shared
+  cephfs, so write a log and read *that* rather than looking for the process.
+- A pipeline like `python stage.py | tail` reports **`tail`'s** exit code. A
+  download killed by the cgroup then looks like a clean success. Capture the
+  status of the thing you actually ran.
+
+#### The home quota is 50 GB, and the model weights do not fit in it
+
+MEASURED 2026-09-16. `df -h ~` is **useless here** — it reports the whole 20 PB
+cephfs and tells you nothing. The number that binds is a directory quota:
+
+```bash
+getfattr -n ceph.quota.max_bytes ~     # 50000000000
+getfattr -n ceph.dir.rbytes ~          # what you are using
+```
+
+pi0.5's base is 14 GB and FastWAM's four repos are ~34 GB, so the two cannot
+both live in a 50 GB home. The HF cache therefore lives on **scratch**, with
+`~/.cache/huggingface` a symlink to it:
+
+```bash
+mv ~/.cache/huggingface /scratch/users/$USER/hf_home
+ln -s /scratch/users/$USER/hf_home ~/.cache/huggingface
+```
+
+Everything keeps working unchanged — every script and every job still names
+`~/.cache/huggingface`, and `HF_HUB_OFFLINE=1` still finds what it needs —
+because the symlink is transparent. `/scratch/users/$USER` carries no quota
+attribute and already holds the staged datasets and the run outputs.
+
+**The trade this makes.** Scratch is scratch. Nothing observed there has been
+purged (files from July were still present in September), but a purge policy can
+exist without being advertised, and a compute node that cannot find
+`lerobot/pi05_base` fails *after* the GPU is reserved. If a run dies at startup
+naming a model repo, check the cache is still there before anything else, and
+re-stage with `SO101_STAGE_PI05=1` / `SO101_STAGE_FASTWAM=1`.
+
+When the quota does bite, it does not say so clearly: `snapshot_download`
+surfaces it as `OSError(122, 'Disk quota exceeded')` from somewhere deep inside a
+transfer, several gigabytes into a file that was going to fit.
+
+
+Two more things a `fastwam` row needs, and neither is about staging:
+
+- **Exactly two camera features**, `central,tactile_quad`. The Wan backbone
+  concatenates image features into one tensor of 224×448, so their widths must
+  sum to 448 — the 2×2 fingertip composite exists for this reason. The run
+  matrix refuses any other camera set before anything is reserved.
+- **An H200, not an A100.** It is roughly 6 B parameters; `freeze_video_expert`
+  leaves about 1 B of action expert training, which is what makes a finetune
+  feasible at all.
+
+```bash
+SBATCH_CONSTRAINT=h200 bash hpc/submit_real.sh --only harena_fastwam
+```
+
+`harena_fastwam_predict` is the same model with its predicted future exposed,
+so it stages and trains identically — see
+[the world action model](../documents/world_action_model.md).
+
+
 ### 2. Stage the datasets — *collection box (NOT CREATE)*
 
 ```bash

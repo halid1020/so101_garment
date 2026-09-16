@@ -26,6 +26,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[2]
+
 from tool.retarget_checkpoint import _ancestry, compatible
 
 
@@ -114,6 +116,162 @@ class RefusalMessageTest(unittest.TestCase):
         # The reader needs to see WHY, which is that these are two chains.
         self.assertIn("harena_act", message)
         self.assertIn("never across two", message)
+
+
+class RetargetCarriesTheCropStepTest(unittest.TestCase):
+    """The silent bug: a cropped pi0.5 that trained on uncropped images.
+
+    `make_pre_post_processors` begins `if pretrained_path:` and loads the SAVED
+    pipeline off disk -- it never calls the policy's factory. Every pi0.5
+    finetune uses `--policy.path`, because the base carries the pretrained image
+    slots, so the crop variant's factory was never invoked and its step never
+    existed. MEASURED: a three-hour run scored bit-identically to plain pi0.5,
+    RMSE 16.044489 both, to every digit. It was a second baseline wearing the
+    crop's name, and nothing in the run said so.
+    """
+
+    def base(self) -> Path:
+        src = Path(tempfile.mkdtemp()) / "base"
+        src.mkdir()
+        (src / "config.json").write_text(json.dumps({"type": "pi05"}))
+        (src / "policy_preprocessor.json").write_text(
+            json.dumps(
+                {
+                    "steps": [
+                        {
+                            "registry_name": "rename_observations_processor",
+                            "config": {},
+                        },
+                        {"registry_name": "normalizer_processor", "config": {}},
+                    ]
+                }
+            )
+        )
+        (src / "model.safetensors").write_text("weights")
+        return src
+
+    def steps_of(self, directory: Path) -> "list[str]":
+        blob = json.loads((directory / "policy_preprocessor.json").read_text())
+        return [s["registry_name"] for s in blob["steps"]]
+
+    def test_a_crop_target_gains_the_crop_step(self):
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05_crop", out)
+        self.assertIn("so101_tactile_crop", self.steps_of(out))
+
+    def test_it_runs_before_the_rename(self):
+        """Order is not cosmetic here.
+
+        pi0.5's rename turns the rig's cameras into openpi's slot names, so a
+        crop placed after it looks for cameras that no longer exist and silently
+        does nothing -- the same nothing this test exists to catch.
+        """
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05_crop", out)
+        self.assertEqual(self.steps_of(out)[0], "so101_tactile_crop")
+
+    def test_a_plain_target_gains_nothing(self):
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05", out)
+        self.assertEqual(
+            self.steps_of(out),
+            ["rename_observations_processor", "normalizer_processor"],
+        )
+
+    def test_the_shared_base_is_not_written_through(self):
+        """The base is 14 GB and symlinked; editing it would poison every run."""
+        from tool.retarget_checkpoint import retarget
+
+        src = self.base()
+        retarget(src, "harena_pi05_crop", Path(tempfile.mkdtemp()) / "out")
+        self.assertEqual(
+            self.steps_of(src),
+            ["rename_observations_processor", "normalizer_processor"],
+        )
+
+    def test_the_weights_are_still_symlinked(self):
+        # The whole point of the retarget is not copying 14 GB.
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05_crop", out)
+        self.assertTrue((out / "model.safetensors").is_symlink())
+
+    def test_the_legacy_name_works_too(self):
+        """A checkpoint on disk right now says so101_pi05_crop.
+
+        The policies were renamed so101_* -> harena_*, and the old names survive
+        as registry aliases because they are written into Slurm scripts already
+        submitted and into train_config.json files a resuming job reads. A
+        retarget that refused the old spelling would break exactly the runs the
+        shim exists to keep alive.
+        """
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "so101_pi05_crop", out)
+        self.assertEqual(self.steps_of(out)[0], "so101_tactile_crop")
+        # And the name the caller asked for is what lands in config.json, so a
+        # resuming job still finds the type it was launched with.
+        self.assertEqual(
+            json.loads((out / "config.json").read_text())["type"], "so101_pi05_crop"
+        )
+
+    def test_print_path_emits_the_path_and_nothing_else(self):
+        """The driver captures this in a command substitution.
+
+        `base_path="$(retarget_checkpoint.py ... --print-path)"` takes ALL of
+        stdout, so one informational line here becomes part of the path. It did:
+        the run died with `Repo id must be in the form 'repo_name': '  preprocessor:
+        added so101_tactile_crop...'` after the GPU was already reserved.
+        """
+        import subprocess
+        import sys
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "tool" / "retarget_checkpoint.py"),
+                "--checkpoint",
+                str(self.base()),
+                "--to",
+                "harena_pi05_crop",
+                "--out",
+                str(out),
+                "--print-path",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO),
+            env={
+                "PYTHONPATH": f"{REPO}:{REPO / 'src'}",
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(Path.home()),
+            },
+        )
+        self.assertEqual(result.stdout.strip(), str(out))
+        self.assertEqual(len(result.stdout.strip().splitlines()), 1)
+        # The note is not lost -- it just belongs on the other stream.
+        self.assertIn("preprocessor: added", result.stderr)
+
+    def test_the_step_carries_the_measured_fraction(self):
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05_crop", out)
+        blob = json.loads((out / "policy_preprocessor.json").read_text())
+        crop = next(
+            s for s in blob["steps"] if s["registry_name"] == "so101_tactile_crop"
+        )
+        # Rows only, width whole -- the measurement's finding, pinned.
+        self.assertEqual(list(crop["config"]["fraction"]), [0.80, 1.00])
 
 
 if __name__ == "__main__":

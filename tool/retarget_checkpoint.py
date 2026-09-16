@@ -55,6 +55,26 @@ def resolve(checkpoint: str) -> Path:
         ) from exc
 
 
+#: The shim's contract, in one line. The policies were renamed `so101_*` ->
+#: `harena_*`, and the old names survive as registry aliases because they are
+#: written into Slurm scripts already submitted and into `train_config.json`
+#: files a resuming job reads. A checkpoint on disk right now says
+#: `so101_pi05_crop`; the run matrix says `harena_pi05_crop`. Both must reach
+#: the same chain or a retarget refuses a pair it should accept.
+_LEGACY_PREFIX = "so101_"
+_CANONICAL_PREFIX = "harena_"
+
+
+def _canonical(policy: str) -> str:
+    """The name the run matrix knows, given either spelling."""
+    from actoris_harena.training.matrix import POLICIES
+
+    if policy in POLICIES or not policy.startswith(_LEGACY_PREFIX):
+        return policy
+    renamed = _CANONICAL_PREFIX + policy[len(_LEGACY_PREFIX) :]
+    return renamed if renamed in POLICIES else policy
+
+
 def _ancestry(policy: str) -> "list[str]":
     """A policy and everything it is a variant of, nearest first.
 
@@ -62,6 +82,7 @@ def _ancestry(policy: str) -> "list[str]":
     a mis-typed entry pointing a name at itself would otherwise hang here rather
     than fail.
     """
+    policy = _canonical(policy)
     chain, seen = [policy], {policy}
     while True:
         nxt = TWIN_OF.get(chain[-1])
@@ -137,7 +158,96 @@ def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> 
 
     config["type"] = target_type
     (out / "config.json").write_text(json.dumps(config, indent=4) + "\n")
+    _carry_extra_processor_steps(source, out, target_type)
     return out
+
+
+def _carry_extra_processor_steps(source: Path, out: Path, target_type: str) -> None:
+    """Put the target's own preprocessor steps into the retargeted base.
+
+    THE BUG THIS EXISTS FOR, and it is silent. `make_pre_post_processors` begins
+    `if pretrained_path:` and loads the SAVED pipeline off disk -- it never calls
+    the policy's factory. Every pi0.5 finetune uses `--policy.path`, because the
+    base carries the pretrained image slots, so
+    `make_harena_pi05_crop_pre_post_processors` is never invoked and its crop
+    step never exists. MEASURED: a 3-hour `so101_pi05_crop` run trained on
+    UNCROPPED tactile images and scored bit-identically to plain pi0.5 --
+    RMSE 16.044489 both, to every digit. It was a second baseline wearing the
+    crop's name, and nothing in the run said so.
+
+    So the retarget, which already exists to make a repo-local base, also writes
+    the pipeline that base should carry. Only steps the target declares and the
+    source lacks are added, at the FRONT -- the crop has to run before the
+    rename, or pi0.5's slot names hide the cameras from it. The normalizer's
+    safetensors stay symlinked and keep working because nothing after index 0
+    moves.
+    """
+    config_file = out / "policy_preprocessor.json"
+    if not config_file.exists() and not config_file.is_symlink():
+        return
+    try:
+        pipeline = json.loads((source / "policy_preprocessor.json").read_text())
+    except (OSError, ValueError):
+        return
+
+    extra = _target_only_steps(target_type)
+    if not extra:
+        return
+    present = {step.get("registry_name") for step in pipeline.get("steps", [])}
+    additions = [s for s in extra if s["registry_name"] not in present]
+    if not additions:
+        return
+
+    pipeline["steps"] = additions + list(pipeline.get("steps", []))
+    if config_file.is_symlink():
+        config_file.unlink()  # do not write through into the shared base
+    config_file.write_text(json.dumps(pipeline, indent=4) + "\n")
+    names = ", ".join(s["registry_name"] for s in additions)
+    # STDERR. --print-path exists so a shell can capture the path in a
+    # command substitution, and anything else on stdout is captured with it --
+    # which is how a chatty line here became part of a Hub repo id and killed
+    # the run: "Repo id must be in the form 'repo_name'...: '  preprocessor:
+    # added so101_tactile_crop...'".
+    print(
+        f"  preprocessor: added {names} ahead of the base's own steps",
+        file=sys.stderr,
+    )
+
+
+def _target_only_steps(target_type: str) -> "list[dict]":
+    """The serialised steps this policy adds over the one it is a variant of.
+
+    Built from the target's CONFIG rather than by constructing the policy: the
+    step's own `get_config` is the authority on its fields, and a retarget must
+    not need 14 GB of weights loaded to decide what a pipeline looks like.
+    """
+    from actoris_harena.policies.loading import ensure_registered
+    from lerobot.configs import PreTrainedConfig
+
+    ensure_registered()
+    try:
+        config = PreTrainedConfig.get_choice_class(target_type)()
+    except Exception:  # an unregistered or unconstructable target adds nothing
+        return []
+
+    crop = getattr(config, "tactile_crop", None)
+    if crop is None:
+        return []
+    from actoris_harena.policies.common.tactile import (
+        TACTILE_CAMERAS,
+        HarenaTactileCropProcessorStep,
+    )
+
+    step = HarenaTactileCropProcessorStep(
+        fraction=tuple(crop),
+        cameras=tuple(getattr(config, "tactile_cameras", TACTILE_CAMERAS)),
+    )
+    return [
+        {
+            "registry_name": "so101_tactile_crop",
+            "config": step.get_config(),
+        }
+    ]
 
 
 def main() -> int:

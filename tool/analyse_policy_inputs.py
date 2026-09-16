@@ -154,7 +154,10 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             out["gradcam"] = {
                 k: v.tolist() for k, v in grads.grad_cam(inference, batch).items()
             }
-        except RuntimeError as problem:
+        except grads.NoFeatureMap as problem:
+            # Deliberately NOT `RuntimeError`: an out-of-memory error is one of
+            # those, and recording a full GPU as "unavailable" tells a reader
+            # the method does not apply to this policy. It does; let it raise.
             out["gradcam_unavailable"] = str(problem)
     return out
 
@@ -374,8 +377,17 @@ def sanity_check(args, inference, source) -> dict:
             "the randomised policy ignores every input entirely (all shares 0), "
             "so this attribution is a property of the TRAINED weights"
         )
-    elif agreement != agreement or abs(agreement) < 0.5:
+    elif agreement != agreement or agreement < 0.5:
+        # NOT abs(agreement). The test asks whether randomising the weights
+        # leaves the saliency UNCHANGED -- that is a strong POSITIVE
+        # correlation. A strongly NEGATIVE one means the ordering reversed,
+        # which is randomisation destroying it, and is a pass. Wrapping it in
+        # abs() called that a failure: pi0.5's deck reported "the ranking
+        # SURVIVED randomisation" on an agreement of -0.77, which is the
+        # opposite of what happened, on a figure headed for a supervisor.
         verdict = "the ranking did not survive randomisation, as it should not"
+        if agreement < -0.5:
+            verdict += " (it reversed, which is randomisation destroying it)"
     else:
         verdict = (
             "⚠️  the ranking SURVIVED randomisation: this attribution may be "

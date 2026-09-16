@@ -47,6 +47,13 @@ class TestTheRealDriver(unittest.TestCase):
             with self.subTest(policy=crop):
                 self.assertEqual(self._base_policy(crop), twin)
 
+    def test_a_prediction_variant_routes_through_its_port(self):
+        # harena_fastwam_predict exposes a future FastWAM already computes and
+        # changes nothing about the model, so it must train on its twin's
+        # budget. A variant that quietly got the default step count instead
+        # would produce a run that looks fine and is not comparable to anything.
+        self.assertEqual(self._base_policy("harena_fastwam_predict"), "fastwam")
+
     def test_a_legacy_name_still_routes(self):
         # A run matrix row or a resubmitted job may still say so101_*. The driver
         # must route it, or a resume dies where it was meant to recover.

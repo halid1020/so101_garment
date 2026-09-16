@@ -125,26 +125,138 @@ into one frame for the model, and split back out for scoring, with prediction an
 ground truth both compared at cell resolution so neither is upscaled to meet the
 other.
 
-## Status: builds and trains, never trained at scale
+## Status: trained, and what the probe cost to learn
 
-MEASURED 2026-09-07 on a laptop CPU, which answers the cheap half of the
-question before any GPU time is spent: `so101_dreamzero` constructs from the
-run matrix's own path and takes optimiser steps end to end — **58 638 924
-learnable parameters**, loss 3.94 at step 1 — on a three-camera dataset at
-30 fps with the default `chunk_size=48`, `latent_frames_per_chunk=2`,
-`frame_stride=24`. So a GPU row will not die on a construction error hours in.
+MEASURED 2026-09-15 on thanos (RTX 3090 Ti, 24.5 GiB), sweeping batch upward
+and stopping at the first size that fails — which never came. Batch 2, 4 and 8
+all survived 400 steps:
 
-What that does **not** establish is anything about learning, or a batch ceiling.
-No destination in `src/conf/train_destinations.yaml` names a limit for
-`so101_dreamzero`, so the first real run should be a short probe that measures
-VRAM, step rate and power and writes them down beside the figures already there
-— on thanos especially, where that file records diffusion taking the whole box
-down at 24 loader workers with VRAM to spare, so power is a constraint as much
-as capacity.
+| batch | `mem_gb` | 400 steps |
+|---|---|---|
+| 2 | 3.35 | 4:26 |
+| 4 | 5.56 | 8:11 |
+| 8 | 9.89 | 16:00 |
+
+So the ceiling on this card is a lower bound and not a ceiling, and it is not
+worth chasing: at 9.89 GB of 24.5 there is better than two-fold headroom.
+**Memory is not what binds this policy.** Two other things are.
+
+**Time.** 0.42 step/s in the probe, 0.77 step/s in the real run once startup is
+excluded from the average — the probe's figure buys model construction and the
+first dataloader fill inside only 400 steps, so it is the pessimistic one. At
+0.77 step/s the matrix's 80 000-step default is about **25 hours**, against the
+36 the row budgets. It fits, but not with much room.
+
+**Power, which took the machine down.** A first attempt at eight loader workers
+reached step 2000 in 46 minutes drawing **404 W of a 480 W limit**, and thanos
+went down at 13:54 on 2026-09-16 — no traceback, no OOM, no Xid, no journal
+entry, `who -b` the only record. That is the signature `train_destinations.yaml`
+already records for the diffusion runs, and 404 W is *above* the 395 W peak of
+the diffusion arm that trained through. This is the established power ceiling
+reached by a new policy, not a new fault. There is no sudo on that box, so the
+power limit cannot be lowered and the only lever is to feed the card less.
+
+**Halving the loader workers did not lower the peak.** At four workers the
+sampled peak was 415 W — if anything higher, and the step rate was unchanged at
+0.77 step/s, so the workers were never the constraint. What actually protects
+the run is not a mitigation but a recovery: a checkpoint every 2000 steps
+(about 45 minutes) and a supervising loop that resumes from it, so a cut costs
+under an hour instead of a day. A cut that takes the machine with it still
+needs something outside the process to restart the loop.
+
+### The one measurement that was not a measurement
+
+The probe script queried `nvidia-smi` *after* each arm had exited, so it
+recorded an idle 4 MiB card three times and reported that as the VRAM cost. The
+numbers in the table above come from lerobot's own `mem_gb` metric field, which
+is logged at full precision on every metric line and was in the log all along.
+Worth stating plainly because the failure was silent and plausible: a number
+appeared, it was small, and nothing about it looked wrong.
 
 **Stage the VAE before submitting anywhere.** The frozen
 `stabilityai/sd-vae-ft-mse` (~330 MB) is fetched from the Hub on first use and
 deliberately kept out of the checkpoint, while every launcher exports
 `HF_HUB_OFFLINE=1`. On a compute node with no internet that fails *after* the
-GPU is reserved. `hpc/README.md` has the login-node command; the smoke run above
-worked only because the VAE was already in this machine's cache.
+GPU is reserved. `hpc/README.md` has the login-node command.
+
+## Where the result shows up
+
+`tool/eval_world_model.py` writes `prediction.json` beside the checkpoint it
+scored — under `checkpoints/<step>/prediction/`, not under `checkpoints/last`,
+because `last` is a symlink and the score belongs to the checkpoint that
+produced it. The console's Training tab reads it into a **Future prediction**
+panel, ordered by the verdict rather than by PSNR.
+
+That ordering is the whole point. Holding the last observed frame scores 67.8 dB
+on a near-static camera, and four of this rig's five cameras are gel images that
+barely move until contact. A tactile camera at 40 dB that loses to holding on
+every horizon step has taught the model nothing; the overhead camera at 30 dB
+that wins has. A panel sorted by PSNR would put those two in the wrong order and
+present the model's worst camera as its best result.
+
+## The other world model, and why it could not be compared
+
+`harena_fastwam` is the opposite trade. It is a real ~6 B Wan-class model with a
+genuine pretrained video prior, where DreamZero is 59 M parameters trained from
+scratch — so between them they bracket the question this rig actually wants
+answered: does a video prior buy anything at rig scale, or does the data do it?
+
+That comparison was not possible, for a reason that had nothing to do with either
+model. `wan.modular.infer_joint` decodes both future video and actions and
+returns `{"video": …, "action": …}` — and **nothing in the policy API ever called
+it**. `predict_action_chunk` reaches `infer_action` and only that. So the port
+owned a video prediction it could not be asked for, while DreamZero could be
+asked and owned no prior. `tool/eval_world_model.py` rejected FastWAM outright.
+
+`harena_fastwam_predict` closes that: a subclass in a sibling package, the same
+shape as the crop variants, so the ported files stay byte-identical to upstream
+and `tool/port_policies.py --check` stays green at 18 files. It adds the three
+calls the scorer makes — `predict_future_frames`, `tile_cameras`,
+`untile_cameras` — plus the two context fields it reads. FastWAM already tiles
+its cameras by concatenating them along width, so the tiling pair is a rename of
+what it does, not a new representation.
+
+Two details in it are load-bearing, and both would be quiet rather than loud if
+they were wrong:
+
+- **The first predicted frame is dropped.** `infer_joint` pins
+  `latents_video[:, :, 0:1]` to the conditioning frame's latents at every
+  denoising step, so frame zero of the output is the input reproduced. Scoring it
+  would measure the model on an image it was handed, and would flatter every
+  horizon curve at step one — exactly where the held-last-frame baseline is
+  already strongest.
+- **The sampler is pinned** (`predict_seed`, `predict_inference_steps`).
+  `infer_joint` samples, so two passes over one observation disagree; an arm
+  compared against another arm under an unpinned sampler measures the sampler.
+  Same reasoning as `analysis.diffusion.plan`, and the same mistake was made
+  there first.
+
+The context arithmetic differs between the two and the scorer has to know which:
+DreamZero counts context in latent CHUNKS, FastWAM conditions on a single first
+frame. `n_context_chunks` and `latent_frames_per_chunk` are both 1 on the
+subclass — not a convention chosen for convenience, but the number of observed
+frames the prediction is conditioned on, which is what the scorer slices off
+before comparing.
+
+**Still untrained.** The subclass makes FastWAM *scoreable*; it does not make it
+*trained*. That needs ~34 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
+Diffusers VAE, UMT5-XXL, `lerobot/fastwam_base`) and a card larger than thanos's
+24.5 GiB — CREATE with `SBATCH_CONSTRAINT=h200`, where `freeze_video_expert`
+leaves only the ~1 B action expert training. If it does not fit even there, that
+is a measurement to record as a ceiling, not something to retry blind.
+
+**Training the port, scoring the variant.** Stage 6 trains `harena_fastwam`, not
+`harena_fastwam_predict`, and that is not a compromise: the two are the same
+model with the same weights, so a checkpoint from either loads into the other.
+`TWIN_OF` carries `harena_fastwam_predict → harena_fastwam` and
+`tool/retarget_checkpoint.py` walks it, which is the same mechanism that let
+`harena_pi05_crop` reach `pi05` two hops away. So the run can be launched from
+whatever branch a cluster happens to be on, and the prediction asked for
+afterwards from a checkout that has the subclass.
+
+MEASURED on CREATE 2026-09-16: `policy_available("harena_fastwam")` is true
+there and `policy_available("fastwam")` is false, which is the honest report --
+the port is what can be trained today, because FastWAM landed upstream after
+`LEROBOT_COMMIT`. `h200` is a real node feature on that cluster
+(`erc-hpc-comp[244-245,247,250]`, partition `gpu`), so the constraint in the
+command above selects something that exists rather than queueing for ever.
