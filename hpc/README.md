@@ -397,6 +397,34 @@ Two smaller things about that node, both of which cost time here:
   download killed by the cgroup then looks like a clean success. Capture the
   status of the thing you actually ran.
 
+#### Stage the BASE dataset between machines, never a camera view
+
+MEASURED 2026-09-16, moving the rig dataset to a second cluster. A camera view
+(`<dataset>__<cameras>`) is a few megabytes of metadata whose `videos/`
+directories are **absolute symlinks into the base dataset**. Copying one to
+another machine copies the symlinks, which then point at a path on the machine
+it came from, and nothing notices until training starts.
+
+The failure does not mention symlinks. The reader judges the local copy
+incomplete, goes to the Hub for a version tag, and dies offline with
+
+```
+OfflineModeIsEnabled: Cannot reach https://huggingface.co/api/datasets/<view>/refs
+```
+
+which reads as a network problem for a dataset that never left the disk. It is
+the same misleading error `common/recording/dataset_check.py` exists for, from a
+different cause.
+
+So transfer `<dataset>` alone. The views are rebuilt on arrival by the job
+itself, which is idempotent and costs seconds — and a view that is already there
+is REUSED, so a broken one transferred earlier will be reused too. Delete any
+view that came off another machine before submitting:
+
+```bash
+rm -rf <stage>/<dataset>__*        # keep <dataset> itself
+```
+
 #### The home quota is 50 GB, and the model weights do not fit in it
 
 MEASURED 2026-09-16. `df -h ~` is **useless here** — it reports the whole 20 PB
