@@ -71,6 +71,20 @@ viking:
   # files as fast as the other machines' local disks. AV1 decode was measured
   # to be the floor elsewhere, but that was on local storage; if step rate here
   # is worse than thanos at the same batch, the filesystem is the first suspect.
+  #
+  # FIRST REAL MEASUREMENT, 2026-09-16, harena_fastwam on an H100 PCIe (85 GB):
+  #   batch 8, two camera features (central + tactile_quad), freeze_video_expert
+  #   -> mem_gb 72.16, 1.31 s/step, data_s 0.058.
+  # Three things follow, and the first is why this row is on `gpuplus` at all:
+  #   * 72 GB DOES NOT FIT ON AN A40. The 48 GB cards on `gpu`/`gpu_week` carry
+  #     everything else here comfortably and cannot carry this at any batch
+  #     worth running, so the partition choice is forced rather than cautious.
+  #   * data_s of 0.058 against updt_s of 1.31 says Lustre is NOT the floor for
+  #     this policy -- the dataloader waits on the model, not the other way
+  #     round. That answers the open question above for fastwam only; a lighter
+  #     policy reading five cameras may still find the filesystem first.
+  #   * 30000 steps comes to about 11 hours, well inside the 36 the row asks
+  #     for, so the wall-time budget is not the binding constraint either.
 
 thanos:
   ssh: thanos
