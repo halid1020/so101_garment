@@ -56,9 +56,19 @@ viking:
   # TWO CARDS, and which one a row needs is a real choice rather than a default:
   #   gpu / gpu_week   14 nodes x 3 A40   48 GB   -- everything except fastwam
   #   gpuplus           6 nodes x 2 H100  80 GB   -- fastwam, which is ~6B
-  # The gres syntax NAMES THE TYPE here (`gpu:a40:1`, `gpu:h100:1`) where the
-  # other cluster asks for a bare `gpu:1`, so the submit script cannot simply be
-  # copied between them.
+  # THE GRES SPELLING DIFFERS BETWEEN VIKING'S OWN PARTITIONS, which is not
+  # something a reading of `sinfo` would predict and cost a rejected submission
+  # to find. MEASURED 2026-09-16 with a two-line probe job:
+  #   partition `gpu`      --gres=gpu:1       ACCEPTED
+  #                        --gres=gpu:a40:1   REFUSED, "Missing GPU resource
+  #                                           (gres) specification /
+  #                                           Access/permission denied"
+  #   partition `gpuplus`  --gres=gpu:h100:1  ACCEPTED
+  # The nodes themselves advertise `Gres=gpu:a40:3`, so the typed form is
+  # syntactically fine and a site submit filter is what rejects it. Ask for an
+  # UNTYPED gpu on `gpu` and a TYPED one on `gpuplus`; the error names neither
+  # the type nor the partition, so a wrong guess looks like a permissions
+  # problem with the account.
   #
   # NO `limits` BLOCK YET, deliberately. Nothing has been measured on this
   # machine, and a guessed ceiling refuses rows that fit while admitting rows

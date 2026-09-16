@@ -23,12 +23,14 @@
 #   --scratch DIR     node-visible scratch root    (default /scratch/users/$USER)
 #   --partition P     Slurm partition              (default: the sbatch's own)
 #   --gres G          Slurm GPU request            (default: the sbatch's own,
-#                     `gpu:1`). NOT every cluster spells this the same way:
-#                     CREATE takes a bare `gpu:1` and picks the card with
-#                     --constraint, while Viking NAMES THE TYPE in the gres
-#                     itself -- `gpu:a40:1` on its `gpu` partition, `gpu:h100:1`
-#                     on `gpuplus`. Passing it here rather than forking the
-#                     sbatch keeps one file for every site.
+#                     `gpu:1`). NOT every cluster spells this the same way, and
+#                     MEASURED 2026-09-16, not every PARTITION of one cluster
+#                     does either: CREATE takes a bare `gpu:1` and picks the
+#                     card with --constraint; Viking's `gpuplus` wants a typed
+#                     `gpu:h100:1`; and Viking's `gpu` REFUSES the typed form
+#                     its own nodes advertise, taking only `gpu:1`. Passing it
+#                     here rather than forking the sbatch keeps one file for
+#                     every site.
 #   --account A       Slurm account, if enforced
 #   --exclude NODES   Slurm nodes to keep off, comma-separated. Use it when a
 #                     node has an unhealthy GPU: the driver refuses one that
