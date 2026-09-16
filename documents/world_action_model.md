@@ -239,7 +239,7 @@ frames the prediction is conditioned on, which is what the scorer slices off
 before comparing.
 
 **Still untrained.** The subclass makes FastWAM *scoreable*; it does not make it
-*trained*. That needs ~34 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
+*trained*. That needs ~45 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
 Diffusers VAE, UMT5-XXL, `lerobot/fastwam_base`) and a card larger than thanos's
 24.5 GiB — CREATE with `SBATCH_CONSTRAINT=h200`, where `freeze_video_expert`
 leaves only the ~1 B action expert training. If it does not fit even there, that

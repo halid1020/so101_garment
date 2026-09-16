@@ -363,12 +363,17 @@ four times over — stage it once, on the login node:
 SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
 ```
 
+MEASURED 2026-09-16, staged in full on Viking. The totals are given because
+this is the number to check free space against, and both earlier estimates in
+this file were wrong — first “~20 GB”, then “~34 GB”:
+
 | Repo | What it is | How much |
 |------|-----------|----------|
 | `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | **19 GB** (9.8 + 10.0 + 0.2) |
-| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | several GB |
-| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | ~5 MB |
-| `lerobot/fastwam_base` | the action expert's starting weights | ~4 GB |
+| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | **14 GB** |
+| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | **21 MB** |
+| `lerobot/fastwam_base` | the action expert's starting weights | **12 GB** |
+| | **total** | **45 GB** |
 
 None of the four is licence-gated, so unlike pi0.5's tokenizer this needs no
 token — only bandwidth and a login node that will not kill the download.
