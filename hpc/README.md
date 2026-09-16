@@ -392,6 +392,42 @@ Two smaller things about that node, both of which cost time here:
   download killed by the cgroup then looks like a clean success. Capture the
   status of the thing you actually ran.
 
+#### The home quota is 50 GB, and the model weights do not fit in it
+
+MEASURED 2026-09-16. `df -h ~` is **useless here** — it reports the whole 20 PB
+cephfs and tells you nothing. The number that binds is a directory quota:
+
+```bash
+getfattr -n ceph.quota.max_bytes ~     # 50000000000
+getfattr -n ceph.dir.rbytes ~          # what you are using
+```
+
+pi0.5's base is 14 GB and FastWAM's four repos are ~34 GB, so the two cannot
+both live in a 50 GB home. The HF cache therefore lives on **scratch**, with
+`~/.cache/huggingface` a symlink to it:
+
+```bash
+mv ~/.cache/huggingface /scratch/users/$USER/hf_home
+ln -s /scratch/users/$USER/hf_home ~/.cache/huggingface
+```
+
+Everything keeps working unchanged — every script and every job still names
+`~/.cache/huggingface`, and `HF_HUB_OFFLINE=1` still finds what it needs —
+because the symlink is transparent. `/scratch/users/$USER` carries no quota
+attribute and already holds the staged datasets and the run outputs.
+
+**The trade this makes.** Scratch is scratch. Nothing observed there has been
+purged (files from July were still present in September), but a purge policy can
+exist without being advertised, and a compute node that cannot find
+`lerobot/pi05_base` fails *after* the GPU is reserved. If a run dies at startup
+naming a model repo, check the cache is still there before anything else, and
+re-stage with `SO101_STAGE_PI05=1` / `SO101_STAGE_FASTWAM=1`.
+
+When the quota does bite, it does not say so clearly: `snapshot_download`
+surfaces it as `OSError(122, 'Disk quota exceeded')` from somewhere deep inside a
+transfer, several gigabytes into a file that was going to fit.
+
+
 Two more things a `fastwam` row needs, and neither is about staging:
 
 - **Exactly two camera features**, `central,tactile_quad`. The Wan backbone
