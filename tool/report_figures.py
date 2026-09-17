@@ -519,12 +519,15 @@ def draw_split_comparison(temporal: dict, random_split: dict, out: Path) -> Path
                 color=MUTED,
             )
     axis.axhline(1.0, color=MUTED, linestyle=":", linewidth=1)
+    # Placed INSIDE the axes, not at their right edge: at `len(arms) - 0.5` the
+    # text sat past the last bar and rendered outside the visible area, which is
+    # the sort of thing that only shows up on looking at the picture.
     axis.annotate(
-        "no gap at all",
-        xy=(len(arms) - 0.5, 1.0),
-        xytext=(0, 4),
+        "no gap at all (held-out error = trained-on error)",
+        xy=(-0.42, 1.0),
+        xytext=(0, 5),
         textcoords="offset points",
-        ha="right",
+        ha="left",
         fontsize=8,
         color=MUTED,
     )
