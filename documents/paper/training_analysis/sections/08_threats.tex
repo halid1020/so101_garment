@@ -6,17 +6,17 @@ be wrong. They are gathered here rather than scattered through the report so
 that a reader can weigh them together, and each names a specific confound and
 the measurement that would settle it, rather than hedging.
 
-\paragraph{The split is temporal, not random.}
+\paragraph{The split is temporal, not random --- and this has been tested.}
 The recordings held back are the last seven of a single session, because that is
-what the trainer withholds. Any property that drifted over the session sits
-entirely in the held-back set: the lighting, where the garment was placed
-between takes, wear and residue on the tactile gels. The generalisation gap
-reported in Section~\ref{sec:results} is therefore a gap in time as well as a
-gap in familiarity, and the two cannot be separated from these runs. What would
-settle it is one further retraining per family on a randomly chosen seven, with
-everything else held fixed; if the gap persists it is overfitting, and if it
-collapses it was drift. This is the single largest open question in the report,
-and it bears on its largest effect.
+what the trainer withholds. Any property that drifted over the session therefore
+sits entirely in the held-back set: the lighting, where the garment was placed
+between takes, wear and residue on the tactile gels. Read alone, the gap in
+Section~\ref{sec:results} is a gap in time as well as a gap in familiarity.
+Section~\ref{sec:split} reports the control that separates them, and it clears
+this threat rather than merely bounding it: a random hold-out is harder than a
+temporal one, where drift predicts the opposite. What remains is narrower and
+is stated there --- the two splits hold back different recordings, so the
+distance between the two ratios is not itself a measurement.
 
 \paragraph{The crop changes two things at once.}
 Cropping removes the outer rows of the tactile image and then resizes what is

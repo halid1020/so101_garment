@@ -20,8 +20,10 @@ is the more accurate of the two; on unfamiliar ones it is the less accurate. Its
 error grows roughly fourfold between the two halves against under twofold for
 the diffusion family. \emph{Bound:} this is the largest and most robust effect
 in the report, being a ratio within each policy and immune to the horizon
-problem --- but the held-out recordings are the last of the session, so part of
-it may be drift rather than overfitting.
+problem. Section~\ref{sec:split} rules out the obvious alternative explanation:
+holding back a random seven recordings instead of the last seven makes the gap
+\emph{larger}, where drift across the session predicts smaller. What the
+finding does not say is how much data would close it.
 
 \paragraph{\textbf{Cropping the tactile rim buys nothing that this experiment
 can detect.}} On held-out recordings both families move by about one per cent
@@ -59,8 +61,16 @@ reproducing a memorised trajectory looks like, and it is not what planning
 looks like. \emph{Bound:} a statement about behaviour on training data, not
 about competence on the rig.
 
-The two findings that bear most on what to do next are the second and the
-third. The generalisation gap is large, robust, and currently confounded with
-session drift; the crop --- the change actually under test --- does nothing
-measurable. Together they point away from preprocessing the tactile input and
-toward the amount and variety of data behind these policies.
+A seventh finding follows from the control rather than from any single
+measurement. \textbf{The gap is not an artefact of when the held-back
+recordings were made.} A random hold-out is harder than a temporal one for both
+families, and drift predicts the reverse. \emph{Bound:} the two hold-outs are
+different recordings, so the two ratios are not two measurements of one
+quantity; the direction is what survives.
+
+The findings that bear most on what to do next are the second and the third,
+and the control above is what makes the pairing sharp. The generalisation gap
+is large, robust, and now known not to be drift; the crop --- the change
+actually under test --- does nothing measurable. Together they point away from
+preprocessing the tactile input and towards the amount and variety of data
+behind these policies.
