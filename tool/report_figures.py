@@ -41,6 +41,9 @@ FAMILY = {
     "pi05": "#7a5bb5",
 }
 
+#: Arm name to the label a reader sees, for figures that take arms by name.
+ARMS_LABEL = (("act", "ACT"), ("diffusion", "Diffusion"), ("pi05", "pi0.5"))
+
 #: The six arms, in the order they read best: each baseline beside its crop.
 ARMS = (
     ("act", "ACT", False),
@@ -449,4 +452,94 @@ def draw_contact_sheet(dataset: Path, out: Path, held_out: "list[int]") -> Path:
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  contact sheet: {len(thumbs)} recordings -> {out}")
+    return out
+
+
+def draw_split_comparison(temporal: dict, random_split: dict, out: Path) -> Path:
+    """Does the generalisation gap survive a RANDOM split? The drift question.
+
+    The trainer holds out the LAST recordings of a session, so a gap measured
+    that way mixes two causes: the policy has not seen these recordings, and the
+    recordings are late in the session, by which time lighting, garment
+    placement and gel wear may all have moved. This figure puts the two splits
+    side by side.
+
+    THE DIRECTION IS THE RESULT, and it is robust in a way the magnitudes are
+    not. If drift were the explanation, a random held-out set -- recordings that
+    sit BETWEEN training recordings, so the policy interpolates in time rather
+    than extrapolating -- should be easier. MEASURED: it is harder. So the
+    degradation is a property of unseen recordings and not of when they were
+    recorded.
+
+    The magnitudes are a different matter and the caption has to say so: the two
+    splits hold out DIFFERENT recordings, so part of the difference between the
+    two gap ratios is that one set of seven may simply be harder than the other.
+    """
+    arms = [a for a in ("act", "diffusion") if a in temporal and a in random_split]
+    if not arms:
+        raise SystemExit("need both splits for at least one policy family")
+
+    figure, axis = plt.subplots(figsize=(8.2, 4.4))
+    x = np.arange(len(arms))
+    width = 0.36
+    gaps_t = [
+        rmse_over(temporal[a], "validation") / rmse_over(temporal[a], "train")
+        for a in arms
+    ]
+    gaps_r = [
+        rmse_over(random_split[a], "validation") / rmse_over(random_split[a], "train")
+        for a in arms
+    ]
+    colours = [FAMILY[family_of(a)] for a in arms]
+    axis.bar(
+        x - width / 2,
+        gaps_t,
+        width,
+        color=colours,
+        alpha=0.45,
+        label="held out the LAST seven",
+    )
+    axis.bar(
+        x + width / 2,
+        gaps_r,
+        width,
+        color=colours,
+        alpha=1.0,
+        label="held out a RANDOM seven",
+    )
+    for index, (a, b) in enumerate(zip(gaps_t, gaps_r)):
+        for offset, value in ((-width / 2, a), (width / 2, b)):
+            axis.annotate(
+                f"x{value:.1f}",
+                xy=(index + offset, value),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                color=MUTED,
+            )
+    axis.axhline(1.0, color=MUTED, linestyle=":", linewidth=1)
+    axis.annotate(
+        "no gap at all",
+        xy=(len(arms) - 0.5, 1.0),
+        xytext=(0, 4),
+        textcoords="offset points",
+        ha="right",
+        fontsize=8,
+        color=MUTED,
+    )
+    axis.set_xticks(x)
+    axis.set_xticklabels([dict(ARMS_LABEL).get(a, a) for a in arms], fontsize=10)
+    axis.set_ylabel("held-out error / trained-on error")
+    axis.legend(frameon=False, fontsize=9, loc="upper left")
+    axis.set_title(
+        "The gap does not come from drift: a random hold-out is harder, not easier",
+        color=INK,
+        fontsize=12,
+    )
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  split comparison: {len(arms)} families -> {out}")
     return out
