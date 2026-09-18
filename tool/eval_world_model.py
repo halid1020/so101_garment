@@ -78,6 +78,34 @@ def load_dataset(policy, root: str, episodes: "list[int]"):
     )
 
 
+def check_coverage(scored: int, skipped: "list[str]") -> str:
+    """Refuse a result that rests on nothing; warn about one resting on little.
+
+    A run that scored NOTHING used to print an empty table, write a result file
+    and exit zero with a tick. MEASURED 2026-09-18: a shape mismatch in the
+    conditioning state made the scorer refuse all twenty-four sampled frames,
+    and the only evidence was in a log nobody had to read.
+
+    The per-frame exception this backs onto exists for the occasional frame too
+    near an episode edge to pad. That is an edge case; every frame failing is a
+    fault in the run, and the two must not end the same way.
+    """
+    if scored == 0:
+        reasons = sorted(set(skipped))
+        detail = "\n  ".join(reasons[:3]) or "no frames were sampled at all"
+        raise SystemExit(
+            f"❌ scored no frames of {len(skipped)} attempted, so nothing was "
+            f"written. Every frame was refused, which is a fault in the run and "
+            f"not an edge case:\n  {detail}"
+        )
+    if len(skipped) > scored:
+        return (
+            f"⚠️  {len(skipped)} frames skipped against {scored} scored; "
+            "the result rests on a minority of the recording"
+        )
+    return ""
+
+
 @torch.no_grad()
 def evaluate_frame(
     policy, batch: dict, seed: "int | None" = None
@@ -236,6 +264,7 @@ def main() -> int:
     print(f"dataset    : {args.dataset} ({dataset.num_frames} frames)")
 
     collected: "list[dict]" = []
+    skipped: "list[str]" = []
     for index in range(0, dataset.num_frames, args.every):
         if len(collected) >= args.max_frames:
             break
@@ -251,9 +280,14 @@ def main() -> int:
             # noise this observation is integrated from.
             collected.append(evaluate_frame(policy, batch, seed=pinned))
         except ValueError as exc:  # a frame too near an episode edge to pad
+            skipped.append(str(exc))
             print(f"  skipped frame {index}: {exc}")
         print(f"\r  {len(collected)} frames", end="", flush=True)
     print()
+
+    warning = check_coverage(len(collected), skipped)
+    if warning:
+        print(warning)
 
     summary = summarise(collected)
     out_dir = Path(args.out or Path(args.checkpoint).parent / "prediction")
@@ -264,6 +298,7 @@ def main() -> int:
         "dataset": str(args.dataset),
         "episodes": episodes,
         "frames": len(collected),
+        "skipped": len(skipped),
         "seed": pinned,
         "per_camera": summary,
     }

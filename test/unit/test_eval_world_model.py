@@ -8,10 +8,11 @@ and they are where a wrong answer would be quiet rather than loud.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import torch
 
-from tool.eval_world_model import parse_range, report, summarise
+from tool.eval_world_model import check_coverage, parse_range, report, summarise
 
 
 def frame(psnr, baseline, ssim=0.5, ssim_baseline=0.5, camera="central"):
@@ -73,6 +74,49 @@ class ReportTest(unittest.TestCase):
         """A reader must not have to know what 'held' means."""
         text = report(summarise([frame([10.0], [10.0])]))
         self.assertIn("last observed frame repeated", text)
+
+
+class EmptyResultTest(unittest.TestCase):
+    """A run that scores nothing must not look like a run that scored.
+
+    MEASURED 2026-09-18: a shape mismatch in the conditioning state made the
+    scorer refuse all twenty-four sampled frames. It printed a table with no
+    rows, wrote a result file, and exited zero with a tick -- so the only
+    evidence was in a log nobody had to read. The frame-level exception exists
+    for the occasional frame too near an episode edge to pad, and this
+    distinguishes that from a fault applying to every frame.
+    """
+
+    def test_scoring_nothing_is_refused(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, ["bad shape"] * 24)
+        self.assertIn("scored no frames", str(caught.exception))
+
+    def test_the_refusal_carries_the_reason_the_frames_gave(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, ["`proprio` must be [D] or [1,D], got (1, 9, 12)"])
+        self.assertIn("proprio", str(caught.exception))
+
+    def test_the_refusal_names_it_a_fault_and_not_an_edge_case(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, [])
+        self.assertIn("not an edge case", str(caught.exception))
+
+    def test_a_healthy_run_is_silent(self):
+        self.assertEqual(check_coverage(24, []), "")
+
+    def test_a_few_edge_frames_do_not_raise_a_warning(self):
+        # Two skips against twenty-four scored is the case this must tolerate.
+        self.assertEqual(check_coverage(24, ["edge", "edge"]), "")
+
+    def test_a_majority_of_skips_warns_without_refusing(self):
+        warning = check_coverage(2, ["edge"] * 22)
+        self.assertIn("minority of the recording", warning)
+
+    def test_the_skip_count_reaches_the_result_file(self):
+        # So a reader of the result can see coverage without the log.
+        body = Path("tool/eval_world_model.py").read_text()
+        self.assertIn('"skipped": len(skipped),', body)
 
 
 if __name__ == "__main__":
