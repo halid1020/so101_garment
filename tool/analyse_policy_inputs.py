@@ -450,6 +450,23 @@ def summarise(payload: dict) -> None:
             )
 
 
+def phase_labels(indices, episode_phases):
+    """The phase of each sampled frame, for frames numbered across the dataset.
+
+    The phases are one label per row OF THE EPISODE, while `indices` are rows of
+    the whole dataset, so an episode that does not start at row zero has to be
+    shifted before it can index them. Clamping a global index instead -- which
+    is what this did -- gave every frame of every episode after the first the
+    LAST phase, and the figure then shaded one band in the wrong place rather
+    than failing.
+    """
+    if not episode_phases:
+        return None
+    start = indices[0] if indices else 0
+    last = len(episode_phases) - 1
+    return [episode_phases[min(max(i - start, 0), last)] for i in indices]
+
+
 def draw(payload, source, inference, args, out_dir: Path) -> None:
     """Every figure the collected numbers support."""
     written: "list[str]" = []
@@ -464,11 +481,7 @@ def draw(payload, source, inference, args, out_dir: Path) -> None:
                 name: [f["occlusion"]["streams"][name]["share"] for f in frames]
                 for name in streams
             }
-            labels = (
-                [data["phases"][min(i, len(data["phases"]) - 1)] for i in indices]
-                if data["phases"]
-                else None
-            )
+            labels = phase_labels(indices, data["phases"])
             written.append(
                 report.contribution_over_time(
                     out_dir / f"episode{episode}_over_time.png",

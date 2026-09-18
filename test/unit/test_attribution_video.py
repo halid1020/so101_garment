@@ -12,8 +12,11 @@ import unittest
 
 from tool.attribution_video import (
     NoSuchMethod,
+    apply_crop,
     common_frames,
+    crop_for,
     frames_of,
+    maps_at,
     require_gradcam,
     shares_at,
     tile_shape,
@@ -105,6 +108,88 @@ class LayoutTest(unittest.TestCase):
     def test_no_panels_is_refused(self):
         with self.assertRaises(ValueError):
             tile_shape(0)
+
+
+class GradcamDrawingTest(unittest.TestCase):
+    """The renderer, not merely the pieces it is built from.
+
+    Every test above passed while the Grad-CAM video drew empty share bars,
+    because each one exercised a helper and none exercised the choice between
+    them. These cover that choice.
+    """
+
+    def test_maps_come_back_for_the_frame_asked_for(self):
+        run = run_with([frame(10, cam={"central": [[1.0]]}), frame(20)])
+        self.assertEqual(maps_at(run, 58, 10), {"central": [[1.0]]})
+
+    def test_a_frame_with_no_maps_gives_nothing_rather_than_raising(self):
+        run = run_with([frame(10, cam={"central": [[1.0]]}), frame(20)])
+        self.assertIsNone(maps_at(run, 58, 20))
+        self.assertIsNone(maps_at(run, 58, 999))
+
+    def test_a_gradcam_video_is_refused_without_the_recording(self):
+        # The maps are stored without the frames they were computed from, so a
+        # Grad-CAM video with no dataset would have nothing to draw them over.
+        # It must say so rather than render panels of heatmap on nothing.
+        import subprocess
+        import sys
+
+        done = subprocess.run(
+            [
+                sys.executable,
+                "tool/attribution_video.py",
+                "--arm",
+                "a=/nonexistent.json",
+                "--episode",
+                "58",
+                "--mode",
+                "gradcam",
+                "--out",
+                "/tmp/never_written.mp4",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(done.returncode, 0)
+
+    def test_an_arm_with_no_crop_in_its_config_reports_none(self):
+        self.assertIsNone(crop_for({}))
+        self.assertIsNone(crop_for({"checkpoint": "/nowhere/at/all"}))
+
+    def test_a_crop_is_read_from_the_checkpoint_it_scored(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "config.json").write_text(
+                json.dumps(
+                    {
+                        "tactile_crop": [0.8, 1.0],
+                        "tactile_cameras": ["left_arm_left_gripper"],
+                    }
+                )
+            )
+            got = crop_for({"checkpoint": directory})
+        self.assertEqual(got, ((0.8, 1.0), ("left_arm_left_gripper",)))
+
+    def test_a_cropped_panel_is_not_the_frame_the_policy_never_saw(self):
+        # The whole reason the crop is applied here: a cropped arm drawn from
+        # the full frame would illustrate attention to rows it never received.
+        # Same shape, different content, and the top rows are what changed.
+        import numpy as np
+
+        image = np.zeros((40, 40, 3), dtype=np.uint8)
+        image[:8] = 255  # a bright band only the uncropped arm can see
+        cropped = apply_crop(image, (0.8, 1.0))
+        self.assertEqual(cropped.shape, image.shape)
+        self.assertLess(cropped[:8].mean(), image[:8].mean())
+
+    def test_a_crop_of_one_keeps_the_image_exactly(self):
+        import numpy as np
+
+        image = np.arange(40 * 40 * 3, dtype=np.uint8).reshape(40, 40, 3)
+        self.assertTrue((apply_crop(image, (1.0, 1.0)) == image).all())
 
 
 if __name__ == "__main__":

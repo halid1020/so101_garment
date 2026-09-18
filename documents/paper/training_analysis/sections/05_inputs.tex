@@ -53,3 +53,9 @@ the same as how much the input matters for folding a garment: a stream can be
 ignored because another carries the same information, and only retraining
 without it would show whether it was needed. Section~\ref{sec:threats} returns
 to both.
+
+The first of those limits is lifted in Section~\ref{sec:framewise}, which repeats
+the measurement on a recording no policy was trained on and keeps the result per
+frame instead of pooling it. That section also shows what pooling costs: the
+shares above are means, and the quantity they average moves by far more within a
+single recording than the means differ between policies.

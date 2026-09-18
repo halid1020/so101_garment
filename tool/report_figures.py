@@ -331,6 +331,72 @@ def write_table(results: "dict[str, dict]", out: Path) -> Path:
     return out
 
 
+TACTILE = (
+    "left_arm_left_gripper",
+    "left_arm_right_gripper",
+    "right_arm_left_gripper",
+    "right_arm_right_gripper",
+)
+
+
+def tactile_share_series(run: dict, episode: int) -> "tuple[list[float], list[float]]":
+    """Seconds into the recording, and the share the tactile cameras carried.
+
+    The four fingertip cameras are summed because the question is what TOUCH
+    contributed, not which finger. Time is measured from the start of the
+    recording rather than from the start of the dataset, so the axis is a
+    duration a reader can compare against the video.
+    """
+    frames = (((run.get("episodes") or {}).get(str(episode)) or {}).get("frames")) or []
+    if not frames:
+        return [], []
+    start = frames[0]["index"]
+    seconds, shares = [], []
+    for frame in frames:
+        streams = ((frame.get("occlusion") or {}).get("streams")) or {}
+        if not streams:
+            continue
+        seconds.append((frame["index"] - start) / 30.0)
+        shares.append(sum(float(streams[c]["share"]) for c in TACTILE if c in streams))
+    return seconds, shares
+
+
+def draw_framewise_shares(attribution: Path, out: Path, episode: int = 58) -> Path:
+    """What touch contributed, moment by moment, on a recording nobody trained on.
+
+    The pooled figures report a mean over the episode, and a mean is the one
+    summary that cannot answer the question asked of it here: a channel that is
+    ignored for most of a recording and decisive for a second of it has a small
+    mean and a large moment. This draws the moment.
+    """
+    figure, axis = plt.subplots(figsize=(9.0, 3.6))
+    drawn = 0
+    for arm, label, _crop in ARMS:
+        path = attribution / f"heldout-{arm}" / "attribution.json"
+        if not path.is_file():
+            continue
+        seconds, shares = tactile_share_series(json.loads(path.read_text()), episode)
+        if not seconds:
+            continue
+        axis.plot(seconds, shares, label=label, **style_for(arm))
+        drawn += 1
+    axis.set_xlabel("seconds into the recording")
+    axis.set_ylabel("share carried by touch")
+    axis.set_ylim(bottom=0)
+    axis.set_title(
+        "Touch is not read evenly: its share moves several-fold within one recording",
+        color=INK,
+        fontsize=12,
+    )
+    axis.legend(frameon=False, fontsize=9, ncol=2)
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  framewise tactile share: {drawn} arms -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -339,6 +405,12 @@ def main() -> int:
         help="directory of <prefix><arm>.json action-error results",
     )
     parser.add_argument("--prefix", default="split10-")
+    parser.add_argument(
+        "--attribution",
+        default="outputs/analysis/2026-09-18",
+        help="directory of heldout-<arm>/attribution.json runs",
+    )
+    parser.add_argument("--episode", type=int, default=58)
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
 
@@ -360,6 +432,11 @@ def main() -> int:
     draw_horizon(results, out / "horizon_decay.png")
     draw_gap(results, out / "train_vs_heldout.png")
     write_table(results, out / "policy_table.tex")
+    attribution = Path(args.attribution)
+    if attribution.is_dir():
+        draw_framewise_shares(attribution, out / "framewise_shares.png", args.episode)
+    else:
+        print(f"no attribution runs at {attribution}; framewise figure skipped")
     print(f"\nwrote {out}")
     return 0
 

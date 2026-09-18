@@ -56,18 +56,44 @@ resolution would place there, which is what makes a value comparable across
 resolutions and gives the dashed reference line its meaning. Three band widths
 are reported so that the conclusion cannot depend on one arbitrary choice.
 
-\paragraph{The videos --- pending at the time of writing.}
-The recordings the report scores are held-out ones, while every attribution run
-completed so far covers recordings the policies trained on. Drawing a saliency
-video from training frames and placing it beside error measured on held-out
-frames would invite precisely the comparison this report is careful to avoid
-elsewhere, so the videos wait for attribution on a held-out recording. What
-follows describes how they are built, not what they show.
-The saliency videos are built from the same per-frame contributions as
-Figure~\ref{fig:streams}, computed on one held-out recording and drawn as one
-panel per policy in a single frame, so that the policies are compared on
-identical input at identical moments. Every panel of a cropped policy is drawn
-from the cropped image that policy actually receives, not from the full image,
-because showing an input the policy never saw would misrepresent what it was
-attending to. The still strips in this report are frames sampled from those
-videos at regular intervals.
+\paragraph{The hold-out control, Table~\ref{tab:split} and
+Figure~\ref{fig:split}.}
+Each family is trained a second time, changing one thing: instead of withholding
+the last seven recordings, seven are withheld at random from across the session.
+Architecture, optimisation budget, random seed and scoring are all held at the
+values the first training used, so the two runs of a family differ in which
+recordings were withheld and in nothing else. Each trained model is then scored
+on the recordings it saw and on the recordings it did not, and the ratio of the
+two is the gap. A ratio is used rather than a difference because it is
+dimensionless and computed within one policy, which is what allows the two
+families to appear on one axis despite planning different distances ahead. The
+per-recording figures quoted alongside come from scoring each withheld
+recording on its own instead of pooling the seven.
+
+\paragraph{The framewise comparison, Figures~\ref{fig:framewise}
+and~\ref{fig:gradcampeak}, and the videos.}
+All four are computed on one recording the policies never saw, sampling every
+fifth frame of it. At each sampled frame every policy plans, each input is
+suppressed in turn exactly as described above, and the resulting contributions
+are kept per frame instead of being pooled. Figure~\ref{fig:framewise} sums the
+four fingertip cameras at each instant and plots that against time from the
+start of the recording. Figure~\ref{fig:gradcampeak} is one instant of the
+gradient picture, chosen as the frame where the contribution of touch reaches
+its maximum, and it is rendered directly rather than recovered from a compressed
+video so that the panels are at full quality.
+
+Two rules are enforced when the panels are assembled rather than left to care.
+The comparison covers only the frames that every policy scored, so an
+incomplete run shortens it instead of putting different policies at different
+moments. And a cropped policy's tactile panels are produced by applying that
+policy's own recorded crop to the frame, so the panel shows the image the policy
+received; the crop is read from the trained model's configuration rather than
+restated, which is what stops the picture and the policy disagreeing.
+
+The two moving versions accompany the report as video files rather than being
+embedded, because the document format cannot carry them: one shows the gradient
+pictures through the recording, the other the contribution of every input
+through the same recording at the same instants. A policy with no spatial
+feature map is left out of the gradient video by name rather than drawn as an
+empty panel, since an empty panel beside full ones reads as a policy attending
+to nothing.

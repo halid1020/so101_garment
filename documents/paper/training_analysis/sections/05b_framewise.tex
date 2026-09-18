@@ -1,0 +1,83 @@
+\section{The comparison, frame by frame}
+\label{sec:framewise}
+
+Every figure so far reports a number pooled over a recording, and pooling is the
+wrong summary for what this section measures. Two moving pictures and two still
+figures are described below, all drawn from one recording that no policy was
+trained on, and all showing the same instants. Figure~\ref{fig:framewise} gives
+the contribution of touch through that recording, and
+Figure~\ref{fig:gradcampeak} shows where each policy was looking at the moment
+touch mattered most.
+
+The procedure is the same for all four. The recording is replayed frame by
+frame. At each frame every policy plans its next actions; then each input is
+suppressed in turn and the policy plans again, and the distance between the two
+plans is recorded as that input's contribution at that instant. The gradient
+pictures are made the same way round but by a different route: instead of
+suppressing an input, the sensitivity of the plan to each pixel of each camera
+is computed directly and drawn over the image the policy was given. Because
+every policy is asked about the same frame before any of them moves on, the
+panels within one picture are one moment and not four.
+
+That arrangement is enforced rather than hoped for. The comparison covers only
+frames that every policy scored, so a policy that stopped early shortens the
+comparison instead of shifting the others along it. Separate pictures played
+side by side would drift apart within seconds, and a reader could no longer tell
+whether two panels differ because the policies differ or because the moments do.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{framewise_shares.png}
+  \caption{The share of the plan carried by the four fingertip cameras, through
+  one held-back recording. Colour follows the family and a dashed line marks the
+  cropped arm, so the pair within a colour is the crop comparison. Shares are
+  normalised within a policy, so heights may be compared along a curve but not
+  between colours.}
+  \label{fig:framewise}
+\end{figure}
+
+\textbf{Touch swings far more within one recording than it differs between
+policies.} For the action-chunking family its share runs from \num{0.009} to
+\num{0.439} across ten seconds --- close to fiftyfold --- against a pooled mean
+of \num{0.095}. The mean is not wrong, but it describes no instant that occurs:
+the channel is very nearly ignored for the opening three seconds and carries
+over two fifths of the plan at its peak. Any conclusion of the form ``the
+tactile cameras contribute little'' drawn from a pooled figure is therefore a
+statement about an average, not about the moments the sensor exists for.
+
+\textbf{The two families do not read touch the same way.} The action-chunking
+family reads it in bursts, its peak reaching four to five times its own mean;
+the diffusion family reads it steadily, ranging eightfold where the other ranges
+fiftyfold, and peaking at barely twice its mean. One family treats the
+fingertips as an occasional check and the other as a continuous input, and that
+difference is invisible in every pooled figure in this report. Why they differ
+is not established here.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{gradcam_peak_touch.png}
+  \caption{Where each policy looks at the instant touch carried the most, one
+  row per policy and one column per camera. A cropped policy's tactile panels
+  are drawn from the cropped image --- the image that policy actually receives
+  --- which is why those rows appear magnified. Brightness is relative to each
+  map's own mean, so it marks where a policy looks more than it looks
+  everywhere, not how strongly it looks.}
+  \label{fig:gradcampeak}
+\end{figure}
+
+Two things govern how Figure~\ref{fig:gradcampeak} should be read. A cropped
+arm's tactile panels are drawn from the cropped image rather than the full
+frame, because showing the full frame would illustrate attention to pixels that
+policy never received. And the gradient maps differ in grid resolution between
+the two families, finer for the action-chunking one, so a comparison down a
+column is sound while a comparison across one confuses a policy's attention with
+its map's coarseness. Within that limit the picture agrees with
+Section~\ref{sec:cropping}: after cropping, bright regions sit noticeably closer
+to the edges of the tactile panels.
+
+These pictures cannot settle three things, and Section~\ref{sec:threats} carries
+them. Suppressing an input measures how much a trained policy uses it, not
+whether the task needs it. One recording is an illustration and not a sample.
+And a policy can look in a sensible place and still plan badly --- where a
+policy looks and whether it is right are different measurements, and only the
+second is in Section~\ref{sec:results}.

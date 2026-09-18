@@ -83,6 +83,12 @@ def shares_at(frame: dict) -> "dict[str, float]":
     return {name: float(value.get("share", 0.0)) for name, value in streams.items()}
 
 
+def maps_at(run: dict, episode: int, index: int) -> "dict | None":
+    """The gradient maps for one arm at one instant, or nothing."""
+    frame = next((f for f in frames_of(run, episode) if f["index"] == index), None)
+    return (frame or {}).get("gradcam")
+
+
 def require_gradcam(name: str, run: dict, episode: int) -> None:
     """Refuse, by name, a policy whose run carries no gradient maps."""
     for frame in frames_of(run, episode):
@@ -163,6 +169,113 @@ def draw_map(axis, image: np.ndarray, cam: "np.ndarray | None", label: str) -> N
     axis.axis("off")
 
 
+def crop_for(run: dict) -> "tuple[tuple, tuple] | None":
+    """The tactile crop this arm was trained with, read from its checkpoint.
+
+    Returned rather than guessed, and read from the checkpoint the attribution
+    run actually scored, because a crop drawn from anywhere else would be a
+    picture of a different policy. An arm whose config names no crop returns
+    nothing, which is the uncropped case.
+    """
+    checkpoint = run.get("checkpoint")
+    if not checkpoint:
+        return None
+    config = Path(checkpoint) / "config.json"
+    if not config.exists():
+        return None
+    body = json.loads(config.read_text())
+    fraction = body.get("tactile_crop")
+    if not fraction:
+        return None
+    cameras = tuple(body.get("tactile_cameras") or ())
+    return tuple(fraction), cameras
+
+
+def apply_crop(image: np.ndarray, crop) -> np.ndarray:
+    """What the policy was shown: centre-cropped and resized back.
+
+    Delegates to the policy package's own crop rather than repeating the
+    arithmetic here. A second implementation that drifted by a pixel would
+    illustrate attention to pixels the policy never saw, which is the one thing
+    this video exists to avoid.
+    """
+    import torch
+    from actoris_harena.policies.common.tactile import crop_and_restore
+
+    chw = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1).float()
+    restored = crop_and_restore(chw, crop)
+    return restored.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).numpy()
+
+
+def images_for(root: str, indices: "list[int]", cameras: "list[str]") -> dict:
+    """Every camera image the video needs, keyed by frame index then camera.
+
+    The gradient maps are stored without the frames they were computed from, so
+    the recording has to be read again. Read once here and reused across arms:
+    the arms differ in what they attend to, not in what they were shown.
+    """
+    from actoris_harena.analysis.sources import DatasetSource, _to_hwc_uint8
+
+    source = DatasetSource(root=root, every=1)
+    keys = [k for k in source.keys if k.split(".")[-1] in cameras]
+    out: dict = {}
+    for index in indices:
+        sample = source.dataset[index]
+        out[index] = {k.split(".")[-1]: _to_hwc_uint8(sample[k]) for k in keys}
+    return out
+
+
+def render_gradcam_frame(runs, episode, index, out_path, images, crops) -> Path:
+    """One video frame: every arm down the page, every camera across it.
+
+    Laid out arm-per-row so a reader compares a policy against its cropped twin
+    by looking down a column, which is the comparison the report is about.
+    """
+    cameras = sorted(
+        {c for run in runs.values() for c in (maps_at(run, episode, index) or {})},
+        key=lambda c: (c != "central", c),
+    )
+    rows, columns = len(runs), max(1, len(cameras))
+    figure, axes = plt.subplots(
+        rows, columns, figsize=(columns * 2.1, rows * 1.85), squeeze=False
+    )
+    for row, (name, run) in enumerate(runs.items()):
+        grids = maps_at(run, episode, index) or {}
+        crop = crops.get(name)
+        for column, camera in enumerate(cameras):
+            axis = axes[row][column]
+            picture = (images.get(index) or {}).get(camera)
+            if picture is None:
+                axis.axis("off")
+                continue
+            if crop and camera in crop[1]:
+                picture = apply_crop(picture, crop[0])
+            grid = grids.get(camera)
+            draw_map(
+                axis,
+                picture,
+                np.asarray(grid, dtype=float) if grid is not None else None,
+                camera.replace("_", " ") if row == 0 else "",
+            )
+            if column == 0:
+                axis.text(
+                    -0.06,
+                    0.5,
+                    name,
+                    transform=axis.transAxes,
+                    rotation=90,
+                    fontsize=8,
+                    color=INK,
+                    ha="right",
+                    va="center",
+                )
+    figure.suptitle(f"episode {episode}, frame {index}", fontsize=10, color=MUTED)
+    figure.tight_layout(rect=(0.02, 0, 1, 0.95))
+    figure.savefig(out_path, dpi=110)
+    plt.close(figure)
+    return out_path
+
+
 def tile_shape(count: int) -> "tuple[int, int]":
     """Rows and columns for `count` panels, wide rather than tall.
 
@@ -207,7 +320,21 @@ def main() -> int:
     )
     parser.add_argument("--episode", type=int, required=True)
     parser.add_argument("--mode", choices=("shares", "gradcam"), default="shares")
+    parser.add_argument(
+        "--dataset",
+        default="",
+        help="dataset root; required by --mode gradcam, which draws the maps "
+        "over the frames they came from",
+    )
     parser.add_argument("--fps", type=int, default=4)
+    parser.add_argument(
+        "--still",
+        type=int,
+        default=None,
+        help="render ONE frame index to --out as a picture instead of a video, "
+        "so the report shows the same panels at full quality rather than a "
+        "frame recovered from a compressed stream",
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -241,16 +368,55 @@ def main() -> int:
         if covered != len(indices):
             print(f"  note: {name} scored {covered} frames, video uses {len(indices)}")
 
-    import imageio.v2 as imageio
+    images: dict = {}
+    crops: dict = {}
+    if args.mode == "gradcam":
+        if not args.dataset:
+            raise SystemExit(
+                "--dataset is required for a Grad-CAM video: the maps are stored "
+                "without the frames they were computed from, so the recording has "
+                "to be read again to draw them over anything"
+            )
+        crops = {n: crop_for(r) for n, r in runs.items()}
+        cameras = sorted(
+            {
+                c
+                for r in runs.values()
+                for c in (maps_at(r, args.episode, indices[0]) or {})
+            }
+        )
+        # A still needs one frame decoded, not sixty.
+        wanted = [args.still] if args.still is not None else indices
+        images = images_for(args.dataset, wanted, cameras)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.still is not None:
+        if args.still not in indices:
+            nearest = min(indices, key=lambda i: abs(i - args.still))
+            raise SystemExit(
+                f"frame {args.still} was not scored by every arm; the nearest "
+                f"that was is {nearest}"
+            )
+        if args.mode == "gradcam":
+            render_gradcam_frame(runs, args.episode, args.still, out, images, crops)
+        else:
+            render_shares_frame(runs, args.episode, args.still, out)
+        print(f"\n✅ {out}  (frame {args.still})")
+        return 0
+
+    import imageio.v2 as imageio
+
     scratch = out.parent / f".{out.stem}_frames"
     scratch.mkdir(exist_ok=True)
     written = []
     for position, index in enumerate(indices):
         path = scratch / f"{position:05d}.png"
-        render_shares_frame(runs, args.episode, index, path)
+        if args.mode == "gradcam":
+            render_gradcam_frame(runs, args.episode, index, path, images, crops)
+        else:
+            render_shares_frame(runs, args.episode, index, path)
         written.append(path)
         print(f"\r  {position + 1}/{len(indices)} frames", end="", flush=True)
     print()
