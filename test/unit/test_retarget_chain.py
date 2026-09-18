@@ -101,7 +101,13 @@ class CompatibilityTest(unittest.TestCase):
             "pi05 carries a field the crop does not declare, so config_as would "
             "raise even though compatible() said yes",
         )
-        self.assertEqual(sorted(theirs - ours), ["tactile_cameras", "tactile_crop"])
+        # The crop adds fields and never removes one, which is the direction
+        # that matters: config_as reads the source's fields off the target.
+        # `tactile_resize` joined them when the crop-without-resize arm landed.
+        self.assertEqual(
+            sorted(theirs - ours),
+            ["tactile_cameras", "tactile_crop", "tactile_resize"],
+        )
 
 
 class RefusalMessageTest(unittest.TestCase):

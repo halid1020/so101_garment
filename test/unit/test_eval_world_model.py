@@ -12,7 +12,13 @@ from pathlib import Path
 
 import torch
 
-from tool.eval_world_model import check_coverage, parse_range, report, summarise
+from tool.eval_world_model import (
+    check_coverage,
+    make_batch,
+    parse_range,
+    report,
+    summarise,
+)
 
 
 def frame(psnr, baseline, ssim=0.5, ssim_baseline=0.5, camera="central"):
@@ -117,6 +123,49 @@ class EmptyResultTest(unittest.TestCase):
         # So a reader of the result can see coverage without the log.
         body = Path("tool/eval_world_model.py").read_text()
         self.assertIn('"skipped": len(skipped),', body)
+
+
+class BatchCarriesTheTaskTest(unittest.TestCase):
+    """A tensors-only batch drops the task, and a prompted model then refuses.
+
+    MEASURED 2026-09-19: every sampled frame was refused with "Either `prompt`
+    or both `context/context_mask` must be provided", because the batch keeps
+    only tensors and the task description is a string. The world model this
+    scorer was written against conditions on a learned task embedding and never
+    needed it.
+    """
+
+    def item(self):
+        return {
+            "observation.state": torch.zeros(9, 12),
+            "observation.images.central": torch.zeros(9, 3, 8, 8),
+            "task": "fold the garment",
+            "episode_index": torch.tensor(58),
+        }
+
+    def test_the_task_survives(self):
+        batch = make_batch(self.item(), "cpu")
+        self.assertEqual(batch["task"], "fold the garment")
+
+    def test_tensors_gain_a_batch_dimension(self):
+        batch = make_batch(self.item(), "cpu")
+        self.assertEqual(tuple(batch["observation.state"].shape), (1, 9, 12))
+
+    def test_the_task_is_not_given_a_batch_dimension(self):
+        # It is a string; unsqueezing it is not defined and wrapping it in a
+        # list would change what the model receives.
+        batch = make_batch(self.item(), "cpu")
+        self.assertIsInstance(batch["task"], str)
+
+    def test_a_row_with_no_task_is_fine(self):
+        batch = make_batch({"observation.state": torch.zeros(2)}, "cpu")
+        self.assertNotIn("task", batch)
+
+    def test_a_tensor_task_is_left_to_the_tensor_path(self):
+        # Some datasets carry a task INDEX rather than a description; that is a
+        # tensor and must keep its batch dimension like any other.
+        batch = make_batch({"task": torch.tensor(3)}, "cpu")
+        self.assertEqual(tuple(batch["task"].shape), (1,))
 
 
 if __name__ == "__main__":

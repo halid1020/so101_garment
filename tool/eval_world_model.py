@@ -78,6 +78,25 @@ def load_dataset(policy, root: str, episodes: "list[int]"):
     )
 
 
+def make_batch(item: dict, device) -> dict:
+    """One dataset row as a batch of one, keeping what is not a tensor.
+
+    The task description is a STRING, so a tensors-only batch drops it.
+    DreamZero never misses it -- it conditions on a single learned task
+    embedding -- but a language-conditioned world model refuses to run without
+    a prompt, and refuses it on every frame. This scorer was written against
+    the model that did not need one.
+    """
+    batch = {
+        key: value.unsqueeze(0).to(device)
+        for key, value in item.items()
+        if isinstance(value, torch.Tensor)
+    }
+    if "task" in item and not isinstance(item["task"], torch.Tensor):
+        batch["task"] = item["task"]
+    return batch
+
+
 def check_coverage(scored: int, skipped: "list[str]") -> str:
     """Refuse a result that rests on nothing; warn about one resting on little.
 
@@ -268,12 +287,7 @@ def main() -> int:
     for index in range(0, dataset.num_frames, args.every):
         if len(collected) >= args.max_frames:
             break
-        item = dataset[index]
-        batch = {
-            key: value.unsqueeze(0).to(device)
-            for key, value in item.items()
-            if isinstance(value, torch.Tensor)
-        }
+        batch = make_batch(dataset[index], device)
         try:
             # The SAME seed for every frame, not seed+index: each frame is an
             # independent prediction, and what has to be reproducible is the
