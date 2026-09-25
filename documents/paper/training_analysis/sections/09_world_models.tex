@@ -1,0 +1,38 @@
+\section{Two world models}
+\label{sec:worldmodels}
+
+Every policy so far maps an observation to a plan of actions and nothing else.
+The two models in this section also predict what the cameras will see next, so
+they can be asked a question no earlier arm can: does the model know how the
+scene will change? Section~\ref{sec:wmactions} first places their action error
+beside the policies', and Section~\ref{sec:prediction} then scores the
+predicted observations themselves.
+
+The two were chosen to bracket one question. The first is a small world model
+of about sixty million parameters, trained from scratch on this rig's
+recordings alone. The second is roughly a hundred times larger and starts from
+a video generator pretrained on general footage, so it arrives already knowing
+how images tend to move. It reads the overhead camera and a single composite
+of the four fingertip images, arranged two by two. If the pretrained prior
+matters at the scale of one rig and one task, the larger model should predict
+better; if the recordings carry most of what there is to learn, the gap should
+be small.
+
+Both models are scored under the treatment the policies received. The same
+seven recordings at the end of the session are held back and never trained on,
+every sampler is pinned to one seed so that a number repeats, and action error
+is measured against the same recorded chunks. Their action rows can therefore
+be read against the earlier table rather than merely beside it. The larger
+model trained for fewer steps than the smaller one, because each of its steps
+costs far more; \unjustified{} the step counts were set by the compute
+available, not matched, so neither model is claimed to have converged.
+
+\subsection{Action error}
+\label{sec:wmactions}
+
+Action error comes first because it is the measure the rest of this report
+already rests on, and it answers whether predicting the future costs a model
+anything at planning its actions.
+
+% RESULTS PENDING: the larger model's train and held-out rows are being scored;
+% the smaller model's are queued on the machine that holds its checkpoint.
