@@ -538,6 +538,43 @@ def write_prediction_table(results: "dict[str, dict]", out: Path) -> "Path | Non
     return out
 
 
+def write_world_model_table(
+    policies: "dict[str, dict]", world: "dict[str, dict]", out: Path
+) -> "Path | None":
+    """Every family, baselines only, over the steps ALL of them plan.
+
+    FastWAM plans ten actions, so ten is the only horizon every row shares; a
+    wider one would silently drop it, and each family's own horizon would
+    compare unequal questions -- the reason the policy table has a
+    shared-horizon column at all.
+    """
+    candidates = [(label, policies.get(arm)) for arm, label in ARMS_LABEL]
+    candidates += [(label, world.get(key)) for key, label, _m in WORLD_MODELS]
+    rows: "list[tuple[str, dict]]" = [(lab, r) for lab, r in candidates if r]
+    if not rows:
+        return None
+    common = min(len(r["train"]["mse_per_step"]) for _l, r in rows)
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        rf"& & \multicolumn{{3}}{{c}}{{over the first {common} steps}} \\",
+        r"\cmidrule(lr){3-5}",
+        r"model & horizon & train & held-out & gap \\",
+        r"\midrule",
+    ]
+    for label, r in rows:
+        train = rmse_over(r, "train", common)
+        held = rmse_over(r, "validation", common)
+        lines.append(
+            f"{label} & {r['train']['horizon']} & {train:.3f} & {held:.3f} & "
+            f"{held / train:.1f} \\\\"
+        )
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  world-model table: {len(rows)} rows over {common} steps -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -563,6 +600,15 @@ def main() -> int:
             "fastwam=outputs/analysis/2026-09-25/fastwam-prediction/prediction.json",
         ],
         help="model=path pairs of world-model prediction.json results",
+    )
+    parser.add_argument(
+        "--world-mse",
+        nargs="*",
+        default=[
+            "dreamzero=outputs/mse/thanos/2026-09-25/split10-dreamzero.json",
+            "fastwam=outputs/mse/viking/2026-09-25/split10-fastwam.json",
+        ],
+        help="model=path pairs of world-model action_mse.json results",
     )
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
@@ -607,6 +653,14 @@ def main() -> int:
             print(f"  prediction: no {key} result at {path}")
     draw_prediction(predictions, out / "prediction_margin.png")
     write_prediction_table(predictions, out / "prediction_table.tex")
+    world = {}
+    for pair in args.world_mse:
+        key, _, path = pair.partition("=")
+        if Path(path).is_file():
+            world[key] = json.loads(Path(path).read_text())
+        else:
+            print(f"  world-model action error: no {key} result at {path}")
+    write_world_model_table(results, world, out / "world_model_table.tex")
     print(f"\nwrote {out}")
     return 0
 

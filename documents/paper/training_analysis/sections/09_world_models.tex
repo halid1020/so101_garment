@@ -34,5 +34,38 @@ Action error comes first because it is the measure the rest of this report
 already rests on, and it answers whether predicting the future costs a model
 anything at planning its actions.
 
-% RESULTS PENDING: the larger model's train and held-out rows are being scored;
-% the smaller model's are queued on the machine that holds its checkpoint.
+The horizon problem of Section~\ref{sec:results} returns in a sharper form.
+The large world model plans only ten steps ahead, so ten is the one horizon
+every model shares, and Table~\ref{tab:worldactions} rescores every family
+over its first ten steps. Only the uncropped arm of each policy family appears,
+since the crop is not the question here.
+
+\begin{table}[t]
+  \centering
+  \caption{Action error over the first ten planned steps, about a third of a
+  second, for every family. \emph{Horizon} is how far each model plans in
+  total; the error is computed over the ten steps they all plan. \emph{Gap} is
+  held-out error divided by trained-on error. The large world model was scored
+  on one frame in sixty and the others on one in twenty-five.}
+  \label{tab:worldactions}
+  \small
+  \input{tables/world_model_table}
+\end{table}
+
+\textbf{Both world models plan the next third of a second better on unseen
+recordings than any of the three policies.} Their held-out errors, \num{3.9}
+and \num{4.2}, sit about a fifth below the best policy's \num{5.0} and about
+half the other two policies'. The two world models are within a few per cent
+of each other, which is too close to rank on this evidence.
+
+The small world model also fits its training recordings more tightly than any
+other model in this report, and so has the widest gap between the two halves.
+It learns the recordings it sees very closely, and it still generalises better
+than the policies do; the two are not in conflict, because a gap is a ratio and
+its held-out error is low in absolute terms.
+
+This does not establish that predicting the future is what helps. The small
+world model sees two past frames reaching back \SI{1.6}{\second}, where
+every policy sees a single frame, and the large one starts from a pretrained video model. Either
+could account for the advantage. Neither model's sampler spread was measured,
+and the comparison covers a third of a second only.

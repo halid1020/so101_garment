@@ -27,3 +27,7 @@ believing a high number means a good prediction.
   spans -- 0.8 to 4.8 s against about 0.13 to 1.1 s -- so P3's table compares
   step counts within a model only, P4's figure plots against seconds, and P5's
   comparison is the single shared instant (0.8 s), stated as one point.
+- (added 2026-09-25) P4b: the large model's filmstrip, because its overhead
+  margin is near zero while its frames are sharp and move correctly -- the
+  averaged score cannot see a small moving part against a static garment. That
+  is a finding about the metric, stated in bold, and it is why P4 exists.

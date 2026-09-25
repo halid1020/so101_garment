@@ -83,6 +83,26 @@ families' held-out error. A small gap can mean a policy that never fitted its
 training data. \emph{Bound:} one training budget of about one pass over the
 data; a longer run could open the gap.
 
+\paragraph{\textbf{Both world models plan the near term better on unseen
+recordings than every policy.}} Over the ten steps all five share, their
+held-out error is about a fifth below the best policy's
+(Table~\ref{tab:worldactions}). \emph{Bound:} a third of a second, no
+sampler floor, and inputs that differ --- more past video for one, a pretrained
+prior for the other --- so the objective is not isolated.
+
+\paragraph{\textbf{The small world model predicts what the cameras will see
+better than repeating the present.}} It beats holding on five or six of six
+steps on every camera, most clearly on the fingertips where holding is
+strongest, and its filmstrip shows it predicting a release of contact
+(Table~\ref{tab:prediction}, Figures~\ref{fig:predmargin}
+and~\ref{fig:filmstrip}). \emph{Bound:} one seed; its images are blurred.
+
+\paragraph{\textbf{An image score averaged over the frame can miss a correct
+prediction.}} The large world model's overhead frames move correctly and score
+no better than holding, because the part that moves is small
+(Figure~\ref{fig:fastwamstrip}). \emph{Bound:} one recording shown; the point
+is about the metric, and it cuts in the model's favour.
+
 One further finding follows from the control rather than from any single
 measurement. \textbf{The gap is not an artefact of when the held-back
 recordings were made.} A random hold-out is harder than a temporal one for both

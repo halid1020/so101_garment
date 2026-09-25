@@ -20,3 +20,9 @@ do not conflict -- describe what was computed and from what, and name no code.
   sampled from those same videos.
 - P6 the rim measure: normalised coordinates, the flat-map reference, and the
   band widths reported.
+- (added 2026-09-25) world-model paragraphs: the action table (rescoring over
+  the first ten steps, each model's own sampling rate, the video window the
+  small model is given), the prediction numbers and margin figure (held-out
+  recordings, one frame in thirty, pinned seed, margin over the held frame,
+  time axis from each model's own spacing), and the filmstrips (the scored
+  tensors themselves, not a second rollout).

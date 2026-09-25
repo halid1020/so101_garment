@@ -91,6 +91,29 @@ horizon is set by how it was trained, not by this evaluation: it predicts nine
 frames spaced four apart, so it never looks further ahead than the small
 model's first step.
 
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fastwam_filmstrip.png}
+  \caption{The large world model's prediction across its horizon, from the
+  same recording as Figure~\ref{fig:filmstrip}; columns are about
+  \SI{0.13}{\second} apart. The fingertip row is the model's two-by-two
+  composite of the four fingertip cameras. The last observed frame differs
+  from the small model's by \SI{0.8}{\second}, because the two models place
+  it differently relative to the horizon.}
+  \label{fig:fastwamstrip}
+\end{figure}
+
+Figure~\ref{fig:fastwamstrip} shows what the overhead number hides. The
+large model's frames are sharp where the small model's are blurred, and they
+move correctly: the grippers enter the top of the overhead view at the pace
+they really did. The margin over holding stays near zero regardless, because
+the garment filling most of the frame does not move within a second, so
+holding is already right about most pixels and the motion that distinguishes a
+prediction occupies a sliver of the image. \textbf{An image score averaged over
+the frame can rate a correct prediction of a small moving part as no better
+than doing nothing.} The fingertip composite, where contact changes a large
+share of the pixels, is where the model's margin shows.
+
 The two models overlap at one instant, \SI{0.8}{\second} ahead, and there the
 large model is ahead on both panels of Figure~\ref{fig:predmargin}. That is
 the only direct comparison the data allow, and it is one point. It is

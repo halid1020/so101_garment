@@ -43,7 +43,11 @@ be measured on recordings it never saw, and each cropped policy is matched to
 its uncropped twin in architecture, optimisation budget and data. The
 comparison reverses several conclusions that had been drawn from training
 recordings alone, and two of those reverse a second time once the families are
-compared over a planning horizon they share rather than over their own. We give
+compared over a planning horizon they share rather than over their own. Two
+world models, which predict what the cameras will see as well as what to do,
+are scored under the same treatment: both plan the near term better on unseen
+recordings than every policy, and the smaller predicts the cameras better than
+repeating the present. We give
 the provenance of every figure so that each claim can be checked, and we state
 the confounds that remain open, including one that the present split cannot
 separate.
@@ -56,10 +60,10 @@ separate.
 \input{sections/04_cropping}
 \input{sections/05_inputs}
 \input{sections/05b_framewise}
+\input{sections/09_world_models}
+\input{sections/10_prediction}
 \input{sections/06_findings}
 \input{sections/07_provenance}
 \input{sections/08_threats}
-\input{sections/09_world_models}
-\input{sections/10_prediction}
 
 \end{document}

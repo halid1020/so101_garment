@@ -27,3 +27,13 @@ figure or table earlier in the report.
 - F7 a policy can be flat across its whole chunk on recordings it trained on.
   Evidence: the decay figure, trained-on panel. Bound: this is a statement
   about memorisation, not about on-robot behaviour.
+- (added 2026-09-25) F-WM1 both world models plan the near term better on
+  unseen recordings than every policy. Evidence: the world-model table. Bound:
+  ten steps, no sampler floor, and more past context.
+- F-WM2 the small world model predicts the future cameras better than holding,
+  and the large one sharper but over a second only. Evidence: prediction table,
+  margin figure, filmstrips. Bound: one seed, and the two see the fingertips
+  differently.
+- F-WM3 (metric) a frame-averaged image score can rate a correct prediction of
+  a small moving part as no better than holding. Evidence: the large model's
+  filmstrip beside its overhead margin.

@@ -55,6 +55,29 @@ touch at two fifths. The bar shown here reruns the same checkpoint on the same
 recordings with the adapter loaded and the task instruction supplied. The other
 two bars were never affected, because those families store complete weights.
 
+\paragraph{The world models' action error, Table~\ref{tab:worldactions}.}
+Scored as the policies were, with two differences. The small world model reads
+a short stretch of past video, so each sampled frame is given to it with the
+two earlier frames it was trained to see rather than alone; a single frame
+repeated would have shown it a frozen past. Every model's per-step error curve
+is then averaged over its first ten steps only, the longest span every model
+plans, and square-rooted.
+
+\paragraph{Future-observation prediction, Table~\ref{tab:prediction} and
+Figures~\ref{fig:predmargin} to~\ref{fig:fastwamstrip}.}
+One frame in thirty of the held-back recordings, twenty-four frames in all, is
+given to each model with the past it expects, through the same input
+normalisation it was trained with, and with its sampler pinned to one seed.
+The model's predicted images are compared with the recorded ones at each
+horizon step, as PSNR and SSIM, per camera; the last observed frame, repeated,
+is scored the same way as the baseline. The margin figure plots the difference
+between the two against the time each step lies ahead of the last observed
+frame, taken from each model's own frame spacing. The filmstrips show the very
+images those numbers were computed from, saved during scoring rather than
+generated again. An earlier scoring of the small model skipped the input
+normalisation and reported it losing to holding on every camera; every number
+here replaces that one.
+
 \paragraph{The rim measure, Figure~\ref{fig:rim}.}
 Gradient maps are computed for the tactile cameras, giving one map per camera
 per frame. A band is defined around the edge of each map in \emph{normalised}

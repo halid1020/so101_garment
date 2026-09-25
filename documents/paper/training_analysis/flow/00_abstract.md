@@ -17,3 +17,7 @@ Single paragraph, high level, NO numbers (writing guideline §4).
   compared over a horizon they share.
 - Close: state that the report gives every figure's provenance so each claim
   can be checked, and flags the confounds that remain open.
+- (added 2026-09-25) Extension: two world models that also predict the
+  cameras, scored the same way; they plan the near term better on unseen
+  recordings than every policy, and the small one predicts the cameras better
+  than repeating the present. No numbers.
