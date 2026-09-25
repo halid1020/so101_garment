@@ -49,6 +49,17 @@ FAMILY = {
 #: reader never needs the colour alone to tell the two apart.
 WORLD_MODELS = (("dreamzero", "DreamZero", "o"), ("fastwam", "FastWAM", "s"))
 
+#: Seconds from the last OBSERVED frame to horizon step 1, and between steps.
+#: Read off the trained configs, at 30 fps. DreamZero: context frames at -48 and
+#: -24, predictions at 0, 24, ... 120 (chunk_size 48, two latent frames per
+#: chunk). FastWAM: observes frame 0 and predicts 4, 8, ... 32. The two
+#: horizons barely overlap -- FastWAM's whole horizon fits inside DreamZero's
+#: first step -- so steps are never compared by index, only by time.
+#: A camera name a reader should see instead of the dataset key.
+CAMERA_LABEL = {"central": "overhead", "tactile_quad": "fingertips, composite"}
+
+HORIZON_SECONDS = {"dreamzero": (24 / 30, 24 / 30), "fastwam": (4 / 30, 4 / 30)}
+
 #: Arm name to the label a reader sees, for figures that take arms by name.
 ARMS_LABEL = (("act", "ACT"), ("diffusion", "Diffusion"), ("pi05", "pi0.5"))
 
@@ -429,30 +440,42 @@ def prediction_margins(payload: dict) -> "dict[str, list[float]]":
     }
 
 
+def fingertip_margin(per_camera: "dict[str, list[float]]") -> "list[float] | None":
+    """One fingertip series: the composite if the model saw one, else the mean.
+
+    FastWAM reads the four fingertips as a single 2x2 composite and is scored on
+    it; DreamZero reads them separately. The mean of four margins is the closest
+    like-for-like, and the caption says that is what it is.
+    """
+    if "tactile_quad" in per_camera:
+        return per_camera["tactile_quad"]
+    series = [v for k, v in per_camera.items() if "gripper" in k]
+    if not series:
+        return None
+    return [float(np.mean(step)) for step in zip(*series)]
+
+
 def draw_prediction(results: "dict[str, dict]", out: Path) -> "Path | None":
-    """Each world model's margin over holding, one panel per camera it saw."""
+    """Each world model's margin over holding, against seconds ahead."""
     margins = {key: prediction_margins(r) for key, r in results.items() if r}
-    cameras: "list[str]" = []
-    for per_camera in margins.values():
-        cameras += [c for c in per_camera if c not in cameras]
-    if not cameras:
+    if not margins:
         print("  prediction: no world-model results; figure skipped")
         return None
-    columns = min(3, len(cameras))
-    rows = -(-len(cameras) // columns)
-    figure, axes = plt.subplots(
-        rows, columns, figsize=(3.4 * columns, 2.6 * rows), sharey=True, squeeze=False
+    panels = (
+        ("overhead camera", lambda m: m.get("central")),
+        ("fingertips", fingertip_margin),
     )
-    for index, camera in enumerate(cameras):
-        axis = axes[index // columns][index % columns]
+    figure, axes = plt.subplots(1, 2, figsize=(10.0, 3.8), sharey=True)
+    for axis, (title, pick) in zip(axes, panels):
         axis.axhline(0, color=MUTED, linewidth=1.0)
         for key, label, marker in WORLD_MODELS:
-            series = margins.get(key, {}).get(camera)
+            series = pick(margins.get(key, {})) if key in margins else None
             if not series:
                 continue
-            steps = range(1, len(series) + 1)
+            first, spacing = HORIZON_SECONDS[key]
+            seconds = [first + i * spacing for i in range(len(series))]
             axis.plot(
-                steps,
+                seconds,
                 series,
                 color=FAMILY[key],
                 marker=marker,
@@ -460,29 +483,58 @@ def draw_prediction(results: "dict[str, dict]", out: Path) -> "Path | None":
                 linewidth=2.0,
                 label=label,
             )
-        axis.set_title(camera.replace("_", " "), fontsize=10, color=INK)
-        axis.set_xlabel("horizon step", fontsize=9, color=MUTED)
+        axis.set_title(title, fontsize=11, color=INK)
+        axis.set_xlabel(
+            "seconds after the last observed frame", fontsize=9, color=MUTED
+        )
         tidy(axis)
-    for index in range(len(cameras), rows * columns):
-        axes[index // columns][index % columns].set_visible(False)
-    for row in axes:
-        row[0].set_ylabel("dB above holding", fontsize=9, color=MUTED)
-    handles, labels = [], []
-    for axis in figure.axes:
-        for h, lab in zip(*axis.get_legend_handles_labels()):
-            if lab not in labels:
-                handles.append(h)
-                labels.append(lab)
+    axes[0].set_ylabel("PSNR above holding (dB)", fontsize=9, color=MUTED)
+    handles, labels = axes[0].get_legend_handles_labels()
     figure.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False)
     figure.suptitle(
         "Above the line, the model predicts better than repeating the last frame",
         color=INK,
         fontsize=12,
     )
-    figure.tight_layout(rect=(0, 0.06, 1, 0.95))
+    figure.tight_layout(rect=(0, 0.08, 1, 0.93))
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  prediction margin: {sorted(margins)} -> {out}")
+    return out
+
+
+def write_prediction_table(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Per camera and model: PSNR and SSIM beside holding, and steps won.
+
+    A step counts as won only by a clear margin (0.1 dB); a step the model
+    ties with holding is not a step on which it predicted anything.
+    """
+    labels = {key: label for key, label, _m in WORLD_MODELS}
+    lines = [
+        r"\begin{tabular}{llrrrrr}",
+        r"\toprule",
+        r"& & \multicolumn{2}{c}{PSNR (dB)} & \multicolumn{2}{c}{SSIM} & \\",
+        r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+        r"camera & model & model & held & model & held & steps won \\",
+        r"\midrule",
+    ]
+    rows = 0
+    for key, payload in results.items():
+        for camera, v in (payload or {}).get("per_camera", {}).items():
+            won = sum(1 for m, h in zip(v["psnr"], v["psnr_baseline"]) if m - h > 0.1)
+            lines.append(
+                f"{CAMERA_LABEL.get(camera, camera.replace('_', ' '))} & "
+                f"{labels.get(key, key)} & "
+                f"{np.mean(v['psnr']):.1f} & {np.mean(v['psnr_baseline']):.1f} & "
+                f"{np.mean(v['ssim']):.3f} & {np.mean(v['ssim_baseline']):.3f} & "
+                f"{won} of {len(v['psnr'])} \\\\"
+            )
+            rows += 1
+    if not rows:
+        return None
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  prediction table: {rows} rows -> {out}")
     return out
 
 
@@ -499,7 +551,7 @@ def main() -> int:
     parser.add_argument(
         "--attribution",
         nargs="+",
-        default=["outputs/analysis/2026-09-18", "outputs/analysis/2026-09-19"],
+        default=["outputs/analysis/2026-09-18", "outputs/analysis/2026-09-25"],
         help="directories of heldout-<arm>/attribution.json runs",
     )
     parser.add_argument("--episode", type=int, default=58)
@@ -554,6 +606,7 @@ def main() -> int:
         else:
             print(f"  prediction: no {key} result at {path}")
     draw_prediction(predictions, out / "prediction_margin.png")
+    write_prediction_table(predictions, out / "prediction_table.tex")
     print(f"\nwrote {out}")
     return 0
 

@@ -249,9 +249,11 @@ def evaluate_frame(
     moved by up to 0.05 dB (5.77 against 5.82 on one fingertip) while every
     held-last-frame baseline was identical to the digit, which is what locates
     the difference in the sampler rather than in frame selection: holding a
-    frame involves no sampling. 0.05 dB is small beside the 13 dB that separates
-    this checkpoint from its baseline, and it is NOT small beside the difference
-    two trained arms would be compared on.
+    frame involves no sampling. 0.05 dB is small beside the three to eight dB by
+    which the 80 000-step DreamZero beats holding (2026-09-25, scored through
+    its preprocessor -- the "13 dB" gap once quoted here came from a scorer
+    that skipped it), and it is NOT small beside the difference two trained
+    arms would be compared on.
     """
     if seed is not None:
         torch.manual_seed(seed)
