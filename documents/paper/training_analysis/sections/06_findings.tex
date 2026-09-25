@@ -46,13 +46,13 @@ observation that motivated the crop. \emph{Bound:} measured on training
 recordings, and the rise after cropping is partly mechanical, since removing
 the outer rows moves the surviving pixels closer to the new edge.
 
-\paragraph{\textbf{The families do not use the rig the same way, and the
-tactile channels rank last for two of the three.}} The action-chunking family
-leans on the overhead camera, the diffusion family on proprioception, and the
-third ranks touch above proprioception --- the only one to do so.
-\emph{Bound:} shares are normalised within a policy, so this is a claim about
-ordering and never about magnitudes; and the third family reads half as many
-tactile cameras as the others.
+\paragraph{\textbf{The families do not use the rig the same way, and two of
+the three lean mostly on proprioception.}} The action-chunking family leans on
+the overhead camera; the diffusion and fine-tuned families each take about
+three quarters of their plan's movement from where the arms are. Touch ranks
+last or near-last for all three. \emph{Bound:} shares are normalised within a
+policy, so this is a claim about ordering and never about magnitudes; and the
+fine-tuned family reads half as many tactile cameras as the others.
 
 \paragraph{\textbf{A pooled contribution understates what touch does by about
 fivefold.}} Within one held-back recording the share carried by the fingertip
@@ -62,12 +62,12 @@ carries much of the plan. \emph{Bound:} one recording, and a contribution is a
 measure of use rather than of necessity; the swing is large enough that its
 direction does not depend on either.
 
-\paragraph{\textbf{The two families read touch in different rhythms, not merely
-in different amounts.}} The action-chunking family reads it in bursts, peaking
-at four to five times its own mean; the diffusion family reads it steadily,
-peaking at barely twice. \emph{Bound:} visible only framewise, on one recording,
+\paragraph{\textbf{Only one of the three families reads touch in bursts.}}
+The action-chunking family peaks at four to five times its own mean; the
+diffusion and fine-tuned families read it steadily, peaking at two to two and
+a half times theirs. \emph{Bound:} visible only framewise, on one recording,
 and normalised within each policy --- so this compares each family against its
-own average and never one family's magnitude against the other's.
+own average and never one family's magnitude against another's.
 
 \paragraph{\textbf{A policy can be flat across its entire planning horizon on
 recordings it trained on.}} The action-chunking family predicts the hundredth
@@ -75,6 +75,13 @@ step of a familiar recording about as accurately as the first. That is what
 reproducing a memorised trajectory looks like, and it is not what planning
 looks like. \emph{Bound:} a statement about behaviour on training data, not
 about competence on the rig.
+
+\paragraph{\textbf{The smallest generalisation gap belongs to the least-fitted
+policy.}} The fine-tuned family loses only a tenth on recordings it never saw,
+because its error on recordings it trained on is already above the other
+families' held-out error. A small gap can mean a policy that never fitted its
+training data. \emph{Bound:} one training budget of about one pass over the
+data; a longer run could open the gap.
 
 One further finding follows from the control rather than from any single
 measurement. \textbf{The gap is not an artefact of when the held-back

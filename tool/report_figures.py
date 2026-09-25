@@ -543,7 +543,7 @@ def main() -> int:
     parser.add_argument(
         "--mse",
         nargs="+",
-        default=["outputs/mse/thanos/2026-09-16", "outputs/mse/thanos/2026-09-19"],
+        default=["outputs/mse/thanos/2026-09-16", "outputs/mse/thanos/2026-09-25"],
         help="directories of <prefix><arm>.json action-error results; an arm "
         "found in two is an error, so a rerun cannot silently shadow the original",
     )

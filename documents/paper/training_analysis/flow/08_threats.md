@@ -18,3 +18,7 @@ concrete confound with a named consequence, not a hedge.
   statements therefore do not yet cover it.
 - P8 none of this is an on-robot result. Say what on-robot trials would settle
   and what they would not.
+- (revised 2026-09-25) the "still pending" paragraph becomes the third family's
+  own caveat: one pass over the data, a low-rank adapter, three cameras, and no
+  sampler floor measured -- so its row answers "what does this budget buy", not
+  "how does this family compare at convergence".

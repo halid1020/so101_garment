@@ -19,3 +19,11 @@ off a table or figure in the same section.
   family is flat across its whole chunk on recordings it trained on and steep
   on recordings it did not. Say what that shape means -- memorisation -- rather
   than leaving the reader to infer it.
+- P6 (added 2026-09-25, when the third family's rows landed) the fine-tuned
+  family, read with its training budget beside it. Its gap is the smallest in
+  the table, and that is NOT generalisation: it was trained for about one pass
+  over the recordings and its error on recordings it trained on is already
+  higher than the other two families' error on recordings they never saw. A
+  ratio near one here means it never fitted the training half. Say so before a
+  reader credits it. Its crop difference is a few per cent with no sampler floor
+  measured, so no claim is made from it. It reads three cameras, not five.

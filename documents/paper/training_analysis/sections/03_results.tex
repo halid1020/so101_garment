@@ -31,15 +31,15 @@ so neither can be quoted without the other.
   error divided by trained-on error. It appears in both groups because it
   differs between them: the longer-horizon family's ratio falls from
   \num{5.3} to \num{4.1} when the far end of its chunk --- where its held-out
-  error grows fastest --- is excluded. The dashes are the policy family whose
-  matched retraining had not finished when this was written.}
+  error grows fastest --- is excluded.}
   \label{tab:policies}
   \small
   \input{tables/policy_table}
 \end{table}
 
-Read across the shared-horizon column, the two families that have completed
-differ by less than a tenth, with the diffusion family ahead. Read down the gap
+Read across the shared-horizon column, the two families trained from scratch
+differ by less than a tenth, with the diffusion family ahead, and the fine-tuned
+family trails both by around half. Read down the gap
 column, they differ by more than twofold: the action-chunking family is roughly
 four times worse on recordings it never saw than on recordings it trained on,
 while the diffusion family is under twice as bad. The gap is a ratio computed
@@ -78,6 +78,21 @@ like. On recordings it never saw, the same family's error climbs steeply with
 distance into the chunk. The diffusion family climbs steeply in both panels,
 which is the ordinary and expected behaviour: predictions further ahead are
 worse.
+
+\textbf{The fine-tuned family's small gap is not generalisation.} Its held-out
+error is only about a tenth above its trained-on error, the smallest gap in
+Table~\ref{tab:policies}, and read alone that looks like the most robust policy
+in the report. It is not. Over the shared horizon its error on recordings it
+\emph{trained on} is \num{13.8}, which is already higher than either other
+family's error on recordings it \emph{never saw}, at \num{10.1} and \num{9.2}.
+Its two curves in Figure~\ref{fig:horizon} nearly coincide for the same reason.
+This family trained for roughly one pass over its recordings, adapting only a
+small low-rank addition to a large pretrained model, so it never fitted the
+training half closely enough to have anything to lose on the held-out half. Its
+row therefore measures what this training budget buys, not how the family
+compares at convergence. It also reads three cameras where the others read
+five. Its cropped arm is about one per cent lower on both halves, but no
+sampler floor was measured for this family, so that difference is not claimed.
 
 \unjustified{} the sampling rate of one frame in twenty was chosen to keep the
 scoring of six policies within a working day and has not been shown to leave

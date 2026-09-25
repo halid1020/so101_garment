@@ -23,3 +23,7 @@ believing a high number means a good prediction.
 - P6 the limits: the sampler is pinned so a number is reproducible, but both
   models sample and a different seed gives a different rollout; and prediction
   quality is not task success.
+- (added 2026-09-25, from the results) the two models predict over DIFFERENT
+  spans -- 0.8 to 4.8 s against about 0.13 to 1.1 s -- so P3's table compares
+  step counts within a model only, P4's figure plots against seconds, and P5's
+  comparison is the single shared instant (0.8 s), stated as one point.

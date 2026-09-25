@@ -28,11 +28,12 @@ whether two panels differ because the policies differ or because the moments do.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{framewise_shares.png}
-  \caption{The share of the plan carried by the four fingertip cameras, through
+  \caption{The share of the plan carried by the fingertip cameras, through
   one held-back recording. Colour follows the family and a dashed line marks the
   cropped arm, so the pair within a colour is the crop comparison. Shares are
   normalised within a policy, so heights may be compared along a curve but not
-  between colours.}
+  between colours. The fine-tuned family reads two fingertip cameras and the
+  others four.}
   \label{fig:framewise}
 \end{figure}
 
@@ -45,13 +46,17 @@ over two fifths of the plan at its peak. Any conclusion of the form ``the
 tactile cameras contribute little'' drawn from a pooled figure is therefore a
 statement about an average, not about the moments the sensor exists for.
 
-\textbf{The two families do not read touch the same way.} The action-chunking
-family reads it in bursts, its peak reaching four to five times its own mean;
-the diffusion family reads it steadily, ranging eightfold where the other ranges
-fiftyfold, and peaking at barely twice its mean. One family treats the
-fingertips as an occasional check and the other as a continuous input, and that
-difference is invisible in every pooled figure in this report. Why they differ
-is not established here.
+\textbf{Only the action-chunking family reads touch in bursts.} Its peak
+reaches four to five times its own mean. The diffusion family reads touch
+steadily, ranging eightfold where the action-chunking family ranges fiftyfold,
+and peaking at barely twice its mean. The fine-tuned family behaves like the
+diffusion family, peaking at around two and a half times its mean. One family
+treats the fingertips as an occasional check and the other two as a continuous
+input, and that difference is invisible in every pooled figure in this report.
+The two steady families both generate their plans by iterative denoising, and
+the bursty one does not; that is a correlation across three policies and is
+not tested here. The fine-tuned family reads only two of the four fingertip
+cameras, so its share is over those two.
 
 \begin{figure}[t]
   \centering

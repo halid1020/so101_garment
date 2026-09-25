@@ -50,13 +50,14 @@ it would do worse --- a stream can be ignored because a correlated one carries
 the same information. Retraining with the stream removed is what answers the
 second question, and it costs a training run per stream rather than minutes.
 
-\paragraph{One family's numbers are still pending.}
-The matched retraining of the third family had not finished when this was
-written, so its rows are dashes. Every cross-family statement here is therefore
-a statement about two families, and the third may not follow the same pattern:
-it differs in the cameras it reads, in being a finetune of a pretrained model
-rather than a model trained from scratch, and in planning a different distance
-ahead again.
+\paragraph{The fine-tuned family is under-trained, not merely different.}
+Its matched retraining completed, but on a budget of about one pass over the
+recordings, adapting a small low-rank addition rather than the whole model.
+Its row answers what that budget buys. It does not say how the family compares
+with the others once each has fitted its data, and its near-unity gap reflects
+a training set it never fitted, as Section~\ref{sec:results} shows. It also
+reads three cameras where the others read five, and its sampler's own spread
+was not measured, so differences of a few per cent in its row are not findings.
 
 \paragraph{None of this is an on-robot result.}
 Error against recorded commands measures agreement with one demonstrator on

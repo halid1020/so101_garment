@@ -34,7 +34,10 @@ policy. The shared-horizon column is the same curve averaged over only its first
 thirty-two positions, which is why the two columns can differ for the same
 policy and why both are reported. Policies whose output is sampled have their
 sampler fixed to a recorded seed, so that rerunning the scoring reproduces the
-number rather than redrawing it.
+number rather than redrawing it. The fine-tuned family reads a written
+instruction as well as its cameras, and it is scored with the instruction it
+was trained on; an earlier scoring that supplied none put its held-out error
+about a tenth higher.
 
 \paragraph{The input contributions, Figure~\ref{fig:streams}.}
 For each sampled frame the policy plans once with all inputs present. Each input
@@ -44,6 +47,13 @@ than introducing an artificial edge --- and the policy plans again. The size of
 the change between the two plans is that group's contribution on that frame.
 Contributions are summed over frames and normalised to sum to one within each
 policy, which is what restricts the figure to statements about ordering.
+
+\textbf{A correction to this figure.} An earlier version drew the fine-tuned
+family's bar from a run in which its trained adapter had not been loaded, so it
+described an untrained model; that bar put proprioception at a twentieth and
+touch at two fifths. The bar shown here reruns the same checkpoint on the same
+recordings with the adapter loaded and the task instruction supplied. The other
+two bars were never affected, because those families store complete weights.
 
 \paragraph{The rim measure, Figure~\ref{fig:rim}.}
 Gradient maps are computed for the tactile cameras, giving one map per camera
