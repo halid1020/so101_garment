@@ -39,7 +39,15 @@ FAMILY = {
     "act": "#2a78d6",
     "diffusion": "#eb6834",
     "pi05": "#7a5bb5",
+    # The two world models: new entities, so new hues, placed well clear of the
+    # three policy families above and never reused for them.
+    "dreamzero": "#17917a",
+    "fastwam": "#c2407e",
 }
+
+#: World models: key, label, marker. The marker is the second encoding, so a
+#: reader never needs the colour alone to tell the two apart.
+WORLD_MODELS = (("dreamzero", "DreamZero", "o"), ("fastwam", "FastWAM", "s"))
 
 #: Arm name to the label a reader sees, for figures that take arms by name.
 ARMS_LABEL = (("act", "ACT"), ("diffusion", "Diffusion"), ("pi05", "pi0.5"))
@@ -407,6 +415,77 @@ def draw_framewise_shares(
     return out
 
 
+def prediction_margins(payload: dict) -> "dict[str, list[float]]":
+    """Per camera, PSNR minus the held-last-frame PSNR at every horizon step.
+
+    The margin and not the PSNR, because holding scores highly on a camera that
+    barely moves: a model is only predicting where it beats doing nothing.
+    """
+    return {
+        camera: [
+            round(m - h, 4) for m, h in zip(values["psnr"], values["psnr_baseline"])
+        ]
+        for camera, values in payload.get("per_camera", {}).items()
+    }
+
+
+def draw_prediction(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Each world model's margin over holding, one panel per camera it saw."""
+    margins = {key: prediction_margins(r) for key, r in results.items() if r}
+    cameras: "list[str]" = []
+    for per_camera in margins.values():
+        cameras += [c for c in per_camera if c not in cameras]
+    if not cameras:
+        print("  prediction: no world-model results; figure skipped")
+        return None
+    columns = min(3, len(cameras))
+    rows = -(-len(cameras) // columns)
+    figure, axes = plt.subplots(
+        rows, columns, figsize=(3.4 * columns, 2.6 * rows), sharey=True, squeeze=False
+    )
+    for index, camera in enumerate(cameras):
+        axis = axes[index // columns][index % columns]
+        axis.axhline(0, color=MUTED, linewidth=1.0)
+        for key, label, marker in WORLD_MODELS:
+            series = margins.get(key, {}).get(camera)
+            if not series:
+                continue
+            steps = range(1, len(series) + 1)
+            axis.plot(
+                steps,
+                series,
+                color=FAMILY[key],
+                marker=marker,
+                markersize=5,
+                linewidth=2.0,
+                label=label,
+            )
+        axis.set_title(camera.replace("_", " "), fontsize=10, color=INK)
+        axis.set_xlabel("horizon step", fontsize=9, color=MUTED)
+        tidy(axis)
+    for index in range(len(cameras), rows * columns):
+        axes[index // columns][index % columns].set_visible(False)
+    for row in axes:
+        row[0].set_ylabel("dB above holding", fontsize=9, color=MUTED)
+    handles, labels = [], []
+    for axis in figure.axes:
+        for h, lab in zip(*axis.get_legend_handles_labels()):
+            if lab not in labels:
+                handles.append(h)
+                labels.append(lab)
+    figure.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False)
+    figure.suptitle(
+        "Above the line, the model predicts better than repeating the last frame",
+        color=INK,
+        fontsize=12,
+    )
+    figure.tight_layout(rect=(0, 0.06, 1, 0.95))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  prediction margin: {sorted(margins)} -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -424,6 +503,15 @@ def main() -> int:
         help="directories of heldout-<arm>/attribution.json runs",
     )
     parser.add_argument("--episode", type=int, default=58)
+    parser.add_argument(
+        "--prediction",
+        nargs="*",
+        default=[
+            "dreamzero=outputs/analysis/2026-09-25/dreamzero-prediction/prediction.json",
+            "fastwam=outputs/analysis/2026-09-25/fastwam-prediction/prediction.json",
+        ],
+        help="model=path pairs of world-model prediction.json results",
+    )
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
 
@@ -458,6 +546,14 @@ def main() -> int:
         draw_framewise_shares(attributions, out / "framewise_shares.png", args.episode)
     else:
         print(f"no attribution runs at {args.attribution}; framewise figure skipped")
+    predictions = {}
+    for pair in args.prediction:
+        key, _, path = pair.partition("=")
+        if Path(path).is_file():
+            predictions[key] = json.loads(Path(path).read_text())
+        else:
+            print(f"  prediction: no {key} result at {path}")
+    draw_prediction(predictions, out / "prediction_margin.png")
     print(f"\nwrote {out}")
     return 0
 
