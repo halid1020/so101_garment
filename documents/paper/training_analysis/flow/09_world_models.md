@@ -32,3 +32,8 @@ continuation rather than a second paper. Gated on both models finishing.
   floor for either world model, the large model sampled less densely, and the
   small model sees 0.8 s of past video where the policies see one frame -- so
   the advantage is not attributable to the prediction objective alone.
+- A5 (added 2026-09-25, once measured) the sampler floor, as its own small
+  table: three seeds over the held-out recordings. The small world model's lead
+  over the best policy is many times its own spread, so A2 stands for it; the
+  fine-tuned policy's near-term error swings a fifth between seeds and it is
+  last on every seed. The large model's floor is pending and A2 says so.

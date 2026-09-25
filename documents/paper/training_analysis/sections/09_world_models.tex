@@ -67,5 +67,26 @@ its held-out error is low in absolute terms.
 This does not establish that predicting the future is what helps. The small
 world model sees two past frames reaching back \SI{1.6}{\second}, where
 every policy sees a single frame, and the large one starts from a pretrained video model. Either
-could account for the advantage. Neither model's sampler spread was measured,
-and the comparison covers a third of a second only.
+could account for the advantage, and the comparison covers a third of a
+second only.
+
+\begin{table}[t]
+  \centering
+  \caption{The sampler's own spread. The held-back recordings scored three
+  times, changing only the random seed each sampling model draws from; the
+  lowest and highest root-mean-square error are shown. A difference between
+  two models smaller than this spread is not a finding. The large world
+  model's rescoring had not finished when this was written.}
+  \label{tab:floor}
+  \small
+  \input{tables/floor_table}
+\end{table}
+
+The advantage is not the sampler's doing, at least for the small world model.
+Table~\ref{tab:floor} rescores the held-back recordings under three seeds.
+Over the first ten steps the small world model's error moves by about a
+twentieth of a unit, against a lead of nearly a whole unit over the diffusion
+family, whose own spread is smaller still. The fine-tuned policy is the
+outlier: its near-term error swings by a fifth between seeds, and it is last
+on every one of them. The large world model's spread is not yet measured, so
+its place beside the small one rests on a single seed.

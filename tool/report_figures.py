@@ -575,6 +575,43 @@ def write_world_model_table(
     return out
 
 
+def write_floor_table(directory: Path, out: Path, steps: int = 10) -> "Path | None":
+    """The sampler's own spread: held-out error under three seeds, per model.
+
+    ``directory`` holds ``<model>-seed<N>.json`` results, each scoring ONLY the
+    held-out recordings (so their block is labelled train). A difference
+    between two models smaller than this spread is not a finding.
+    """
+    labels = dict(ARMS_LABEL) | {k: lab for k, lab, _m in WORLD_MODELS}
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        rf"& \multicolumn{{2}}{{c}}{{own horizon}} & \multicolumn{{2}}{{c}}{{first {steps} steps}} \\",
+        r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}",
+        r"model & lowest & highest & lowest & highest \\",
+        r"\midrule",
+    ]
+    rows = 0
+    for model in [k for k, _l in ARMS_LABEL] + [k for k, _l, _m in WORLD_MODELS]:
+        paths = sorted(directory.glob(f"{model}-seed*.json"))
+        if len(paths) < 2:
+            continue
+        blocks = [json.loads(p.read_text())["train"] for p in paths]
+        own = [float(np.sqrt(np.mean(b["mse_per_step"]))) for b in blocks]
+        near = [float(np.sqrt(np.mean(b["mse_per_step"][:steps]))) for b in blocks]
+        lines.append(
+            f"{labels.get(model, model)} ({len(paths)} seeds) & {min(own):.2f} & "
+            f"{max(own):.2f} & {min(near):.2f} & {max(near):.2f} \\\\"
+        )
+        rows += 1
+    if not rows:
+        return None
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  sampler floor: {rows} models -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -600,6 +637,12 @@ def main() -> int:
             "fastwam=outputs/analysis/2026-09-25/fastwam-prediction/prediction.json",
         ],
         help="model=path pairs of world-model prediction.json results",
+    )
+    parser.add_argument(
+        "--floor",
+        nargs="*",
+        default=["outputs/mse/floor"],
+        help="directory of <model>-seed<N>.json held-out rescorings",
     )
     parser.add_argument(
         "--world-mse",
@@ -661,6 +704,8 @@ def main() -> int:
         else:
             print(f"  world-model action error: no {key} result at {path}")
     write_world_model_table(results, world, out / "world_model_table.tex")
+    for directory in args.floor:
+        write_floor_table(Path(directory), out / "floor_table.tex")
     print(f"\nwrote {out}")
     return 0
 

@@ -56,8 +56,10 @@ recordings, adapting a small low-rank addition rather than the whole model.
 Its row answers what that budget buys. It does not say how the family compares
 with the others once each has fitted its data, and its near-unity gap reflects
 a training set it never fitted, as Section~\ref{sec:results} shows. It also
-reads three cameras where the others read five, and its sampler's own spread
-was not measured, so differences of a few per cent in its row are not findings.
+reads three cameras where the others read five, and its error moves by several
+per cent between random seeds over its whole horizon and by a fifth over its
+first ten steps (Table~\ref{tab:floor}), so differences of that size in its
+row are not findings.
 
 \paragraph{None of this is an on-robot result.}
 Error against recorded commands measures agreement with one demonstrator on

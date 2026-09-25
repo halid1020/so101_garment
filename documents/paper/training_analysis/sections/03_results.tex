@@ -91,8 +91,9 @@ small low-rank addition to a large pretrained model, so it never fitted the
 training half closely enough to have anything to lose on the held-out half. Its
 row therefore measures what this training budget buys, not how the family
 compares at convergence. It also reads three cameras where the others read
-five. Its cropped arm is about one per cent lower on both halves, but no
-sampler floor was measured for this family, so that difference is not claimed.
+five. Its cropped arm is about one per cent lower on both halves, which is
+well inside the several per cent its own error moves between random seeds
+(Table~\ref{tab:floor}), so that difference is not claimed.
 
 \unjustified{} the sampling rate of one frame in twenty was chosen to keep the
 scoring of six policies within a working day and has not been shown to leave
