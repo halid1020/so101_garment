@@ -147,8 +147,59 @@ def check_coverage(scored: int, skipped: "list[str]") -> str:
 
 
 @torch.no_grad()
+def as_uint8(frame) -> np.ndarray:
+    """One ``[C, H, W]`` frame in ``[0, 1]`` as an ``H x W x C`` image."""
+    array = frame.detach().float().clamp(0, 1).cpu().numpy()
+    return (array.transpose(1, 2, 0) * 255).round().astype(np.uint8)
+
+
+def draw_filmstrip(kept: dict, out: Path, title: str = "") -> Path:
+    """Actual, predicted and held, per camera, across the horizon.
+
+    Three rows per camera and one column per horizon step. The held row repeats
+    one frame on purpose: it is what the baseline predicts at every step, so a
+    reader sees exactly what a model must beat, and a predicted row that looks
+    like the held row is a model that has learned to predict the present.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    cameras = list(kept)
+    steps = len(kept[cameras[0]]["actual"])
+    rows = [(c, kind) for c in cameras for kind in ("actual", "predicted", "held")]
+    figure, axes = plt.subplots(
+        len(rows), steps, figsize=(1.5 * steps + 1.2, 1.5 * len(rows)), squeeze=False
+    )
+    for r, (camera, kind) in enumerate(rows):
+        for step in range(steps):
+            axis = axes[r][step]
+            image = kept[camera]["held"] if kind == "held" else kept[camera][kind][step]
+            axis.imshow(image)
+            axis.set_xticks([])
+            axis.set_yticks([])
+            if r == 0:
+                axis.set_title(f"step {step + 1}", fontsize=9)
+            if step == 0:
+                label = f"{camera}\n{kind}" if kind == "actual" else kind
+                axis.set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
+    # The title needs its own band: left to tight_layout it lands on the
+    # middle column's "step" header, which is how the first render came out.
+    figure.tight_layout(rect=(0, 0, 1, 0.97 if title else 1))
+    if title:
+        figure.suptitle(title, fontsize=11, y=0.995)
+    figure.savefig(out, dpi=110, bbox_inches="tight")
+    plt.close(figure)
+    return out
+
+
 def evaluate_frame(
-    policy, batch: dict, seed: "int | None" = None, model_batch: "dict | None" = None
+    policy,
+    batch: dict,
+    seed: "int | None" = None,
+    model_batch: "dict | None" = None,
+    keep: "list | None" = None,
 ) -> "dict[str, dict[str, list[float]]]":
     """Predicted vs actual for one observation, per camera, per horizon step.
 
@@ -156,6 +207,10 @@ def evaluate_frame(
     own preprocessor -- and ``batch`` is where the truth comes from. They are
     kept apart so that a processor which rescaled the images could never move
     the ground truth along with the prediction. See :func:`preprocess`.
+
+    ``keep``, when given, receives the IMAGES behind the numbers -- per camera,
+    the last observed frame, the actual future and the predicted one -- so a
+    filmstrip shows the frames that were scored and not a separate rollout.
 
     ``seed`` pins the sampler. It is not optional in spirit, only in signature:
     DreamZero integrates its flow from ``torch.randn`` and FastWAM's
@@ -189,6 +244,18 @@ def evaluate_frame(
     predicted = policy.untile_cameras(predicted_tiled)
     actual = policy.untile_cameras(future_tiled)
     context = policy.untile_cameras(context_tiled)
+
+    if keep is not None:
+        keep.append(
+            {
+                key.split(".")[-1]: {
+                    "held": as_uint8(context[key][0, -1]),
+                    "actual": [as_uint8(f) for f in actual[key][0]],
+                    "predicted": [as_uint8(f) for f in predicted[key][0]],
+                }
+                for key in predicted
+            }
+        )
 
     out = {}
     for key in predicted:
@@ -292,6 +359,14 @@ def main() -> int:
     )
     parser.add_argument("--out", default=None)
     parser.add_argument("--no-figures", action="store_true")
+    parser.add_argument(
+        "--filmstrip",
+        type=int,
+        nargs="*",
+        default=[],
+        help="frame indices (as the loop counts them, within the loaded "
+        "episodes) to draw as actual / predicted / held filmstrips",
+    )
     args = parser.parse_args()
 
     from tool.eval_sim_policy import load_policy
@@ -310,6 +385,8 @@ def main() -> int:
     print(f"checkpoint : {args.checkpoint}\npolicy     : {policy_type}")
     print(f"dataset    : {args.dataset} ({dataset.num_frames} frames)")
 
+    wanted = set(args.filmstrip)
+    strips: "dict[int, list]" = {}
     collected: "list[dict]" = []
     skipped: "list[str]" = []
     for index in range(0, dataset.num_frames, args.every):
@@ -326,6 +403,7 @@ def main() -> int:
                     batch,
                     seed=pinned,
                     model_batch=preprocess(pre, batch, device),
+                    keep=strips.setdefault(index, []) if index in wanted else None,
                 )
             )
         except ValueError as exc:  # a frame too near an episode edge to pad
@@ -355,6 +433,15 @@ def main() -> int:
     print(report(summary))
     if not args.no_figures and summary:
         draw(summary, out_dir)
+    for index, kept in sorted(strips.items()):
+        if kept:
+            drawn = draw_filmstrip(
+                kept[0], out_dir / f"filmstrip_{index}.png", f"frame {index}"
+            )
+            print(f"🎞️  {drawn}")
+    missed = sorted(wanted - {i for i, k in strips.items() if k})
+    if missed:
+        print(f"⚠️  no filmstrip for {missed}: not on the sampling grid, or skipped")
     print(f"\n✅ {out_dir}")
     return 0
 

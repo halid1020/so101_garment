@@ -13,7 +13,9 @@ from pathlib import Path
 import torch
 
 from tool.eval_world_model import (
+    as_uint8,
     check_coverage,
+    draw_filmstrip,
     make_batch,
     parse_range,
     preprocess,
@@ -302,6 +304,59 @@ class ThePreprocessorIsAppliedTest(unittest.TestCase):
             policy, raw, seed=0, model_batch=preprocess(self.halve, raw, "cpu")
         )
         self.assertIs(policy.truth_from, raw)
+
+
+class FilmstripTest(unittest.TestCase):
+    """The pictures are of the frames the numbers were computed on."""
+
+    class Tiny:
+        """Two cameras side by side; the prediction is the truth brightened."""
+
+        class config:
+            n_context_chunks = 1
+            latent_frames_per_chunk = 1
+
+        def tile_cameras(self, batch):
+            return batch["video"]
+
+        def predict_future_frames(self, batch):
+            return (batch["video"][:, 1:] + 0.25).clamp(0, 1)
+
+        def untile_cameras(self, tiled):
+            half = tiled.shape[-1] // 2
+            return {"a.left": tiled[..., :half], "a.right": tiled[..., half:]}
+
+    def kept(self):
+        from tool.eval_world_model import evaluate_frame
+
+        video = torch.linspace(0, 0.5, 3).view(1, 3, 1, 1, 1).expand(1, 3, 3, 16, 32)
+        keep: list = []
+        evaluate_frame(self.Tiny(), {"video": video.clone()}, seed=0, keep=keep)
+        return keep[0]
+
+    def test_every_camera_keeps_held_actual_and_predicted(self):
+        kept = self.kept()
+        self.assertEqual(sorted(kept), ["left", "right"])
+        self.assertEqual(len(kept["left"]["actual"]), 2)
+        self.assertEqual(len(kept["left"]["predicted"]), 2)
+        self.assertEqual(kept["left"]["held"].shape, (16, 16, 3))
+
+    def test_held_is_the_last_observed_frame_and_predicted_is_the_prediction(self):
+        kept = self.kept()
+        self.assertEqual(int(kept["left"]["held"].max()), 0)
+        # actual step 1 is 0.25 -> 64; predicted is that brightened by 0.25.
+        self.assertEqual(int(kept["left"]["actual"][0].max()), 64)
+        self.assertEqual(int(kept["left"]["predicted"][0].max()), 128)
+
+    def test_as_uint8_is_height_width_channels(self):
+        self.assertEqual(as_uint8(torch.ones(3, 2, 5)).shape, (2, 5, 3))
+
+    def test_a_filmstrip_is_written(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = draw_filmstrip(self.kept(), Path(tmp) / "strip.png", "frame 0")
+            self.assertGreater(out.stat().st_size, 1000)
 
 
 class SamplerPinTest(unittest.TestCase):
