@@ -180,6 +180,29 @@ def camera_slug(inference, source) -> "str | None":
     return "+".join(cameras)
 
 
+def task_prompt(given: str, episode_tasks: "list") -> str:
+    """The prompt to plan with: the one given, else the dataset's own.
+
+    An empty prompt is not a neutral default for a policy that reads language.
+    FastWAM refuses one outright, and pi0.5 would plan -- from an instruction it
+    was never trained on, so its error would measure the missing prompt as much
+    as the policy. Where the dataset holds ONE task, that task is the answer.
+    Where it holds several, picking one would score most episodes under the
+    wrong instruction, so the caller must say.
+    """
+    if given:
+        return given
+    found = sorted({str(t[0]) for t in episode_tasks if len(t)})
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        return ""
+    raise SystemExit(
+        f"❌ this dataset holds {len(found)} tasks ({', '.join(found[:3])}...); "
+        "pass --task, since one prompt cannot stand for all of them"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -285,6 +308,10 @@ def main() -> None:
         else RunSource(args.run, inference.cameras)
     )
     print(f"📁 {source.describe()}")
+    if args.dataset:
+        inference.task = task_prompt(args.task, source.dataset.meta.episodes["tasks"])
+        if inference.task != args.task:
+            print(f"💬 prompting with the dataset's task: {inference.task!r}")
 
     # The convention: outputs/analysis/<YYYY-MM-DD>/<policy>-<camera slug>/.
     # The old default was `outputs/analysis/<basename of --checkpoint>`, which on

@@ -361,7 +361,9 @@ def tactile_share_series(run: dict, episode: int) -> "tuple[list[float], list[fl
     return seconds, shares
 
 
-def draw_framewise_shares(attribution: Path, out: Path, episode: int = 58) -> Path:
+def draw_framewise_shares(
+    attribution: "Path | list[Path]", out: Path, episode: int = 58
+) -> Path:
     """What touch contributed, moment by moment, on a recording nobody trained on.
 
     The pooled figures report a mean over the episode, and a mean is the one
@@ -371,10 +373,18 @@ def draw_framewise_shares(attribution: Path, out: Path, episode: int = 58) -> Pa
     """
     figure, axis = plt.subplots(figsize=(9.0, 3.6))
     drawn = 0
+    roots = [attribution] if isinstance(attribution, Path) else list(attribution)
     for arm, label, _crop in ARMS:
-        path = attribution / f"heldout-{arm}" / "attribution.json"
-        if not path.is_file():
+        paths = [
+            r / f"heldout-{arm}" / "attribution.json"
+            for r in roots
+            if (r / f"heldout-{arm}" / "attribution.json").is_file()
+        ]
+        if len(paths) > 1:
+            raise SystemExit(f"❌ heldout-{arm} found in more than one directory")
+        if not paths:
             continue
+        path = paths[0]
         seconds, shares = tactile_share_series(json.loads(path.read_text()), episode)
         if not seconds:
             continue
@@ -401,14 +411,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mse",
-        default="outputs/mse/thanos/2026-09-16",
-        help="directory of <prefix><arm>.json action-error results",
+        nargs="+",
+        default=["outputs/mse/thanos/2026-09-16", "outputs/mse/thanos/2026-09-19"],
+        help="directories of <prefix><arm>.json action-error results; an arm "
+        "found in two is an error, so a rerun cannot silently shadow the original",
     )
     parser.add_argument("--prefix", default="split10-")
     parser.add_argument(
         "--attribution",
-        default="outputs/analysis/2026-09-18",
-        help="directory of heldout-<arm>/attribution.json runs",
+        nargs="+",
+        default=["outputs/analysis/2026-09-18", "outputs/analysis/2026-09-19"],
+        help="directories of heldout-<arm>/attribution.json runs",
     )
     parser.add_argument("--episode", type=int, default=58)
     parser.add_argument("--out", default=None, help="where the figures go")
@@ -421,7 +434,15 @@ def main() -> int:
     out = Path(args.out) if args.out else analysis_dir("training-report")
     out.mkdir(parents=True, exist_ok=True)
 
-    results = load_arms(Path(args.mse), args.prefix)
+    results: "dict[str, dict]" = {}
+    for directory in args.mse:
+        found = load_arms(Path(directory), args.prefix)
+        clash = sorted(set(found) & set(results))
+        if clash:
+            raise SystemExit(
+                f"❌ {', '.join(clash)} found in more than one --mse directory"
+            )
+        results.update(found)
     missing = [label for arm, label, _c in ARMS if arm not in results]
     print(f"arms found: {sorted(results)}")
     if missing:
@@ -432,11 +453,11 @@ def main() -> int:
     draw_horizon(results, out / "horizon_decay.png")
     draw_gap(results, out / "train_vs_heldout.png")
     write_table(results, out / "policy_table.tex")
-    attribution = Path(args.attribution)
-    if attribution.is_dir():
-        draw_framewise_shares(attribution, out / "framewise_shares.png", args.episode)
+    attributions = [Path(a) for a in args.attribution if Path(a).is_dir()]
+    if attributions:
+        draw_framewise_shares(attributions, out / "framewise_shares.png", args.episode)
     else:
-        print(f"no attribution runs at {attribution}; framewise figure skipped")
+        print(f"no attribution runs at {args.attribution}; framewise figure skipped")
     print(f"\nwrote {out}")
     return 0
 

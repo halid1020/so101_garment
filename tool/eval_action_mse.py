@@ -62,7 +62,7 @@ import common  # noqa: E402,F401  -- declares this rig to actoris_harena
 # content_name in actoris_harena.analysis.paths and should move there when the
 # package is next open for editing; it is imported rather than copied so that
 # an analysis directory and the run directory it describes cannot drift apart.
-from tool.analyse_policy_inputs import camera_slug  # noqa: E402
+from tool.analyse_policy_inputs import camera_slug, task_prompt  # noqa: E402
 
 
 def held_out_episodes(
@@ -93,29 +93,6 @@ def held_out_episodes(
         train.extend(group[: len(group) - n_eval])
         validation.extend(group[len(group) - n_eval :])
     return sorted(train), sorted(validation)
-
-
-def task_prompt(given: str, episode_tasks: "list") -> str:
-    """The prompt to plan with: the one given, else the dataset's own.
-
-    An empty prompt is not a neutral default for a policy that reads language.
-    FastWAM refuses one outright, and pi0.5 would plan -- from an instruction it
-    was never trained on, so its error would measure the missing prompt as much
-    as the policy. Where the dataset holds ONE task, that task is the answer.
-    Where it holds several, picking one would score most episodes under the
-    wrong instruction, so the caller must say.
-    """
-    if given:
-        return given
-    found = sorted({str(t[0]) for t in episode_tasks if len(t)})
-    if len(found) == 1:
-        return found[0]
-    if not found:
-        return ""
-    raise SystemExit(
-        f"❌ this dataset holds {len(found)} tasks ({', '.join(found[:3])}...); "
-        "pass --task, since one prompt cannot stand for all of them"
-    )
 
 
 def split_from_checkpoint(checkpoint: str) -> float:
