@@ -26,6 +26,7 @@ from tool.eval_action_mse import (
     held_out_episodes,
     split_from_checkpoint,
     summarise,
+    task_prompt,
 )
 
 
@@ -148,6 +149,24 @@ class SummaryTest(unittest.TestCase):
 
     def test_no_frames_says_so_rather_than_dividing_by_zero(self):
         self.assertEqual(summarise([], 12), {"frames": 0})
+
+
+class TaskPromptTest(unittest.TestCase):
+    """An empty prompt is a different instruction, not no instruction."""
+
+    def test_a_given_prompt_wins(self):
+        self.assertEqual(task_prompt("fold it", [["fold the short"]]), "fold it")
+
+    def test_a_single_task_dataset_supplies_its_own(self):
+        tasks = [["fold the short"], ["fold the short"]]
+        self.assertEqual(task_prompt("", tasks), "fold the short")
+
+    def test_several_tasks_are_refused_rather_than_one_picked(self):
+        with self.assertRaises(SystemExit):
+            task_prompt("", [["fold the short"], ["stack the cups"]])
+
+    def test_a_dataset_with_no_tasks_stays_unprompted(self):
+        self.assertEqual(task_prompt("", [[], []]), "")
 
 
 class SplitFromCheckpointTest(unittest.TestCase):
