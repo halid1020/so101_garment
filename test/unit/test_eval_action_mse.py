@@ -23,7 +23,9 @@ import numpy as np
 
 from tool.eval_action_mse import (
     chunk_errors,
+    future_truth,
     held_out_episodes,
+    needs_window,
     split_from_checkpoint,
     summarise,
     task_prompt,
@@ -167,6 +169,41 @@ class TaskPromptTest(unittest.TestCase):
 
     def test_a_dataset_with_no_tasks_stays_unprompted(self):
         self.assertEqual(task_prompt("", [[], []]), "")
+
+
+class WindowedTruthTest(unittest.TestCase):
+    """A world model's window holds past actions; only the future is scored."""
+
+    def test_the_past_is_context_and_not_scored(self):
+        item = {"action": np.arange(6.0).reshape(6, 1)}
+        truth = future_truth(item, [-2, -1, 0, 1, 2, 3])
+        self.assertEqual(truth.ravel().tolist(), [2.0, 3.0, 4.0, 5.0])
+
+    def test_padding_past_the_episode_end_is_cut(self):
+        item = {
+            "action": np.arange(5.0).reshape(5, 1),
+            "action_is_pad": np.array([False, False, False, True, True]),
+        }
+        truth = future_truth(item, [-1, 0, 1, 2, 3])
+        self.assertEqual(truth.ravel().tolist(), [1.0, 2.0])
+
+    def test_only_a_world_model_with_a_window_takes_the_windowed_path(self):
+        class Config:
+            observation_delta_indices = [-48, -24, 0, 24]
+
+        class WorldModel:
+            config = Config()
+
+            def predict_future_frames(self, batch):
+                return None
+
+        class Policy:
+            config = Config()
+
+        self.assertTrue(needs_window(WorldModel()))
+        # A policy with a multi-step window but no world model is left to the
+        # single-frame path, which repeats the frame as it always has.
+        self.assertFalse(needs_window(Policy()))
 
 
 class SplitFromCheckpointTest(unittest.TestCase):

@@ -160,6 +160,54 @@ def evaluate(inference, source, episodes: "list[int]", seed: int) -> "dict":
     return summarise(errors, inference.action_dim)
 
 
+def needs_window(policy) -> bool:
+    """A world model that conditions on a short VIDEO, not on one frame.
+
+    DreamZero reads the frames named by ``observation_delta_indices`` -- a past
+    chunk of video -- and refuses a single frame outright. Repeating the one
+    frame into that window would hand it a frozen past, a state it never saw in
+    training, so these are loaded with their real window instead.
+    """
+    indices = getattr(policy.config, "observation_delta_indices", None) or []
+    return hasattr(policy, "predict_future_frames") and len(indices) > 1
+
+
+def future_truth(item: dict, action_delta_indices: "list[int]") -> np.ndarray:
+    """The recorded actions from time zero on, cut where the episode ended.
+
+    The window also holds the PAST actions (negative offsets) the model is
+    conditioned on; those are context, not something it predicts. Past the
+    end of an episode LeRobot pads by repetition, and scoring against padding
+    would credit the policy for holding still -- the same rule as
+    :func:`chunk_errors` applies to the single-frame path.
+    """
+    start = list(action_delta_indices).index(0)
+    actions = np.asarray(item["action"])[start:]
+    pad = item.get("action_is_pad")
+    if pad is not None:
+        pad = np.asarray(pad)[start:]
+        if pad.any():
+            actions = actions[: int(np.argmax(pad))]
+    return actions
+
+
+def evaluate_windowed(
+    inference, dataset: str, episodes: "list[int]", every: int, seed: int
+) -> "dict":
+    """As :func:`evaluate`, for a model that needs its video window."""
+    from tool.eval_world_model import load_dataset, make_batch
+
+    data = load_dataset(inference.policy, dataset, episodes)
+    deltas = inference.policy.config.action_delta_indices
+    errors: "list[np.ndarray]" = []
+    for index in range(0, data.num_frames, every):
+        item = data[index]
+        batch = inference.to_device(inference.pre(make_batch(item, inference.device)))
+        planned = plan(inference, batch, seed)
+        errors.append(chunk_errors(planned, future_truth(item, deltas)))
+    return summarise(errors, inference.action_dim)
+
+
 def report(name: str, block: "dict") -> None:
     if not block.get("frames"):
         print(f"  {name:12s} no frames")
@@ -305,10 +353,23 @@ def main() -> None:
     }
 
     print()
-    out["train"] = evaluate(inference, source, train, args.seed)
+    windowed = needs_window(inference.policy)
+    if windowed:
+        print(
+            "🎞️  scoring with each observation's video window, as this model reads it"
+        )
+
+    def score(episodes: "list[int]") -> "dict":
+        if windowed:
+            return evaluate_windowed(
+                inference, args.dataset, episodes, args.every, args.seed
+            )
+        return evaluate(inference, source, episodes, args.seed)
+
+    out["train"] = score(train)
     report("train", out["train"])
     if validation:
-        out["validation"] = evaluate(inference, source, validation, args.seed)
+        out["validation"] = score(validation)
         report("validation", out["validation"])
 
     # The floor. A stochastic policy's own wobble bounds what a difference in
