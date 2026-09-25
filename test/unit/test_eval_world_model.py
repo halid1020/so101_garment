@@ -16,6 +16,7 @@ from tool.eval_world_model import (
     check_coverage,
     make_batch,
     parse_range,
+    preprocess,
     report,
     summarise,
 )
@@ -234,6 +235,73 @@ class WorldModelContractTest(unittest.TestCase):
         from actoris_harena.policies.act.modeling_act import HarenaActPolicy
 
         self.assertFalse(hasattr(HarenaActPolicy, "predict_future_frames"))
+
+
+class ThePreprocessorIsAppliedTest(unittest.TestCase):
+    """The model sees normalised inputs; the truth stays the recorded frames.
+
+    Leaving the preprocessor out raised nothing and scored the 80 000-step
+    DreamZero at noise level: raw joint angles in degrees went in where
+    training had used normalised ones. MEASURED 2026-09-25 -- about 6 dB raw
+    against 14 to 18 dB preprocessed, on the same frames and seed.
+    """
+
+    class Seer:
+        """Records which batch each call was handed."""
+
+        class config:
+            n_context_chunks = 1
+            latent_frames_per_chunk = 1
+
+        def __init__(self):
+            self.predicted_from = None
+            self.truth_from = None
+
+        def predict_future_frames(self, batch):
+            self.predicted_from = batch
+            return torch.zeros(1, 2)
+
+        def tile_cameras(self, batch):
+            self.truth_from = batch
+            return torch.zeros(1, 2)
+
+        def untile_cameras(self, tiled):
+            return {}
+
+    @staticmethod
+    def halve(batch):
+        return {
+            k: v / 2 if isinstance(v, torch.Tensor) else v for k, v in batch.items()
+        }
+
+    def test_preprocess_runs_the_checkpoints_own_processor(self):
+        raw = {"observation.state": torch.tensor([100.0]), "task": "fold"}
+        out = preprocess(self.halve, raw, "cpu")
+        self.assertEqual(float(out["observation.state"]), 50.0)
+        self.assertEqual(out["task"], "fold")
+        # The raw batch is left alone: it is still where the truth comes from.
+        self.assertEqual(float(raw["observation.state"]), 100.0)
+
+    def test_the_model_is_handed_the_preprocessed_batch(self):
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Seer()
+        raw = {"observation.state": torch.tensor([100.0])}
+        model_batch = preprocess(self.halve, raw, "cpu")
+        evaluate_frame(policy, raw, seed=0, model_batch=model_batch)
+        self.assertIs(policy.predicted_from, model_batch)
+
+    def test_the_truth_comes_from_the_raw_batch(self):
+        # A processor that rescaled images must not move the ground truth with
+        # the prediction, or a wrong scale would score as agreement.
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Seer()
+        raw = {"observation.state": torch.tensor([100.0])}
+        evaluate_frame(
+            policy, raw, seed=0, model_batch=preprocess(self.halve, raw, "cpu")
+        )
+        self.assertIs(policy.truth_from, raw)
 
 
 class SamplerPinTest(unittest.TestCase):

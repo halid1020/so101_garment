@@ -78,6 +78,27 @@ def load_dataset(policy, root: str, episodes: "list[int]"):
     )
 
 
+def preprocess(pre, batch: dict, device) -> dict:
+    """The batch as the model saw it in training: through its own preprocessor.
+
+    Leaving this out does not fail. It hands the model raw joint angles in
+    DEGREES, up to about 110, as its state and past actions, where training
+    gave it values normalised to within a few units of zero -- and the model
+    duly predicts noise. MEASURED 2026-09-25 on the 80 000-step DreamZero, same
+    frames, same seed: 6.2 / 6.2 / 7.0 dB raw against 16.6 / 18.3 / 14.3 dB
+    preprocessed, with a VAE round trip of about 27 dB as the ceiling. Every
+    DreamZero number before that date was scored raw.
+
+    The preprocessor ends by moving the batch to the device it was TRAINED on,
+    so tensors are put back where this run's weights are.
+    """
+    out = pre(dict(batch))
+    return {
+        key: value.to(device) if isinstance(value, torch.Tensor) else value
+        for key, value in out.items()
+    }
+
+
 def make_batch(item: dict, device) -> dict:
     """One dataset row as a batch of one, keeping what is not a tensor.
 
@@ -127,9 +148,14 @@ def check_coverage(scored: int, skipped: "list[str]") -> str:
 
 @torch.no_grad()
 def evaluate_frame(
-    policy, batch: dict, seed: "int | None" = None
+    policy, batch: dict, seed: "int | None" = None, model_batch: "dict | None" = None
 ) -> "dict[str, dict[str, list[float]]]":
     """Predicted vs actual for one observation, per camera, per horizon step.
+
+    ``model_batch`` is what the MODEL sees -- the batch after the checkpoint's
+    own preprocessor -- and ``batch`` is where the truth comes from. They are
+    kept apart so that a processor which rescaled the images could never move
+    the ground truth along with the prediction. See :func:`preprocess`.
 
     ``seed`` pins the sampler. It is not optional in spirit, only in signature:
     DreamZero integrates its flow from ``torch.randn`` and FastWAM's
@@ -153,7 +179,9 @@ def evaluate_frame(
     config = policy.config
     context_frames = config.n_context_chunks * config.latent_frames_per_chunk
 
-    predicted_tiled = policy.predict_future_frames(batch)
+    predicted_tiled = policy.predict_future_frames(
+        batch if model_batch is None else model_batch
+    )
     actual_tiled = policy.tile_cameras(batch)
     context_tiled = actual_tiled[:, :context_frames]
     future_tiled = actual_tiled[:, context_frames:]
@@ -269,7 +297,7 @@ def main() -> int:
     from tool.eval_sim_policy import load_policy
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    policy, _pre, _post, policy_type = load_policy(args.checkpoint, device)
+    policy, pre, _post, policy_type = load_policy(args.checkpoint, device)
     if not hasattr(policy, "predict_future_frames"):
         raise SystemExit(
             f"❌ {policy_type} is not a world model: it predicts actions but not "
@@ -292,7 +320,14 @@ def main() -> int:
             # The SAME seed for every frame, not seed+index: each frame is an
             # independent prediction, and what has to be reproducible is the
             # noise this observation is integrated from.
-            collected.append(evaluate_frame(policy, batch, seed=pinned))
+            collected.append(
+                evaluate_frame(
+                    policy,
+                    batch,
+                    seed=pinned,
+                    model_batch=preprocess(pre, batch, device),
+                )
+            )
         except ValueError as exc:  # a frame too near an episode edge to pad
             skipped.append(str(exc))
             print(f"  skipped frame {index}: {exc}")
