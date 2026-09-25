@@ -153,7 +153,34 @@ def as_uint8(frame) -> np.ndarray:
     return (array.transpose(1, 2, 0) * 255).round().astype(np.uint8)
 
 
-def draw_filmstrip(kept: dict, out: Path, title: str = "") -> Path:
+def save_filmstrip(kept: dict, out: Path) -> Path:
+    """The arrays behind a filmstrip, so a report can redraw any subset of them.
+
+    Keys are ``<camera>/held``, ``<camera>/actual`` and ``<camera>/predicted``.
+    """
+    arrays = {}
+    for camera, parts in kept.items():
+        arrays[f"{camera}/held"] = parts["held"]
+        arrays[f"{camera}/actual"] = np.stack(parts["actual"])
+        arrays[f"{camera}/predicted"] = np.stack(parts["predicted"])
+    np.savez_compressed(out, **arrays)
+    return out
+
+
+def load_filmstrip(path: Path) -> dict:
+    """The inverse of :func:`save_filmstrip`."""
+    kept: dict = {}
+    with np.load(path) as data:
+        for key in data.files:
+            camera, kind = key.rsplit("/", 1)
+            value = data[key]
+            kept.setdefault(camera, {})[kind] = value if kind == "held" else list(value)
+    return kept
+
+
+def draw_filmstrip(
+    kept: dict, out: Path, title: str = "", cameras: "list[str] | None" = None
+) -> Path:
     """Actual, predicted and held, per camera, across the horizon.
 
     Three rows per camera and one column per horizon step. The held row repeats
@@ -166,7 +193,7 @@ def draw_filmstrip(kept: dict, out: Path, title: str = "") -> Path:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    cameras = list(kept)
+    cameras = [c for c in (cameras or list(kept)) if c in kept]
     steps = len(kept[cameras[0]]["actual"])
     rows = [(c, kind) for c in cameras for kind in ("actual", "predicted", "held")]
     figure, axes = plt.subplots(
@@ -438,6 +465,7 @@ def main() -> int:
             drawn = draw_filmstrip(
                 kept[0], out_dir / f"filmstrip_{index}.png", f"frame {index}"
             )
+            save_filmstrip(kept[0], out_dir / f"filmstrip_{index}.npz")
             print(f"🎞️  {drawn}")
     missed = sorted(wanted - {i for i, k in strips.items() if k})
     if missed:

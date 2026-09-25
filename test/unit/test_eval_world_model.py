@@ -16,10 +16,12 @@ from tool.eval_world_model import (
     as_uint8,
     check_coverage,
     draw_filmstrip,
+    load_filmstrip,
     make_batch,
     parse_range,
     preprocess,
     report,
+    save_filmstrip,
     summarise,
 )
 
@@ -350,6 +352,25 @@ class FilmstripTest(unittest.TestCase):
 
     def test_as_uint8_is_height_width_channels(self):
         self.assertEqual(as_uint8(torch.ones(3, 2, 5)).shape, (2, 5, 3))
+
+    def test_saved_arrays_come_back_unchanged(self):
+        import tempfile
+
+        kept = self.kept()
+        with tempfile.TemporaryDirectory() as tmp:
+            back = load_filmstrip(save_filmstrip(kept, Path(tmp) / "s.npz"))
+        self.assertEqual(sorted(back), sorted(kept))
+        self.assertTrue((back["left"]["held"] == kept["left"]["held"]).all())
+        self.assertTrue(
+            (back["right"]["predicted"][1] == kept["right"]["predicted"][1]).all()
+        )
+
+    def test_a_subset_of_cameras_can_be_drawn(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = draw_filmstrip(self.kept(), Path(tmp) / "s.png", cameras=["right"])
+            self.assertGreater(out.stat().st_size, 1000)
 
     def test_a_filmstrip_is_written(self):
         import tempfile
