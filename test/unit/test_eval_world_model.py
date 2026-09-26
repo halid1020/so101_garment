@@ -427,6 +427,15 @@ class SamplerPinTest(unittest.TestCase):
         # nothing was random, not because the seed took effect.
         self.assertNotEqual(self.draw(0), self.draw(1))
 
+    def test_a_model_with_its_own_seed_field_is_seeded_too(self):
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Recorder()
+        policy.config.predict_seed = 99
+        evaluate_frame(policy, {}, seed=5)
+        self.assertEqual(policy.config.predict_seed, 5)
+        del policy.config.predict_seed
+
     def test_seed_none_leaves_the_sampler_free(self):
         # --seed -1 exists to MEASURE the spread, so it must genuinely not pin.
         # No reset here, deliberately: resetting the generator before each draw

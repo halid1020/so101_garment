@@ -259,6 +259,14 @@ def evaluate_frame(
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+        # FastWAM seeds its OWN generator from its config and never reads the
+        # global one, so the global seed alone would leave it on whatever the
+        # config says -- a --seed that silently changes nothing.
+        from actoris_harena.analysis.diffusion import SEED_FIELDS
+
+        for name in SEED_FIELDS:
+            if hasattr(policy.config, name):
+                setattr(policy.config, name, seed)
 
     config = policy.config
     context_frames = config.n_context_chunks * config.latent_frames_per_chunk
