@@ -118,7 +118,8 @@ All four are computed on one recording the policies never saw, sampling every
 fifth frame of it. At each sampled frame every policy plans, each input is
 suppressed in turn exactly as described above, and the resulting contributions
 are kept per frame instead of being pooled. Figure~\ref{fig:framewise} sums the
-four fingertip cameras at each instant and plots that against time from the
+fingertip cameras each policy reads --- four, or two for the fine-tuned
+family --- at each instant and plots that against time from the
 start of the recording. Figure~\ref{fig:gradcampeak} is one instant of the
 gradient picture, chosen as the frame where the contribution of touch reaches
 its maximum, and it is rendered directly rather than recovered from a compressed
@@ -135,7 +136,7 @@ restated, which is what stops the picture and the policy disagreeing.
 The two moving versions accompany the report as video files rather than being
 embedded, because the document format cannot carry them: one shows the gradient
 pictures through the recording, the other the contribution of every input
-through the same recording at the same instants. A policy with no spatial
+through the same recording at the same instants, for all six arms. A policy with no spatial
 feature map is left out of the gradient video by name rather than drawn as an
 empty panel, since an empty panel beside full ones reads as a policy attending
 to nothing.
