@@ -612,6 +612,45 @@ def write_floor_table(directory: Path, out: Path, steps: int = 10) -> "Path | No
     return out
 
 
+#: The three ACT arms that separate the rim from the stretch (Stage 9).
+STRETCH_ARMS = (
+    ("act", "not cropped"),
+    ("act_crop", "cropped and stretched back"),
+    ("act_crop_noresize", "cropped, not stretched"),
+)
+
+
+def write_stretch_table(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Held-out and trained-on error for the three ACT arms, at three horizons.
+
+    The crop removed the gel rim AND stretched what remained back to full
+    height; the third arm removes the rim alone. All three share one recorded
+    configuration -- seed, batch, steps, split -- and differ in that one flag.
+    """
+    rows = [(label, results.get(arm)) for arm, label in STRETCH_ARMS]
+    if sum(1 for _l, r in rows if r) < 3:
+        return None
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        r"& \multicolumn{3}{c}{held-out} & trained-on \\",
+        r"\cmidrule(lr){2-4}\cmidrule(lr){5-5}",
+        r"ACT arm & first 10 & first 32 & all 100 & all 100 \\",
+        r"\midrule",
+    ]
+    for label, r in rows:
+        assert r is not None
+        lines.append(
+            f"{label} & {rmse_over(r, 'validation', 10):.2f} & "
+            f"{rmse_over(r, 'validation', 32):.2f} & {rmse_over(r, 'validation'):.2f} & "
+            f"{rmse_over(r, 'train'):.2f} \\\\"
+        )
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  stretch table -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -704,6 +743,12 @@ def main() -> int:
         else:
             print(f"  world-model action error: no {key} result at {path}")
     write_world_model_table(results, world, out / "world_model_table.tex")
+    stretch = dict(results)
+    for directory in args.mse:
+        path = Path(directory) / f"{args.prefix}act_crop_noresize.json"
+        if path.is_file():
+            stretch["act_crop_noresize"] = json.loads(path.read_text())
+    write_stretch_table(stretch, out / "stretch_table.tex")
     for directory in args.floor:
         write_floor_table(Path(directory), out / "floor_table.tex")
     print(f"\nwrote {out}")

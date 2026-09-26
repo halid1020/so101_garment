@@ -22,10 +22,12 @@ distance between the two ratios is not itself a measurement.
 Cropping removes the outer rows of the tactile image and then resizes what is
 left back to the original shape, which stretches it vertically by a quarter.
 Every statement in this report about cropping is therefore a statement about
-rim removal \emph{and} anisotropic stretching together. An arm that crops
-without resizing would separate them. Until that exists, a null result is a
-null result for this operation, and not evidence that the rim carries no
-information.
+rim removal \emph{and} anisotropic stretching together, except where
+Section~\ref{sec:cropping} separates them. It does so for the action-chunking
+family only, because the other two cannot take a shorter image without a
+different change in its place, and with one training run per arm. For the
+other two families a null result remains a null result for this operation, and
+not evidence that the rim carries no information.
 
 \paragraph{The families do not read the same cameras.}
 One family finetunes a pretrained model with a fixed number of image slots,

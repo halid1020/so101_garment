@@ -16,3 +16,12 @@
 - P5 the honest limit of P4: map resolutions differ by family, so the
   cross-family comparison is only fair at the widest band, and the
   within-family comparison is fair everywhere. -> threats.
+- (added 2026-09-26) Separating the rim from the stretch. A third ACT arm
+  crops and does NOT resize, identical otherwise. Say why only this family:
+  the diffusion implementation refuses cameras of different shapes, and the
+  fine-tuned model would pad the shorter image rather than stretch it, which is
+  a different change again. Read the table: the unstretched crop is lowest at
+  every horizon, the stretched crop's long-horizon penalty vanishes without the
+  stretch. In bold, bounded: consistent with the stretch -- not the rim removal
+  -- being what cost the crop at long range; one training run per arm and
+  training-seed variance unmeasured, so a direction, not a result.

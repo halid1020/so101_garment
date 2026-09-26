@@ -59,3 +59,37 @@ are drawn from recordings the policies trained on, because that is what the
 attribution runs covered --- so it describes where a trained policy looks on
 familiar material, and Section~\ref{sec:inputs} returns to what that can and
 cannot support.
+
+\paragraph{Separating the rim from the stretch.}
+The crop removes the rim and stretches what remains, so every result above
+is about both. A third arm of the action-chunking family separates them: it
+crops exactly as the others do and does not resize, so its fingertip images
+arrive a fifth shorter than its overhead image. It shares every other setting
+with its two twins, including the random seed, the batch, the number of steps
+and the split. This family is the only one that allows it. The diffusion
+implementation refuses cameras of different shapes outright, and the
+fine-tuned model would pad a shorter image rather than accept it, which is a
+different change again.
+
+\begin{table}[t]
+  \centering
+  \caption{Three arms of the action-chunking family that differ only in what
+  is done to the fingertip images: nothing, the crop with the stretch back to
+  full height, or the crop alone. Root-mean-square action error, over the
+  first ten and thirty-two planned steps and over the whole hundred. Each arm
+  is one training run.}
+  \label{tab:stretch}
+  \small
+  \input{tables/stretch_table}
+\end{table}
+
+\textbf{Without the stretch, the crop is never worse than either other arm, and
+is the best of the three over the near horizons.} Table~\ref{tab:stretch} shows it a few per cent lower than the
+uncropped arm over the near horizons and level with it over the whole
+hundred steps, while the stretched arm's penalty over the whole hundred ---
+the one number in which cropping looked harmful --- disappears once the stretch
+is removed. That pattern is what one would see if the stretch, not the loss of
+the rim, were what cost the original crop at long range. It is a direction and
+not a result: each arm is a single training run, and how far a second training
+seed would move each row has not been measured. This family plans without
+sampling, so there is no sampler floor to set against these differences either.

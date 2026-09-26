@@ -55,6 +55,15 @@ touch at two fifths. The bar shown here reruns the same checkpoint on the same
 recordings with the adapter loaded and the task instruction supplied. The other
 two bars were never affected, because those families store complete weights.
 
+\paragraph{The rim and the stretch, Table~\ref{tab:stretch}.}
+The third arm was trained from the recorded configuration of the cropped arm,
+with one setting changed so that the cropped image is passed on at its reduced
+height instead of being stretched back. Before training, a two-step run
+confirmed that the fingertip images reach the model a fifth shorter while the
+overhead image is unchanged. All three arms are scored exactly as in
+Table~\ref{tab:policies}, and the three columns average the same per-step
+curve over the first ten steps, the first thirty-two and all hundred.
+
 \paragraph{The world models' action error, Table~\ref{tab:worldactions}.}
 Scored as the policies were, with two differences. The small world model reads
 a short stretch of past video, so each sampled frame is given to it with the

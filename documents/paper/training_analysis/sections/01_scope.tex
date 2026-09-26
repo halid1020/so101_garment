@@ -25,8 +25,9 @@ every hyperparameter of its uncropped twin, including the batch size and the
 number of optimisation steps. Holding the budget fixed is what makes the pair a
 comparison rather than two separate runs. The resize is not isotropic: it
 stretches the surviving rows vertically while leaving the columns alone.
-Removing the rim and stretching the remainder therefore travel together, and
-Section~\ref{sec:threats} treats that as the confound it is.
+Removing the rim and stretching the remainder therefore travel together.
+Section~\ref{sec:cropping} separates them for the one family whose
+architecture allows it, and Section~\ref{sec:threats} bounds the rest.
 
 Three policy families are compared, each against its cropped twin. They are not
 interchangeable, and three differences matter for how their rows may be read.
