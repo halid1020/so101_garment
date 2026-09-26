@@ -37,3 +37,8 @@ continuation rather than a second paper. Gated on both models finishing.
   over the best policy is many times its own spread, so A2 stands for it; the
   fine-tuned policy's near-term error swings a fifth between seeds and it is
   last on every seed. The large model's floor is pending and A2 says so.
+- A5 revised (2026-09-26): the large model's floor is measured, after a fix --
+  it seeds its own generator, so the first attempt drew one noise three times.
+  It is lower than the small model on every seed, but on a different, sparser
+  frame sample, so still not ranked; and its reported row used its built-in
+  default seed, which is the highest of the four draws.

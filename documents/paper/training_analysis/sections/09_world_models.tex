@@ -76,7 +76,9 @@ second only.
   times, changing only the random seed each sampling model draws from; the
   lowest and highest root-mean-square error are shown. A difference between
   two models smaller than this spread is not a finding. The large world
-  model's rescoring had not finished when this was written.}
+  model's own-horizon and ten-step columns coincide because it plans ten
+  steps. Its row in Table~\ref{tab:worldactions} was drawn with the model's
+  built-in default seed, which gave a higher error than any of these three.}
   \label{tab:floor}
   \small
   \input{tables/floor_table}
@@ -88,5 +90,7 @@ Over the first ten steps the small world model's error moves by about a
 twentieth of a unit, against a lead of nearly a whole unit over the diffusion
 family, whose own spread is smaller still. The fine-tuned policy is the
 outlier: its near-term error swings by a fifth between seeds, and it is last
-on every one of them. The large world model's spread is not yet measured, so
-its place beside the small one rests on a single seed.
+on every one of them. The large world model's error moves by about a twentieth
+between seeds and is below the small model's on every seed tried. That is still
+not a ranking: the two were scored on different samples of the held-back
+frames, the large model on fewer of them.
