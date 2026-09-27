@@ -121,7 +121,8 @@ the stretching, not the loss of the rim, caused that small penalty.
   \centering
   \includegraphics[width=0.72\textwidth]{rim_attention.png}
   \caption{How much Grad-CAM weight falls in a band around the edge of the
-  tactile images, relative to a completely flat map (dashed line at 1). Below
+  tactile images, relative to a completely flat map (dashed line at 1), over
+  60 frames of test demonstration 58 and all four fingertips. Below
   the line, a model looks at the edge \emph{less} than a model that ignored
   position would. Three band widths are shown.}
   \label{fig:rim}
@@ -130,8 +131,8 @@ the stretching, not the loss of the rim, caused that small penalty.
 \textbf{The policies do not over-weight the edges of the tactile images.}
 Figure~\ref{fig:rim} measures this directly. \new{A value of 1 means the edge
 band gets exactly its share of the weight by area; above 1, the model favours
-the edge.} Every uncropped model sits at two thirds to four fifths of its share,
-at every band width. So the edge attention we saw in single Grad-CAM pictures
+the edge.} \new{On a test demonstration,} every uncropped model sits between two thirds
+and nine tenths of its share, at every band width. So the edge attention we saw in single Grad-CAM pictures
 does not hold on average. Cropping moves the weight slightly towards the new
 edge, partly for a mechanical reason: after cropping and stretching, the pixels
 nearest the edge used to be further in. \pending{rim measure for the
@@ -205,13 +206,27 @@ repeating the last frame it saw.
   PSNR (dB). \emph{Reconstruction}: seen frames through the model's own
   autoencoder. \emph{Prediction} and \emph{repeat last}: future frames,
   averaged over the prediction horizon. \emph{Margin}: prediction minus repeat
-  last, at \SI{0.8}{\second} ahead and at the end of the horizon.}}
+  last, at \SI{0.8}{\second} ahead and at the end of each model's horizon
+  (\SI{4.8}{\second} for DreamZero, \SI{1.1}{\second} for FastWAM). Each model
+  works at its own resolution, so compare margins, not PSNR, between models.}}
   \label{tab:wm}
   \small
   \input{tables/wm_table}
 \end{table}
 
-\pending{reconstruction versus prediction, per sensor.}
+\begin{newtext}
+\textbf{Most of the prediction error comes from predicting, not from
+compressing the images.} DreamZero's small image autoencoder is the exception
+on the overhead camera: it reproduces a seen frame at only 17.3\,dB, and the
+model's predictions reach 15.5\,dB, close to that ceiling. On the fingertips
+its autoencoder reaches 34 to 37\,dB, but its predictions only 25 to 30\,dB.
+FastWAM's pretrained autoencoder is much sharper, 34\,dB on the overhead camera
+and about 46\,dB on the fingertips, and its predictions sit 13 to 17\,dB below
+that. So a better autoencoder would remove little of either model's error,
+except DreamZero's on the overhead camera. The two models work at different
+image resolutions, so their PSNR values should not be compared directly; their
+margins over repeating the last frame can be.
+\end{newtext}
 
 \begin{figure}[t]
   \centering
@@ -248,6 +263,7 @@ The garment fills most of the frame and hardly moves within a second, so
 repeating the last frame is already right about most pixels. \textbf{A score
 averaged over the whole frame can rate a correct prediction of a small moving
 part as no better than doing nothing.} On the fingertips, where contact changes
-many pixels, FastWAM gains up to 5\,dB over repeating the last frame. At the
+many pixels, FastWAM starts below repeating the last frame and ends 3 to 6\,dB
+above it on every sensor. At the
 one moment both models predict, \SI{0.8}{\second} ahead, FastWAM is ahead on
 both panels of Figure~\ref{fig:predmargin}.

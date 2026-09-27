@@ -115,7 +115,7 @@ Section~\ref{sec:compare} compares the two.}
 \textbf{Action error.} We give a model one observation and compare the chunk it
 plans with the commands the demonstrator actually sent next. We take the
 root-mean-square error (RMSE) over all twelve joints, in degrees, separately for
-each step of the chunk. We sample one frame in twenty, which gives 1127 scored
+each step of the chunk. We sample one frame in 25, which gives 1127 scored
 frames from the training demonstrations and 111 from the test demonstrations.
 Models plan different distances ahead, and error grows with distance, so we
 compare models over the first ten steps (\SI{0.33}{\second}), which every model

@@ -15,7 +15,7 @@ column is then averaged, and divided by the mean of the middle fifth of the
 image.}
 
 \textbf{Action error (Tables~\ref{tab:actions}, \ref{tab:crop},
-\ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every twentieth frame is given to
+\ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every 25th frame is given to
 the model with the past frames it expects. The planned chunk is compared step by
 step with the recorded commands; squaring and averaging at each step over all
 sampled frames gives the curve, and averaging the curve over the chosen steps
@@ -30,7 +30,8 @@ are held out. Everything else, including the random seed, is unchanged.
 \textbf{Grad-CAM rim measure (Figure~\ref{fig:rim}).} A band around the edge of
 each tactile Grad-CAM map is defined as a fraction of the image, so that maps of
 different resolution are treated alike. The weight inside the band is divided by
-the weight a flat map of the same size would put there.
+the weight a flat map of the same size would put there. \new{The maps come from test demonstration 58, every fifth frame; the
+reviewed draft used training demonstrations.}
 
 \textbf{Input contribution (Figures~\ref{fig:streams} and~\ref{fig:framewise}).}
 As in Section~\ref{sec:measures}. Figure~\ref{fig:framewise} uses every fifth

@@ -757,8 +757,8 @@ def main() -> int:
         "--prediction",
         nargs="*",
         default=[
-            "dreamzero=outputs/analysis/2026-09-25/dreamzero-prediction/prediction.json",
-            "fastwam=outputs/analysis/2026-09-25/fastwam-prediction/prediction.json",
+            "dreamzero=outputs/analysis/2026-09-27/dreamzero-prediction/prediction.json",
+            "fastwam=outputs/analysis/2026-09-27/fastwam-prediction/prediction.json",
         ],
         help="model=path pairs of world-model prediction.json results",
     )
@@ -874,6 +874,7 @@ def main() -> int:
         else:
             print(f"  per-sensor prediction: no {key} result at {path}")
     write_wm_table(revised, out / "wm_table.tex")
+    draw_rim_attention([Path(a) for a in args.attribution], out / "rim_attention.png")
     if args.dataset:
         dataset = Path(args.dataset).expanduser()
         draw_trajectory_strip(dataset, args.episode, out / "trajectory_strip.png")
@@ -1454,6 +1455,85 @@ def write_wm_table(
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  world-model sensor table: {len(rows)} rows -> {out}")
+    return out
+
+
+#: The rim figure's arms: family, label, then (arm key, crop label) per bar.
+RIM_ARMS = (
+    (
+        "act",
+        "ACT",
+        (("act", "no crop"), ("act_crop", "rows"), ("act_crop_edges", "four edges")),
+    ),
+    (
+        "diffusion",
+        "Diffusion",
+        (
+            ("diffusion", "no crop"),
+            ("diffusion_crop", "rows"),
+            ("diffusion_crop_edges", "four edges"),
+        ),
+    ),
+)
+RIM_BANDS = (0.10, 0.15, 0.20)
+
+
+def draw_rim_attention(directories: "list[Path]", out: Path) -> "Path | None":
+    """Grad-CAM weight in an edge band of the tactile maps, against a flat map.
+
+    Read from the held-out Grad-CAM runs (``heldout-gradcam-<arm>``). The band is
+    a fraction of the image, so maps of different resolution are comparable;
+    ``tool/rim_attention.py`` is the measure and says why. A value of one is
+    what a map with no preference for position would give.
+    """
+    from tool.rim_attention import pooled
+
+    def find(arm: str) -> "Path | None":
+        hits = [d / f"heldout-gradcam-{arm}" / "attribution.json" for d in directories]
+        hits = [h for h in hits if h.is_file()]
+        return hits[-1] if hits else None
+
+    figure, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharey=True)
+    styles = ({"alpha": 1.0}, {"alpha": 0.55}, {"alpha": 0.55, "hatch": "///"})
+    drawn = []
+    for axis, (family, title, bars) in zip(axes, RIM_ARMS):
+        xs = np.arange(len(RIM_BANDS))
+        width = 0.26
+        for offset, ((arm, label), style) in enumerate(zip(bars, styles)):
+            path = find(arm)
+            if path is None:
+                continue
+            values = []
+            for band in RIM_BANDS:
+                observed, flat, _n = pooled(path, band)
+                values.append(observed / flat)
+            position = xs + (offset - 1) * width
+            axis.bar(
+                position,
+                values,
+                width * 0.92,
+                color=FAMILY[family],
+                edgecolor="white",
+                label=label,
+                zorder=3,
+                **style,
+            )
+            for x, v in zip(position, values):
+                axis.text(x, v + 0.02, f"{v:.2f}", ha="center", fontsize=7, color=INK)
+            drawn.append(arm)
+        axis.axhline(1.0, color=MUTED, lw=1.2, ls="--", zorder=2)
+        axis.set_xticks(xs)
+        axis.set_xticklabels([f"{int(b * 100)}%" for b in RIM_BANDS])
+        axis.set_xlabel("edge band, as a fraction of the image", fontsize=9)
+        axis.set_title(title, color=INK, fontsize=10, loc="left")
+        axis.legend(frameon=False, fontsize=8, loc="lower right")
+        tidy(axis)
+    axes[0].set_ylabel("edge weight / flat map")
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    missing = [a for _f, _t, bars in RIM_ARMS for a, _l in bars if a not in drawn]
+    print(f"  rim attention: {drawn}" + (f"  MISSING {missing}" if missing else ""))
     return out
 
 
