@@ -809,6 +809,13 @@ def main() -> int:
         default=(0, 180),
         help="EPISODE:FRAME of the Grad-CAM evidence figure (default 0:180)",
     )
+    parser.add_argument(
+        "--h2h",
+        nargs=2,
+        default=None,
+        metavar=("FASTWAM_NPZ", "DREAMZERO_NPZ"),
+        help="filmstrips of the two world action models from the same seen frame",
+    )
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
 
@@ -886,6 +893,18 @@ def main() -> int:
             print(f"  per-sensor prediction: no {key} result at {path}")
     write_wm_table(revised, out / "wm_table.tex")
     draw_rim_attention([Path(a) for a in args.attribution], out / "rim_attention.png")
+    if args.h2h:
+        from tool.eval_world_model import load_filmstrip
+
+        fw_path, dz_path = (Path(p) for p in args.h2h)
+        if fw_path.is_file() and dz_path.is_file():
+            draw_filmstrip_h2h(
+                load_filmstrip(fw_path),
+                load_filmstrip(dz_path),
+                out / "filmstrip_h2h.png",
+            )
+        else:
+            print(f"  head-to-head filmstrip: missing {fw_path} or {dz_path}")
     if args.dataset:
         dataset = Path(args.dataset).expanduser()
         draw_trajectory_strip(dataset, args.episode, out / "trajectory_strip.png")
@@ -1815,6 +1834,89 @@ def draw_model_inputs(dataset: Path, episode: int, fraction: float, out: Path) -
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  model inputs: recording {episode} at {fraction:.2f} -> {out}")
+    return out
+
+
+#: Seconds after the last seen frame of each predicted frame. FastWAM predicts
+#: one frame every four at 30 Hz; DreamZero one every 24, the first 0.8 s out.
+FASTWAM_TIMES = tuple((i + 1) * 4 / 30 for i in range(8))
+DREAMZERO_TIMES = tuple((i + 1) * 24 / 30 for i in range(6))
+
+
+def draw_filmstrip_h2h(
+    fastwam: dict,
+    dreamzero: dict,
+    out: Path,
+    cameras: "tuple[str, ...]" = ("central", "left_arm_left_gripper"),
+    fastwam_at: "tuple[float, ...]" = (4 / 15, 8 / 15, 0.8, 16 / 15),
+    dreamzero_at: "tuple[float, ...]" = (0.8, 1.6, 2.4, 3.2, 4.0, 4.8),
+) -> Path:
+    """FastWAM and DreamZero predicting from the SAME last seen frame.
+
+    Columns are one time axis: the seen frame, then seconds ahead. For each
+    camera the rows are what happened, then each model's prediction and its
+    difference from what happened (truth minus prediction, mid-grey is no
+    error). The seen column shows each model's reconstruction of the frame it
+    was given, so a blurred prediction can be told from a blurred autoencoder.
+    A model's cell is blank where it predicts nothing. Each model is shown at
+    its own resolution; the truth row takes FastWAM's frames up to its horizon
+    and DreamZero's after.
+    """
+    from tool.eval_world_model import difference_image
+
+    times = sorted({0.0, *fastwam_at, *dreamzero_at})
+
+    def frame(parts: dict, grid: "tuple[float, ...]", t: float, kind: str):
+        if t == 0.0:
+            return parts["held"] if kind == "actual" else parts.get("held_recon")
+        hits = [i for i, g in enumerate(grid) if abs(g - t) < 1e-3]
+        return parts[kind][hits[0]] if hits else None
+
+    rows = []
+    for camera in cameras:
+        fw, dz = fastwam[camera], dreamzero[camera]
+        truth = [
+            frame(fw, FASTWAM_TIMES, t, "actual")
+            if t <= FASTWAM_TIMES[-1] + 1e-3
+            else frame(dz, DREAMZERO_TIMES, t, "actual")
+            for t in times
+        ]
+        label = "overhead" if camera == "central" else SENSOR_SHORT.get(camera, camera)
+        rows.append((f"{label}\nactual", truth))
+        for name, parts, grid in (
+            ("FastWAM", fw, FASTWAM_TIMES),
+            ("DreamZero", dz, DREAMZERO_TIMES),
+        ):
+            guess = [frame(parts, grid, t, "predicted") for t in times]
+            own_truth = [frame(parts, grid, t, "actual") for t in times]
+            diff = [
+                None if g is None or a is None else difference_image(a, g)
+                for g, a in zip(guess, own_truth)
+            ]
+            rows.append((f"{name}\npredicted", guess))
+            rows.append((f"{name}\ndifference", diff))
+    figure, axes = plt.subplots(
+        len(rows), len(times), figsize=(1.05 * len(times) + 1.0, 0.95 * len(rows))
+    )
+    for r, (label, images) in enumerate(rows):
+        for c, image in enumerate(images):
+            axis = axes[r][c]
+            axis.set_xticks([])
+            axis.set_yticks([])
+            for spine in axis.spines.values():
+                spine.set_visible(False)
+            if image is not None:
+                axis.imshow(image)
+            if r == 0:
+                axis.set_title(
+                    "seen" if times[c] == 0 else f"+{times[c]:.2f} s", fontsize=7
+                )
+            if c == 0:
+                axis.set_ylabel(label, fontsize=7, rotation=0, ha="right", va="center")
+    figure.tight_layout(pad=0.2, h_pad=0.2, w_pad=0.1)
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  head-to-head filmstrip -> {out}")
     return out
 
 

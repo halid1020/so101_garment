@@ -189,6 +189,134 @@ def _grid_for(camera: str, rows: int, cols: int) -> "tuple[int, int]":
     return (rows * tiles[0], cols * tiles[1])
 
 
+def _flat_frames(frames):
+    """Each frame of a ``(..., 3, H, W)`` stack replaced by its own mean colour."""
+    return frames.mean(dim=(-2, -1), keepdim=True).expand_as(frames).clone()
+
+
+def _painted(frames, cell: "tuple[int, int, int, int]"):
+    """Every frame of the stack with one cell painted its frame's mean colour."""
+    top, bottom, left, right = cell
+    out = frames.clone()
+    colour = frames.mean(dim=(-2, -1), keepdim=True)
+    out[..., top:bottom, left:right] = colour.expand_as(
+        out[..., top:bottom, left:right]
+    )
+    return out
+
+
+def windowed_record(inference, item: dict, args, context_actions: int) -> dict:
+    """Occlusion and patch maps for a model that reads a WINDOW, not one frame.
+
+    DreamZero is given a past chunk of video and of commands; the single-frame
+    path would hand it one frame and it refuses (rightly -- repeating one frame
+    would be a frozen past it never saw). So the perturbations are made on the
+    dataset window itself: a camera is flattened in every frame of the window,
+    the state in every step, and ``past actions`` -- the recorded commands the
+    model is conditioned on -- is a stream of its own, replaced by a constant.
+    Same ``mean`` baseline and pinned sampler as the single-frame path.
+    """
+    import torch
+    from actoris_harena.analysis.diffusion import DEFAULT_SEED, plan
+    from actoris_harena.analysis.perturb import chunk_delta
+
+    from tool.eval_world_model import make_batch
+
+    def planned(window: dict):
+        batch = make_batch(window, inference.device)
+        return plan(inference, inference.to_device(inference.pre(batch)), DEFAULT_SEED)
+
+    reference = planned(item)
+    cameras = sorted(k for k in item if k.startswith("observation.images."))
+    out: "dict[str, Any]" = {}
+    if "occlusion" in args.method:
+
+        def replaced(window: dict, name: str) -> dict:
+            moved = dict(window)
+            if name == "state":
+                state = moved["observation.state"]
+                moved["observation.state"] = torch.full_like(state, float(state.mean()))
+            elif name == "past actions":
+                action = moved["action"].clone()
+                past = action[:context_actions]
+                action[:context_actions] = float(past.mean())
+                moved["action"] = action
+            else:
+                moved[name] = _flat_frames(moved[name])
+            return moved
+
+        names = ["state", "past actions", *cameras]
+        streams = {}
+        for name in names:
+            streams[name.split(".")[-1]] = chunk_delta(
+                reference, planned(replaced(item, name))
+            )
+        total = sum(e["l2"] for e in streams.values())
+        for effect in streams.values():
+            effect["share"] = effect["l2"] / total if total else 0.0
+        everything = item
+        for name in names:
+            everything = replaced(everything, name)
+        out["occlusion"] = {
+            "streams": streams,
+            "all": chunk_delta(reference, planned(everything)),
+            "baseline": "mean",
+            "direction": "leave_one_out",
+        }
+    if "patches" in args.method:
+        rows, cols = args.patch_grid
+        maps = {}
+        for key in cameras:
+            name = key.split(".")[-1]
+            if not (args.patch_cameras == "all" or _tactile(name)):
+                continue
+            height, width = item[key].shape[-2:]
+            values = np.zeros((rows, cols))
+            for row in range(rows):
+                for col in range(cols):
+                    cell = (
+                        row * height // rows,
+                        (row + 1) * height // rows,
+                        col * width // cols,
+                        (col + 1) * width // cols,
+                    )
+                    moved = dict(item)
+                    moved[key] = _painted(item[key], cell)
+                    values[row, col] = chunk_delta(reference, planned(moved))["l2"]
+            maps[name] = values.tolist()
+        out["patches"] = maps
+    return out
+
+
+def windowed_episodes(inference, args) -> "dict[str, dict]":
+    """The per-episode records of :func:`windowed_record`, sampled as the rest."""
+    from tool.eval_world_model import load_dataset
+
+    config = inference.policy.config
+    context_actions = list(config.action_delta_indices).index(0)
+    episodes: "dict[str, dict]" = {}
+    for episode in parse_episodes(args.episodes):
+        data = load_dataset(inference.policy, args.dataset, [episode])
+        frames: "list[dict]" = []
+        for index in range(0, data.num_frames, args.every):
+            if len(frames) >= args.max_frames:
+                break
+            item = data[index]
+            record = {"index": int(item["index"])}
+            record.update(windowed_record(inference, item, args, context_actions))
+            frames.append(record)
+            print(f"  episode {episode} frame {index} ({len(frames)})", end="\r")
+        episodes[str(episode)] = {"frames": frames, "phases": []}
+        print(f"  episode {episode}: {len(frames)} frame(s) analysed (windowed)")
+    return episodes
+
+
+def parse_episodes(text: str) -> "list[int]":
+    from tool.eval_world_model import parse_range
+
+    return parse_range(text)
+
+
 def camera_slug(inference, source) -> "str | None":
     """How the camera set is named in a directory, as a run directory names it.
 
@@ -368,7 +496,12 @@ def main() -> None:
 
     started = time.time()
     episodes: "dict[str, dict]" = {}
-    for episode in source.episodes:
+    from tool.eval_action_mse import needs_window
+
+    windowed = bool(args.dataset) and needs_window(inference.policy)
+    if windowed:
+        episodes = windowed_episodes(inference, args)
+    for episode in [] if windowed else source.episodes:
         frames: "list[dict]" = []
         for index, state, images, truth in source.observations(episode):
             if len(frames) >= args.max_frames:
@@ -411,7 +544,7 @@ def main() -> None:
     (out_dir / "attribution.json").write_text(json.dumps(_jsonable(payload), indent=1))
     print(f"\n📝 {out_dir / 'attribution.json'}")
     summarise(payload)
-    if not args.no_figures:
+    if not args.no_figures and not windowed:
         draw(payload, source, inference, args, out_dir)
     print(f"\n✓ {payload['seconds']:.0f}s")
 

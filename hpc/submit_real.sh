@@ -223,9 +223,19 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
 fi
 
 # ---- snapshot what we submit -----------------------------------------
+# The snapshot directory MUST be new. The array reads its manifest from here when
+# each task starts, so two submissions sharing one would run the later one's rows
+# under the earlier one's job. MEASURED 2026-09-27: a Diffusion and a FastWAM
+# resubmission in the same second both trained FastWAM, one of them fresh in the
+# Diffusion run's directory. `mkdir` without -p is the atomic claim.
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$SCRATCH/so101_outputs/submissions"
 SUB_DIR="$SCRATCH/so101_outputs/submissions/$STAMP"
-mkdir -p "$SUB_DIR"
+suffix=1
+until mkdir "$SUB_DIR" 2>/dev/null; do
+    SUB_DIR="$SCRATCH/so101_outputs/submissions/${STAMP}-$suffix"
+    suffix=$((suffix + 1))
+done
 
 HOURS_SET="$(printf '%s\n' "${ROWS[@]}" | cut -f6 | sort -n -u)"
 
