@@ -1,23 +1,16 @@
 \section{Methods}
 \label{sec:methods}
 
-This section describes the six models (Section~\ref{sec:models}), the
-demonstrations and how we split them (Section~\ref{sec:data}), how we evaluate
-each model (Section~\ref{sec:measures}), and how we crop the tactile images
-(Section~\ref{sec:cropmethod}).
-
 \subsection{Models}
 \label{sec:models}
 
 Every model reads the joint positions of both arms (twelve numbers, which we
 call \emph{proprioception}) and some of the cameras. Each outputs a
 \emph{chunk}: a plan of future arm commands at \SI{30}{\hertz}, the rate at
-which the demonstrations were recorded. \new{(We checked this rate in the
-recordings: each camera frame is on average 16\,ms old when it is stored, and
-90\,\% are under 30\,ms, which matches cameras running at \SI{30}{\hertz}; at
-\SI{25}{\hertz} these would be 20 and 36\,ms.)} Table~\ref{tab:models} lists
-how the models differ, and Figure~\ref{fig:inputs} shows the images each one
-receives. For each model we give its original design first and then what we
+which the demonstrations were recorded. \new{(We checked the camera rate in
+the recordings; Appendix~\ref{sec:provenance}.)} Table~\ref{tab:models} lists
+how the models differ, and Appendix Figure~\ref{fig:inputs} shows the images
+each one receives. For each model we give its original design first and then what we
 changed.
 
 \textbf{ACT} \citep{zhao2023act} \new{encodes each camera image separately with
@@ -51,18 +44,14 @@ handling, resizing to $180\times240$ without cropping.}
 vision-language model reads the images and a written instruction, and a
 smaller ``action expert'' produces the chunk by flow matching. \new{Its vision
 encoder turns each image into tokens; it sees only the current frame.}
-\new{The authors adapt pi0.5 to a new task by finetuning the whole model on
-that task's data; their code also offers LoRA \citep{hu2022lora}, which trains
-small low-rank corrections to chosen weight matrices and freezes the rest, to
-save memory. The literature suggests the choice matters. On the OpenVLA model,
-LoRA of rank 32 on every linear layer matched full finetuning
-\citep{kim2024openvla}; on language models, LoRA learns less of a new task than
-full finetuning, although it also forgets less \citep{biderman2024lora}. Ours
-is narrower than either: rank 16 on the action expert's attention and the small
-state and action layers only, about 1.3 million trained weights, with the
-vision-language model frozen. We chose it because full finetuning does not fit
-our 24\,GB GPU. It may be one reason pi0.5 fits our task poorly
-(Section~\ref{sec:compare}).} pi0.5 has three image slots, so it reads the
+\new{Its authors finetune the whole model on each new task; their code also
+offers LoRA \citep{hu2022lora}, which trains small low-rank corrections to
+chosen weights and freezes the rest. On OpenVLA, LoRA of rank 32 on every
+linear layer matched full finetuning \citep{kim2024openvla}; on language
+models LoRA learns less of a new task, though it forgets less
+\citep{biderman2024lora}. Ours is narrower than either, chosen to fit a 24\,GB
+GPU: rank 16 on the action expert's attention and state and action layers only,
+about 1.3 million trained weights, with the vision-language model frozen.} pi0.5 has three image slots, so it reads the
 overhead camera and one fingertip per arm. It is given the instruction ``fold
 the short'' and plans 50 steps.
 
@@ -76,7 +65,7 @@ and chunking but about 59 million parameters, and is trained from scratch on
 our demonstrations. \new{It therefore tests the method, not the pretrained
 model.} \new{Like the original, it \emph{tiles} the cameras: all five are
 squashed into the cells of a $3\times3$ grid inside one $224\times224$ frame
-(Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.} It
+(Appendix Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.} It
 sees two frames, the latest and one \SI{0.8}{\second} earlier, \new{and is also
 given the arm commands of the past \SI{1.6}{\second}}. It predicts frames every
 \SI{0.8}{\second} up to \SI{4.8}{\second} ahead, with 24 action steps per chunk.
@@ -87,7 +76,7 @@ with a smaller action expert beside it. \new{Its authors finetune the pretrained
 video model on each task's demonstrations, as we do; we start from the public
 LeRobot base model.} \new{Its image input is one frame of fixed size, made by
 setting cameras side by side. We give it the overhead camera beside a
-two-by-two composite of the four fingertips (Figure~\ref{fig:inputs}c). It sees
+two-by-two composite of the four fingertips (Appendix Figure~\ref{fig:inputs}c). It sees
 only the current frame.} It predicts nine frames over about a second and plans
 32 action steps, of which it executes 10. \new{The authors skip the video
 prediction at test time, since it is needed only in training; we run it to
@@ -116,16 +105,6 @@ score the predicted frames.}
   \end{tabular}
 \end{table}
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\textwidth]{model_inputs.png}
-  \caption{\new{The images each model receives, at one moment of held-out
-  demonstration 58. LLG, LRG, RLG and RRG are the fingertip sensors: left arm
-  left gripper finger, left arm right finger, right arm left finger and right
-  arm right finger.}}
-  \label{fig:inputs}
-\end{figure}
-
 \subsection{The demonstrations and the split}
 \label{sec:data}
 
@@ -138,7 +117,7 @@ start to end.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.78\textwidth]{trajectory_strip.png}
+  \includegraphics[width=0.5\textwidth]{trajectory_strip.png}
   \caption{One held-out demonstration seen by the overhead camera, 20 frames
   evenly spaced from start to end. The arms grasp the waistband, fold the shorts
   over and release.}
@@ -211,16 +190,13 @@ alone moves the plan by far more than removing a camera does.
 \emph{Reconstruction} passes frames the model has already seen through its own
 image autoencoder and back. \emph{Prediction} compares the frames the model
 generates for the future, together with its own planned actions, with what the
-cameras actually recorded. \new{We use two standard image measures. The
-peak signal-to-noise ratio (PSNR) is based on the mean squared difference
-between the pixels of two images. It is given in decibels (dB), a logarithmic
-unit: $\text{PSNR} = 10\log_{10}(1/\text{MSE})$ for pixels in $[0,1]$, so every
-10\,dB more means ten times smaller squared error, and 3\,dB about half. Higher
-is better; identical images score infinity. PSNR treats every pixel alike, so
-it punishes blur and small shifts strongly. The structural similarity index
-(SSIM) compares local brightness, contrast and structure instead, which is
-closer to what people notice. It runs from 0 to 1, and higher is better. Using
-both guards against a result that holds for one measure only.} We score every
+cameras actually recorded. \new{We use two standard image measures, and for both higher is better. The
+peak signal-to-noise ratio (PSNR) is $10\log_{10}(1/\text{MSE})$ for pixels in
+$[0,1]$, in decibels (dB): every 10\,dB more means a tenfold smaller squared
+pixel error, 3\,dB about half. It treats every pixel alike, so it punishes blur
+and small shifts. The structural similarity index (SSIM, 0 to 1) compares local
+brightness, contrast and structure, closer to what people notice. Using both
+guards against a result that holds for one measure only.} We score every
 sensor separately.
 
 \new{As a baseline we \emph{repeat the last frame}: we take the last frame the
@@ -241,7 +217,7 @@ gel.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\textwidth]{gradcam_evidence.png}
+  \includegraphics[width=0.75\textwidth]{gradcam_evidence.png}
   \caption{\new{Grad-CAM of ACT on the four fingertips, frame 180 of training
   demonstration 0. Red is where the plan's gradient is largest. The dashed box
   marks the outer tenth of each image; the number is the weight inside that band
@@ -260,7 +236,7 @@ feature that the four-edge crop keeps.}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.92\textwidth]{rim_evidence.png}
+  \includegraphics[width=0.74\textwidth]{rim_evidence.png}
   \caption{The four fingertip sensors before contact. Top: the first frame of
   one demonstration with the crops drawn on it: rows only (white, dashed), four
   edges (yellow) \new{and the ridge crop (blue, dash-dot); the arrow marks the

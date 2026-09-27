@@ -1999,6 +1999,9 @@ def draw_patch_maps(entries: "list[tuple[str, Path]]", out: Path) -> "Path | Non
             grid = maps.get(camera)
             if grid is not None:
                 axis.imshow(grid / grid.max(), cmap="Greys", vmin=0, vmax=1)
+            else:
+                # A sensor this model does not read (pi0.5 reads two).
+                axis.axis("off")
             if r == 0:
                 axis.set_title(label, fontsize=7)
             if c == 0:

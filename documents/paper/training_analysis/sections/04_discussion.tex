@@ -34,22 +34,16 @@ but only a second ahead, and frame-averaged scores undersell it.
 
 \textbf{Next steps.}
 \begin{enumerate}
-  \item \textbf{Collect more varied demonstrations.} More sessions, garments and
-  starting positions are the most direct attack on the generalisation gap.
-  \item \textbf{Test on the robot.} Error against recorded commands measures
-  agreement with one demonstrator. Only trials on the rig show whether a policy
-  folds the garment, and whether it recovers from states the demonstrator never
+  \item \textbf{Collect more varied demonstrations} (sessions, garments,
+  starting positions): the most direct attack on the generalisation gap.
+  \item \textbf{Test on the robot.} Agreement with recorded commands is not
+  folding the garment, nor recovering from states the demonstrator never
   visited.
-  \item \new{\textbf{Finetune pi0.5 fully, or with LoRA on every layer.} Our
-  LoRA touches only the action expert. The recipes in the literature adapt far
-  more of the model, and need a larger GPU.}
-  \item \textbf{Gate touch on contact.} Feeding the tactile images only once
-  contact is detected fits how ACT already uses them, and removes the
-  pre-contact images that raised the edge question.
-  \item \textbf{Train FastWAM to predict further ahead,} to test whether its
-  pretrained video prior still helps beyond one second, where so far only
-  DreamZero predicts.
-  \item \textbf{Score motion, not whole frames.} A prediction score restricted
-  to the pixels that change would reward a correct moving gripper that
-  frame-averaged PSNR misses.
+  \item \new{\textbf{Finetune pi0.5 fully, or with LoRA on every layer,} as
+  the published recipes do; this needs a larger GPU.}
+  \item \textbf{Gate touch on contact,} which fits how ACT uses the fingertips
+  and removes the pre-contact images that raised the edge question.
+  \item \textbf{Predict further, and score motion.} Train FastWAM to predict
+  beyond one second, and score predictions on the pixels that change, which
+  frame-averaged PSNR ignores.
 \end{enumerate}

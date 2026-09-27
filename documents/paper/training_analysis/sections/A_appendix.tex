@@ -27,7 +27,9 @@ elsewhere; the frame shown is from the first stretch.}
 
 \new{\textbf{Recording rate.} From the recorder's own timing file: the gap
 between stored frames is 34.5\,ms on average (29\,Hz), and each camera frame's
-age when stored has a median of 16\,ms and a 90th percentile of 30\,ms.}
+age when stored has a median of 16\,ms and a 90th percentile of 30\,ms. That
+matches cameras running at \SI{30}{\hertz}; at \SI{25}{\hertz} the two would
+be 20 and 36\,ms.}
 
 \textbf{Action error (Tables~\ref{tab:actions}, \ref{tab:crop},
 \ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every 25th frame is given to
@@ -77,6 +79,16 @@ both models are scored per sensor.
 \section{Additional results}
 \label{sec:extra}
 
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.9\textwidth]{model_inputs.png}
+  \caption{\new{The images each model receives, at one moment of held-out
+  demonstration 58. LLG, LRG, RLG and RRG are the fingertip sensors: left arm
+  left gripper finger, left arm right finger, right arm left finger and right
+  arm right finger.}}
+  \label{fig:inputs}
+\end{figure}
+
 \begin{table}[h]
   \centering
   \caption{Change between repeated scorings with three random seeds, lowest
@@ -104,6 +116,33 @@ both models are scored per sensor.
   better than assuming nothing moves.}
   \label{fig:predmargin}
 \end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.72\textwidth]{rim_attention.png}
+  \caption{How much Grad-CAM weight falls in a band around the edge of the
+  tactile images, relative to a completely flat map (dashed line at 1), over
+  60 frames of test demonstration 58 and all four fingertips. Below the line, a
+  model looks at the edge \emph{less} than a model that ignored position would.
+  Three band widths are shown.}
+  \label{fig:rim}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.68\textwidth]{framewise_shares.png}
+  \caption{The fingertips' share of each policy's plan through one test
+  demonstration. Dashed lines are the cropped versions.}
+  \label{fig:framewise}
+\end{figure}
+
+\textbf{Touch matters in bursts.} Figure~\ref{fig:framewise} tracks the
+fingertips' share through one test demonstration. For ACT it runs from under
+1\,\% to 44\,\% within ten seconds, against an average of 10\,\%. It is nearly
+ignored for the first three seconds and carries two fifths of the plan around
+contact. An average therefore describes no moment that actually happens.
+Diffusion and pi0.5 read touch more steadily, peaking at two to two and a half
+times their own average where ACT peaks at four to five times.
 
 \begin{table}[h]
   \centering
