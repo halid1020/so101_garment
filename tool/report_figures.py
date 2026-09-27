@@ -1,0 +1,939 @@
+#!/usr/bin/env python
+"""The figures `training_analysis` is built from, drawn from measured JSON.
+
+Every number here is read out of a file another tool wrote -- `eval_action_mse`
+for the action error, `analyse_policy_inputs` for the stream shares. Nothing is
+recomputed and nothing is typed in by hand, so a figure cannot drift away from
+the run it claims to describe: regenerate and the numbers follow.
+
+Run it with no arguments to draw everything it has the inputs for. An arm whose
+results are not on disk is REPORTED MISSING and skipped, never interpolated and
+never quietly dropped -- a comparison with a silently absent arm reads as a
+complete comparison, which is the one way this figure set could mislead.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import matplotlib  # noqa: E402
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+
+# The dataviz palette. Colour follows the POLICY FAMILY and never the rank, so a
+# figure that drops an arm does not repaint the survivors. The crop arm of each
+# family is the same hue drawn dashed and lighter -- a crop is a variant of its
+# twin, and giving it an unrelated hue would say it was an unrelated thing.
+INK = "#0b0b0b"
+MUTED = "#52514e"
+GRID = "#e1e0d9"
+FAMILY = {
+    "act": "#2a78d6",
+    "diffusion": "#eb6834",
+    "pi05": "#7a5bb5",
+    # The two world models: new entities, so new hues, placed well clear of the
+    # three policy families above and never reused for them.
+    "dreamzero": "#17917a",
+    "fastwam": "#c2407e",
+}
+
+#: World models: key, label, marker. The marker is the second encoding, so a
+#: reader never needs the colour alone to tell the two apart.
+WORLD_MODELS = (("dreamzero", "DreamZero", "o"), ("fastwam", "FastWAM", "s"))
+
+#: Seconds from the last OBSERVED frame to horizon step 1, and between steps.
+#: Read off the trained configs, at 30 fps. DreamZero: context frames at -48 and
+#: -24, predictions at 0, 24, ... 120 (chunk_size 48, two latent frames per
+#: chunk). FastWAM: observes frame 0 and predicts 4, 8, ... 32. The two
+#: horizons barely overlap -- FastWAM's whole horizon fits inside DreamZero's
+#: first step -- so steps are never compared by index, only by time.
+#: A camera name a reader should see instead of the dataset key.
+CAMERA_LABEL = {"central": "overhead", "tactile_quad": "fingertips, composite"}
+
+HORIZON_SECONDS = {"dreamzero": (24 / 30, 24 / 30), "fastwam": (4 / 30, 4 / 30)}
+
+#: Arm name to the label a reader sees, for figures that take arms by name.
+ARMS_LABEL = (("act", "ACT"), ("diffusion", "Diffusion"), ("pi05", "pi0.5"))
+
+#: The six arms, in the order they read best: each baseline beside its crop.
+ARMS = (
+    ("act", "ACT", False),
+    ("act_crop", "ACT cropped", True),
+    ("diffusion", "Diffusion", False),
+    ("diffusion_crop", "Diffusion cropped", True),
+    ("pi05", "pi0.5", False),
+    ("pi05_crop", "pi0.5 cropped", True),
+)
+
+
+def family_of(arm: str) -> str:
+    return arm.removesuffix("_crop")
+
+
+def style_for(arm: str) -> dict:
+    cropped = arm.endswith("_crop")
+    return {
+        "color": FAMILY[family_of(arm)],
+        "linestyle": "--" if cropped else "-",
+        "alpha": 0.75 if cropped else 1.0,
+        "linewidth": 2.0,
+    }
+
+
+def load_arms(directory: Path, prefix: str = "split10-") -> "dict[str, dict]":
+    """Every arm's result that is on disk, keyed by arm name."""
+    found = {}
+    for arm, _label, _crop in ARMS:
+        path = directory / f"{prefix}{arm}.json"
+        if path.is_file():
+            found[arm] = json.loads(path.read_text())
+    return found
+
+
+def tidy(axis) -> None:
+    """The recessive grid and spines every figure here shares."""
+    axis.grid(alpha=0.35, color=GRID, linewidth=0.8)
+    axis.set_axisbelow(True)
+    for side in ("top", "right"):
+        axis.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        axis.spines[side].set_color(GRID)
+    axis.tick_params(colors=MUTED, labelsize=9)
+
+
+def draw_horizon(results: "dict[str, dict]", out: Path) -> Path:
+    """How a plan decays across its own chunk, every arm on ONE pair of axes.
+
+    Two panels, trained-on and held-out, sharing a y axis so the eye can carry a
+    height from one to the other -- that shared scale is the comparison.
+
+    The axis is LOGARITHMIC and the caption has to say so. pi0.5's error is
+    roughly fifty times ACT's, so on a linear axis ACT and Diffusion collapse
+    onto the floor as one indistinguishable line and the figure answers nothing
+    about the two arms the report is mostly about.
+
+    THE POLICIES DO NOT SHARE A HORIZON, and this figure is where that stops
+    being invisible. ACT predicts a hundred steps and Diffusion thirty-two, so
+    a mean error over each policy's own chunk compares one that must guess three
+    times further ahead against one that need not. MEASURED: over their native
+    horizons Diffusion beats ACT on held-out data by 35 %, and over the common
+    first thirty-two steps by 9 %. The shaded band marks the shortest horizon
+    any drawn arm has -- everything left of it is like-for-like, everything
+    right of it is one policy being asked a harder question.
+    """
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.4), sharey=True)
+    drawn = 0
+    horizons = [
+        len(r[h]["mse_per_step"])
+        for r in results.values()
+        for h in ("train", "validation")
+        if r.get(h, {}).get("mse_per_step")
+    ]
+    common = min(horizons) if horizons else 0
+    for panel, half in zip(axes, ("train", "validation")):
+        for arm, label, _crop in ARMS:
+            result = results.get(arm)
+            if not result or half not in result:
+                continue
+            per_step = result[half].get("mse_per_step") or []
+            if not per_step:
+                continue
+            steps = np.arange(1, len(per_step) + 1)
+            panel.plot(steps, per_step, label=label, **style_for(arm))
+            drawn += 1
+        if common:
+            panel.axvspan(0.5, common + 0.5, color=GRID, alpha=0.55, zorder=0)
+            panel.annotate(
+                f"shared horizon\n(first {common} steps)",
+                xy=(common / 2, 0.02),
+                xycoords=("data", "axes fraction"),
+                ha="center",
+                fontsize=8,
+                color=MUTED,
+            )
+        panel.set_yscale("log")
+        panel.set_xlabel("step within the predicted chunk")
+        tidy(panel)
+    axes[0].set_title("on recordings it trained on", color=INK, fontsize=11)
+    axes[1].set_title("on recordings it never saw", color=INK, fontsize=11)
+    axes[0].set_ylabel("action error (MSE, log scale)")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=min(len(labels), 4),
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.06),
+        fontsize=9,
+    )
+    # The title says what the curves show and not what a headline would prefer.
+    # ACT's error is FLAT across its whole chunk on recordings it trained on --
+    # about 6 at the first step and 11 at the hundredth -- which is not "a plan
+    # decays with horizon" at all, and an earlier draft of this title said
+    # exactly that and was wrong about half the figure.
+    figure.suptitle(
+        "ACT is flat across its own chunk on recordings it memorised, "
+        "and steep on recordings it did not",
+        color=INK,
+        fontsize=12,
+    )
+    figure.tight_layout(rect=(0, 0.02, 1, 0.94))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  horizon decay: {drawn} curves -> {out}")
+    return out
+
+
+def draw_gap(results: "dict[str, dict]", out: Path) -> Path:
+    """Trained-on against held-out RMSE, with the ratio between them named.
+
+    The ratio is the finding and the bars alone do not show it, so it is
+    annotated rather than left to be divided by eye.
+    """
+    present = [(a, lab) for a, lab, _c in ARMS if a in results]
+    if not present:
+        raise SystemExit("no arms on disk to draw")
+    figure, axis = plt.subplots(figsize=(9, 4.8))
+    x = np.arange(len(present))
+    width = 0.38
+
+    # EVERY bar over the same number of steps. The recorded `rmse` averages
+    # over each policy's own horizon, and ACT's is a hundred steps against
+    # Diffusion's thirty-two -- so plotting the recorded numbers side by side
+    # shows ACT losing partly because it was asked to plan three times further
+    # ahead. An earlier draft of this figure did exactly that.
+    common = min(r["validation"]["horizon"] for r in results.values())
+    train = [rmse_over(results[a], "train", common) for a, _ in present]
+    held = [rmse_over(results[a], "validation", common) for a, _ in present]
+    colours = [FAMILY[family_of(a)] for a, _ in present]
+
+    axis.bar(x - width / 2, train, width, color=colours, alpha=0.45, label="trained on")
+    axis.bar(x + width / 2, held, width, color=colours, alpha=1.0, label="never seen")
+
+    top = max(held)
+    for index, (value_t, value_h) in enumerate(zip(train, held)):
+        axis.annotate(
+            f"x{value_h / value_t:.1f}",
+            xy=(index, value_h),
+            xytext=(0, 6),
+            textcoords="offset points",
+            ha="center",
+            fontsize=9,
+            color=MUTED,
+        )
+    axis.set_ylim(0, top * 1.18)
+    axis.set_xticks(x)
+    axis.set_xticklabels([lab for _, lab in present], fontsize=9)
+    axis.set_ylabel("action error (RMSE)")
+    axis.legend(frameon=False, fontsize=9, loc="upper left")
+    axis.set_title(
+        "The gap between the two bars is the result, not the height of either",
+        color=INK,
+        fontsize=12,
+    )
+    natives = ", ".join(
+        f"{lab} {results[a]['validation']['horizon']}" for a, lab in present
+    )
+    figure.text(
+        0.5,
+        -0.04,
+        f"Every bar is scored over the first {common} steps of the chunk, which "
+        f"is the longest horizon every arm shares.\nNative horizons differ "
+        f"({natives}); scoring each over its own would compare unequal questions.",
+        ha="center",
+        fontsize=8.5,
+        color=MUTED,
+    )
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  train-vs-held-out: {len(present)} arms -> {out}")
+    return out
+
+
+def rmse_over(result: dict, half: str, steps: "int | None" = None) -> float:
+    """RMSE over the first `steps` of the chunk, or over all of it.
+
+    The reason this exists rather than reading `rmse` straight out of the file:
+    the recorded number averages over each policy's OWN horizon, and the
+    horizons differ — a hundred steps for ACT, thirty-two for Diffusion. Read
+    without care that makes a policy asked to plan three times further ahead
+    look worse at planning, which is a different claim entirely.
+    """
+    per_step = np.array(result[half]["mse_per_step"], dtype=float)
+    if steps:
+        per_step = per_step[:steps]
+    return float(np.sqrt(per_step.mean()))
+
+
+def table_rows(
+    results: "dict[str, dict]", common: "int | None" = None
+) -> "list[list[str]]":
+    """The cross-policy table, as cells. Shared by the LaTeX and the console."""
+    rows = []
+    for arm, label, _crop in ARMS:
+        result = results.get(arm)
+        if not result:
+            # A pending arm is a row of dashes and never an omitted line: a
+            # table that silently lost pi0.5 reads as a complete comparison.
+            rows.append([label, "--", "--", "--", "--", "--", "--"])
+            continue
+        held = result["validation"]
+        native_gap = rmse_over(result, "validation") / rmse_over(result, "train")
+        shared_held: "float | None" = None
+        shared_gap: "float | None" = None
+        if common:
+            shared_held = rmse_over(result, "validation", common)
+            shared_gap = shared_held / rmse_over(result, "train", common)
+        # BOTH gaps, because they are different numbers and neither can be
+        # labelled honestly on its own: over its native hundred steps the
+        # action-chunking family's ratio is 5.3, and over the thirty-two it
+        # shares with the diffusion family it is 4.1. The bar figure annotates
+        # the shared one, so a table showing only the native one would look
+        # like one of the two was simply wrong.
+        rows.append(
+            [
+                label,
+                str(held["horizon"]),
+                f"{rmse_over(result, 'train'):.3f}",
+                f"{rmse_over(result, 'validation'):.3f}",
+                f"{native_gap:.1f}",
+                f"{shared_held:.3f}" if shared_held is not None else "--",
+                f"{shared_gap:.1f}" if shared_gap is not None else "--",
+            ]
+        )
+    return rows
+
+
+def write_table(results: "dict[str, dict]", out: Path) -> Path:
+    """A booktabs fragment, `\\input` by the report exactly as the paper does.
+
+    Generated and never hand-edited, for the living-paper reason: a number typed
+    into prose drifts from the run it came from the first time anything is
+    retrained, and nothing catches it.
+    """
+    horizons = [r["validation"]["horizon"] for r in results.values()]
+    common = min(horizons) if horizons else None
+    # TWO groups of columns, headed so they cannot be confused. The gap over a
+    # policy's own horizon and over the shared one are different numbers -- 5.3
+    # against 4.1 for the longer-horizon family -- and a table showing one while
+    # a figure annotates the other reads as an error in one of them.
+    subhead = (
+        "& & \\multicolumn{3}{c}{over its own horizon} & "
+        f"\\multicolumn{{2}}{{c}}{{over the shared first {common}}} \\\\"
+    )
+    header = "policy & horizon & train & held-out & gap & held-out & gap \\\\"
+    lines = [
+        "\\begin{tabular}{lrrrrrr}",
+        "\\toprule",
+        subhead,
+        "\\cmidrule(lr){3-5}\\cmidrule(lr){6-7}",
+        header,
+        "\\midrule",
+    ]
+    for row in table_rows(results, common):
+        lines.append(" & ".join(row) + " \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}"]
+    out.write_text("\n".join(lines) + "\n")
+    print(f"  table -> {out}")
+    return out
+
+
+TACTILE = (
+    "left_arm_left_gripper",
+    "left_arm_right_gripper",
+    "right_arm_left_gripper",
+    "right_arm_right_gripper",
+)
+
+
+def tactile_share_series(run: dict, episode: int) -> "tuple[list[float], list[float]]":
+    """Seconds into the recording, and the share the tactile cameras carried.
+
+    The four fingertip cameras are summed because the question is what TOUCH
+    contributed, not which finger. Time is measured from the start of the
+    recording rather than from the start of the dataset, so the axis is a
+    duration a reader can compare against the video.
+    """
+    frames = (((run.get("episodes") or {}).get(str(episode)) or {}).get("frames")) or []
+    if not frames:
+        return [], []
+    start = frames[0]["index"]
+    seconds, shares = [], []
+    for frame in frames:
+        streams = ((frame.get("occlusion") or {}).get("streams")) or {}
+        if not streams:
+            continue
+        seconds.append((frame["index"] - start) / 30.0)
+        shares.append(sum(float(streams[c]["share"]) for c in TACTILE if c in streams))
+    return seconds, shares
+
+
+def draw_framewise_shares(
+    attribution: "Path | list[Path]", out: Path, episode: int = 58
+) -> Path:
+    """What touch contributed, moment by moment, on a recording nobody trained on.
+
+    The pooled figures report a mean over the episode, and a mean is the one
+    summary that cannot answer the question asked of it here: a channel that is
+    ignored for most of a recording and decisive for a second of it has a small
+    mean and a large moment. This draws the moment.
+    """
+    figure, axis = plt.subplots(figsize=(9.0, 3.6))
+    drawn = 0
+    roots = [attribution] if isinstance(attribution, Path) else list(attribution)
+    for arm, label, _crop in ARMS:
+        paths = [
+            r / f"heldout-{arm}" / "attribution.json"
+            for r in roots
+            if (r / f"heldout-{arm}" / "attribution.json").is_file()
+        ]
+        if len(paths) > 1:
+            raise SystemExit(f"❌ heldout-{arm} found in more than one directory")
+        if not paths:
+            continue
+        path = paths[0]
+        seconds, shares = tactile_share_series(json.loads(path.read_text()), episode)
+        if not seconds:
+            continue
+        axis.plot(seconds, shares, label=label, **style_for(arm))
+        drawn += 1
+    axis.set_xlabel("seconds into the recording")
+    axis.set_ylabel("share carried by touch")
+    axis.set_ylim(bottom=0)
+    axis.set_title(
+        "Touch is not read evenly: its share moves several-fold within one recording",
+        color=INK,
+        fontsize=12,
+    )
+    axis.legend(frameon=False, fontsize=9, ncol=2)
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  framewise tactile share: {drawn} arms -> {out}")
+    return out
+
+
+def prediction_margins(payload: dict) -> "dict[str, list[float]]":
+    """Per camera, PSNR minus the held-last-frame PSNR at every horizon step.
+
+    The margin and not the PSNR, because holding scores highly on a camera that
+    barely moves: a model is only predicting where it beats doing nothing.
+    """
+    return {
+        camera: [
+            round(m - h, 4) for m, h in zip(values["psnr"], values["psnr_baseline"])
+        ]
+        for camera, values in payload.get("per_camera", {}).items()
+    }
+
+
+def fingertip_margin(per_camera: "dict[str, list[float]]") -> "list[float] | None":
+    """One fingertip series: the composite if the model saw one, else the mean.
+
+    FastWAM reads the four fingertips as a single 2x2 composite and is scored on
+    it; DreamZero reads them separately. The mean of four margins is the closest
+    like-for-like, and the caption says that is what it is.
+    """
+    if "tactile_quad" in per_camera:
+        return per_camera["tactile_quad"]
+    series = [v for k, v in per_camera.items() if "gripper" in k]
+    if not series:
+        return None
+    return [float(np.mean(step)) for step in zip(*series)]
+
+
+def draw_prediction(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Each world model's margin over holding, against seconds ahead."""
+    margins = {key: prediction_margins(r) for key, r in results.items() if r}
+    if not margins:
+        print("  prediction: no world-model results; figure skipped")
+        return None
+    panels = (
+        ("overhead camera", lambda m: m.get("central")),
+        ("fingertips", fingertip_margin),
+    )
+    figure, axes = plt.subplots(1, 2, figsize=(10.0, 3.8), sharey=True)
+    for axis, (title, pick) in zip(axes, panels):
+        axis.axhline(0, color=MUTED, linewidth=1.0)
+        for key, label, marker in WORLD_MODELS:
+            series = pick(margins.get(key, {})) if key in margins else None
+            if not series:
+                continue
+            first, spacing = HORIZON_SECONDS[key]
+            seconds = [first + i * spacing for i in range(len(series))]
+            axis.plot(
+                seconds,
+                series,
+                color=FAMILY[key],
+                marker=marker,
+                markersize=5,
+                linewidth=2.0,
+                label=label,
+            )
+        axis.set_title(title, fontsize=11, color=INK)
+        axis.set_xlabel(
+            "seconds after the last observed frame", fontsize=9, color=MUTED
+        )
+        tidy(axis)
+    axes[0].set_ylabel("PSNR above holding (dB)", fontsize=9, color=MUTED)
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False)
+    figure.suptitle(
+        "Above the line, the model predicts better than repeating the last frame",
+        color=INK,
+        fontsize=12,
+    )
+    figure.tight_layout(rect=(0, 0.08, 1, 0.93))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  prediction margin: {sorted(margins)} -> {out}")
+    return out
+
+
+def write_prediction_table(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Per camera and model: PSNR and SSIM beside holding, and steps won.
+
+    A step counts as won only by a clear margin (0.1 dB); a step the model
+    ties with holding is not a step on which it predicted anything.
+    """
+    labels = {key: label for key, label, _m in WORLD_MODELS}
+    lines = [
+        r"\begin{tabular}{llrrrrr}",
+        r"\toprule",
+        r"& & \multicolumn{2}{c}{PSNR (dB)} & \multicolumn{2}{c}{SSIM} & \\",
+        r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+        r"camera & model & model & held & model & held & steps won \\",
+        r"\midrule",
+    ]
+    rows = 0
+    for key, payload in results.items():
+        for camera, v in (payload or {}).get("per_camera", {}).items():
+            won = sum(1 for m, h in zip(v["psnr"], v["psnr_baseline"]) if m - h > 0.1)
+            lines.append(
+                f"{CAMERA_LABEL.get(camera, camera.replace('_', ' '))} & "
+                f"{labels.get(key, key)} & "
+                f"{np.mean(v['psnr']):.1f} & {np.mean(v['psnr_baseline']):.1f} & "
+                f"{np.mean(v['ssim']):.3f} & {np.mean(v['ssim_baseline']):.3f} & "
+                f"{won} of {len(v['psnr'])} \\\\"
+            )
+            rows += 1
+    if not rows:
+        return None
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  prediction table: {rows} rows -> {out}")
+    return out
+
+
+def write_world_model_table(
+    policies: "dict[str, dict]", world: "dict[str, dict]", out: Path
+) -> "Path | None":
+    """Every family, baselines only, over the steps ALL of them plan.
+
+    FastWAM plans ten actions, so ten is the only horizon every row shares; a
+    wider one would silently drop it, and each family's own horizon would
+    compare unequal questions -- the reason the policy table has a
+    shared-horizon column at all.
+    """
+    candidates = [(label, policies.get(arm)) for arm, label in ARMS_LABEL]
+    candidates += [(label, world.get(key)) for key, label, _m in WORLD_MODELS]
+    rows: "list[tuple[str, dict]]" = [(lab, r) for lab, r in candidates if r]
+    if not rows:
+        return None
+    common = min(len(r["train"]["mse_per_step"]) for _l, r in rows)
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        rf"& & \multicolumn{{3}}{{c}}{{over the first {common} steps}} \\",
+        r"\cmidrule(lr){3-5}",
+        r"model & horizon & train & held-out & gap \\",
+        r"\midrule",
+    ]
+    for label, r in rows:
+        train = rmse_over(r, "train", common)
+        held = rmse_over(r, "validation", common)
+        lines.append(
+            f"{label} & {r['train']['horizon']} & {train:.3f} & {held:.3f} & "
+            f"{held / train:.1f} \\\\"
+        )
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  world-model table: {len(rows)} rows over {common} steps -> {out}")
+    return out
+
+
+def write_floor_table(directory: Path, out: Path, steps: int = 10) -> "Path | None":
+    """The sampler's own spread: held-out error under three seeds, per model.
+
+    ``directory`` holds ``<model>-seed<N>.json`` results, each scoring ONLY the
+    held-out recordings (so their block is labelled train). A difference
+    between two models smaller than this spread is not a finding.
+    """
+    labels = dict(ARMS_LABEL) | {k: lab for k, lab, _m in WORLD_MODELS}
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        rf"& \multicolumn{{2}}{{c}}{{own horizon}} & \multicolumn{{2}}{{c}}{{first {steps} steps}} \\",
+        r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}",
+        r"model & lowest & highest & lowest & highest \\",
+        r"\midrule",
+    ]
+    rows = 0
+    for model in [k for k, _l in ARMS_LABEL] + [k for k, _l, _m in WORLD_MODELS]:
+        paths = sorted(directory.glob(f"{model}-seed*.json"))
+        if len(paths) < 2:
+            continue
+        blocks = [json.loads(p.read_text())["train"] for p in paths]
+        own = [float(np.sqrt(np.mean(b["mse_per_step"]))) for b in blocks]
+        near = [float(np.sqrt(np.mean(b["mse_per_step"][:steps]))) for b in blocks]
+        lines.append(
+            f"{labels.get(model, model)} ({len(paths)} seeds) & {min(own):.2f} & "
+            f"{max(own):.2f} & {min(near):.2f} & {max(near):.2f} \\\\"
+        )
+        rows += 1
+    if not rows:
+        return None
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  sampler floor: {rows} models -> {out}")
+    return out
+
+
+#: The three ACT arms that separate the rim from the stretch (Stage 9).
+STRETCH_ARMS = (
+    ("act", "not cropped"),
+    ("act_crop", "cropped and stretched back"),
+    ("act_crop_noresize", "cropped, not stretched"),
+)
+
+
+def write_stretch_table(results: "dict[str, dict]", out: Path) -> "Path | None":
+    """Held-out and trained-on error for the three ACT arms, at three horizons.
+
+    The crop removed the gel rim AND stretched what remained back to full
+    height; the third arm removes the rim alone. All three share one recorded
+    configuration -- seed, batch, steps, split -- and differ in that one flag.
+    """
+    rows = [(label, results.get(arm)) for arm, label in STRETCH_ARMS]
+    if sum(1 for _l, r in rows if r) < 3:
+        return None
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        r"& \multicolumn{3}{c}{held-out} & trained-on \\",
+        r"\cmidrule(lr){2-4}\cmidrule(lr){5-5}",
+        r"ACT arm & first 10 & first 32 & all 100 & all 100 \\",
+        r"\midrule",
+    ]
+    for label, r in rows:
+        assert r is not None
+        lines.append(
+            f"{label} & {rmse_over(r, 'validation', 10):.2f} & "
+            f"{rmse_over(r, 'validation', 32):.2f} & {rmse_over(r, 'validation'):.2f} & "
+            f"{rmse_over(r, 'train'):.2f} \\\\"
+        )
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  stretch table -> {out}")
+    return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mse",
+        nargs="+",
+        default=["outputs/mse/thanos/2026-09-16", "outputs/mse/thanos/2026-09-25"],
+        help="directories of <prefix><arm>.json action-error results; an arm "
+        "found in two is an error, so a rerun cannot silently shadow the original",
+    )
+    parser.add_argument("--prefix", default="split10-")
+    parser.add_argument(
+        "--attribution",
+        nargs="+",
+        default=["outputs/analysis/2026-09-18", "outputs/analysis/2026-09-25"],
+        help="directories of heldout-<arm>/attribution.json runs",
+    )
+    parser.add_argument("--episode", type=int, default=58)
+    parser.add_argument(
+        "--prediction",
+        nargs="*",
+        default=[
+            "dreamzero=outputs/analysis/2026-09-25/dreamzero-prediction/prediction.json",
+            "fastwam=outputs/analysis/2026-09-25/fastwam-prediction/prediction.json",
+        ],
+        help="model=path pairs of world-model prediction.json results",
+    )
+    parser.add_argument(
+        "--floor",
+        nargs="*",
+        default=["outputs/mse/floor"],
+        help="directory of <model>-seed<N>.json held-out rescorings",
+    )
+    parser.add_argument(
+        "--world-mse",
+        nargs="*",
+        default=[
+            "dreamzero=outputs/mse/thanos/2026-09-25/split10-dreamzero.json",
+            "fastwam=outputs/mse/viking/2026-09-25/split10-fastwam.json",
+        ],
+        help="model=path pairs of world-model action_mse.json results",
+    )
+    parser.add_argument("--out", default=None, help="where the figures go")
+    args = parser.parse_args()
+
+    from actoris_harena.analysis.paths import analysis_dir
+
+    import common.rig_profile  # noqa: F401  -- the rig declares itself first
+
+    out = Path(args.out) if args.out else analysis_dir("training-report")
+    out.mkdir(parents=True, exist_ok=True)
+
+    results: "dict[str, dict]" = {}
+    for directory in args.mse:
+        found = load_arms(Path(directory), args.prefix)
+        clash = sorted(set(found) & set(results))
+        if clash:
+            raise SystemExit(
+                f"❌ {', '.join(clash)} found in more than one --mse directory"
+            )
+        results.update(found)
+    missing = [label for arm, label, _c in ARMS if arm not in results]
+    print(f"arms found: {sorted(results)}")
+    if missing:
+        # Named, every run, and not once at the start. A reader of the log has
+        # to see which arms the figures do NOT contain.
+        print(f"MISSING, drawn as gaps rather than omitted: {missing}")
+
+    draw_horizon(results, out / "horizon_decay.png")
+    draw_gap(results, out / "train_vs_heldout.png")
+    write_table(results, out / "policy_table.tex")
+    attributions = [Path(a) for a in args.attribution if Path(a).is_dir()]
+    if attributions:
+        draw_framewise_shares(attributions, out / "framewise_shares.png", args.episode)
+    else:
+        print(f"no attribution runs at {args.attribution}; framewise figure skipped")
+    predictions = {}
+    for pair in args.prediction:
+        key, _, path = pair.partition("=")
+        if Path(path).is_file():
+            predictions[key] = json.loads(Path(path).read_text())
+        else:
+            print(f"  prediction: no {key} result at {path}")
+    draw_prediction(predictions, out / "prediction_margin.png")
+    write_prediction_table(predictions, out / "prediction_table.tex")
+    world = {}
+    for pair in args.world_mse:
+        key, _, path = pair.partition("=")
+        if Path(path).is_file():
+            world[key] = json.loads(Path(path).read_text())
+        else:
+            print(f"  world-model action error: no {key} result at {path}")
+    write_world_model_table(results, world, out / "world_model_table.tex")
+    stretch = dict(results)
+    for directory in args.mse:
+        path = Path(directory) / f"{args.prefix}act_crop_noresize.json"
+        if path.is_file():
+            stretch["act_crop_noresize"] = json.loads(path.read_text())
+    write_stretch_table(stretch, out / "stretch_table.tex")
+    for directory in args.floor:
+        write_floor_table(Path(directory), out / "floor_table.tex")
+    print(f"\nwrote {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+def draw_contact_sheet(dataset: Path, out: Path, held_out: "list[int]") -> Path:
+    """One frame from the middle of every recording, with the held-back ones marked.
+
+    The point is to make the split concrete. "58 training and 7 held out" is two
+    integers a reader nods at; a sheet of sixty-five frames shows how similar the
+    recordings are to one another, which is the thing that decides whether
+    holding out the last seven is a mild or a severe test.
+
+    Frames come from the overhead camera, at the midpoint of each recording. The
+    midpoint rather than the first frame on purpose: the first frame of every
+    recording shows the same flattened garment before either arm has moved, so a
+    sheet of first frames would look identical sixty-five times over and show
+    nothing at all.
+    """
+    import av
+    import pandas as pd
+
+    key = "observation.images.central"
+    episodes = pd.read_parquet(next((dataset / "meta" / "episodes").rglob("*.parquet")))
+    held = set(held_out)
+
+    # Column names here contain dots (`videos/observation.images.central/...`),
+    # and itertuples renames those into attributes that no longer match. Index
+    # the columns by their real names instead.
+    thumbs: "list[tuple[int, np.ndarray]]" = []
+    for position in range(len(episodes)):
+        row = episodes.iloc[position]
+        index = int(row["episode_index"])
+        chunk = int(row[f"videos/{key}/chunk_index"])
+        file_index = int(row[f"videos/{key}/file_index"])
+        start = float(row[f"videos/{key}/from_timestamp"])
+        end = float(row[f"videos/{key}/to_timestamp"])
+        path = (
+            dataset
+            / "videos"
+            / key
+            / f"chunk-{chunk:03d}"
+            / f"file-{file_index:03d}.mp4"
+        )
+        middle = (start + end) / 2.0
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            container.seek(int(middle / stream.time_base), stream=stream)
+            frame = next(container.decode(stream))
+            image = frame.to_ndarray(format="rgb24")
+        thumbs.append((index, image[::8, ::8]))
+
+    columns = 9
+    rows = int(np.ceil(len(thumbs) / columns))
+    figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.35, rows * 1.1))
+    for axis in np.ravel(axes):
+        axis.axis("off")
+    for axis, (index, image) in zip(np.ravel(axes), thumbs):
+        axis.imshow(image)
+        axis.axis("off")
+        marked = index in held
+        for spine in ("top", "bottom", "left", "right"):
+            axis.spines[spine].set_visible(False)
+        axis.set_title(
+            f"{index}", fontsize=6, color=FAMILY["diffusion"] if marked else MUTED
+        )
+        if marked:
+            # An outline and a colour, never colour alone: this has to survive a
+            # greyscale print and a reader who cannot separate the two hues.
+            axis.add_patch(
+                plt.Rectangle(
+                    (0, 0),
+                    image.shape[1] - 1,
+                    image.shape[0] - 1,
+                    fill=False,
+                    edgecolor=FAMILY["diffusion"],
+                    linewidth=2.5,
+                )
+            )
+    figure.suptitle(
+        f"{len(thumbs)} recordings, one frame from the middle of each — "
+        f"the {len(held)} outlined are held back from training",
+        color=INK,
+        fontsize=11,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  contact sheet: {len(thumbs)} recordings -> {out}")
+    return out
+
+
+def draw_split_comparison(temporal: dict, random_split: dict, out: Path) -> Path:
+    """Does the generalisation gap survive a RANDOM split? The drift question.
+
+    The trainer holds out the LAST recordings of a session, so a gap measured
+    that way mixes two causes: the policy has not seen these recordings, and the
+    recordings are late in the session, by which time lighting, garment
+    placement and gel wear may all have moved. This figure puts the two splits
+    side by side.
+
+    THE DIRECTION IS THE RESULT, and it is robust in a way the magnitudes are
+    not. If drift were the explanation, a random held-out set -- recordings that
+    sit BETWEEN training recordings, so the policy interpolates in time rather
+    than extrapolating -- should be easier. MEASURED: it is harder. So the
+    degradation is a property of unseen recordings and not of when they were
+    recorded.
+
+    The magnitudes are a different matter and the caption has to say so: the two
+    splits hold out DIFFERENT recordings, so part of the difference between the
+    two gap ratios is that one set of seven may simply be harder than the other.
+    """
+    arms = [a for a in ("act", "diffusion") if a in temporal and a in random_split]
+    if not arms:
+        raise SystemExit("need both splits for at least one policy family")
+
+    figure, axis = plt.subplots(figsize=(8.2, 4.4))
+    x = np.arange(len(arms))
+    width = 0.36
+    gaps_t = [
+        rmse_over(temporal[a], "validation") / rmse_over(temporal[a], "train")
+        for a in arms
+    ]
+    gaps_r = [
+        rmse_over(random_split[a], "validation") / rmse_over(random_split[a], "train")
+        for a in arms
+    ]
+    colours = [FAMILY[family_of(a)] for a in arms]
+    axis.bar(
+        x - width / 2,
+        gaps_t,
+        width,
+        color=colours,
+        alpha=0.45,
+        label="held out the LAST seven",
+    )
+    axis.bar(
+        x + width / 2,
+        gaps_r,
+        width,
+        color=colours,
+        alpha=1.0,
+        label="held out a RANDOM seven",
+    )
+    for index, (a, b) in enumerate(zip(gaps_t, gaps_r)):
+        for offset, value in ((-width / 2, a), (width / 2, b)):
+            axis.annotate(
+                f"x{value:.1f}",
+                xy=(index + offset, value),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                color=MUTED,
+            )
+    axis.axhline(1.0, color=MUTED, linestyle=":", linewidth=1)
+    # Placed INSIDE the axes, not at their right edge: at `len(arms) - 0.5` the
+    # text sat past the last bar and rendered outside the visible area, which is
+    # the sort of thing that only shows up on looking at the picture.
+    axis.annotate(
+        "no gap at all (held-out error = trained-on error)",
+        xy=(-0.42, 1.0),
+        xytext=(0, 5),
+        textcoords="offset points",
+        ha="left",
+        fontsize=8,
+        color=MUTED,
+    )
+    axis.set_xticks(x)
+    axis.set_xticklabels([dict(ARMS_LABEL).get(a, a) for a in arms], fontsize=10)
+    axis.set_ylabel("held-out error / trained-on error")
+    axis.legend(frameon=False, fontsize=9, loc="upper left")
+    axis.set_title(
+        "The gap does not come from drift: a random hold-out is harder, not easier",
+        color=INK,
+        fontsize=12,
+    )
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  split comparison: {len(arms)} families -> {out}")
+    return out

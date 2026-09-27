@@ -194,6 +194,16 @@ every horizon step has taught the model nothing; the overhead camera at 30 dB
 that wins has. A panel sorted by PSNR would put those two in the wrong order and
 present the model's worst camera as its best result.
 
+**MEASURED 2026-09-25, and the trap that hid it.** The 80 000-step DreamZero
+(`train-split10`, held-out episodes 58–64, 24 frames, seed 0) beats holding on
+5–6 of 6 steps on every camera, by about 3–8 dB from the second step onwards;
+FastWAM (30 000 steps) ties holding on the overhead camera and gains up to
+~5 dB on the fingertip composite over its ~1 s horizon. Until that date the
+scorer loaded each checkpoint's preprocessor and never applied it, so the model
+was handed joint angles in degrees where training normalised them. Nothing
+raised; DreamZero scored ~6 dB and lost every step on every camera. Any
+prediction number recorded before 2026-09-25 is from that scorer and is void.
+
 ## The other world model, and why it could not be compared
 
 `harena_fastwam` is the opposite trade. It is a real ~6 B Wan-class model with a
@@ -239,7 +249,7 @@ frames the prediction is conditioned on, which is what the scorer slices off
 before comparing.
 
 **Still untrained.** The subclass makes FastWAM *scoreable*; it does not make it
-*trained*. That needs ~34 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
+*trained*. That needs ~45 GB of staged weights (`Wan-AI/Wan2.2-TI2V-5B`, its
 Diffusers VAE, UMT5-XXL, `lerobot/fastwam_base`) and a card larger than thanos's
 24.5 GiB — CREATE with `SBATCH_CONSTRAINT=h200`, where `freeze_video_expert`
 leaves only the ~1 B action expert training. If it does not fit even there, that

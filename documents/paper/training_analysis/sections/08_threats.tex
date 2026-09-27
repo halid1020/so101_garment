@@ -1,0 +1,72 @@
+\section{Threats to validity}
+\label{sec:threats}
+
+This section collects what would have to be true for the conclusions above to
+be wrong. They are gathered here rather than scattered through the report so
+that a reader can weigh them together, and each names a specific confound and
+the measurement that would settle it, rather than hedging.
+
+\paragraph{The split is temporal, not random --- and this has been tested.}
+The recordings held back are the last seven of a single session, because that is
+what the trainer withholds. Any property that drifted over the session therefore
+sits entirely in the held-back set: the lighting, where the garment was placed
+between takes, wear and residue on the tactile gels. Read alone, the gap in
+Section~\ref{sec:results} is a gap in time as well as a gap in familiarity.
+Section~\ref{sec:split} reports the control that separates them, and it clears
+this threat rather than merely bounding it: a random hold-out is harder than a
+temporal one, where drift predicts the opposite. What remains is narrower and
+is stated there --- the two splits hold back different recordings, so the
+distance between the two ratios is not itself a measurement.
+
+\paragraph{The crop changes two things at once.}
+Cropping removes the outer rows of the tactile image and then resizes what is
+left back to the original shape, which stretches it vertically by a quarter.
+Every statement in this report about cropping is therefore a statement about
+rim removal \emph{and} anisotropic stretching together, except where
+Section~\ref{sec:cropping} separates them. It does so for the action-chunking
+family only, because the other two cannot take a shorter image without a
+different change in its place, and with one training run per arm. For the
+other two families a null result remains a null result for this operation, and
+not evidence that the rim carries no information.
+
+\paragraph{The families do not read the same cameras.}
+One family finetunes a pretrained model with a fixed number of image slots,
+fewer than the rig has cameras, so it sees the overhead view and two of the
+four tactile sensors while the others see all five. Its row is consequently not
+an ablation of the same input as the rows above it, and a difference between
+that family and the others confounds architecture with input set.
+
+\paragraph{The held-out sample is small.}
+The held-out errors rest on \num{111} scored frames. A difference of a few per
+cent across that sample is not distinguishable from sampling noise, which
+covers the crop effects reported in Section~\ref{sec:cropping}; a difference of
+severalfold is far outside it, which covers the generalisation gaps. Where a
+claim falls on the wrong side of that line, Section~\ref{sec:findings} says so
+rather than reporting the number as though its size were established.
+
+\paragraph{Attribution measures a difference, not an importance.}
+Suppressing an input and measuring how much the planned action changes says how
+much that input is being used by this trained policy on these frames. It does
+not say the input is necessary for the task, nor that a policy trained without
+it would do worse --- a stream can be ignored because a correlated one carries
+the same information. Retraining with the stream removed is what answers the
+second question, and it costs a training run per stream rather than minutes.
+
+\paragraph{The fine-tuned family is under-trained, not merely different.}
+Its matched retraining completed, but on a budget of about one pass over the
+recordings, adapting a small low-rank addition rather than the whole model.
+Its row answers what that budget buys. It does not say how the family compares
+with the others once each has fitted its data, and its near-unity gap reflects
+a training set it never fitted, as Section~\ref{sec:results} shows. It also
+reads three cameras where the others read five, and its error moves by several
+per cent between random seeds over its whole horizon and by a fifth over its
+first ten steps (Table~\ref{tab:floor}), so differences of that size in its
+row are not findings.
+
+\paragraph{None of this is an on-robot result.}
+Error against recorded commands measures agreement with one demonstrator on
+recordings that demonstrator produced. It cannot measure whether a policy
+recovers from a state the demonstrator never entered, and a lower error is not
+the same as a higher chance of folding the garment. Only trials on the rig
+settle that, and they would not replace these numbers --- they would bound what
+the numbers are evidence for.

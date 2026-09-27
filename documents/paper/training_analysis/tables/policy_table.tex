@@ -1,0 +1,14 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+& & \multicolumn{3}{c}{over its own horizon} & \multicolumn{2}{c}{over the shared first 32} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-7}
+policy & horizon & train & held-out & gap & held-out & gap \\
+\midrule
+ACT & 100 & 2.672 & 14.091 & 5.3 & 10.107 & 4.1 \\
+ACT cropped & 100 & 2.626 & 14.677 & 5.6 & 9.995 & 4.1 \\
+Diffusion & 32 & 4.741 & 9.181 & 1.9 & 9.181 & 1.9 \\
+Diffusion cropped & 32 & 4.791 & 9.207 & 1.9 & 9.207 & 1.9 \\
+pi0.5 & 50 & 17.054 & 18.346 & 1.1 & 14.817 & 1.1 \\
+pi0.5 cropped & 50 & 16.968 & 18.108 & 1.1 & 14.621 & 1.1 \\
+\bottomrule
+\end{tabular}

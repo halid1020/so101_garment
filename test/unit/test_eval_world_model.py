@@ -8,10 +8,22 @@ and they are where a wrong answer would be quiet rather than loud.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import torch
 
-from tool.eval_world_model import parse_range, report, summarise
+from tool.eval_world_model import (
+    as_uint8,
+    check_coverage,
+    draw_filmstrip,
+    load_filmstrip,
+    make_batch,
+    parse_range,
+    preprocess,
+    report,
+    save_filmstrip,
+    summarise,
+)
 
 
 def frame(psnr, baseline, ssim=0.5, ssim_baseline=0.5, camera="central"):
@@ -73,6 +85,92 @@ class ReportTest(unittest.TestCase):
         """A reader must not have to know what 'held' means."""
         text = report(summarise([frame([10.0], [10.0])]))
         self.assertIn("last observed frame repeated", text)
+
+
+class EmptyResultTest(unittest.TestCase):
+    """A run that scores nothing must not look like a run that scored.
+
+    MEASURED 2026-09-18: a shape mismatch in the conditioning state made the
+    scorer refuse all twenty-four sampled frames. It printed a table with no
+    rows, wrote a result file, and exited zero with a tick -- so the only
+    evidence was in a log nobody had to read. The frame-level exception exists
+    for the occasional frame too near an episode edge to pad, and this
+    distinguishes that from a fault applying to every frame.
+    """
+
+    def test_scoring_nothing_is_refused(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, ["bad shape"] * 24)
+        self.assertIn("scored no frames", str(caught.exception))
+
+    def test_the_refusal_carries_the_reason_the_frames_gave(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, ["`proprio` must be [D] or [1,D], got (1, 9, 12)"])
+        self.assertIn("proprio", str(caught.exception))
+
+    def test_the_refusal_names_it_a_fault_and_not_an_edge_case(self):
+        with self.assertRaises(SystemExit) as caught:
+            check_coverage(0, [])
+        self.assertIn("not an edge case", str(caught.exception))
+
+    def test_a_healthy_run_is_silent(self):
+        self.assertEqual(check_coverage(24, []), "")
+
+    def test_a_few_edge_frames_do_not_raise_a_warning(self):
+        # Two skips against twenty-four scored is the case this must tolerate.
+        self.assertEqual(check_coverage(24, ["edge", "edge"]), "")
+
+    def test_a_majority_of_skips_warns_without_refusing(self):
+        warning = check_coverage(2, ["edge"] * 22)
+        self.assertIn("minority of the recording", warning)
+
+    def test_the_skip_count_reaches_the_result_file(self):
+        # So a reader of the result can see coverage without the log.
+        body = Path("tool/eval_world_model.py").read_text()
+        self.assertIn('"skipped": len(skipped),', body)
+
+
+class BatchCarriesTheTaskTest(unittest.TestCase):
+    """A tensors-only batch drops the task, and a prompted model then refuses.
+
+    MEASURED 2026-09-19: every sampled frame was refused with "Either `prompt`
+    or both `context/context_mask` must be provided", because the batch keeps
+    only tensors and the task description is a string. The world model this
+    scorer was written against conditions on a learned task embedding and never
+    needed it.
+    """
+
+    def item(self):
+        return {
+            "observation.state": torch.zeros(9, 12),
+            "observation.images.central": torch.zeros(9, 3, 8, 8),
+            "task": "fold the garment",
+            "episode_index": torch.tensor(58),
+        }
+
+    def test_the_task_survives(self):
+        batch = make_batch(self.item(), "cpu")
+        self.assertEqual(batch["task"], "fold the garment")
+
+    def test_tensors_gain_a_batch_dimension(self):
+        batch = make_batch(self.item(), "cpu")
+        self.assertEqual(tuple(batch["observation.state"].shape), (1, 9, 12))
+
+    def test_the_task_is_not_given_a_batch_dimension(self):
+        # It is a string; unsqueezing it is not defined and wrapping it in a
+        # list would change what the model receives.
+        batch = make_batch(self.item(), "cpu")
+        self.assertIsInstance(batch["task"], str)
+
+    def test_a_row_with_no_task_is_fine(self):
+        batch = make_batch({"observation.state": torch.zeros(2)}, "cpu")
+        self.assertNotIn("task", batch)
+
+    def test_a_tensor_task_is_left_to_the_tensor_path(self):
+        # Some datasets carry a task INDEX rather than a description; that is a
+        # tensor and must keep its batch dimension like any other.
+        batch = make_batch({"task": torch.tensor(3)}, "cpu")
+        self.assertEqual(tuple(batch["task"].shape), (1,))
 
 
 if __name__ == "__main__":
@@ -143,6 +241,145 @@ class WorldModelContractTest(unittest.TestCase):
         self.assertFalse(hasattr(HarenaActPolicy, "predict_future_frames"))
 
 
+class ThePreprocessorIsAppliedTest(unittest.TestCase):
+    """The model sees normalised inputs; the truth stays the recorded frames.
+
+    Leaving the preprocessor out raised nothing and scored the 80 000-step
+    DreamZero at noise level: raw joint angles in degrees went in where
+    training had used normalised ones. MEASURED 2026-09-25 -- about 6 dB raw
+    against 14 to 18 dB preprocessed, on the same frames and seed.
+    """
+
+    class Seer:
+        """Records which batch each call was handed."""
+
+        class config:
+            n_context_chunks = 1
+            latent_frames_per_chunk = 1
+
+        def __init__(self):
+            self.predicted_from = None
+            self.truth_from = None
+
+        def predict_future_frames(self, batch):
+            self.predicted_from = batch
+            return torch.zeros(1, 2)
+
+        def tile_cameras(self, batch):
+            self.truth_from = batch
+            return torch.zeros(1, 2)
+
+        def untile_cameras(self, tiled):
+            return {}
+
+    @staticmethod
+    def halve(batch):
+        return {
+            k: v / 2 if isinstance(v, torch.Tensor) else v for k, v in batch.items()
+        }
+
+    def test_preprocess_runs_the_checkpoints_own_processor(self):
+        raw = {"observation.state": torch.tensor([100.0]), "task": "fold"}
+        out = preprocess(self.halve, raw, "cpu")
+        self.assertEqual(float(out["observation.state"]), 50.0)
+        self.assertEqual(out["task"], "fold")
+        # The raw batch is left alone: it is still where the truth comes from.
+        self.assertEqual(float(raw["observation.state"]), 100.0)
+
+    def test_the_model_is_handed_the_preprocessed_batch(self):
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Seer()
+        raw = {"observation.state": torch.tensor([100.0])}
+        model_batch = preprocess(self.halve, raw, "cpu")
+        evaluate_frame(policy, raw, seed=0, model_batch=model_batch)
+        self.assertIs(policy.predicted_from, model_batch)
+
+    def test_the_truth_comes_from_the_raw_batch(self):
+        # A processor that rescaled images must not move the ground truth with
+        # the prediction, or a wrong scale would score as agreement.
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Seer()
+        raw = {"observation.state": torch.tensor([100.0])}
+        evaluate_frame(
+            policy, raw, seed=0, model_batch=preprocess(self.halve, raw, "cpu")
+        )
+        self.assertIs(policy.truth_from, raw)
+
+
+class FilmstripTest(unittest.TestCase):
+    """The pictures are of the frames the numbers were computed on."""
+
+    class Tiny:
+        """Two cameras side by side; the prediction is the truth brightened."""
+
+        class config:
+            n_context_chunks = 1
+            latent_frames_per_chunk = 1
+
+        def tile_cameras(self, batch):
+            return batch["video"]
+
+        def predict_future_frames(self, batch):
+            return (batch["video"][:, 1:] + 0.25).clamp(0, 1)
+
+        def untile_cameras(self, tiled):
+            half = tiled.shape[-1] // 2
+            return {"a.left": tiled[..., :half], "a.right": tiled[..., half:]}
+
+    def kept(self):
+        from tool.eval_world_model import evaluate_frame
+
+        video = torch.linspace(0, 0.5, 3).view(1, 3, 1, 1, 1).expand(1, 3, 3, 16, 32)
+        keep: list = []
+        evaluate_frame(self.Tiny(), {"video": video.clone()}, seed=0, keep=keep)
+        return keep[0]
+
+    def test_every_camera_keeps_held_actual_and_predicted(self):
+        kept = self.kept()
+        self.assertEqual(sorted(kept), ["left", "right"])
+        self.assertEqual(len(kept["left"]["actual"]), 2)
+        self.assertEqual(len(kept["left"]["predicted"]), 2)
+        self.assertEqual(kept["left"]["held"].shape, (16, 16, 3))
+
+    def test_held_is_the_last_observed_frame_and_predicted_is_the_prediction(self):
+        kept = self.kept()
+        self.assertEqual(int(kept["left"]["held"].max()), 0)
+        # actual step 1 is 0.25 -> 64; predicted is that brightened by 0.25.
+        self.assertEqual(int(kept["left"]["actual"][0].max()), 64)
+        self.assertEqual(int(kept["left"]["predicted"][0].max()), 128)
+
+    def test_as_uint8_is_height_width_channels(self):
+        self.assertEqual(as_uint8(torch.ones(3, 2, 5)).shape, (2, 5, 3))
+
+    def test_saved_arrays_come_back_unchanged(self):
+        import tempfile
+
+        kept = self.kept()
+        with tempfile.TemporaryDirectory() as tmp:
+            back = load_filmstrip(save_filmstrip(kept, Path(tmp) / "s.npz"))
+        self.assertEqual(sorted(back), sorted(kept))
+        self.assertTrue((back["left"]["held"] == kept["left"]["held"]).all())
+        self.assertTrue(
+            (back["right"]["predicted"][1] == kept["right"]["predicted"][1]).all()
+        )
+
+    def test_a_subset_of_cameras_can_be_drawn(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = draw_filmstrip(self.kept(), Path(tmp) / "s.png", cameras=["right"])
+            self.assertGreater(out.stat().st_size, 1000)
+
+    def test_a_filmstrip_is_written(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = draw_filmstrip(self.kept(), Path(tmp) / "strip.png", "frame 0")
+            self.assertGreater(out.stat().st_size, 1000)
+
+
 class SamplerPinTest(unittest.TestCase):
     """The sampler is pinned, because a world model's prediction is sampled.
 
@@ -189,6 +426,15 @@ class SamplerPinTest(unittest.TestCase):
         # Otherwise the pin would be vacuous -- it would look pinned because
         # nothing was random, not because the seed took effect.
         self.assertNotEqual(self.draw(0), self.draw(1))
+
+    def test_a_model_with_its_own_seed_field_is_seeded_too(self):
+        from tool.eval_world_model import evaluate_frame
+
+        policy = self.Recorder()
+        policy.config.predict_seed = 99
+        evaluate_frame(policy, {}, seed=5)
+        self.assertEqual(policy.config.predict_seed, 5)
+        del policy.config.predict_seed
 
     def test_seed_none_leaves_the_sampler_free(self):
         # --seed -1 exists to MEASURE the spread, so it must genuinely not pin.

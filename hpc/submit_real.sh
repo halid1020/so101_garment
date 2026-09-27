@@ -22,6 +22,15 @@
 #                     (`all`, or the row's own comma list -- not a list of sets)
 #   --scratch DIR     node-visible scratch root    (default /scratch/users/$USER)
 #   --partition P     Slurm partition              (default: the sbatch's own)
+#   --gres G          Slurm GPU request            (default: the sbatch's own,
+#                     `gpu:1`). NOT every cluster spells this the same way, and
+#                     MEASURED 2026-09-16, not every PARTITION of one cluster
+#                     does either: CREATE takes a bare `gpu:1` and picks the
+#                     card with --constraint; Viking's `gpuplus` wants a typed
+#                     `gpu:h100:1`; and Viking's `gpu` REFUSES the typed form
+#                     its own nodes advertise, taking only `gpu:1`. Passing it
+#                     here rather than forking the sbatch keeps one file for
+#                     every site.
 #   --account A       Slurm account, if enforced
 #   --exclude NODES   Slurm nodes to keep off, comma-separated. Use it when a
 #                     node has an unhealthy GPU: the driver refuses one that
@@ -47,6 +56,7 @@ FILTER_POLICIES=""
 FILTER_CAMERAS=""
 EXCLUDE=""
 SCRATCH="${SO101_SCRATCH:-/scratch/users/${USER:-$(id -un)}}"
+GRES=""
 PARTITION=""
 ACCOUNT=""
 CONCURRENCY=""
@@ -62,6 +72,7 @@ while [ $# -gt 0 ]; do
         --exclude) EXCLUDE="$2"; shift 2;;
         --scratch) SCRATCH="$2"; shift 2;;
         --partition) PARTITION="$2"; shift 2;;
+        --gres) GRES="$2"; shift 2;;
         --account) ACCOUNT="$2"; shift 2;;
         --concurrency) CONCURRENCY="$2"; shift 2;;
         --job-name) JOB_NAME="$2"; shift 2;;
@@ -246,6 +257,12 @@ for hours in $HOURS_SET; do
         --array="$range"
         --time="${hours}:00:00")
     [ -n "$PARTITION" ] && cmd+=(--partition="$PARTITION")
+    # On the command line and not as SBATCH_GRES: a command-line option beats
+    # the script's own #SBATCH line, and the precedence of the environment
+    # against a script directive is the kind of thing that is easy to be wrong
+    # about and expensive to discover from a queued job that asked for the
+    # wrong card.
+    [ -n "$GRES" ] && cmd+=(--gres="$GRES")
     [ -n "$ACCOUNT" ] && cmd+=(--account="$ACCOUNT")
     [ -n "$EXCLUDE" ] && cmd+=(--exclude="$EXCLUDE")
     cmd+=(--export="ALL,SO101_REPO_ROOT=$REPO_ROOT,SO101_SCRATCH=$SCRATCH,SO101_MANIFEST=$group_file"

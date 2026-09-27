@@ -1,0 +1,40 @@
+\section{Scope and question}
+\label{sec:scope}
+
+This section states the observation that prompted the comparison, defines what
+cropping does to a tactile image, and names the three policy families under
+test. Section~\ref{sec:recordings} then describes the recordings and how they
+are divided, and Section~\ref{sec:results} reports what each policy achieves on
+recordings it never saw.
+
+The rig carries five cameras. One looks down on the workspace; the other four
+are fingertip tactile sensors, one on each side of each gripper. A tactile
+sensor of this kind images a deformable gel from behind, so contact appears as
+a change in the gel's shading. Gradient attribution computed on training
+recordings placed weight along the edges of those tactile images, and did so
+before the gripper touched anything. Light entering at the boundary of the gel
+would produce exactly that signature, and contact would not. Two remedies
+follow from that reading: restrict the image to its centre, or admit the
+tactile stream only once contact is detected. This report evaluates the first.
+The second is not implemented and nothing here argues for or against it.
+
+Cropping keeps the central four fifths of the rows of each tactile image and
+discards the rest. The result is then resized back to the original dimensions,
+so the shape the model receives never changes and a cropped policy can keep
+every hyperparameter of its uncropped twin, including the batch size and the
+number of optimisation steps. Holding the budget fixed is what makes the pair a
+comparison rather than two separate runs. The resize is not isotropic: it
+stretches the surviving rows vertically while leaving the columns alone.
+Removing the rim and stretching the remainder therefore travel together.
+Section~\ref{sec:cropping} separates them for the one family whose
+architecture allows it, and Section~\ref{sec:threats} bounds the rest.
+
+Three policy families are compared, each against its cropped twin. They are not
+interchangeable, and three differences matter for how their rows may be read.
+They read different numbers of cameras, because one family finetunes a
+pretrained model with a fixed number of image slots and the rig has more
+cameras than slots. They plan different distances ahead, which
+Section~\ref{sec:results} shows is not a detail but the single largest
+influence on how the comparison reads. And the attribution methods that apply
+to them differ, because one family carries no spatial feature map for a
+gradient method to attribute to at all.

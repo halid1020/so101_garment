@@ -39,6 +39,63 @@ create:
     pi05:
       batch: 4
 
+viking:
+  ssh: viking.york.ac.uk
+  kind: slurm
+  repo: ~/project/so101_garment
+  # SCRATCH IS NOT A PREFERENCE HERE, it is the only place this can live.
+  # MEASURED 2026-09-16: Viking's home allows 100 GB but only 500 000 FILES, and
+  # a venv carrying torch and CUDA is ninety thousand of them on its own. The
+  # first provisioning attempt died at 58 GB of 100 with "Disk quota exceeded"
+  # -- the inode limit, not the space. The venv, the HF cache and the torch hub
+  # cache all live on /mnt/scratch (Lustre, 327 TB free) with symlinks from home,
+  # so every script still names the paths it always did.
+  scratch: /mnt/scratch/users/$USER
+  stage: "{scratch}/hf_lerobot/local"
+  partition: gpu
+  # TWO CARDS, and which one a row needs is a real choice rather than a default:
+  #   gpu / gpu_week   14 nodes x 3 A40   48 GB   -- everything except fastwam
+  #   gpuplus           6 nodes x 2 H100  80 GB   -- fastwam, which is ~6B
+  # THE GRES SPELLING DIFFERS BETWEEN VIKING'S OWN PARTITIONS, which is not
+  # something a reading of `sinfo` would predict and cost a rejected submission
+  # to find. MEASURED 2026-09-16 with a two-line probe job:
+  #   partition `gpu`      --gres=gpu:1       ACCEPTED
+  #                        --gres=gpu:a40:1   REFUSED, "Missing GPU resource
+  #                                           (gres) specification /
+  #                                           Access/permission denied"
+  #   partition `gpuplus`  --gres=gpu:h100:1  ACCEPTED
+  # The nodes themselves advertise `Gres=gpu:a40:3`, so the typed form is
+  # syntactically fine and a site submit filter is what rejects it. Ask for an
+  # UNTYPED gpu on `gpu` and a TYPED one on `gpuplus`; the error names neither
+  # the type nor the partition, so a wrong guess looks like a permissions
+  # problem with the account.
+  #
+  # NO `limits` BLOCK YET, deliberately. Nothing has been measured on this
+  # machine, and a guessed ceiling refuses rows that fit while admitting rows
+  # that do not -- the same reason the other destinations carry only numbers
+  # that came off a probe. Fill it from a short run, not from the card's
+  # datasheet: an A40's 48 GB says nothing about where the dataloader or the
+  # power draw binds.
+  #
+  # ALSO NOT MEASURED: whether Lustre serves this dataset's many small video
+  # files as fast as the other machines' local disks. AV1 decode was measured
+  # to be the floor elsewhere, but that was on local storage; if step rate here
+  # is worse than thanos at the same batch, the filesystem is the first suspect.
+  #
+  # FIRST REAL MEASUREMENT, 2026-09-16, harena_fastwam on an H100 PCIe (85 GB):
+  #   batch 8, two camera features (central + tactile_quad), freeze_video_expert
+  #   -> mem_gb 72.16, 1.31 s/step, data_s 0.058.
+  # Three things follow, and the first is why this row is on `gpuplus` at all:
+  #   * 72 GB DOES NOT FIT ON AN A40. The 48 GB cards on `gpu`/`gpu_week` carry
+  #     everything else here comfortably and cannot carry this at any batch
+  #     worth running, so the partition choice is forced rather than cautious.
+  #   * data_s of 0.058 against updt_s of 1.31 says Lustre is NOT the floor for
+  #     this policy -- the dataloader waits on the model, not the other way
+  #     round. That answers the open question above for fastwam only; a lighter
+  #     policy reading five cameras may still find the filesystem first.
+  #   * 30000 steps comes to about 11 hours, well inside the 36 the row asks
+  #     for, so the wall-time budget is not the binding constraint either.
+
 thanos:
   ssh: thanos
   kind: ssh

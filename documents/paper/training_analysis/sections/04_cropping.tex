@@ -1,0 +1,95 @@
+\section{What cropping did}
+\label{sec:cropping}
+
+This section answers the question the crop was built to answer. It reports the
+effect on behaviour first, then the effect on where the policies look, since
+the two need not agree and here they do not. Figure~\ref{fig:rim} carries the
+second.
+
+On recordings it never saw, cropping changes almost nothing. Over the shared
+horizon the action-chunking family improves by about one per cent and the
+diffusion family worsens by under half a per cent. Section~\ref{sec:threats}
+gives the sample these rest on, and both effects are smaller than that sample
+can resolve. The honest reading is that this crop makes no difference either
+family's held-out error can detect, not that it makes a small positive or
+negative one.
+
+One effect is larger than the noise, and only the horizon view exposes it. For
+the action-chunking family the sign of the crop's effect depends on where in
+the chunk the error is measured: cropped is better over the first thirty-two
+steps and worse over the full hundred. A single averaged error therefore
+reports whichever the horizon happened to favour, and the same pair of runs
+supports "cropping helps" or "cropping hurts" according to a choice the reader
+never sees. This is the clearest argument in the report for publishing a curve
+rather than a scalar.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{rim_attention.png}
+  \caption{Gradient mass falling within a band around the edge of the tactile
+  images, pooled over the four tactile cameras, expressed relative to what a
+  flat map would put in the same band. The dashed line is that flat map. Values
+  below it mean the policy puts \emph{less} weight at the edges than an
+  indifferent model would. Three band widths are shown because the conclusion
+  should not depend on where the band is drawn.}
+  \label{fig:rim}
+\end{figure}
+
+Figure~\ref{fig:rim} tests the original hypothesis directly rather than through
+task error, and it does not support it. Neither family puts more weight on the
+rim than a flat map would: every uncropped bar sits between two thirds and four
+fifths of the indifferent value. A model reading light leakage at the gel
+boundary would sit above the line, not below it. The result holds at all three
+band widths, so it is not an artefact of where the band was drawn.
+
+Cropping moves both families \emph{toward} the rim rather than away from it,
+which is the opposite of the intended effect and is not mysterious. Removing
+the outer rows and stretching the remainder means the surviving pixels nearest
+the edge were previously further in, so an unchanged attention pattern
+mechanically lands closer to the new boundary. The measure cannot distinguish
+that from a genuine change in what the policy seeks, and neither can these
+runs.
+
+Two limits on this figure. The two families produce gradient maps at different
+spatial resolutions, coarse enough in one case that a narrow band cannot be
+resolved at all, so comparing one family against the other is fair only at the
+widest band; comparing a family against its own cropped twin is fair at every
+band, and that is the comparison the figure is for. And the frames behind it
+are drawn from recordings the policies trained on, because that is what the
+attribution runs covered --- so it describes where a trained policy looks on
+familiar material, and Section~\ref{sec:inputs} returns to what that can and
+cannot support.
+
+\paragraph{Separating the rim from the stretch.}
+The crop removes the rim and stretches what remains, so every result above
+is about both. A third arm of the action-chunking family separates them: it
+crops exactly as the others do and does not resize, so its fingertip images
+arrive a fifth shorter than its overhead image. It shares every other setting
+with its two twins, including the random seed, the batch, the number of steps
+and the split. This family is the only one that allows it. The diffusion
+implementation refuses cameras of different shapes outright, and the
+fine-tuned model would pad a shorter image rather than accept it, which is a
+different change again.
+
+\begin{table}[t]
+  \centering
+  \caption{Three arms of the action-chunking family that differ only in what
+  is done to the fingertip images: nothing, the crop with the stretch back to
+  full height, or the crop alone. Root-mean-square action error, over the
+  first ten and thirty-two planned steps and over the whole hundred. Each arm
+  is one training run.}
+  \label{tab:stretch}
+  \small
+  \input{tables/stretch_table}
+\end{table}
+
+\textbf{Without the stretch, the crop is never worse than either other arm, and
+is the best of the three over the near horizons.} Table~\ref{tab:stretch} shows it a few per cent lower than the
+uncropped arm over the near horizons and level with it over the whole
+hundred steps, while the stretched arm's penalty over the whole hundred ---
+the one number in which cropping looked harmful --- disappears once the stretch
+is removed. That pattern is what one would see if the stretch, not the loss of
+the rim, were what cost the original crop at long range. It is a direction and
+not a result: each arm is a single training run, and how far a second training
+seed would move each row has not been measured. This family plans without
+sampling, so there is no sampler floor to set against these differences either.

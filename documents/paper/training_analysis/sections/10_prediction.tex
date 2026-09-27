@@ -1,0 +1,131 @@
+\section{Predicting what the cameras will see}
+\label{sec:prediction}
+
+This section scores the predicted observations themselves, which is what the
+two world models exist for. It first states the trap that makes a raw image
+score misleading, then gives the measure that avoids it, and then shows the
+predictions next to what happened. Table~\ref{tab:prediction} and
+Figure~\ref{fig:predmargin} carry the numbers, and
+Figure~\ref{fig:filmstrip} carries the pictures.
+
+\paragraph{Repeating the present already scores well.}
+A camera that barely changes is easy to predict: copying the last observed
+frame forward matches the future closely. The fingertip cameras are the extreme
+case. Their gels change little except at contact, so holding the last frame
+already scores between about \num{21} and \num{27} decibels of peak
+signal-to-noise ratio (PSNR) on them, against \num{14} to \num{19} on the
+overhead camera.
+A model reported without that baseline would look good on the fingertips for a
+reason that has nothing to do with prediction.
+
+\paragraph{The measure is the margin over holding.}
+Every prediction is therefore scored beside the last observed frame held
+still, and the verdict is the number of horizon steps on which the model beats
+it by more than a tenth of a decibel. That is counted per camera and never
+pooled, because four of the five cameras are gels where holding is strong and
+the fifth is the one where the scene visibly moves; a pooled figure would be
+dominated by whichever group made prediction easiest. The structural similarity
+index (SSIM) is reported beside PSNR as a second opinion.
+
+\begin{table}[t]
+  \centering
+  \caption{Future-observation prediction on the seven held-back recordings.
+  \emph{Held} is the last observed frame repeated at every step. \emph{Steps
+  won} counts the horizon steps, each \SI{0.8}{\second} apart, on which the
+  model's PSNR exceeds holding by more than a tenth of a decibel. The two
+  models' steps are not the same length: the small model's are
+  \SI{0.8}{\second} apart, the large model's about \SI{0.13}{\second}, so
+  step counts compare within a row and never between models. The large model
+  reads the four fingertips as one composite image.}
+  \label{tab:prediction}
+  \small
+  \input{tables/prediction_table}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{prediction_margin.png}
+  \caption{Each world model's PSNR minus that of holding the last frame, per
+  camera and per horizon step. Above the line the model predicts better than
+  doing nothing, plotted against time rather than step because the two models
+  predict over different spans: the small model from \SI{0.8}{\second} to
+  \SI{4.8}{\second} ahead, the large one to about \SI{1}{\second}. For the
+  small model the fingertip line is the mean of its four fingertip cameras; the
+  large model is scored on its single composite.}
+  \label{fig:predmargin}
+\end{figure}
+
+\textbf{The small world model predicts the future better than holding the
+present, on every camera, from the second step onwards.} It wins five or six
+of six steps on each camera, by roughly three to eight decibels beyond the
+first step. The margin is largest on the fingertip cameras, which is where
+holding is strongest, so the model is not winning where the baseline is weak.
+It loses or ties only at the first step, \SI{0.8}{\second} ahead, where the
+future still looks almost exactly like the present.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{dreamzero_filmstrip.png}
+  \caption{One held-back moment, as the small world model predicted it. For each camera the rows are what
+  happened, what the model predicted, and the last observed frame held still;
+  columns are horizon steps \SI{0.8}{\second} apart. The images are the ones
+  the numbers in Table~\ref{tab:prediction} were computed from.}
+  \label{fig:filmstrip}
+\end{figure}
+
+Figure~\ref{fig:filmstrip} shows what those margins look like. In the last
+observed frame the arms are down over the garment and one fingertip gel shows
+the bright marks of contact. In what actually followed, the arms lift clear and
+the contact marks vanish. \textbf{The model predicts the release rather than
+the present:} its fingertip rows lose the contact marks as the real ones do,
+and its overhead rows show the arms lifted. Its images are blurrier than the
+real ones, which is where the remaining error lies, but the change it predicts
+is the change that happened.
+
+\textbf{The large model predicts only a second ahead, and within that second
+it gains on holding only at the fingertips.} On the overhead camera it stays
+within half a decibel of the held frame throughout, winning two of its eight
+steps by the stated margin. On the fingertip composite it starts below holding
+and climbs to about five decibels above it by the end of its horizon. Its
+horizon is set by how it was trained, not by this evaluation: it predicts nine
+frames spaced four apart, so it never looks further ahead than the small
+model's first step.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fastwam_filmstrip.png}
+  \caption{The large world model's prediction across its horizon, from the
+  same recording as Figure~\ref{fig:filmstrip}; columns are about
+  \SI{0.13}{\second} apart. The fingertip row is the model's two-by-two
+  composite of the four fingertip cameras. The last observed frame differs
+  from the small model's by \SI{0.8}{\second}, because the two models place
+  it differently relative to the horizon.}
+  \label{fig:fastwamstrip}
+\end{figure}
+
+Figure~\ref{fig:fastwamstrip} shows what the overhead number hides. The
+large model's frames are sharp where the small model's are blurred, and they
+move correctly: the grippers enter the top of the overhead view at the pace
+they really did. The margin over holding stays near zero regardless, because
+the garment filling most of the frame does not move within a second, so
+holding is already right about most pixels and the motion that distinguishes a
+prediction occupies a sliver of the image. \textbf{An image score averaged over
+the frame can rate a correct prediction of a small moving part as no better
+than doing nothing.} The fingertip composite, where contact changes a large
+share of the pixels, is where the model's margin shows.
+
+The two models overlap at one instant, \SI{0.8}{\second} ahead, and there the
+large model is ahead on both panels of Figure~\ref{fig:predmargin}. That is
+the only direct comparison the data allow, and it is one point. It is
+consistent with a pretrained video prior helping in the near term, and it says
+nothing about the seconds beyond, where only the small model predicts at all
+and where it keeps its margin. Whether the prior buys anything over a longer
+horizon would need the large model trained to predict one.
+
+Three limits bound this section. Both models sample, and every number here uses
+one pinned seed; a different seed gives a different rollout, and the spread
+across seeds was not measured for these checkpoints. The two models see the
+fingertips differently, as four images or one composite, so their fingertip
+margins are comparable in direction and not to the decibel. And predicting the
+next few seconds of the cameras well is not the same as acting well:
+Section~\ref{sec:wmactions} is where their actions are scored.

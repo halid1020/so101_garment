@@ -1,0 +1,62 @@
+\section{What each input contributes}
+\label{sec:inputs}
+
+This section asks a different question from the rest of the report: not how well
+a policy performs, but which of its inputs it is actually using.
+Figure~\ref{fig:streams} carries the answer. The method, its one essential
+precaution and the rule for reading the figure come first, because the figure
+is easy to over-read.
+
+Each input stream is suppressed in turn --- replaced by an uninformative
+substitute --- and the resulting change in the planned action is measured. A
+stream's share is therefore the size of the difference that stream makes to
+this trained policy on these frames. For a policy whose output is sampled
+rather than determined, the sampler must be fixed while this is done, and the
+reason is not fastidiousness: on the diffusion family, two plans drawn from one
+unchanged observation differ by more than eighty times the difference that
+suppressing a camera makes. Unpinned, the measurement would report the
+sampler's own variation and call it attribution.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{stream_shares.png}
+  \caption{The share of the change in the planned action attributable to each
+  group of inputs. Shares are normalised within a policy, so each bar sums to
+  one hundred and the \emph{heights are not comparable between bars}. What may
+  be carried across is the order of the groups within each bar. The third
+  family reads two fingertip cameras where the others read four, because it
+  finetunes a pretrained model with a fixed number of image slots.}
+  \label{fig:streams}
+\end{figure}
+
+The rule for reading Figure~\ref{fig:streams} is that only the \emph{ordering}
+within a bar may be carried between bars. The shares are normalised per policy,
+so a larger slice in one bar than in another says nothing on its own; what it
+can say is which input a given policy leans on most, and where the tactile
+channels sit in its ranking.
+
+By that rule the families disagree, and not subtly. The action-chunking family
+leans on the overhead camera, with proprioception second and the four tactile
+cameras last by a wide margin. The diffusion family leans overwhelmingly on
+proprioception --- where the arms are matters more to it than what any camera
+shows --- with vision and touch far behind. The fine-tuned family resembles
+the diffusion family, leaning on proprioception for about three quarters of
+what moves its plan; it is the only one to rank its fingertip cameras, taken
+together, just above the overhead camera. It reads half as many tactile cameras
+as the others, so whether that narrow ordering reflects the architecture or the
+smaller input set cannot be told apart here.
+
+Two limits bound all of this. The frames are drawn from recordings the policies
+trained on, so the figure describes where a trained policy looks on familiar
+material rather than on the held-out recordings the rest of the report scores.
+And a share measures how much suppressing an input moves the plan, which is not
+the same as how much the input matters for folding a garment: a stream can be
+ignored because another carries the same information, and only retraining
+without it would show whether it was needed. Section~\ref{sec:threats} returns
+to both.
+
+The first of those limits is lifted in Section~\ref{sec:framewise}, which repeats
+the measurement on a recording no policy was trained on and keeps the result per
+frame instead of pooling it. That section also shows what pooling costs: the
+shares above are means, and the quantity they average moves by far more within a
+single recording than the means differ between policies.

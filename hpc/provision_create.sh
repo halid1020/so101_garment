@@ -101,6 +101,36 @@ CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     echo "⚠️  egl_probe pre-build skipped (already satisfied)."
 pip install -e ".[${LEROBOT_EXTRAS}]"
 
+# 2b. The shared pipeline (parallel ../actoris_harena), EDITABLE ---------
+# THE PIPELINE IS NOT IN THIS REPO. Training, the policies, the run matrix
+# and the analysis all live in actoris_harena, so a cluster without it can
+# clone this repo, build a venv, and still fail at `import` the moment a
+# job starts -- after the GPU has been reserved.
+#
+# It was a hand step on every machine until now, which is exactly the kind
+# of step that is remembered on the machine you are looking at and
+# forgotten on the next one. MEASURED 2026-09-16: a fresh Viking checkout
+# had LeRobot and this repo and no pipeline at all.
+#
+# `[rig]` and NEVER `[sim]`: the two extras cannot coexist, because LeRobot
+# pins numpy>=2.0,<2.3 and the simulation stack pins numpy<2.0. On a shared
+# cluster the sim extra may already be what that checkout was used for, so
+# this is a real hazard here and not a theoretical one.
+#
+# EDITABLE, deliberately: whatever branch is checked out there is what this
+# repo imports, so a `git pull` on the cluster updates the pipeline without
+# a reinstall -- and a `git checkout` changes this repo's behaviour with no
+# warning, which is why the branch is printed below rather than assumed.
+HARENA_DIR="${SO101_HARENA_DIR:-$REPO_ROOT/../actoris_harena}"
+echo "=> Installing the shared pipeline from ${HARENA_DIR}..."
+if [ ! -d "$HARENA_DIR" ]; then
+    echo "=> Cloning actoris_harena..."
+    git clone https://github.com/halid1020/actoris_harena.git "$HARENA_DIR"
+fi
+pip install -e "${HARENA_DIR}[rig]"
+echo "   pipeline branch: $(git -C "$HARENA_DIR" rev-parse --abbrev-ref HEAD) \
+($(git -C "$HARENA_DIR" rev-parse --short HEAD))"
+
 # 3. This repo's extra requirements ------------------------------------
 cd "$REPO_ROOT"
 echo "=> Installing project requirements..."
@@ -280,9 +310,11 @@ fi
 # 6. Pre-stage FastWAM's four repos (only if a fastwam row is trained) -------
 # FastWAM is a Wan2.2-class video model and it assembles itself from FOUR
 # separate places, none of which a compute node can reach behind
-# HF_HUB_OFFLINE=1. MEASURED 2026-09-16: about 34 GB in total, of which the
-# DiT shards alone are 19 GB -- so this is opt-in as pi0.5 is, and see the
-# note in hpc/README.md about the 50 GB home quota before running it:
+# HF_HUB_OFFLINE=1. MEASURED 2026-09-16, staged in full: 45 GB in total --
+# 19 GB of DiT shards, 14 GB of VAE and text encoder, 12 GB of action-expert
+# base. So this is opt-in as pi0.5 is, and see the note in hpc/README.md
+# about home quotas before running it: 45 GB does not fit in a 50 GB home
+# that already holds a 14 GB pi0.5 base, which is how this was found out.
 # `SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh`.
 #
 # The four, and why each is separate -- read off the loaders in
@@ -314,7 +346,7 @@ fi
 # holds 86 MB resident and arrives at about 80 MB/s, so this is faster as well
 # as survivable.
 if [ "${SO101_STAGE_FASTWAM:-0}" = "1" ]; then
-    echo "=> Pre-staging FastWAM's four repos (~34 GB) into the HF cache..."
+    echo "=> Pre-staging FastWAM's four repos (~45 GB) into the HF cache..."
     export HF_HUB_DISABLE_XET=1
     python - <<'FASTWAM_PY' || exit 1
 import sys
@@ -356,7 +388,7 @@ for repo, patterns, what in WANTED:
 print("✓ FastWAM's four repos staged; a compute node can build it offline.")
 FASTWAM_PY
 else
-    echo "=> Skipping FastWAM's four repos (~34 GB)."
+    echo "=> Skipping FastWAM's four repos (~45 GB)."
     echo "   Training a fastwam row needs all four: re-run with SO101_STAGE_FASTWAM=1"
 fi
 

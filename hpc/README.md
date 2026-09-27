@@ -363,12 +363,17 @@ four times over — stage it once, on the login node:
 SO101_STAGE_FASTWAM=1 bash hpc/provision_create.sh
 ```
 
+MEASURED 2026-09-16, staged in full on Viking. The totals are given because
+this is the number to check free space against, and both earlier estimates in
+this file were wrong — first “~20 GB”, then “~34 GB”:
+
 | Repo | What it is | How much |
 |------|-----------|----------|
 | `Wan-AI/Wan2.2-TI2V-5B` | the MoT DiT shards — `diffusion_pytorch_model*.safetensors` **only** | **19 GB** (9.8 + 10.0 + 0.2) |
-| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | several GB |
-| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | ~5 MB |
-| `lerobot/fastwam_base` | the action expert's starting weights | ~4 GB |
+| `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | two subfolders of one repo: `vae` and `text_encoder` (UMT5-XXL) | **14 GB** |
+| `google/umt5-xxl` | the tokenizer — a *different* repo from the encoder above, and it must stay compatible with it | **21 MB** |
+| `lerobot/fastwam_base` | the action expert's starting weights | **12 GB** |
+| | **total** | **45 GB** |
 
 None of the four is licence-gated, so unlike pi0.5's tokenizer this needs no
 token — only bandwidth and a login node that will not kill the download.
@@ -391,6 +396,34 @@ Two smaller things about that node, both of which cost time here:
 - A pipeline like `python stage.py | tail` reports **`tail`'s** exit code. A
   download killed by the cgroup then looks like a clean success. Capture the
   status of the thing you actually ran.
+
+#### Stage the BASE dataset between machines, never a camera view
+
+MEASURED 2026-09-16, moving the rig dataset to a second cluster. A camera view
+(`<dataset>__<cameras>`) is a few megabytes of metadata whose `videos/`
+directories are **absolute symlinks into the base dataset**. Copying one to
+another machine copies the symlinks, which then point at a path on the machine
+it came from, and nothing notices until training starts.
+
+The failure does not mention symlinks. The reader judges the local copy
+incomplete, goes to the Hub for a version tag, and dies offline with
+
+```
+OfflineModeIsEnabled: Cannot reach https://huggingface.co/api/datasets/<view>/refs
+```
+
+which reads as a network problem for a dataset that never left the disk. It is
+the same misleading error `common/recording/dataset_check.py` exists for, from a
+different cause.
+
+So transfer `<dataset>` alone. The views are rebuilt on arrival by the job
+itself, which is idempotent and costs seconds — and a view that is already there
+is REUSED, so a broken one transferred earlier will be reused too. Delete any
+view that came off another machine before submitting:
+
+```bash
+rm -rf <stage>/<dataset>__*        # keep <dataset> itself
+```
 
 #### The home quota is 50 GB, and the model weights do not fit in it
 

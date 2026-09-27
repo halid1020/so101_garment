@@ -62,7 +62,7 @@ import common  # noqa: E402,F401  -- declares this rig to actoris_harena
 # content_name in actoris_harena.analysis.paths and should move there when the
 # package is next open for editing; it is imported rather than copied so that
 # an analysis directory and the run directory it describes cannot drift apart.
-from tool.analyse_policy_inputs import camera_slug  # noqa: E402
+from tool.analyse_policy_inputs import camera_slug, task_prompt  # noqa: E402
 
 
 def held_out_episodes(
@@ -157,6 +157,54 @@ def evaluate(inference, source, episodes: "list[int]", seed: int) -> "dict":
             planned = plan(inference, inference.batch(state, images), seed)
             start = index - lo
             errors.append(chunk_errors(planned, truth[start:]))
+    return summarise(errors, inference.action_dim)
+
+
+def needs_window(policy) -> bool:
+    """A world model that conditions on a short VIDEO, not on one frame.
+
+    DreamZero reads the frames named by ``observation_delta_indices`` -- a past
+    chunk of video -- and refuses a single frame outright. Repeating the one
+    frame into that window would hand it a frozen past, a state it never saw in
+    training, so these are loaded with their real window instead.
+    """
+    indices = getattr(policy.config, "observation_delta_indices", None) or []
+    return hasattr(policy, "predict_future_frames") and len(indices) > 1
+
+
+def future_truth(item: dict, action_delta_indices: "list[int]") -> np.ndarray:
+    """The recorded actions from time zero on, cut where the episode ended.
+
+    The window also holds the PAST actions (negative offsets) the model is
+    conditioned on; those are context, not something it predicts. Past the
+    end of an episode LeRobot pads by repetition, and scoring against padding
+    would credit the policy for holding still -- the same rule as
+    :func:`chunk_errors` applies to the single-frame path.
+    """
+    start = list(action_delta_indices).index(0)
+    actions = np.asarray(item["action"])[start:]
+    pad = item.get("action_is_pad")
+    if pad is not None:
+        pad = np.asarray(pad)[start:]
+        if pad.any():
+            actions = actions[: int(np.argmax(pad))]
+    return actions
+
+
+def evaluate_windowed(
+    inference, dataset: str, episodes: "list[int]", every: int, seed: int
+) -> "dict":
+    """As :func:`evaluate`, for a model that needs its video window."""
+    from tool.eval_world_model import load_dataset, make_batch
+
+    data = load_dataset(inference.policy, dataset, episodes)
+    deltas = inference.policy.config.action_delta_indices
+    errors: "list[np.ndarray]" = []
+    for index in range(0, data.num_frames, every):
+        item = data[index]
+        batch = inference.to_device(inference.pre(make_batch(item, inference.device)))
+        planned = plan(inference, batch, seed)
+        errors.append(chunk_errors(planned, future_truth(item, deltas)))
     return summarise(errors, inference.action_dim)
 
 
@@ -282,6 +330,9 @@ def main() -> None:
 
     split = split_from_checkpoint(args.checkpoint) if args.split is None else args.split
     tasks = source.dataset.meta.episodes["tasks"]
+    inference.task = task_prompt(args.task, tasks)
+    if inference.task != args.task:
+        print(f"💬 prompting with the dataset's task: {inference.task!r}")
     train, validation = held_out_episodes(tasks, split, source.episodes)
 
     if not validation:
@@ -302,10 +353,23 @@ def main() -> None:
     }
 
     print()
-    out["train"] = evaluate(inference, source, train, args.seed)
+    windowed = needs_window(inference.policy)
+    if windowed:
+        print(
+            "🎞️  scoring with each observation's video window, as this model reads it"
+        )
+
+    def score(episodes: "list[int]") -> "dict":
+        if windowed:
+            return evaluate_windowed(
+                inference, args.dataset, episodes, args.every, args.seed
+            )
+        return evaluate(inference, source, episodes, args.seed)
+
+    out["train"] = score(train)
     report("train", out["train"])
     if validation:
-        out["validation"] = evaluate(inference, source, validation, args.seed)
+        out["validation"] = score(validation)
         report("validation", out["validation"])
 
     # The floor. A stochastic policy's own wobble bounds what a difference in

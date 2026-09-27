@@ -1,0 +1,127 @@
+\section{Findings}
+\label{sec:findings}
+
+Each finding below is stated in bold, followed by the evidence already
+presented and the bound on what it establishes. Nothing appears here that
+cannot be read off a table or figure earlier in the report, and nothing is
+stated more strongly than the sample behind it allows.
+
+\paragraph{\textbf{On recordings it never saw, the diffusion family beats the
+action-chunking family --- by far less than the obvious comparison suggests.}}
+Over the horizon the two share, the margin is under a tenth; over their own
+horizons it appears to be roughly a third. The direction survives the
+correction and the magnitude does not. \emph{Bound:} the two families differ in
+architecture and in planning horizon at once, and only the second has been
+controlled for here.
+
+\paragraph{\textbf{The two families differ more in how much they degrade than
+in how well they perform.}} On familiar recordings the action-chunking family
+is the more accurate of the two; on unfamiliar ones it is the less accurate. Its
+error grows roughly fourfold between the two halves against under twofold for
+the diffusion family. \emph{Bound:} this is the largest and most robust effect
+in the report, being a ratio within each policy and immune to the horizon
+problem. Section~\ref{sec:split} rules out the obvious alternative explanation:
+holding back a random seven recordings instead of the last seven makes the gap
+\emph{larger}, where drift across the session predicts smaller. What the
+finding does not say is how much data would close it.
+
+\paragraph{\textbf{Cropping the tactile rim buys nothing that this experiment
+can detect.}} On held-out recordings both families move by about one per cent
+or less, in opposite directions, on a sample too small to resolve either.
+\emph{Bound:} a null result for \emph{this} crop, which removes the rim and
+stretches the remainder together; it is not evidence that the rim carries no
+information.
+
+\paragraph{\textbf{For the action-chunking family, the stretch and not the
+rim removal is what the crop's long-range penalty follows.}} Cropped without
+the stretch, the family is a few per cent better than uncropped over the near
+horizons and level over its whole chunk (Table~\ref{tab:stretch}).
+\emph{Bound:} one family, one training run per arm, and training-seed
+variance unmeasured.
+
+\paragraph{\textbf{The crop's effect changes sign with horizon.}} For the
+action-chunking family, cropping is better over the first thirty-two steps of
+the chunk and worse over the full hundred. \emph{Bound:} this is visible only
+because the error is reported as a curve; both numbers come from the same pair
+of runs, which is the point.
+
+\paragraph{\textbf{Neither family over-reads the gel rim, and cropping moves
+attention toward it.}} Gradient mass in the outer band sits at two thirds to
+four fifths of what an indifferent model would place there, at every band width
+tested, and rises for both families after cropping. This contradicts the
+observation that motivated the crop. \emph{Bound:} measured on training
+recordings, and the rise after cropping is partly mechanical, since removing
+the outer rows moves the surviving pixels closer to the new edge.
+
+\paragraph{\textbf{The families do not use the rig the same way, and two of
+the three lean mostly on proprioception.}} The action-chunking family leans on
+the overhead camera; the diffusion and fine-tuned families each take about
+three quarters of their plan's movement from where the arms are. Touch ranks
+last or near-last for all three. \emph{Bound:} shares are normalised within a
+policy, so this is a claim about ordering and never about magnitudes; and the
+fine-tuned family reads half as many tactile cameras as the others.
+
+\paragraph{\textbf{A pooled contribution understates what touch does by about
+fivefold.}} Within one held-back recording the share carried by the fingertip
+cameras runs from under one per cent to over two fifths, against a pooled mean
+under a tenth. The channel is very nearly ignored for seconds at a time and then
+carries much of the plan. \emph{Bound:} one recording, and a contribution is a
+measure of use rather than of necessity; the swing is large enough that its
+direction does not depend on either.
+
+\paragraph{\textbf{Only one of the three families reads touch in bursts.}}
+The action-chunking family peaks at four to five times its own mean; the
+diffusion and fine-tuned families read it steadily, peaking at two to two and
+a half times theirs. \emph{Bound:} visible only framewise, on one recording,
+and normalised within each policy --- so this compares each family against its
+own average and never one family's magnitude against another's.
+
+\paragraph{\textbf{A policy can be flat across its entire planning horizon on
+recordings it trained on.}} The action-chunking family predicts the hundredth
+step of a familiar recording about as accurately as the first. That is what
+reproducing a memorised trajectory looks like, and it is not what planning
+looks like. \emph{Bound:} a statement about behaviour on training data, not
+about competence on the rig.
+
+\paragraph{\textbf{The smallest generalisation gap belongs to the least-fitted
+policy.}} The fine-tuned family loses only a tenth on recordings it never saw,
+because its error on recordings it trained on is already above the other
+families' held-out error. A small gap can mean a policy that never fitted its
+training data. \emph{Bound:} one training budget of about one pass over the
+data; a longer run could open the gap.
+
+\paragraph{\textbf{Both world models plan the near term better on unseen
+recordings than every policy.}} Over the ten steps all five share, their
+held-out error is about a fifth below the best policy's
+(Table~\ref{tab:worldactions}), and for both that lead is many times their
+samplers' spread (Table~\ref{tab:floor}). \emph{Bound:} a third of
+a second, and inputs that differ --- more past video for one, a pretrained
+prior for the other --- so the objective is not isolated.
+
+\paragraph{\textbf{The small world model predicts what the cameras will see
+better than repeating the present.}} It beats holding on five or six of six
+steps on every camera, most clearly on the fingertips where holding is
+strongest, and its filmstrip shows it predicting a release of contact
+(Table~\ref{tab:prediction}, Figures~\ref{fig:predmargin}
+and~\ref{fig:filmstrip}). \emph{Bound:} one seed; its images are blurred.
+
+\paragraph{\textbf{An image score averaged over the frame can miss a correct
+prediction.}} The large world model's overhead frames move correctly and score
+no better than holding, because the part that moves is small
+(Figure~\ref{fig:fastwamstrip}). \emph{Bound:} one recording shown; the point
+is about the metric, and it cuts in the model's favour.
+
+One further finding follows from the control rather than from any single
+measurement. \textbf{The gap is not an artefact of when the held-back
+recordings were made.} A random hold-out is harder than a temporal one for both
+families, and drift predicts the reverse. \emph{Bound:} the two hold-outs are
+different recordings, so the two ratios are not two measurements of one
+quantity; the direction is what survives.
+
+The findings that bear most on what to do next are the generalisation gap
+and the null result on cropping,
+and the control above is what makes the pairing sharp. The generalisation gap
+is large, robust, and now known not to be drift; the crop --- the change
+actually under test --- does nothing measurable. Together they point away from
+preprocessing the tactile input and towards the amount and variety of data
+behind these policies.
