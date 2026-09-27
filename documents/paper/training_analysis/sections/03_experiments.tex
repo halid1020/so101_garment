@@ -158,7 +158,14 @@ ACT uses touch only briefly, removing touch altogether should cost little.}
   \input{tables/sensor_table}
 \end{table}
 
-\pending{ACT sensor-set result.}
+\new{\textbf{ACT generalises better without the fingertips.} Trained on the
+overhead camera alone, it fits its training demonstrations exactly as well as
+with all five cameras (2.62 against 2.67), but its test error is lower: 13.8
+against 14.1 over its plan, and 5.8 against 7.9 over the first ten steps. So on
+new demonstrations the fingertips do not help ACT, and may hurt it. Each setting
+is one training run, and we have not measured how much a second run with
+another seed would move these numbers (Appendix~\ref{sec:threats}).} \pending{overhead plus one fingertip per
+arm.}
 
 \begin{figure}[t]
   \centering
