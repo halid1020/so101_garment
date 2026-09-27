@@ -1,47 +1,70 @@
 \section{Introduction}
 \label{sec:intro}
 
-Our rig has two robot arms that fold a pair of shorts on a table. Five cameras
-watch the task. One looks down on the table. The other four are tactile
-sensors, one on each fingertip: each films a soft gel from behind, so touching
-something shows up as a change in the gel's shading. We recorded 65
-demonstrations by teleoperation and trained six models on them
-(Section~\ref{sec:models}). Four are \emph{policies}, which map what the robot
-sees to a plan of future arm commands. Two are \emph{world models}, which also
-predict what the cameras will see next.
+Our rig has two robot arms that fold a pair of shorts on a table. \new{We
+collect data using five cameras.} One looks down on the table. The other four
+are tactile sensors, one on each fingertip: each films a soft gel from behind,
+so touching something shows up as a change in the gel's shading. We recorded 65
+demonstrations by teleoperation. \new{In every demonstration the garment starts
+in the same state and position, and the operator folds it with the same
+strategy. This keeps the demonstrations consistent: in the same situation the
+recorded actions differ little from one demonstration to the next (little
+\emph{multi-modality}), so a model is not asked to average two different ways
+of folding.}
+
+\new{We train six state-of-the-art learning-based control policies on these
+demonstrations (Section~\ref{sec:models}).
+\begin{itemize}
+  \item Three are \emph{behaviour-cloning} policies trained from scratch: ACT,
+  Diffusion Policy and a flow-matching policy. Each learns, by imitating the
+  recorded commands, to map what the robot senses to a plan of future arm
+  commands.
+  \item One is a \emph{vision-language-action} (VLA) model, pi0.5. It starts
+  from a vision-language model pretrained on web and robot data, reads a written
+  instruction, and is finetuned on our demonstrations.
+  \item Two are \emph{world action models} (WAMs), DreamZero and FastWAM. They
+  learn to predict future camera images together with the actions, so that
+  predicting how the scene will look teaches them how it moves.
+\end{itemize}}
 
 This report answers three questions, in order of importance.
 \begin{enumerate}
-  \item \textbf{How do the models differ on demonstrations they never saw?}
-  This is the main comparison (Section~\ref{sec:compare}).
+  \item \new{\textbf{How does each policy perform on the demonstrations it was
+  trained on, and on held-out demonstrations it never saw?}} This is the main
+  comparison (Section~\ref{sec:compare}).
   \item \textbf{Does cropping the tactile images help?} Our earlier Grad-CAM
-  pictures (defined in Section~\ref{sec:measures}) showed one policy looking at
-  the edges of the tactile images, even before the fingers touched anything. A
-  likely cause is light leaking in at the gel's edge. We tested the obvious fix,
-  cropping the edges away (Section~\ref{sec:crop}). This question is secondary.
-  \item \textbf{How well do the world models predict the cameras?} We score how
-  well they reproduce frames they have seen and how well they predict frames
-  they have not (Section~\ref{sec:wm}).
+  pictures (defined in Section~\ref{sec:measures}) showed ACT putting weight on
+  the edges of the tactile images, where light may leak in at the gel's
+  boundary. We test cropping the edges away, \new{and we use Grad-CAM and patch
+  occlusion maps to see whether cropping changes which parts of the tactile
+  images each model relies on} (Section~\ref{sec:crop}). This question is
+  secondary.
+  \item \textbf{How well do the world action models predict the cameras?} We
+  score how well they reproduce frames they have seen and how well they predict
+  frames they have not (Section~\ref{sec:wm}).
 \end{enumerate}
 
 The main findings are these.
 \begin{itemize}
-  \item \textbf{Both world models plan the next third of a second better than
-  every policy} on unseen demonstrations.
-  \item \textbf{Every model is much worse on unseen demonstrations.} The gap
+  \item \textbf{On held-out demonstrations, the two world action models plan
+  the next \new{ten steps (a third of a second)} most accurately.} \new{Among the
+  behaviour-cloning policies, flow matching is the most accurate over those
+  steps.}
+  \item \textbf{Every policy is much worse on held-out demonstrations.} The gap
   is largest for ACT, which almost memorises its training demonstrations. It is
-  not caused by the session drifting over time.
-  \item \textbf{Diffusion is the most accurate policy for the first steps of a
-  plan, but its error grows fastest;} ACT's grows slowly.
+  not caused by the recording session drifting over time.
+  \item \textbf{Diffusion's plans are accurate for the first steps, but their
+  error grows fastest;} ACT's grows slowly.
   \item \textbf{Cropping the tactile images changes almost nothing} on any
-  model, and the policies do not over-weight the image edges in the first place.
+  model scored so far, and on average the policies do not over-weight the image
+  edges.
   \item \textbf{Touch matters in short bursts.} ACT nearly ignores the tactile
   cameras most of the time and leans on them heavily around contact.
   \item \textbf{A frame-averaged image score can miss a correct prediction} of
   a small moving part, such as a gripper.
 \end{itemize}
 
-Section~\ref{sec:methods} describes the models, the data and how we measure.
-Section~\ref{sec:experiments} reports the experiments, and
+Section~\ref{sec:methods} describes the models, the data and how we evaluate
+them. Section~\ref{sec:experiments} reports the experiments, and
 Section~\ref{sec:discussion} discusses what we learned and what to do next.
 Appendix~\ref{sec:provenance} explains how every figure and table was made.

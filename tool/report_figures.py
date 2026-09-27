@@ -798,6 +798,17 @@ def main() -> int:
         ],
         help="model=path pairs scored per sensor with reconstruction",
     )
+    parser.add_argument(
+        "--gradcam-evidence",
+        default="outputs/analysis/2026-09-07/act-all/attribution.json",
+        help="the ACT attribution whose Grad-CAM first showed edge weight",
+    )
+    parser.add_argument(
+        "--gradcam-frame",
+        type=lambda text: tuple(int(v) for v in text.split(":")),
+        default=(0, 180),
+        help="EPISODE:FRAME of the Grad-CAM evidence figure (default 0:180)",
+    )
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
 
@@ -880,6 +891,14 @@ def main() -> int:
         draw_trajectory_strip(dataset, args.episode, out / "trajectory_strip.png")
         draw_rim_evidence(
             dataset, list(range(65)), out / "rim_evidence.png", example=args.episode
+        )
+        draw_model_inputs(dataset, args.episode, 0.45, out / "model_inputs.png")
+        draw_gradcam_evidence(
+            Path(args.gradcam_evidence),
+            dataset,
+            args.gradcam_frame[0],
+            args.gradcam_frame[1],
+            out / "gradcam_evidence.png",
         )
     print(f"\nwrote {out}")
     return 0
@@ -1166,14 +1185,19 @@ def rim_profiles(
     return out
 
 
+#: The ridge crop's kept columns, as fractions of the width (rows 0.1-0.9).
+RIDGE_CROP = (0.36, 0.90)
+
+
 def draw_rim_evidence(
     dataset: Path, episodes: "list[int]", out: Path, example: int = 0
 ) -> "tuple[Path, dict[str, dict[str, float]]]":
     """The tactile rim, and the two crops that remove it, on every fingertip.
 
-    Top row: one pre-contact frame per sensor with the two crop boxes drawn on
-    it -- dashed, the rows-only crop (top and bottom tenth); solid, the
-    four-edge crop (a tenth off every edge). Bottom row: the brightness of each
+    Top row: one pre-contact frame per sensor with the three crop boxes drawn
+    on it -- dashed, the rows-only crop (top and bottom tenth); solid, the
+    four-edge crop (a tenth off every edge); dash-dot, the ridge crop -- and
+    the gel's ridge marked where the column profile peaks. Bottom row: the brightness of each
     row and each column relative to the gel's centre, averaged over the first
     frame of every listed recording, with the crop lines marked. Returns the
     edge brightness per camera so the text quotes the figure's own numbers.
@@ -1191,7 +1215,11 @@ def draw_rim_evidence(
         top = axes[0, column]
         top.imshow(image)
         top.axis("off")
-        top.set_title(camera.replace("_", " "), fontsize=8, color=INK)
+        top.set_title(
+            f"{camera.replace('_', ' ')} ({SENSOR_SHORT[camera]})",
+            fontsize=8,
+            color=INK,
+        )
         top.add_patch(
             plt.Rectangle(
                 (0, 0.1 * height),
@@ -1213,6 +1241,33 @@ def draw_rim_evidence(
                 linewidth=1.6,
             )
         )
+        # The ridge crop: the four-edge box with its left edge moved past the
+        # ridge (RIDGE_CROP), drawn in cyan.
+        left, right = RIDGE_CROP
+        top.add_patch(
+            plt.Rectangle(
+                (left * width, 0.1 * height),
+                (right - left) * width,
+                0.8 * height,
+                fill=False,
+                edgecolor="#3fd0ff",
+                linewidth=1.6,
+                linestyle="-.",
+            )
+        )
+        # The ridge itself, located from this sensor's own column profile:
+        # the brightest column, which is not at the rim.
+        cols = profiles[camera]["cols"]
+        ridge = int(np.argmax(cols)) / len(cols)
+        top.annotate(
+            "ridge",
+            xy=(ridge * width, 0.55 * height),
+            xytext=(ridge * width + 0.12 * width, 0.8 * height),
+            color="#ff4fa3",
+            fontsize=8,
+            fontweight="bold",
+            arrowprops={"arrowstyle": "->", "color": "#ff4fa3", "lw": 1.5},
+        )
         bottom = axes[1, column]
         rows, cols = profiles[camera]["rows"], profiles[camera]["cols"]
         bottom.plot(
@@ -1231,6 +1286,16 @@ def draw_rim_evidence(
         )
         for x in (0.1, 0.9):
             bottom.axvline(x, color=MUTED, lw=1, ls=":")
+        bottom.axvline(RIDGE_CROP[0], color="#3fd0ff", lw=1.2, ls="-.")
+        bottom.annotate(
+            "ridge",
+            xy=(ridge, cols.max()),
+            xytext=(ridge + 0.12, cols.max()),
+            color="#ff4fa3",
+            fontsize=7,
+            va="center",
+            arrowprops={"arrowstyle": "->", "color": "#ff4fa3", "lw": 1.0},
+        )
         bottom.axhline(1.0, color=GRID, lw=1)
         bottom.set_xlabel("position across the image", fontsize=8)
         if column == 0:
@@ -1245,7 +1310,7 @@ def draw_rim_evidence(
                 max(cols[: len(cols) // 10].max(), cols[-len(cols) // 10 :].max())
             ),
         }
-    axes[1, 0].legend(fontsize=7, frameon=False, loc="upper center")
+    axes[1, 0].legend(fontsize=7, frameon=False, loc="upper right")
     figure.tight_layout()
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
@@ -1295,6 +1360,30 @@ ACTION_ROWS = (
 )
 
 
+def bold_lowest(rows: "list[list[str]]", columns: "list[int]") -> "list[list[str]]":
+    """Set the lowest number in each named column in bold.
+
+    Lower is better for every error these tables show. A cell that is not a
+    number (a dash, ``n/a``) takes no part, and a tie bolds every holder.
+    """
+    out = [list(row) for row in rows]
+    for column in columns:
+        values: "list[float | None]" = []
+        for row in rows:
+            try:
+                values.append(float(row[column]))
+            except (ValueError, IndexError):
+                values.append(None)
+        numbers = [v for v in values if v is not None]
+        if not numbers:
+            continue
+        best = min(numbers)
+        for i, value in enumerate(values):
+            if value == best:
+                out[i][column] = rf"\textbf{{{rows[i][column]}}}"
+    return out
+
+
 def _cells(result: "dict | None", steps: "int | None" = None) -> "list[str]":
     """Train, test and gap over ``steps`` (or the whole plan), as table cells."""
     if not result:
@@ -1319,12 +1408,16 @@ def write_action_table(results: "dict[str, dict]", out: Path, common: int = 10) 
         r"model & plan & train & test & gap & test & gap \\",
         r"\midrule",
     ]
+    rows = []
     for arm, label in ACTION_ROWS:
         result = results.get(arm)
         plan = str(result["validation"]["horizon"]) if result else "--"
         own = _cells(result)
         near = _cells(result, common)
-        lines.append(" & ".join([label, plan, *own, near[1], near[2]]) + r" \\")
+        rows.append([label, plan, *own, near[1], near[2]])
+    # Train, test and the shared-steps test; never the gap, where small is not
+    # good -- pi0.5's is small because it never fitted its training set.
+    lines += [" & ".join(row) + r" \\" for row in bold_lowest(rows, [2, 3, 5])]
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  action table -> {out}")
@@ -1334,20 +1427,34 @@ def write_action_table(results: "dict[str, dict]", out: Path, common: int = 10) 
 #: Crop table: model label, then the arm key for each column. None means that
 #: crop does not exist for the model, which is not the same as pending.
 CROP_ROWS = (
-    ("ACT", "act", "act_crop", "act_crop_noresize", "act_crop_edges"),
-    ("Diffusion", "diffusion", "diffusion_crop", None, "diffusion_crop_edges"),
-    ("pi0.5", "pi05", "pi05_crop", None, "pi05_crop_edges"),
-    ("DreamZero", "dreamzero", None, None, "dreamzero_crop_edges"),
-    ("FastWAM", "fastwam", None, None, "fastwam_crop_edges"),
+    ("ACT", "act", "act_crop", "act_crop_noresize", "act_crop_edges", "act_crop_ridge"),
+    (
+        "Diffusion",
+        "diffusion",
+        "diffusion_crop",
+        None,
+        "diffusion_crop_edges",
+        "diffusion_crop_ridge",
+    ),
+    ("pi0.5", "pi05", "pi05_crop", None, "pi05_crop_edges", "pi05_crop_ridge"),
+    (
+        "DreamZero",
+        "dreamzero",
+        None,
+        None,
+        "dreamzero_crop_edges",
+        "dreamzero_crop_ridge",
+    ),
+    ("FastWAM", "fastwam", None, None, "fastwam_crop_edges", "fastwam_crop_ridge"),
 )
 
 
 def write_crop_table(results: "dict[str, dict]", out: Path) -> Path:
     """Test RMSE over each model's own plan, uncropped and under each crop."""
     lines = [
-        r"\begin{tabular}{lrrrr}",
+        r"\begin{tabular}{lrrrrr}",
         r"\toprule",
-        r"model & no crop & rows & rows, unstretched & four edges \\",
+        r"model & no crop & rows & rows, unstretched & four edges & ridge \\",
         r"\midrule",
     ]
     for label, *arms in CROP_ROWS:
@@ -1359,7 +1466,9 @@ def write_crop_table(results: "dict[str, dict]", out: Path) -> Path:
                 cells.append(f"{rmse_over(results[arm], 'validation'):.2f}")
             else:
                 cells.append("--")
-        lines.append(" & ".join([label, *cells]) + r" \\")
+        # Bold within a row: the question is which crop suits THIS model.
+        row = bold_lowest([cells], list(range(len(cells))))[0]
+        lines.append(" & ".join([label, *row]) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  crop table -> {out}")
@@ -1384,19 +1493,29 @@ def write_sensor_table(results: "dict[str, dict]", out: Path, common: int = 10) 
         r"cameras & train & test & gap & test & gap \\",
         r"\midrule",
     ]
+    rows = []
     for arm, label in SENSOR_ROWS:
         result = results.get(arm)
         near = _cells(result, common)
-        lines.append(" & ".join([label, *_cells(result), near[1], near[2]]) + r" \\")
+        rows.append([label, *_cells(result), near[1], near[2]])
+    lines += [" & ".join(row) + r" \\" for row in bold_lowest(rows, [1, 2, 4])]
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  sensor table -> {out}")
     return out
 
 
+#: The fingertip sensors by arm and finger, as the report abbreviates them.
+SENSOR_SHORT = {
+    "left_arm_left_gripper": "LLG",
+    "left_arm_right_gripper": "LRG",
+    "right_arm_left_gripper": "RLG",
+    "right_arm_right_gripper": "RRG",
+}
+
 #: Sensor rows of the world-model table, in the order a reader expects.
 WM_SENSORS = (("central", "overhead"),) + tuple(
-    (camera, camera.replace("_", " ")) for camera in TACTILE
+    (camera, SENSOR_SHORT[camera]) for camera in TACTILE
 )
 
 
@@ -1534,6 +1653,168 @@ def draw_rim_attention(directories: "list[Path]", out: Path) -> "Path | None":
     plt.close(figure)
     missing = [a for _f, _t, bars in RIM_ARMS for a, _l in bars if a not in drawn]
     print(f"  rim attention: {drawn}" + (f"  MISSING {missing}" if missing else ""))
+    return out
+
+
+def edge_ratio(cam: np.ndarray, band: float = 0.10) -> float:
+    """Weight in the outer ``band`` of a map, over the share its area would get.
+
+    1 is a map that ignores position; 2 puts twice its area's share on the edge.
+    """
+    cam = np.asarray(cam, dtype=float)
+    height, width = cam.shape
+    rows, cols = max(1, round(band * height)), max(1, round(band * width))
+    mask = np.zeros(cam.shape, bool)
+    mask[:rows], mask[-rows:], mask[:, :cols], mask[:, -cols:] = True, True, True, True
+    total = cam.sum()
+    return float(cam[mask].sum() / total / mask.mean()) if total > 0 else float("nan")
+
+
+def draw_gradcam_evidence(
+    attribution: Path, dataset: Path, episode: int, index: int, out: Path
+) -> "Path | None":
+    """The Grad-CAM picture that raised the rim question, with its edge band.
+
+    The four fingertip maps of one frame, over the frame itself, with the outer
+    tenth outlined and each sensor's edge ratio (:func:`edge_ratio`) in its
+    title, so the claim "ACT weights the edge" is a number on the figure.
+    """
+    import pandas as pd
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    payload = json.loads(attribution.read_text())
+    frames = payload["episodes"][str(episode)]["frames"]
+    frame = next((f for f in frames if f.get("index") == index), None)
+    if frame is None or "gradcam" not in frame:
+        print(f"  gradcam evidence: no Grad-CAM at episode {episode} frame {index}")
+        return None
+    table = pd.concat(
+        pd.read_parquet(p)
+        for p in sorted((dataset / "meta" / "episodes").rglob("*.parquet"))
+    )
+    length = int(table[table["episode_index"] == episode].iloc[0]["length"])
+    figure, axes = plt.subplots(1, 4, figsize=(11, 2.3))
+    for axis, camera in zip(axes, TACTILE_CAMERAS):
+        image = episode_frames(
+            dataset, f"observation.images.{camera}", episode, [index / (length - 1)]
+        )[0][1]
+        cam = np.asarray(frame["gradcam"][camera], dtype=float)
+        height, width = image.shape[:2]
+        axis.imshow(image)
+        axis.imshow(
+            cam,
+            cmap="jet",
+            alpha=0.45,
+            extent=(0, width, height, 0),
+            interpolation="bilinear",
+        )
+        axis.add_patch(
+            plt.Rectangle(
+                (0.1 * width, 0.1 * height),
+                0.8 * width,
+                0.8 * height,
+                fill=False,
+                edgecolor="white",
+                linestyle="--",
+                linewidth=1.3,
+            )
+        )
+        axis.set_title(
+            f"{SENSOR_SHORT[camera]}: edge band x{edge_ratio(cam):.1f}", fontsize=8
+        )
+        axis.axis("off")
+    figure.tight_layout(pad=0.3)
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  gradcam evidence: episode {episode} frame {index} -> {out}")
+    return out
+
+
+def _resized(image: np.ndarray, height: int, width: int) -> np.ndarray:
+    from PIL import Image
+
+    return np.asarray(Image.fromarray(image).resize((width, height), Image.BILINEAR))
+
+
+def _letterboxed(image: np.ndarray, size: int) -> np.ndarray:
+    """pi0.5's ``resize_with_pad``: keep the aspect ratio, pad the rest black."""
+    height, width = image.shape[:2]
+    scale = size / max(height, width)
+    inner = _resized(image, round(height * scale), round(width * scale))
+    canvas = np.zeros((size, size, 3), dtype=np.uint8)
+    top, left = (size - inner.shape[0]) // 2, (size - inner.shape[1]) // 2
+    canvas[top : top + inner.shape[0], left : left + inner.shape[1]] = inner
+    return canvas
+
+
+def draw_model_inputs(dataset: Path, episode: int, fraction: float, out: Path) -> Path:
+    """What each model's image input looks like, from one moment of one recording.
+
+    Rebuilt with the models' own layouts: ACT, Diffusion and flow matching read
+    the five frames separately; pi0.5 letterboxes three of them to 224 x 224;
+    DreamZero squashes all five into the cells of a 3 x 3 grid of one 224 x 224
+    frame (spare cells black); FastWAM squashes the four fingertips into the
+    quadrants of one image and sets it beside the overhead view, each 224 x 224.
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    names = ["central", *TACTILE_CAMERAS]
+    frames = {
+        n: episode_frames(dataset, f"observation.images.{n}", episode, [fraction])[0][1]
+        for n in names
+    }
+    cell = 224 // 3
+    tiled = np.zeros((224, 224, 3), dtype=np.uint8)
+    for i, n in enumerate(names):
+        row, col = divmod(i, 3)
+        tiled[row * cell : (row + 1) * cell, col * cell : (col + 1) * cell] = _resized(
+            frames[n], cell, cell
+        )
+    quad = np.zeros((224, 224, 3), dtype=np.uint8)
+    for i, n in enumerate(TACTILE_CAMERAS):
+        row, col = divmod(i, 2)
+        quad[row * 112 : (row + 1) * 112, col * 112 : (col + 1) * 112] = _resized(
+            frames[n], 112, 112
+        )
+    fastwam = np.concatenate([_resized(frames["central"], 224, 224), quad], axis=1)
+    pi05 = np.concatenate(
+        [
+            _letterboxed(frames[n], 224)
+            for n in ("central", "left_arm_left_gripper", "right_arm_left_gripper")
+        ],
+        axis=1,
+    )
+
+    figure = plt.figure(figsize=(11, 4.9))
+    grid = figure.add_gridspec(2, 10, height_ratios=(1, 1.45), hspace=0.35)
+    for i, n in enumerate(names):
+        axis = figure.add_subplot(grid[0, 2 * i : 2 * i + 2])
+        axis.imshow(frames[n])
+        axis.set_title(
+            "overhead" if n == "central" else SENSOR_SHORT[n], fontsize=8, color=INK
+        )
+        axis.axis("off")
+    figure.text(
+        0.5,
+        0.93,
+        "(a) the five cameras, as ACT, Diffusion and flow matching read them "
+        "(each separately)",
+        ha="center",
+        fontsize=9,
+    )
+    panels = (
+        (grid[1, 0:3], tiled, "(b) DreamZero: one tiled frame"),
+        (grid[1, 3:7], fastwam, "(c) FastWAM: overhead | fingertip composite"),
+        (grid[1, 7:10], pi05, "(d) pi0.5: overhead, LLG, RLG, padded"),
+    )
+    for spec, image, title in panels:
+        axis = figure.add_subplot(spec)
+        axis.imshow(image)
+        axis.set_title(title, fontsize=9, color=INK)
+        axis.axis("off")
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  model inputs: recording {episode} at {fraction:.2f} -> {out}")
     return out
 
 

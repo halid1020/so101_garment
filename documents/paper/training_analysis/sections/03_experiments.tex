@@ -4,8 +4,9 @@
 We report four experiments, in the order of the questions in
 Section~\ref{sec:intro}. Section~\ref{sec:compare} compares all the models,
 Section~\ref{sec:crop} tests the tactile crop, Section~\ref{sec:sensors} asks
-which sensors ACT needs, and Section~\ref{sec:wm} scores the world models'
-predictions of the cameras.
+which sensors ACT needs \new{and which inputs each model uses}, and
+Section~\ref{sec:wm} scores the world action models' predictions of the
+cameras.
 
 \subsection{Comparing the models}
 \label{sec:compare}
@@ -20,7 +21,8 @@ with how far ahead the model plans.
   demonstrations. The left block scores each model over its own plan; the
   right block scores every model over the first ten steps
   (\SI{0.33}{\second}), the only block that is fair across rows. \emph{Gap} is
-  test error divided by training error.}
+  test error divided by training error. \new{The lowest error in each column is
+  in bold.}}
   \label{tab:actions}
   \small
   \input{tables/action_table}
@@ -29,67 +31,59 @@ with how far ahead the model plans.
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.92\textwidth]{horizon_all.png}
-  \caption{\new{Action error at each step of the plan, against how far ahead
-  that step is, for every model on one linear scale. Left: test
-  demonstrations. Right: training demonstrations. The shaded band is the first
-  ten steps, which every model plans.}}
+  \caption{Action error at each step of the plan, against how far ahead that
+  step is, for every model on one linear scale. Left: test demonstrations.
+  Right: training demonstrations. The shaded band is the first ten steps, which
+  every model plans.}
   \label{fig:horizon}
 \end{figure}
 
-\textbf{Both world models plan the next third of a second better than every
-policy on unseen demonstrations.} Over the first ten steps their test errors
-are 3.9 (FastWAM) and 4.2 (DreamZero), against 5.0 for the best policy,
-Diffusion. The two world models are too close to rank. Their lead is several
-times larger than the change we see when we rerun them with different random
-seeds (Appendix Table~\ref{tab:floor}). It does not prove that predicting the
-future is what helps: DreamZero also sees more past frames than any policy, and
-FastWAM starts from a pretrained video model.
+\textbf{Both world action models plan the next ten steps better than every
+other model on unseen demonstrations.} Over those steps their test errors are
+3.9 (FastWAM) and 4.2 (DreamZero). The two are too close to rank. Their lead is
+several times larger than the change we see when we rerun them with different
+random seeds (Appendix Table~\ref{tab:floor}). It does not prove that
+predicting the future is what helps: FastWAM starts from a pretrained video
+model, and DreamZero \new{is given the past \SI{1.6}{\second} of arm commands}.
 
-\begin{newtext}
-\textbf{Diffusion is the most accurate policy for the first steps of a plan,
-but its error grows fastest.} On the test demonstrations its error starts at
-3.9 and reaches 13.9 by step 32, a factor of 3.6. ACT starts higher, at 7.3,
-but grows by only a factor of 1.8 over the same steps, so the two lines cross
-at about one second (Figure~\ref{fig:horizon}, left). On the training
-demonstrations the difference is starker. ACT's error is almost flat across all
-100 steps (2.4 to 3.3), which means it reproduces the rest of a familiar
-demonstration almost exactly. Diffusion's error grows sixfold over its 32
-steps.
-\end{newtext}
+\new{\textbf{Flow matching is the most accurate behaviour-cloning policy over
+the first ten steps}, at 4.5 against Diffusion's 5.0. Further ahead the two
+converge (7.6 each at step 24), and by step 32 Diffusion is slightly ahead
+(9.2 against 9.8). Flow matching and pi0.5 share their training objective, and
+flow matching's error over the first ten steps is half pi0.5's (4.5 against
+9.0). On our data, pi0.5's pretraining with our narrow LoRA does worse than
+training a small model from scratch.}
+
+\textbf{Diffusion is \new{the most accurate of the other behaviour-cloning
+policies} for the first steps of a plan, but its error grows fastest.} On the
+test demonstrations its error starts at 3.9 and reaches 13.9 by step 32, a
+factor of 3.6. ACT starts higher, at 7.3, but grows by only a factor of 1.8
+over the same steps, so the two lines cross at about one second
+(Figure~\ref{fig:horizon}, left). On the training demonstrations the difference
+is starker. ACT's error is almost flat across all 100 steps (2.4 to 3.3), which
+means it reproduces the rest of a familiar demonstration almost exactly.
+Diffusion's error grows sixfold over its 32 steps.
 
 \textbf{Every model is much worse on unseen demonstrations.} ACT's error is
 about five times higher on the test demonstrations than on the training ones,
-and Diffusion's about twice as high. A natural worry is that the last seven
-demonstrations are harder because the session drifted, for example in lighting
-or gel wear. Figure~\ref{fig:split} rules this out. \new{When we hold out seven
-demonstrations picked at random from across the session, the gap becomes
-larger, not smaller. A random test set lies between training demonstrations in
-time, so drift should make it easier; it is harder.} The two test sets are
-different demonstrations, so only the direction of this change is certain, not
-its size (Appendix~\ref{sec:threats}).
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.45\textwidth]{split_comparison.png}
-  \caption{The gap (test error divided by training error) when testing on the
-  last seven demonstrations and on a random seven. The dotted line is a model
-  equally good on both.}
-  \label{fig:split}
-\end{figure}
+and Diffusion's about twice as high. \new{As Section~\ref{sec:data} explains,
+the last seven demonstrations are also the latest, so a slow change over the
+afternoon could make them harder for a reason that has nothing to do with
+generalisation. Appendix Figure~\ref{fig:split} tests this. When the seven test
+demonstrations are instead picked at random from across the afternoon, each
+sits between training demonstrations in time, so any drift should make them
+easier. The gap becomes larger, not smaller: 8.9 against 5.3 for ACT, and 2.6
+against 1.9 for Diffusion. Drift therefore does not explain the gap.} The two
+test sets are different demonstrations, so only the direction of this change is
+certain, not its size (Appendix~\ref{sec:threats}).
 
 \textbf{pi0.5's small gap does not mean it generalises well.} Its test error is
 only a tenth above its training error, but its error on the demonstrations it
 trained on is already higher than Diffusion's error on demonstrations it never
 saw. It trained for about one pass over the data, adapting only the small LoRA
-addition, so it never fitted the training set.
-\begin{newtext}
-We therefore trained it for about three passes (\num{70000} steps), changing
-nothing else. \pending{pi0.5 at \num{70000} steps: training and test error, and
-whether the gap opens.}
-
-\textbf{Flow matching} keeps pi0.5's training objective but drops its
-pretraining. \pending{flow-matching result against Diffusion and pi0.5.}
-\end{newtext}
+addition, so it never fitted the training set. We therefore trained it for
+about three passes (\num{70000} steps), changing nothing else. \pending{pi0.5
+at \num{70000} steps: training and test error, and whether the gap opens.}
 
 \subsection{Cropping the tactile images}
 \label{sec:crop}
@@ -99,11 +93,10 @@ crop.
 
 \begin{table}[t]
   \centering
-  \caption{\new{Test action error (RMSE over each model's own plan) with each
-  tactile crop. \emph{Rows} removes the top and bottom tenth and stretches the
-  rest back; \emph{rows, unstretched} keeps the cropped size (ACT only);
-  \emph{four edges} removes a tenth from every side. Each entry is one training
-  run.}}
+  \caption{Test action error (RMSE over each model's own plan) with each
+  tactile crop (Section~\ref{sec:cropmethod}). \emph{Rows, unstretched} exists
+  for ACT only. Each entry is one training run; \new{the lowest in each row is in
+  bold.}}
   \label{tab:crop}
   \small
   \input{tables/crop_table}
@@ -112,56 +105,60 @@ crop.
 \textbf{Cropping the tactile images changes almost nothing.} With the rows-only
 crop, ACT, Diffusion and pi0.5 move by a few per cent at most, in both
 directions. That is within what repeating a run with another random seed moves
-Diffusion and pi0.5 (Appendix Table~\ref{tab:floor}). \pending{four-edge crop
-on all five models.} For ACT, the one place the rows-only crop looked harmful,
-over the far end of its plan, disappears when the image is not stretched. So
-the stretching, not the loss of the rim, caused that small penalty.
+Diffusion and pi0.5 (Appendix Table~\ref{tab:floor}). \new{The four-edge crop
+leaves pi0.5 unchanged (18.34 against 18.35).} \pending{four-edge and ridge
+crops on the remaining models.} For ACT, the one place the rows-only crop looked
+harmful, over the far end of its plan, disappears when the image is not
+stretched. So the stretching, not the loss of the rim, caused that small
+penalty.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.72\textwidth]{rim_attention.png}
   \caption{How much Grad-CAM weight falls in a band around the edge of the
   tactile images, relative to a completely flat map (dashed line at 1), over
-  60 frames of test demonstration 58 and all four fingertips. Below
-  the line, a model looks at the edge \emph{less} than a model that ignored
-  position would. Three band widths are shown.}
+  60 frames of test demonstration 58 and all four fingertips. Below the line, a
+  model looks at the edge \emph{less} than a model that ignored position would.
+  Three band widths are shown.}
   \label{fig:rim}
 \end{figure}
 
 \textbf{The policies do not over-weight the edges of the tactile images.}
-Figure~\ref{fig:rim} measures this directly. \new{A value of 1 means the edge
-band gets exactly its share of the weight by area; above 1, the model favours
-the edge.} \new{On a test demonstration,} every uncropped model sits between two thirds
-and nine tenths of its share, at every band width. So the edge attention we saw in single Grad-CAM pictures
-does not hold on average. Cropping moves the weight slightly towards the new
-edge, partly for a mechanical reason: after cropping and stretching, the pixels
-nearest the edge used to be further in. \pending{rim measure for the
-four-edge crop.}
+Figure~\ref{fig:rim} measures this directly. A value of 1 means the edge band
+gets exactly its share of the weight by area; above 1, the model favours the
+edge. On a test demonstration, every uncropped model sits between two thirds
+and nine tenths of its share, at every band width. \new{So the strong edge
+weighting of Figure~\ref{fig:gradcamevidence} happens at some moments but does
+not hold on average.} Cropping moves the weight slightly towards the new edge,
+partly for a mechanical reason: after cropping and stretching, the pixels
+nearest the edge used to be further in. \pending{patch occlusion maps for all
+models and crops: does cropping change where each model looks?}
 
-\subsection{Which sensors ACT needs}
+\subsection{Which sensors the models use}
 \label{sec:sensors}
 
-\begin{newtext}
 We retrained ACT with three sets of inputs, all with proprioception: the
 overhead camera alone; the overhead camera and one fingertip per arm (the pair
 pi0.5 reads); and all five cameras. Table~\ref{tab:sensors} gives the result.
+\new{The overhead-only model tests the reading of Figure~\ref{fig:framewise}: if
+ACT uses touch only briefly, removing touch altogether should cost little.}
 
 \begin{table}[t]
   \centering
   \caption{ACT trained on three sets of cameras, all with proprioception.
-  Action error (RMSE) over its own 100-step plan and over the first ten steps.}
+  Action error (RMSE) over its own 100-step plan and over the first ten steps.
+  \new{The lowest error in each column is in bold.}}
   \label{tab:sensors}
   \small
   \input{tables/sensor_table}
 \end{table}
 
 \pending{ACT sensor-set result.}
-\end{newtext}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.62\textwidth]{stream_shares.png}
-  \caption{How much each input moves each policy's plan (input contribution,
+  \includegraphics[width=0.55\textwidth]{stream_shares.png}
+  \caption{How much each input moves each model's plan (input contribution,
   Section~\ref{sec:measures}). Each bar adds up to 100\,\%, so compare the
   order of inputs within a bar, not heights between bars. pi0.5 reads two
   fingertips; the others read four.}
@@ -171,11 +168,12 @@ pi0.5 reads); and all five cameras. Table~\ref{tab:sensors} gives the result.
 Figure~\ref{fig:streams} shows which inputs the policies actually use. ACT
 relies most on the overhead camera, then proprioception, with the fingertips
 last. Diffusion and pi0.5 rely mostly on proprioception: about three quarters
-of what moves pi0.5's plan is where the arms are.
+of what moves pi0.5's plan is where the arms are. \pending{input contribution
+of DreamZero and FastWAM.}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.8\textwidth]{framewise_shares.png}
+  \includegraphics[width=0.68\textwidth]{framewise_shares.png}
   \caption{The fingertips' share of each policy's plan through one test
   demonstration. Dashed lines are the cropped versions.}
   \label{fig:framewise}
@@ -189,81 +187,69 @@ contact. An average therefore describes no moment that actually happens.
 Diffusion and pi0.5 read touch more steadily, peaking at two to two and a half
 times their own average where ACT peaks at four to five times.
 
-\subsection{How well the world models predict the cameras}
+\subsection{How well the world action models predict the cameras}
 \label{sec:wm}
 
-\begin{newtext}
-Table~\ref{tab:wm} scores both world models on every sensor. The first column
-is reconstruction, the frames the model saw passed through its own
-autoencoder, which is the sharpest any of its predictions can be. The next
-columns compare its predicted future frames with the real ones and with
-repeating the last frame it saw.
-\end{newtext}
+Table~\ref{tab:wm} scores both world action models on every sensor. The first
+column is reconstruction, the frames the model saw passed through its own
+autoencoder, which is the sharpest any of its predictions can be. \new{For
+DreamZero this is its frozen image autoencoder, applied to each frame; for
+FastWAM it is Wan2.2's video autoencoder, which compresses groups of four
+frames together.} The next columns compare its predicted future frames with the
+real ones and with repeating the last frame it saw.
 
 \begin{table}[t]
   \centering
-  \caption{\new{World models on the seven test demonstrations, per sensor, in
-  PSNR (dB). \emph{Reconstruction}: seen frames through the model's own
-  autoencoder. \emph{Prediction} and \emph{repeat last}: future frames,
-  averaged over the prediction horizon. \emph{Margin}: prediction minus repeat
-  last, at \SI{0.8}{\second} ahead and at the end of each model's horizon
-  (\SI{4.8}{\second} for DreamZero, \SI{1.1}{\second} for FastWAM). Each model
-  works at its own resolution, so compare margins, not PSNR, between models.}}
+  \caption{World action models on the seven test demonstrations, per sensor, in
+  PSNR (dB, higher is better). \emph{Reconstruction}: seen frames through the
+  model's own autoencoder. \emph{Prediction}: predicted future frames.
+  \new{\emph{Repeat last}: the last seen frame used as the prediction for every
+  future time.} Both averaged over the prediction horizon. \emph{Margin}:
+  prediction minus repeat last, at \SI{0.8}{\second} ahead and at the end of
+  each model's horizon (\SI{4.8}{\second} for DreamZero, \SI{1.1}{\second} for
+  FastWAM). Each model works at its own resolution, so compare margins, not
+  PSNR, between models.}
   \label{tab:wm}
   \small
   \input{tables/wm_table}
 \end{table}
 
-\begin{newtext}
 \textbf{Most of the prediction error comes from predicting, not from
 compressing the images.} DreamZero's small image autoencoder is the exception
 on the overhead camera: it reproduces a seen frame at only 17.3\,dB, and the
-model's predictions reach 15.5\,dB, close to that ceiling. On the fingertips
-its autoencoder reaches 34 to 37\,dB, but its predictions only 25 to 30\,dB.
+model's predictions reach 15.5\,dB, close to that ceiling. \new{(At 17.3\,dB a typical
+pixel is off by 14\,\% of the full brightness range, a visibly blurred image;
+at 35\,dB it would be off by under 2\,\%.)} On the fingertips its
+autoencoder reaches 34 to 37\,dB, but its predictions only 25 to 30\,dB.
 FastWAM's pretrained autoencoder is much sharper, 34\,dB on the overhead camera
 and about 46\,dB on the fingertips, and its predictions sit 13 to 17\,dB below
 that. So a better autoencoder would remove little of either model's error,
-except DreamZero's on the overhead camera. The two models work at different
-image resolutions, so their PSNR values should not be compared directly; their
-margins over repeating the last frame can be.
-\end{newtext}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.8\textwidth]{prediction_margin.png}
-  \caption{Each world model's PSNR minus that of repeating the last frame,
-  against how far ahead the frame is. Above zero, the model predicts better than
-  assuming nothing moves.}
-  \label{fig:predmargin}
-\end{figure}
+except DreamZero's on the overhead camera.
 
 \textbf{DreamZero predicts the cameras better than repeating the last frame,
 on every sensor, from \SI{1.6}{\second} ahead onwards.} Its margin is roughly 3
 to 8\,dB, and largest on the fingertips, where repeating the last frame is
 already strong because the gels change only at contact. At \SI{0.8}{\second} it
 only ties, because the future still looks almost exactly like the present.
-Figure~\ref{fig:filmstrip} shows one example: the model predicts the arms
-lifting and the contact marks on a gel fading, as really happened, though its
-images are blurred.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.85\textwidth]{dreamzero_filmstrip.png}
-  \caption{One test moment as DreamZero predicted it. For each camera the rows
-  are what happened, what the model predicted, and the last frame it saw;
-  columns are \SI{0.8}{\second} apart.}
-  \label{fig:filmstrip}
-\end{figure}
 
 \textbf{FastWAM predicts sharp, correctly moving frames, but a frame-averaged
 score barely rewards them.} It predicts only about a second ahead. On the
 overhead camera it ties with repeating the last frame, although its frames show
-the grippers moving at the right pace (Appendix Figure~\ref{fig:fastwamstrip}).
-The garment fills most of the frame and hardly moves within a second, so
-repeating the last frame is already right about most pixels. \textbf{A score
-averaged over the whole frame can rate a correct prediction of a small moving
-part as no better than doing nothing.} On the fingertips, where contact changes
-many pixels, FastWAM starts below repeating the last frame and ends 3 to 6\,dB
-above it on every sensor. At the
-one moment both models predict, \SI{0.8}{\second} ahead, FastWAM is ahead on
-both panels of Figure~\ref{fig:predmargin}.
+the grippers moving at the right pace (Figure~\ref{fig:filmstrip}). The garment
+fills most of the frame and hardly moves within a second, so repeating the last
+frame is already right about most pixels. \textbf{A score averaged over the
+whole frame can rate a correct prediction of a small moving part as no better
+than doing nothing.} On the fingertips, where contact changes many pixels,
+FastWAM starts below repeating the last frame and ends 3 to 6\,dB above it on
+every sensor. At the one moment both models predict, \SI{0.8}{\second} ahead,
+FastWAM is ahead on both panels of Appendix Figure~\ref{fig:predmargin}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\textwidth]{dreamzero_filmstrip.png}
+  \caption{One test moment as DreamZero predicted it; columns are
+  \SI{0.8}{\second} apart. \pending{head-to-head DreamZero and FastWAM
+  filmstrip: actual row starting with the last seen frame, predicted row
+  starting with its reconstruction, and a difference row.}}
+  \label{fig:filmstrip}
+\end{figure}

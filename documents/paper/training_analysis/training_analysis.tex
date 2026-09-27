@@ -12,10 +12,11 @@
 % Guideline convention: flag design choices that lack a solid reason.
 \newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
 
-% Material added since the annotated draft of 2026-09-27 is set in blue, as the
-% reviewer asked; rewording of old material stays black.
-\newcommand{\new}[1]{{\color{blue}#1}}
-\newenvironment{newtext}{\color{blue}}{}
+% Material added since the second annotated draft (2026-09-27) is set in green,
+% as the reviewer asked; everything reviewed before is black.
+\definecolor{newgreen}{RGB}{0,128,60}
+\newcommand{\new}[1]{{\color{newgreen}#1}}
+\newenvironment{newtext}{\color{newgreen}}{}
 % A result whose run has not finished. None may survive into a shared version.
 \newcommand{\pending}[1]{{\color{red}[pending: #1]}}
 
@@ -27,7 +28,10 @@
 \title{Learning Bimanual Garment Folding with Tactile Fingertips:\\
 Policies, Tactile Cropping and World Models}
 
-\author{Halid Kadi \and Yupeng Wang \and Yongqiang Zhao \and Juan Ye \and Shan Luo}
+\author{Halid Kadi$^{1}$ \and Yupeng Wang$^{2}$ \and Yongqiang Zhao$^{2}$
+\and Juan Ye$^{1}$ \and Shan Luo$^{2}$\\[4pt]
+\small $^{1}$School of Computer Science, University of St Andrews\\
+\small $^{2}$Department of Engineering, King's College London}
 
 \date{Last updated: \today}
 
@@ -35,17 +39,20 @@ Policies, Tactile Cropping and World Models}
 \maketitle
 
 \begin{abstract}
-This report compares learned controllers for a two-armed robot that folds a
-garment, using an overhead camera and four tactile sensors on its fingertips.
-We train four policies and two world models from the same teleoperated
-demonstrations and test them on demonstrations they never saw. We ask three
-questions. How do the models differ on new demonstrations? Does cropping the
-edges of the tactile images help? And how well do the world models predict
-what the cameras will see next? The models that also predict the future plan
-their next actions best. Every model is much worse on new demonstrations than
-on the ones it trained on, and cropping the tactile images does not change
-that. We describe how every figure was made, so that each claim can be checked.
-\new{Text in blue is new since the reviewed draft.}
+This report compares \new{state-of-the-art learning-based control policies} for
+a two-armed robot that folds a garment, \new{using data collected with five
+cameras: one overhead and four tactile sensors on the fingertips.} \new{We train
+three behaviour-cloning policies, one vision-language-action policy and two
+world action models} from the same teleoperated demonstrations. We ask three
+questions. \new{How does each policy perform on the demonstrations it was
+trained on, and on demonstrations it never saw? Does cropping the edges of the
+tactile images help, and does it change which parts of those images the models
+rely on?} And how well do the world action models predict what the cameras will
+see next? \new{We find that the world action models, which also predict the
+future camera images, plan their next actions most accurately on unseen
+demonstrations.} Every model is much worse on unseen demonstrations than on the
+ones it trained on, and cropping the tactile images does not change that. We
+describe how every figure was made, so that each claim can be checked.
 \end{abstract}
 
 \input{sections/01_introduction}

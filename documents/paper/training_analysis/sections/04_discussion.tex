@@ -1,7 +1,6 @@
 \section{Discussion}
 \label{sec:discussion}
 
-\begin{newtext}
 \textbf{What we learned.} The largest effect in this report is not a difference
 between models. It is the drop from training to unseen demonstrations, which
 every model shows and which is not caused by drift over the session. ACT shows
@@ -14,11 +13,17 @@ model, and on average the policies do not over-weight the image edges that
 motivated it. The edges are brighter than the centre, but the policies'
 behaviour does not depend on them in a way we can measure.
 
+\new{Pretraining did not help as we used it. pi0.5, finetuned through a narrow
+LoRA, plans worse than a small flow-matching policy with the same objective
+trained from scratch on our 58 demonstrations. Whether full finetuning, or
+longer training, closes that gap is the question the three-pass pi0.5 run
+begins to answer.}
+
 Touch is used, but briefly. ACT ignores the fingertips for seconds at a time
 and then leans on them heavily around contact, so averaged contributions
 understate what the tactile sensors do.
 
-The two world models plan the near future best, and DreamZero predicts the
+The two world action models plan the near future best, and DreamZero predicts the
 cameras better than assuming nothing moves. FastWAM predicts sharper frames,
 but only a second ahead, and frame-averaged scores undersell it.
 
@@ -30,6 +35,9 @@ but only a second ahead, and frame-averaged scores undersell it.
   agreement with one demonstrator. Only trials on the rig show whether a policy
   folds the garment, and whether it recovers from states the demonstrator never
   visited.
+  \item \new{\textbf{Finetune pi0.5 fully, or with LoRA on every layer.} Our
+  LoRA touches only the action expert. The recipes in the literature adapt far
+  more of the model, and need a larger GPU.}
   \item \textbf{Gate touch on contact.} Feeding the tactile images only once
   contact is detected fits how ACT already uses them, and removes the
   pre-contact images that raised the edge question.
@@ -40,4 +48,3 @@ but only a second ahead, and frame-averaged scores undersell it.
   to the pixels that change would reward a correct moving gripper that
   frame-averaged PSNR misses.
 \end{enumerate}
-\end{newtext}

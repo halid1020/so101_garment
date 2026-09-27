@@ -5,14 +5,14 @@ Every figure and table is generated from the result files the experiments
 wrote; no number is typed in by hand. When a model is retrained, the figures
 are redrawn and the numbers follow.
 
-\textbf{Figure~\ref{fig:trajectory}.} \new{Twenty overhead frames, evenly spaced
-in time from the first to the last frame of test demonstration 58.}
+\textbf{Figure~\ref{fig:trajectory}.} Twenty overhead frames, evenly spaced
+in time from the first to the last frame of test demonstration 58.
 
-\textbf{Figure~\ref{fig:rimevidence}.} \new{The first frame of every
+\textbf{Figure~\ref{fig:rimevidence}.} The first frame of every
 demonstration is taken for each fingertip sensor, before either gripper has
 closed. The frames are converted to brightness and averaged. Each row and each
 column is then averaged, and divided by the mean of the middle fifth of the
-image.}
+image.
 
 \textbf{Action error (Tables~\ref{tab:actions}, \ref{tab:crop},
 \ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every 25th frame is given to
@@ -30,23 +30,23 @@ are held out. Everything else, including the random seed, is unchanged.
 \textbf{Grad-CAM rim measure (Figure~\ref{fig:rim}).} A band around the edge of
 each tactile Grad-CAM map is defined as a fraction of the image, so that maps of
 different resolution are treated alike. The weight inside the band is divided by
-the weight a flat map of the same size would put there. \new{The maps come from test demonstration 58, every fifth frame; the
-reviewed draft used training demonstrations.}
+the weight a flat map of the same size would put there. The maps come from test demonstration 58, every fifth frame; the
+reviewed draft used training demonstrations.
 
 \textbf{Input contribution (Figures~\ref{fig:streams} and~\ref{fig:framewise}).}
 As in Section~\ref{sec:measures}. Figure~\ref{fig:framewise} uses every fifth
-frame of test demonstration 58 and keeps the result per frame. \new{Correction:
+frame of test demonstration 58 and keeps the result per frame. Correction:
 the reviewed draft said each input was replaced by its dataset average. It is
 replaced by a flat image of its own average colour, and the joint positions by a
-constant; this text now says so.}
+constant; this text now says so.
 
 \textbf{World models (Tables~\ref{tab:wm}, Figures~\ref{fig:predmargin},
 \ref{fig:filmstrip}, \ref{fig:fastwamstrip}).} One frame in thirty of the test
 demonstrations, 24 frames in all, is given to each model with its sampler fixed
 to one seed. The filmstrips are the frames those numbers were computed from.
-\new{For a cropped world model the true frames are cropped the same way before
+For a cropped world model the true frames are cropped the same way before
 scoring, and FastWAM's fingertip composite is cut back into its four sensors so
-both models are scored per sensor.}
+both models are scored per sensor.
 
 \section{Additional results}
 \label{sec:extra}
@@ -60,6 +60,24 @@ both models are scored per sensor.}
   \small
   \input{tables/floor_table}
 \end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.45\textwidth]{split_comparison.png}
+  \caption{The gap (test error divided by training error) when testing on the
+  last seven demonstrations and on a random seven. The dotted line is a model
+  equally good on both.}
+  \label{fig:split}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\textwidth]{prediction_margin.png}
+  \caption{Each world action model's PSNR minus that of repeating the last
+  frame, against how far ahead the frame is. Above zero, the model predicts
+  better than assuming nothing moves.}
+  \label{fig:predmargin}
+\end{figure}
 
 \begin{table}[h]
   \centering
@@ -127,7 +145,7 @@ ACT.
 \textbf{Not an on-robot result.} Agreement with recorded commands is not the
 same as folding the garment.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 \bibitem{zhao2023act} T.~Z. Zhao, V.~Kumar, S.~Levine and C.~Finn. Learning
 fine-grained bimanual manipulation with low-cost hardware. \emph{RSS}, 2023.
 \bibitem{chi2023diffusion} C.~Chi et al. Diffusion Policy: visuomotor policy
@@ -138,8 +156,16 @@ model with open-world generalization. 2025.
 language models. \emph{ICLR}, 2022.
 \bibitem{lipman2023flow} Y.~Lipman et al. Flow matching for generative
 modeling. \emph{ICLR}, 2023.
-\bibitem{dreamzero} World action models are zero-shot policies.
+\bibitem{dreamzero} S.~Ye et al. World action models are zero-shot policies.
 arXiv:2602.15922, 2026.
+\bibitem{kim2024openvla} M.~J. Kim et al. OpenVLA: an open-source
+vision-language-action model. \emph{CoRL}, 2024.
+\bibitem{biderman2024lora} D.~Biderman et al. LoRA learns less and forgets less.
+\emph{TMLR}, 2024.
+\bibitem{fastwam} T.~Yuan, Z.~Dong, Y.~Liu and H.~Zhao. Fast-WAM: do world
+action models need test-time future imagination? arXiv:2603.16666, 2026.
+\bibitem{wan2025} Wan Team. Wan: open and advanced large-scale video generative
+models. arXiv:2503.20314, 2025.
 \bibitem{selvaraju2017gradcam} R.~R. Selvaraju et al. Grad-CAM: visual
 explanations from deep networks via gradient-based localization. \emph{ICCV},
 2017.
