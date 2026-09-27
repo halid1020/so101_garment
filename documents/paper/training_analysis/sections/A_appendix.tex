@@ -1,0 +1,145 @@
+\section{How each figure and table was made}
+\label{sec:provenance}
+
+Every figure and table is generated from the result files the experiments
+wrote; no number is typed in by hand. When a model is retrained, the figures
+are redrawn and the numbers follow.
+
+\textbf{Figure~\ref{fig:trajectory}.} \new{Twenty overhead frames, evenly spaced
+in time from the first to the last frame of test demonstration 58.}
+
+\textbf{Figure~\ref{fig:rimevidence}.} \new{The first frame of every
+demonstration is taken for each fingertip sensor, before either gripper has
+closed. The frames are converted to brightness and averaged. Each row and each
+column is then averaged, and divided by the mean of the middle fifth of the
+image.}
+
+\textbf{Action error (Tables~\ref{tab:actions}, \ref{tab:crop},
+\ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every twentieth frame is given to
+the model with the past frames it expects. The planned chunk is compared step by
+step with the recorded commands; squaring and averaging at each step over all
+sampled frames gives the curve, and averaging the curve over the chosen steps
+and taking the square root gives one number. FastWAM is scored on one frame in
+sixty because each of its predictions is slow. pi0.5 is scored with the
+instruction it was trained with.
+
+\textbf{The split control (Figure~\ref{fig:split}, Table~\ref{tab:split}).} ACT
+and Diffusion are retrained once more, changing only which seven demonstrations
+are held out. Everything else, including the random seed, is unchanged.
+
+\textbf{Grad-CAM rim measure (Figure~\ref{fig:rim}).} A band around the edge of
+each tactile Grad-CAM map is defined as a fraction of the image, so that maps of
+different resolution are treated alike. The weight inside the band is divided by
+the weight a flat map of the same size would put there.
+
+\textbf{Input contribution (Figures~\ref{fig:streams} and~\ref{fig:framewise}).}
+As in Section~\ref{sec:measures}. Figure~\ref{fig:framewise} uses every fifth
+frame of test demonstration 58 and keeps the result per frame. \new{Correction:
+the reviewed draft said each input was replaced by its dataset average. It is
+replaced by a flat image of its own average colour, and the joint positions by a
+constant; this text now says so.}
+
+\textbf{World models (Tables~\ref{tab:wm}, Figures~\ref{fig:predmargin},
+\ref{fig:filmstrip}, \ref{fig:fastwamstrip}).} One frame in thirty of the test
+demonstrations, 24 frames in all, is given to each model with its sampler fixed
+to one seed. The filmstrips are the frames those numbers were computed from.
+\new{For a cropped world model the true frames are cropped the same way before
+scoring, and FastWAM's fingertip composite is cut back into its four sensors so
+both models are scored per sensor.}
+
+\section{Additional results}
+\label{sec:extra}
+
+\begin{table}[h]
+  \centering
+  \caption{Change between repeated scorings with three random seeds, lowest
+  and highest RMSE on the test demonstrations. A difference between two models
+  smaller than this spread is not a finding.}
+  \label{tab:floor}
+  \small
+  \input{tables/floor_table}
+\end{table}
+
+\begin{table}[h]
+  \centering
+  \caption{The gap under each held-out set.}
+  \label{tab:split}
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    model & last seven & random seven & change \\
+    \midrule
+    ACT & 5.3 & 8.9 & $+68\,\%$ \\
+    Diffusion & 1.9 & 2.6 & $+37\,\%$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Scoring each of the random seven on its own shows one atypical demonstration,
+with nearly twice the median error of the other six. Without it, ACT's gap is
+still 7.4, above the 5.3 of the last seven.
+
+\begin{table}[h]
+  \centering
+  \caption{ACT with the rows-only crop, stretched and unstretched, over the
+  first 10, first 32 and all 100 steps (test RMSE).}
+  \label{tab:stretch}
+  \small
+  \input{tables/stretch_table}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{gradcam_peak_touch.png}
+  \caption{Grad-CAM for each policy at the moment touch mattered most in test
+  demonstration 58. A cropped policy is shown the cropped image it received.}
+  \label{fig:gradcampeak}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{fastwam_filmstrip.png}
+  \caption{FastWAM's prediction over its horizon; columns are about
+  \SI{0.13}{\second} apart. The fingertip row is its two-by-two composite.}
+  \label{fig:fastwamstrip}
+\end{figure}
+
+\section{Threats to validity}
+\label{sec:threats}
+
+\textbf{Small test set.} The test errors rest on 111 scored frames. A few per
+cent is within noise; a factor of several is not.
+
+\textbf{One training run per model.} We measured how much a score moves with
+the sampling seed, but not how much a retrained model moves with its training
+seed. Small crop effects could reverse on a second training run.
+
+\textbf{Models read different cameras.} pi0.5 reads three cameras and FastWAM a
+composite, so differences between them and the others mix architecture with
+input.
+
+\textbf{Contribution is use, not need.} Removing an input and measuring the
+change says how much a trained model uses it, not whether the task needs it.
+Only retraining without it answers that, as Section~\ref{sec:sensors} does for
+ACT.
+
+\textbf{Not an on-robot result.} Agreement with recorded commands is not the
+same as folding the garment.
+
+\begin{thebibliography}{9}
+\bibitem{zhao2023act} T.~Z. Zhao, V.~Kumar, S.~Levine and C.~Finn. Learning
+fine-grained bimanual manipulation with low-cost hardware. \emph{RSS}, 2023.
+\bibitem{chi2023diffusion} C.~Chi et al. Diffusion Policy: visuomotor policy
+learning via action diffusion. \emph{RSS}, 2023.
+\bibitem{pi05} Physical Intelligence. $\pi_{0.5}$: a vision-language-action
+model with open-world generalization. 2025.
+\bibitem{hu2022lora} E.~J. Hu et al. LoRA: low-rank adaptation of large
+language models. \emph{ICLR}, 2022.
+\bibitem{lipman2023flow} Y.~Lipman et al. Flow matching for generative
+modeling. \emph{ICLR}, 2023.
+\bibitem{dreamzero} World action models are zero-shot policies.
+arXiv:2602.15922, 2026.
+\bibitem{selvaraju2017gradcam} R.~R. Selvaraju et al. Grad-CAM: visual
+explanations from deep networks via gradient-based localization. \emph{ICCV},
+2017.
+\end{thebibliography}

@@ -1,0 +1,193 @@
+\section{Methods}
+\label{sec:methods}
+
+This section describes the six models (Section~\ref{sec:models}), the
+demonstrations and how we split them (Section~\ref{sec:data}), how we measure
+each model (Section~\ref{sec:measures}), and how we crop the tactile images
+(Section~\ref{sec:cropmethod}).
+
+\subsection{The models}
+\label{sec:models}
+
+\begin{newtext}
+Every model reads the joint positions of both arms (twelve numbers, which we
+call \emph{proprioception}) and some of the cameras. Each outputs a
+\emph{chunk}: a plan of future arm commands at \SI{30}{\hertz}.
+Table~\ref{tab:models} lists how they differ. For each model we give its
+original design first and then what we changed.
+
+\textbf{ACT} \citep{zhao2023act} encodes each camera with a ResNet-18 and
+decodes a whole chunk at once with a transformer, trained as a conditional
+variational autoencoder. The original smooths overlapping chunks at test time.
+We use the LeRobot implementation unchanged, with all five cameras and a chunk
+of 100 steps (\SI{3.3}{\second}).
+
+\textbf{Diffusion Policy} \citep{chi2023diffusion} starts from random noise
+and removes it step by step to produce a chunk, using a one-dimensional
+convolutional network conditioned on the images. We use the LeRobot version
+with all five cameras and ResNet-18 encoders trained from scratch. It reads the
+last two frames, predicts 64 steps and executes 32, so we score the 32 it
+executes.
+
+\textbf{pi0.5} \citep{pi05} is a vision-language-action model: a pretrained
+vision-language model reads the images and a written instruction, and a
+smaller ``action expert'' produces the chunk by flow matching. It was
+pretrained on a large set of robot data. We finetune the public base model with
+LoRA \citep{hu2022lora} (rank 16), which trains a small low-rank addition to
+the action expert and leaves the rest frozen. It has only three image slots, so
+it reads the overhead camera and one fingertip per arm. It is given the
+instruction ``fold the short'' and plans 50 steps.
+
+\textbf{Flow matching} is our own small policy. It keeps pi0.5's training
+objective and action expert but replaces the pretrained vision-language model
+with Diffusion Policy's ResNet-18 encoders, trained from scratch on all five
+cameras. Flow matching \citep{lipman2023flow} learns to move noise to an action
+chunk along straight lines, which is the optimal-transport path between the
+two. The model therefore separates the objective from pi0.5's pretraining.
+
+\textbf{DreamZero} \citep{dreamzero} is a \emph{world action model}: it
+predicts future video and future actions together, under one flow-matching
+objective. The original is built on a 14-billion-parameter pretrained video
+generator. Ours has about 59 million parameters and is trained from scratch on
+our demonstrations. It tiles all five cameras into one image and compresses
+each frame with a frozen image autoencoder. It sees two past frames, up to
+\SI{1.6}{\second} back, and predicts frames every \SI{0.8}{\second} up to
+\SI{4.8}{\second} ahead, with 24 action steps per chunk.
+
+\textbf{FastWAM} is also a world action model, built on a pretrained
+five-billion-parameter video generator (Wan2.2) with an action expert beside
+it. We finetune the public LeRobot base model. Its image input is one frame of
+fixed size, so it reads the overhead camera and a two-by-two composite of the
+four fingertip images. It predicts nine frames over about a second and plans 32
+action steps, of which it executes 10.
+\end{newtext}
+
+\begin{table}[t]
+  \centering
+  \caption{\new{The six models. \emph{Plan} is the number of steps each model
+  commits to and we score (at \SI{30}{\hertz}). \emph{Fingertips} is how many
+  of the four tactile cameras the model reads. Parameters count the whole
+  model; for pi0.5 only the LoRA addition is trained.}}
+  \label{tab:models}
+  \small
+  \begin{tabular}{lrrlrrl}
+    \toprule
+    model & plan & fingertips & starts from & parameters & steps $\times$ batch & predicts images \\
+    \midrule
+    ACT & 100 & 4 & ImageNet encoder & \SI{52}{M} & \num{80000} $\times$ 8 & no \\
+    Diffusion & 32 & 4 & scratch & \SI{323}{M} & \num{100000} $\times$ 8 & no \\
+    pi0.5 & 50 & 2 & robot-pretrained & \SI{4.1}{B} & \num{30000} $\times$ 1 & no \\
+    Flow matching & 50 & 4 & scratch & \pending{count} & \num{60000} $\times$ 16 & no \\
+    DreamZero & 24 & 4 & scratch & \SI{59}{M} & \num{80000} $\times$ 8 & yes \\
+    FastWAM & 10 & 4 (composite) & video-pretrained & \SI{6.0}{B} & \num{30000} $\times$ 8 & yes \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{The demonstrations and the split}
+\label{sec:data}
+
+We recorded one task in one session: a pair of shorts, already laid flat, is
+folded once by the two arms. There are 65 demonstrations, about 15 seconds
+each, 30141 frames in all at \SI{30}{\hertz}. \new{Figure~\ref{fig:trajectory}
+shows one demonstration from start to end.}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.78\textwidth]{trajectory_strip.png}
+  \caption{\new{One held-out demonstration seen by the overhead camera, 20
+  frames evenly spaced from start to end. The arms grasp the waistband, fold
+  the shorts over and release.}}
+  \label{fig:trajectory}
+\end{figure}
+
+We train every model on the first 58 demonstrations and test it on the
+\emph{last seven}, which it never sees. \new{The last seven were recorded at
+the end of the session. If something changed slowly during the session, such
+as the lighting or wear on the gels, the test set would differ from the
+training set for that reason alone. To check this, we retrain ACT and
+Diffusion on a \emph{random seven} held out from across the whole session.
+Section~\ref{sec:compare} compares the two.}
+
+\subsection{How we measure}
+\label{sec:measures}
+
+\textbf{Action error.} We give a model one observation and compare the chunk it
+plans with the commands the demonstrator actually sent next. We take the
+root-mean-square error (RMSE) over all twelve joints, in degrees, separately for
+each step of the chunk. We sample one frame in twenty, which gives 1127 scored
+frames from the training demonstrations and 111 from the test demonstrations.
+Models plan different distances ahead, and error grows with distance, so we
+compare models over the first ten steps (\SI{0.33}{\second}), which every model
+plans. The \emph{gap} is the test error divided by the training error. Models
+that sample have their random seed fixed, so a score repeats exactly.
+
+\begin{newtext}
+\textbf{Grad-CAM} \citep{selvaraju2017gradcam} shows where in an image a
+model's output comes from. We take the magnitude of the planned chunk as the
+output. We then compute its gradient with respect to the last feature map of
+the ResNet encoder, average that gradient over each channel to get one weight
+per channel, and sum the channels with these weights. Negative values are set
+to zero, and the map is scaled so its peak is one and enlarged to the image
+size. Grad-CAM needs a convolutional feature map, so it applies to ACT and
+Diffusion but not to pi0.5.
+
+\textbf{Input contribution.} To ask how much a model uses one input, we replace
+that input with an uninformative version and measure how far the plan moves.
+An image is replaced by a flat image of its own average colour, which keeps its
+brightness but removes all structure. The joint positions are replaced by a
+constant. The distance between the two plans is the mean, over the chunk, of the
+Euclidean distance between their commands. We do this for each input in turn
+and divide each distance by their sum, so the contributions of one model add up
+to 100\,\%. Because they are normalised within a model, the percentages rank a
+model's inputs; they cannot be compared in size between models. For models
+that sample, the seed is fixed during this, since otherwise sampling noise
+alone moves the plan by far more than removing a camera does.
+
+\textbf{World models.} We score frames in two ways. \emph{Reconstruction}
+passes frames the model has already seen through its own image autoencoder and
+back. \emph{Prediction} compares the frames the model generates for the future,
+together with its own planned actions, with what the cameras actually recorded.
+Both use peak signal-to-noise ratio (PSNR, in decibels, higher is better) and
+the structural similarity index (SSIM, from 0 to 1). We score every sensor
+separately. As a baseline we repeat the last frame the model saw; a model that
+cannot beat this has learned nothing about how the scene moves.
+\end{newtext}
+
+\subsection{The tactile crop}
+\label{sec:cropmethod}
+
+\begin{newtext}
+Our earlier Grad-CAM pictures showed ACT putting weight near the edges of the
+tactile images before contact. Figure~\ref{fig:rimevidence} measures what the
+images themselves show before contact. On each sensor the brightest edge is 10 to
+21\,\% brighter than the centre, which fits light leaking in at the gel boundary. However, the
+brightest feature on every sensor is a vertical ridge inside the gel, about a
+third of the way across, not the edge. So the images support a brighter rim,
+but they do not show that the rim is the strongest signal before contact.
+\end{newtext}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.92\textwidth]{rim_evidence.png}
+  \caption{\new{The four fingertip sensors before contact. Top: the first frame
+  of one demonstration, with the rows-only crop (dashed) and the four-edge crop
+  (solid). Bottom: brightness of each row and column relative to the centre of
+  the gel, averaged over the first frame of all 65 demonstrations; dotted lines
+  mark the crop boundaries. The sharp peak in the columns is a ridge in the gel,
+  not the rim.}}
+  \label{fig:rimevidence}
+\end{figure}
+
+We test three crops, each applied to all four fingertip images. \emph{Rows
+only} removes the top and bottom tenth of the image. We measured beforehand
+that the columns carry contact signal right up to the edge on two sensors,
+while every sensor has spare rows. \new{\emph{Four edges} removes a tenth from
+every side.} Both then resize the image back to its original shape, which
+stretches it. \emph{Rows without stretching} keeps the cropped image at its
+smaller size. Only ACT accepts cameras of different sizes, so only ACT gets
+this third crop. \new{The crop is part of the model's saved input pipeline, so
+it is applied during training and again at test time. We confirmed this in the
+saved pipeline of every cropped model.} Apart from the crop, a cropped model is
+identical to its uncropped version: the same architecture, data, number of
+steps, batch size and random seed.

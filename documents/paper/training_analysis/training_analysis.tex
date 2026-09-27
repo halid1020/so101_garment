@@ -4,6 +4,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{siunitx}
 \usepackage[numbers]{natbib}
@@ -11,20 +12,22 @@
 % Guideline convention: flag design choices that lack a solid reason.
 \newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
 
+% Material added since the annotated draft of 2026-09-27 is set in blue, as the
+% reviewer asked; rewording of old material stays black.
+\newcommand{\new}[1]{{\color{blue}#1}}
+\newenvironment{newtext}{\color{blue}}{}
+% A result whose run has not finished. None may survive into a shared version.
+\newcommand{\pending}[1]{{\color{red}[pending: #1]}}
+
 % Figures are kept beside this document rather than referenced out of the
 % results tree, because that tree is not version controlled and the report must
 % rebuild on a machine that has never run the experiments.
 \graphicspath{{figures/}}
 
-\title{Cropped Tactile Inputs and Held-Out Behaviour:\\
-A Comparison of Three Visuomotor Policy Families on a Bimanual
-Garment-Folding Rig}
+\title{Learning Bimanual Garment Folding with Tactile Fingertips:\\
+Policies, Tactile Cropping and World Models}
 
-\author{so101\_garment project\thanks{A report, not a living paper. It records
-one comparison and the evidence behind it. Claims that graduate from here into
-the real-world training paper must be copied there in the same branch, under
-that paper's living-document rule. The repository's writing guideline governs
-its style.}}
+\author{Halid Kadi \and Yupeng Wang \and Yongqiang Zhao \and Juan Ye \and Shan Luo}
 
 \date{Last updated: \today}
 
@@ -32,38 +35,25 @@ its style.}}
 \maketitle
 
 \begin{abstract}
-A bimanual rig fitted with fingertip tactile cameras learns garment folding
-from teleoperated demonstrations. Gradient attribution computed on training
-recordings placed weight at the edges of the tactile images, including before
-contact, which is consistent with light entering at the boundary of the
-sensing gel rather than with contact being sensed. This report evaluates the
-remedy that follows from that reading: cropping each tactile image to its
-centre. Every policy is retrained with a held-out split so that behaviour can
-be measured on recordings it never saw, and each cropped policy is matched to
-its uncropped twin in architecture, optimisation budget and data. The
-comparison reverses several conclusions that had been drawn from training
-recordings alone, and two of those reverse a second time once the families are
-compared over a planning horizon they share rather than over their own. Two
-world models, which predict what the cameras will see as well as what to do,
-are scored under the same treatment: both plan the near term better on unseen
-recordings than every policy, and the smaller predicts the cameras better than
-repeating the present. We give
-the provenance of every figure so that each claim can be checked, and we state
-the confounds that remain open, including one that the present split cannot
-separate.
+This report compares learned controllers for a two-armed robot that folds a
+garment, using an overhead camera and four tactile sensors on its fingertips.
+We train four policies and two world models from the same teleoperated
+demonstrations and test them on demonstrations they never saw. We ask three
+questions. How do the models differ on new demonstrations? Does cropping the
+edges of the tactile images help? And how well do the world models predict
+what the cameras will see next? The models that also predict the future plan
+their next actions best. Every model is much worse on new demonstrations than
+on the ones it trained on, and cropping the tactile images does not change
+that. We describe how every figure was made, so that each claim can be checked.
+\new{Text in blue is new since the reviewed draft.}
 \end{abstract}
 
-\input{sections/01_scope}
-\input{sections/02_recordings}
-\input{sections/03_results}
-\input{sections/03b_split}
-\input{sections/04_cropping}
-\input{sections/05_inputs}
-\input{sections/05b_framewise}
-\input{sections/09_world_models}
-\input{sections/10_prediction}
-\input{sections/06_findings}
-\input{sections/07_provenance}
-\input{sections/08_threats}
+\input{sections/01_introduction}
+\input{sections/02_methods}
+\input{sections/03_experiments}
+\input{sections/04_discussion}
+
+\appendix
+\input{sections/A_appendix}
 
 \end{document}

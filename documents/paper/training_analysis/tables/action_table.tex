@@ -1,0 +1,15 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+& & \multicolumn{3}{c}{over its own plan} & \multicolumn{2}{c}{over the first 10 steps} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-7}
+model & plan & train & test & gap & test & gap \\
+\midrule
+ACT & 100 & 2.67 & 14.09 & 5.3 & 7.88 & 3.4 \\
+Diffusion & 32 & 4.74 & 9.18 & 1.9 & 5.03 & 2.8 \\
+pi0.5 & 50 & 17.05 & 18.35 & 1.1 & 8.96 & 1.1 \\
+pi0.5, three passes & -- & -- & -- & -- & -- & -- \\
+Flow matching & -- & -- & -- & -- & -- & -- \\
+DreamZero & 24 & 0.94 & 7.02 & 7.4 & 4.17 & 5.3 \\
+FastWAM & 10 & 1.53 & 3.94 & 2.6 & 3.94 & 2.6 \\
+\bottomrule
+\end{tabular}

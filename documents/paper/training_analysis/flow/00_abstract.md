@@ -1,23 +1,7 @@
-# Abstract — paragraph flow
+# Abstract (no numbers)
 
-Single paragraph, high level, NO numbers (writing guideline §4).
-
-- Hook: a tactile-equipped bimanual rig learns garment folding from
-  teleoperated demonstrations, and the question asked of it was whether the
-  policies read the tactile sensors or merely the light leaking round their
-  edges.
-- Problem: the evidence that prompted the question was gradient attribution on
-  training recordings, and neither attribution on training data nor a training
-  loss can answer whether a change helps.
-- What we do: retrain every policy with a held-out split, score them on
-  recordings they never saw, and compare cropped tactile inputs against
-  uncropped ones under matched budgets.
-- Turn: report that the comparison reverses several conclusions drawn from
-  training data, and that two of them reverse again once the policies are
-  compared over a horizon they share.
-- Close: state that the report gives every figure's provenance so each claim
-  can be checked, and flags the confounds that remain open.
-- (added 2026-09-25) Extension: two world models that also predict the
-  cameras, scored the same way; they plan the near term better on unseen
-  recordings than every policy, and the small one predicts the cameras better
-  than repeating the present. No numbers.
+P1  "This report compares ..." five learned controllers on a bimanual tactile
+    garment-folding rig, on recordings they never saw           -> what we ask
+    (how the policies differ, what the tactile crop does, how well the world
+    models predict the cameras); what we find in one sentence each; what is
+    open. Blue marks what is new since the annotated draft.

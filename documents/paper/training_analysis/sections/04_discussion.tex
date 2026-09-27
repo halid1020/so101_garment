@@ -1,0 +1,43 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\begin{newtext}
+\textbf{What we learned.} The largest effect in this report is not a difference
+between models. It is the drop from training to unseen demonstrations, which
+every model shows and which is not caused by drift over the session. ACT shows
+it most clearly: it replays familiar demonstrations almost exactly and does
+much worse on new ones. Fifty-eight demonstrations of one task from one session
+are not enough for any of these models to generalise to a fifty-ninth.
+
+Cropping the tactile images is not the lever. It changes almost nothing on any
+model, and on average the policies do not over-weight the image edges that
+motivated it. The edges are brighter than the centre, but the policies'
+behaviour does not depend on them in a way we can measure.
+
+Touch is used, but briefly. ACT ignores the fingertips for seconds at a time
+and then leans on them heavily around contact, so averaged contributions
+understate what the tactile sensors do.
+
+The two world models plan the near future best, and DreamZero predicts the
+cameras better than assuming nothing moves. FastWAM predicts sharper frames,
+but only a second ahead, and frame-averaged scores undersell it.
+
+\textbf{Next steps.}
+\begin{enumerate}
+  \item \textbf{Collect more varied demonstrations.} More sessions, garments and
+  starting positions are the most direct attack on the generalisation gap.
+  \item \textbf{Test on the robot.} Error against recorded commands measures
+  agreement with one demonstrator. Only trials on the rig show whether a policy
+  folds the garment, and whether it recovers from states the demonstrator never
+  visited.
+  \item \textbf{Gate touch on contact.} Feeding the tactile images only once
+  contact is detected fits how ACT already uses them, and removes the
+  pre-contact images that raised the edge question.
+  \item \textbf{Train FastWAM to predict further ahead,} to test whether its
+  pretrained video prior still helps beyond one second, where so far only
+  DreamZero predicts.
+  \item \textbf{Score motion, not whole frames.} A prediction score restricted
+  to the pixels that change would reward a correct moving gripper that
+  frame-averaged PSNR misses.
+\end{enumerate}
+\end{newtext}

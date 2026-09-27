@@ -43,7 +43,24 @@ FAMILY = {
     # three policy families above and never reused for them.
     "dreamzero": "#17917a",
     "fastwam": "#c2407e",
+    # Flow matching: a policy, but neither a port nor a world model.
+    "flowmatch": "#8a6d1d",
 }
+
+#: Every model drawn on the all-model horizon figure: key, label, marker. The
+#: uncropped arm only -- the crop has its own figure and table.
+ALL_MODELS = (
+    ("act", "ACT", None),
+    ("diffusion", "Diffusion", None),
+    ("pi05", "pi0.5", None),
+    ("flowmatch", "Flow matching", None),
+    ("dreamzero", "DreamZero", "o"),
+    ("fastwam", "FastWAM", "s"),
+)
+
+#: Commands are recorded at 30 Hz, so one planned step is a thirtieth of a second
+#: for every model -- which is what lets their curves share a time axis.
+ACTION_HZ = 30.0
 
 #: World models: key, label, marker. The marker is the second encoding, so a
 #: reader never needs the colour alone to tell the two apart.
@@ -191,6 +208,74 @@ def draw_horizon(results: "dict[str, dict]", out: Path) -> Path:
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  horizon decay: {drawn} curves -> {out}")
+    return out
+
+
+def draw_horizon_all(results: "dict[str, dict]", out: Path, shared: int = 10) -> Path:
+    """Error against how far ahead, for every model, on one linear scale.
+
+    Root-mean-square error per planned step, against time ahead in seconds, so
+    models that plan ten steps and a hundred sit on one axis without either
+    being stretched. Linear on purpose -- a reader compares heights directly --
+    and both panels share it. The shaded band is the stretch every model plans.
+    """
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.0), sharey=True)
+    drawn = []
+    for panel, half, title in zip(
+        axes,
+        ("validation", "train"),
+        ("on the 7 held-out recordings", "on the 58 training recordings"),
+    ):
+        for key, label, marker in ALL_MODELS:
+            result = results.get(key)
+            per_step = (result or {}).get(half, {}).get("mse_per_step") or []
+            if not per_step:
+                continue
+            seconds = np.arange(1, len(per_step) + 1) / ACTION_HZ
+            panel.plot(
+                seconds,
+                np.sqrt(per_step),
+                label=label,
+                color=FAMILY[key],
+                linewidth=2.0,
+                marker=marker,
+                markersize=4,
+                markevery=max(1, len(per_step) // 8),
+            )
+            if half == "validation":
+                drawn.append(label)
+        panel.axvspan(0, shared / ACTION_HZ, color=GRID, alpha=0.55, zorder=0)
+        panel.set_xlim(0, None)
+        panel.set_xlabel("time ahead (s)")
+        panel.set_title(title, color=INK, fontsize=10)
+        tidy(panel)
+    axes[0].set_ylabel("action error (RMSE)")
+    axes[0].annotate(
+        f"first {shared} steps",
+        xy=(shared / ACTION_HZ / 2, 0.97),
+        xycoords=("data", "axes fraction"),
+        ha="center",
+        va="top",
+        fontsize=7,
+        color=MUTED,
+    )
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=len(labels),
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.04),
+        fontsize=9,
+    )
+    figure.tight_layout(rect=(0, 0.05, 1, 1))
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    missing = [label for _k, label, _m in ALL_MODELS if label not in drawn]
+    print(
+        f"  horizon, all models: {drawn}" + (f"  MISSING {missing}" if missing else "")
+    )
     return out
 
 
@@ -692,6 +777,27 @@ def main() -> int:
         ],
         help="model=path pairs of world-model action_mse.json results",
     )
+    parser.add_argument(
+        "--results-root",
+        default="outputs/mse",
+        help="every <machine>/<date>/<prefix><arm>.json under it feeds the "
+        "all-model, crop and sensor tables and the all-model horizon figure",
+    )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="the dataset directory, for the trajectory strip and the rim "
+        "evidence; both are skipped without it",
+    )
+    parser.add_argument(
+        "--wm-prediction",
+        nargs="*",
+        default=[
+            "dreamzero=outputs/analysis/2026-09-27/dreamzero-prediction/prediction.json",
+            "fastwam=outputs/analysis/2026-09-27/fastwam-prediction/prediction.json",
+        ],
+        help="model=path pairs scored per sensor with reconstruction",
+    )
     parser.add_argument("--out", default=None, help="where the figures go")
     args = parser.parse_args()
 
@@ -751,12 +857,31 @@ def main() -> int:
     write_stretch_table(stretch, out / "stretch_table.tex")
     for directory in args.floor:
         write_floor_table(Path(directory), out / "floor_table.tex")
+
+    everything = load_results(Path(args.results_root), args.prefix)
+    missing_rows = [label for arm, label in ACTION_ROWS if arm not in everything]
+    if missing_rows:
+        print(f"MISSING from the action table, drawn as dashes: {missing_rows}")
+    draw_horizon_all(everything, out / "horizon_all.png")
+    write_action_table(everything, out / "action_table.tex")
+    write_crop_table(everything, out / "crop_table.tex")
+    write_sensor_table(everything, out / "sensor_table.tex")
+    revised = {}
+    for pair in args.wm_prediction:
+        key, _, path = pair.partition("=")
+        if Path(path).is_file():
+            revised[key] = json.loads(Path(path).read_text())
+        else:
+            print(f"  per-sensor prediction: no {key} result at {path}")
+    write_wm_table(revised, out / "wm_table.tex")
+    if args.dataset:
+        dataset = Path(args.dataset).expanduser()
+        draw_trajectory_strip(dataset, args.episode, out / "trajectory_strip.png")
+        draw_rim_evidence(
+            dataset, list(range(65)), out / "rim_evidence.png", example=args.episode
+        )
     print(f"\nwrote {out}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 def draw_contact_sheet(dataset: Path, out: Path, held_out: "list[int]") -> Path:
@@ -937,3 +1062,400 @@ def draw_split_comparison(temporal: dict, random_split: dict, out: Path) -> Path
     plt.close(figure)
     print(f"  split comparison: {len(arms)} families -> {out}")
     return out
+
+
+def episode_frames(
+    dataset: Path, key: str, episode: int, fractions: "list[float]"
+) -> "list[tuple[float, np.ndarray]]":
+    """Frames of one camera at the given fractions of one recording's length.
+
+    Returns ``(seconds from the recording's start, RGB frame)`` pairs, decoded
+    by seeking into the recording's slice of the shared video file -- the same
+    route the contact sheet takes, for the same reason: the metadata names each
+    recording's span inside a file that holds several.
+    """
+    import av
+    import pandas as pd
+
+    table = pd.concat(
+        pd.read_parquet(p)
+        for p in sorted((dataset / "meta" / "episodes").rglob("*.parquet"))
+    )
+    row = table[table["episode_index"] == episode].iloc[0]
+    chunk = int(row[f"videos/{key}/chunk_index"])
+    file_index = int(row[f"videos/{key}/file_index"])
+    start = float(row[f"videos/{key}/from_timestamp"])
+    end = float(row[f"videos/{key}/to_timestamp"])
+    path = (
+        dataset / "videos" / key / f"chunk-{chunk:03d}" / f"file-{file_index:03d}.mp4"
+    )
+    out = []
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        for fraction in fractions:
+            wanted = start + fraction * (end - start - 1.0 / 30)
+            container.seek(int(wanted / stream.time_base), stream=stream)
+            frame = None
+            for candidate in container.decode(stream):
+                frame = candidate
+                if float(candidate.pts * stream.time_base) >= wanted - 1e-3:
+                    break
+            assert frame is not None
+            out.append((wanted - start, frame.to_ndarray(format="rgb24")))
+    return out
+
+
+def draw_trajectory_strip(
+    dataset: Path, episode: int, out: Path, count: int = 20
+) -> Path:
+    """One recording as the overhead camera saw it, ``count`` evenly spaced frames.
+
+    Replaces a sheet of one frame per recording, which showed sixty-five near
+    copies of one picture: what a reader needs first is what ONE demonstration
+    looks like from start to finish.
+    """
+    frames = episode_frames(
+        dataset, "observation.images.central", episode, list(np.linspace(0, 1, count))
+    )
+    columns = 5
+    rows = int(np.ceil(count / columns))
+    figure, axes = plt.subplots(rows, columns, figsize=(columns * 2.0, rows * 1.65))
+    for axis in np.ravel(axes):
+        axis.axis("off")
+    for axis, (seconds, image) in zip(np.ravel(axes), frames):
+        axis.imshow(image)
+        axis.set_title(f"{seconds:.1f} s", fontsize=8, color=MUTED, pad=2)
+    figure.tight_layout(pad=0.3)
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  trajectory strip: recording {episode}, {count} frames -> {out}")
+    return out
+
+
+def rim_profiles(
+    dataset: Path, episodes: "list[int]"
+) -> "dict[str, dict[str, np.ndarray]]":
+    """Mean brightness per row and per column of each fingertip, before contact.
+
+    The first frame of each recording, where both grippers are still open and
+    nothing has touched a gel, so any structure at the edge is the sensor's own
+    and not contact. Each profile is divided by the mean of its middle fifth,
+    so ``1.1`` reads as "ten per cent brighter than the centre of the gel".
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    out: "dict[str, dict[str, np.ndarray]]" = {}
+    for camera in TACTILE_CAMERAS:
+        key = f"observation.images.{camera}"
+        stack = np.stack(
+            [
+                episode_frames(dataset, key, e, [0.0])[0][1].mean(axis=2)
+                for e in episodes
+            ]
+        ).astype(float)
+        mean = stack.mean(axis=0)
+        rows, cols = mean.mean(axis=1), mean.mean(axis=0)
+
+        def relative(profile):
+            n = len(profile)
+            middle = profile[int(n * 0.4) : int(np.ceil(n * 0.6))].mean()
+            return profile / middle
+
+        out[camera] = {"rows": relative(rows), "cols": relative(cols), "image": mean}
+    return out
+
+
+def draw_rim_evidence(
+    dataset: Path, episodes: "list[int]", out: Path, example: int = 0
+) -> "tuple[Path, dict[str, dict[str, float]]]":
+    """The tactile rim, and the two crops that remove it, on every fingertip.
+
+    Top row: one pre-contact frame per sensor with the two crop boxes drawn on
+    it -- dashed, the rows-only crop (top and bottom tenth); solid, the
+    four-edge crop (a tenth off every edge). Bottom row: the brightness of each
+    row and each column relative to the gel's centre, averaged over the first
+    frame of every listed recording, with the crop lines marked. Returns the
+    edge brightness per camera so the text quotes the figure's own numbers.
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    profiles = rim_profiles(dataset, episodes)
+    edges: "dict[str, dict[str, float]]" = {}
+    figure, axes = plt.subplots(2, 4, figsize=(11, 4.6), height_ratios=(1.15, 1))
+    for column, camera in enumerate(TACTILE_CAMERAS):
+        image = episode_frames(dataset, f"observation.images.{camera}", example, [0.0])[
+            0
+        ][1]
+        height, width = image.shape[:2]
+        top = axes[0, column]
+        top.imshow(image)
+        top.axis("off")
+        top.set_title(camera.replace("_", " "), fontsize=8, color=INK)
+        top.add_patch(
+            plt.Rectangle(
+                (0, 0.1 * height),
+                width - 1,
+                0.8 * height,
+                fill=False,
+                edgecolor="#f5f5f5",
+                linestyle="--",
+                linewidth=1.4,
+            )
+        )
+        top.add_patch(
+            plt.Rectangle(
+                (0.1 * width, 0.1 * height),
+                0.8 * width,
+                0.8 * height,
+                fill=False,
+                edgecolor="#ffd23f",
+                linewidth=1.6,
+            )
+        )
+        bottom = axes[1, column]
+        rows, cols = profiles[camera]["rows"], profiles[camera]["cols"]
+        bottom.plot(
+            np.linspace(0, 1, len(rows)),
+            rows,
+            color=FAMILY["act"],
+            lw=2,
+            label="rows (top to bottom)",
+        )
+        bottom.plot(
+            np.linspace(0, 1, len(cols)),
+            cols,
+            color=FAMILY["diffusion"],
+            lw=2,
+            label="columns (left to right)",
+        )
+        for x in (0.1, 0.9):
+            bottom.axvline(x, color=MUTED, lw=1, ls=":")
+        bottom.axhline(1.0, color=GRID, lw=1)
+        bottom.set_xlabel("position across the image", fontsize=8)
+        if column == 0:
+            bottom.set_ylabel("brightness / centre", fontsize=8)
+        bottom.tick_params(labelsize=7)
+        tidy(bottom)
+        edges[camera] = {
+            "rows": float(
+                max(rows[: len(rows) // 10].max(), rows[-len(rows) // 10 :].max())
+            ),
+            "cols": float(
+                max(cols[: len(cols) // 10].max(), cols[-len(cols) // 10 :].max())
+            ),
+        }
+    axes[1, 0].legend(fontsize=7, frameon=False, loc="upper center")
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  rim evidence: {len(episodes)} first frames per sensor -> {out}")
+    for camera, value in edges.items():
+        print(
+            f"    {camera:<26} brightest outer tenth: rows x{value['rows']:.3f}"
+            f"  cols x{value['cols']:.3f}"
+        )
+    return out, edges
+
+
+#: Result files whose name marks them void. Kept on disk as the record of a
+#: fault, and never drawn.
+VOID_MARKERS = ("superseded", "INVALID")
+
+
+def load_results(root: Path, prefix: str = "split10-") -> "dict[str, dict]":
+    """Every action-error result under ``<root>/<machine>/<date>/``, by arm.
+
+    One arm found twice is an error rather than a choice: a rescoring that
+    silently shadowed the original is how a table ends up describing a run
+    nobody can point to.
+    """
+    found: "dict[str, dict]" = {}
+    where: "dict[str, Path]" = {}
+    for path in sorted(root.glob(f"*/*/{prefix}*.json")):
+        arm = path.stem[len(prefix) :]
+        if any(marker in arm for marker in VOID_MARKERS):
+            continue
+        if arm in found:
+            raise SystemExit(f"❌ {arm} is in both {where[arm]} and {path}")
+        found[arm] = json.loads(path.read_text())
+        where[arm] = path
+    return found
+
+
+#: Rows of the all-model action table: arm key, label.
+ACTION_ROWS = (
+    ("act", "ACT"),
+    ("diffusion", "Diffusion"),
+    ("pi05", "pi0.5"),
+    ("pi05_long", "pi0.5, three passes"),
+    ("flowmatch", "Flow matching"),
+    ("dreamzero", "DreamZero"),
+    ("fastwam", "FastWAM"),
+)
+
+
+def _cells(result: "dict | None", steps: "int | None" = None) -> "list[str]":
+    """Train, test and gap over ``steps`` (or the whole plan), as table cells."""
+    if not result:
+        return ["--", "--", "--"]
+    train = rmse_over(result, "train", steps)
+    test = rmse_over(result, "validation", steps)
+    return [f"{train:.2f}", f"{test:.2f}", f"{test / train:.1f}"]
+
+
+def write_action_table(results: "dict[str, dict]", out: Path, common: int = 10) -> Path:
+    """Every model, over its own plan and over the steps they all plan.
+
+    A missing model is a row of dashes, never an omitted line: a table that lost
+    a row silently reads as a complete comparison.
+    """
+    lines = [
+        r"\begin{tabular}{lrrrrrr}",
+        r"\toprule",
+        rf"& & \multicolumn{{3}}{{c}}{{over its own plan}} & "
+        rf"\multicolumn{{2}}{{c}}{{over the first {common} steps}} \\",
+        r"\cmidrule(lr){3-5}\cmidrule(lr){6-7}",
+        r"model & plan & train & test & gap & test & gap \\",
+        r"\midrule",
+    ]
+    for arm, label in ACTION_ROWS:
+        result = results.get(arm)
+        plan = str(result["validation"]["horizon"]) if result else "--"
+        own = _cells(result)
+        near = _cells(result, common)
+        lines.append(" & ".join([label, plan, *own, near[1], near[2]]) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  action table -> {out}")
+    return out
+
+
+#: Crop table: model label, then the arm key for each column. None means that
+#: crop does not exist for the model, which is not the same as pending.
+CROP_ROWS = (
+    ("ACT", "act", "act_crop", "act_crop_noresize", "act_crop_edges"),
+    ("Diffusion", "diffusion", "diffusion_crop", None, "diffusion_crop_edges"),
+    ("pi0.5", "pi05", "pi05_crop", None, "pi05_crop_edges"),
+    ("DreamZero", "dreamzero", None, None, "dreamzero_crop_edges"),
+    ("FastWAM", "fastwam", None, None, "fastwam_crop_edges"),
+)
+
+
+def write_crop_table(results: "dict[str, dict]", out: Path) -> Path:
+    """Test RMSE over each model's own plan, uncropped and under each crop."""
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        r"model & no crop & rows & rows, unstretched & four edges \\",
+        r"\midrule",
+    ]
+    for label, *arms in CROP_ROWS:
+        cells = []
+        for arm in arms:
+            if arm is None:
+                cells.append("n/a")
+            elif arm in results:
+                cells.append(f"{rmse_over(results[arm], 'validation'):.2f}")
+            else:
+                cells.append("--")
+        lines.append(" & ".join([label, *cells]) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  crop table -> {out}")
+    return out
+
+
+SENSOR_ROWS = (
+    ("act_central", "overhead"),
+    ("act_central_2tactile", "overhead + one fingertip per arm"),
+    ("act", "overhead + all four fingertips"),
+)
+
+
+def write_sensor_table(results: "dict[str, dict]", out: Path, common: int = 10) -> Path:
+    """ACT on three camera sets, all with proprioception."""
+    lines = [
+        r"\begin{tabular}{lrrrrr}",
+        r"\toprule",
+        r"& \multicolumn{3}{c}{over its 100-step plan} & "
+        rf"\multicolumn{{2}}{{c}}{{first {common} steps}} \\",
+        r"\cmidrule(lr){2-4}\cmidrule(lr){5-6}",
+        r"cameras & train & test & gap & test & gap \\",
+        r"\midrule",
+    ]
+    for arm, label in SENSOR_ROWS:
+        result = results.get(arm)
+        near = _cells(result, common)
+        lines.append(" & ".join([label, *_cells(result), near[1], near[2]]) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  sensor table -> {out}")
+    return out
+
+
+#: Sensor rows of the world-model table, in the order a reader expects.
+WM_SENSORS = (("central", "overhead"),) + tuple(
+    (camera, camera.replace("_", " ")) for camera in TACTILE
+)
+
+
+def write_wm_table(
+    predictions: "dict[str, dict]", out: Path, at: float = 0.8
+) -> "Path | None":
+    """Reconstruction, prediction and repeat-last per sensor, both world models.
+
+    The margin is read at ``at`` seconds ahead -- the one instant both models
+    predict -- and at the last step of each model's own horizon.
+    """
+    rows = []
+    for key, label, _marker in WORLD_MODELS:
+        payload = predictions.get(key)
+        if not payload:
+            continue
+        first, spacing = HORIZON_SECONDS[key]
+        for camera, camera_label in WM_SENSORS:
+            values = payload["per_camera"].get(camera)
+            if not values:
+                continue
+            model = np.array(values["psnr"])
+            held = np.array(values["psnr_baseline"])
+            times = first + spacing * np.arange(len(model))
+            index = int(np.argmin(np.abs(times - at)))
+            recon = values.get("recon_psnr")
+            rows.append(
+                [
+                    camera_label,
+                    label,
+                    f"{recon[0]:.1f}" if recon else "--",
+                    f"{model.mean():.1f}",
+                    f"{held.mean():.1f}",
+                    f"{model[index] - held[index]:+.1f}",
+                    f"{model[-1] - held[-1]:+.1f}",
+                ]
+            )
+    if not rows:
+        # A table the report \input's must exist, so an unscored state is a
+        # visible placeholder rather than a build error or a silent gap.
+        out.write_text(
+            "\\begin{tabular}{l}\\pending{world models not yet scored per sensor}\\end{tabular}\n"
+        )
+        print(f"  world-model sensor table: nothing scored yet -> placeholder {out}")
+        return out
+    lines = [
+        r"\begin{tabular}{llrrrrr}",
+        r"\toprule",
+        r"& & & & & \multicolumn{2}{c}{margin} \\",
+        r"\cmidrule(lr){6-7}",
+        rf"sensor & model & reconstruction & prediction & repeat last & "
+        rf"at \SI{{{at}}}{{\second}} & at end \\",
+        r"\midrule",
+    ]
+    lines += [" & ".join(row) + r" \\" for row in rows]
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    out.write_text("\n".join(lines))
+    print(f"  world-model sensor table: {len(rows)} rows -> {out}")
+    return out
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
