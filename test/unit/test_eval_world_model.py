@@ -10,6 +10,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from tool.eval_world_model import (
@@ -543,6 +544,32 @@ class ReconstructionTest(unittest.TestCase):
 
         for cls in (HarenaDreamzeroPolicy, HarenaFastwamPredictPolicy):
             self.assertTrue(callable(getattr(cls, "reconstruct_frames", None)), cls)
+
+    def test_the_held_frame_s_reconstruction_is_kept_for_the_filmstrip(self):
+        import tempfile
+
+        from tool.eval_world_model import evaluate_frame
+
+        frames = torch.full((1, 3, 3, 16, 16), 0.5)
+        keep: list = []
+        evaluate_frame(self.Blurry(), {"frames": frames}, seed=0, keep=keep)
+        recon = keep[0]["central"]["held_recon"]
+        self.assertEqual(int(recon.max()), 64)  # 0.5 halved -> 0.25 -> 64
+        with tempfile.TemporaryDirectory() as tmp:
+            back = load_filmstrip(save_filmstrip(keep[0], Path(tmp) / "s.npz"))
+            self.assertTrue((back["central"]["held_recon"] == recon).all())
+            drawn = draw_filmstrip(keep[0], Path(tmp) / "s.png")
+            self.assertGreater(drawn.stat().st_size, 1000)
+
+    def test_a_difference_image_is_grey_where_the_frames_agree(self):
+        from tool.eval_world_model import difference_image
+
+        same = np.full((2, 2, 3), 200, dtype=np.uint8)
+        self.assertEqual(int(difference_image(same, same).max()), 128)
+        black = np.zeros_like(same)
+        white = np.full_like(same, 255)
+        self.assertEqual(int(difference_image(white, black).min()), 255)
+        self.assertEqual(int(difference_image(black, white).max()), 0)
 
     def test_the_report_shows_the_ceiling(self):
         summary = {

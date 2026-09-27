@@ -206,11 +206,15 @@ def as_uint8(frame) -> np.ndarray:
 def save_filmstrip(kept: dict, out: Path) -> Path:
     """The arrays behind a filmstrip, so a report can redraw any subset of them.
 
-    Keys are ``<camera>/held``, ``<camera>/actual`` and ``<camera>/predicted``.
+    Keys are ``<camera>/held``, ``<camera>/actual`` and ``<camera>/predicted``,
+    and ``<camera>/held_recon`` -- the held frame through the model's own
+    autoencoder -- when the model can reconstruct.
     """
     arrays = {}
     for camera, parts in kept.items():
         arrays[f"{camera}/held"] = parts["held"]
+        if parts.get("held_recon") is not None:
+            arrays[f"{camera}/held_recon"] = parts["held_recon"]
         arrays[f"{camera}/actual"] = np.stack(parts["actual"])
         arrays[f"{camera}/predicted"] = np.stack(parts["predicted"])
     np.savez_compressed(out, **arrays)
@@ -224,19 +228,31 @@ def load_filmstrip(path: Path) -> dict:
         for key in data.files:
             camera, kind = key.rsplit("/", 1)
             value = data[key]
-            kept.setdefault(camera, {})[kind] = value if kind == "held" else list(value)
+            single = kind in ("held", "held_recon")
+            kept.setdefault(camera, {})[kind] = value if single else list(value)
     return kept
+
+
+def difference_image(truth: np.ndarray, predicted: np.ndarray) -> np.ndarray:
+    """Truth minus prediction, both in ``[0, 1]``, mapped from ``[-1, 1]`` to ``[0, 1]``.
+
+    Mid-grey is no error; brighter is where the model drew too dark, darker
+    where it drew too bright. Two uint8 images of the same shape in, one out.
+    """
+    diff = truth.astype(np.float64) / 255.0 - predicted.astype(np.float64) / 255.0
+    return ((diff + 1.0) / 2.0 * 255.0).round().astype(np.uint8)
 
 
 def draw_filmstrip(
     kept: dict, out: Path, title: str = "", cameras: "list[str] | None" = None
 ) -> Path:
-    """Actual, predicted and held, per camera, across the horizon.
+    """Actual, predicted and their difference, per camera, across the horizon.
 
-    Three rows per camera and one column per horizon step. The held row repeats
-    one frame on purpose: it is what the baseline predicts at every step, so a
-    reader sees exactly what a model must beat, and a predicted row that looks
-    like the held row is a model that has learned to predict the present.
+    Three rows per camera. Column 0 is the last frame the model saw: the actual
+    row shows it, the predicted row shows the model's reconstruction of it (its
+    own autoencoder, when it has one), and every later column is one step of the
+    horizon, so the rows line up in time. The difference row is truth minus
+    prediction (see :func:`difference_image`): flat grey is a perfect frame.
     """
     import matplotlib
 
@@ -245,20 +261,39 @@ def draw_filmstrip(
 
     cameras = [c for c in (cameras or list(kept)) if c in kept]
     steps = len(kept[cameras[0]]["actual"])
-    rows = [(c, kind) for c in cameras for kind in ("actual", "predicted", "held")]
+    rows = [
+        (c, kind) for c in cameras for kind in ("actual", "predicted", "difference")
+    ]
+    columns = steps + 1
     figure, axes = plt.subplots(
-        len(rows), steps, figsize=(1.5 * steps + 1.2, 1.5 * len(rows)), squeeze=False
+        len(rows),
+        columns,
+        figsize=(1.5 * columns + 1.2, 1.5 * len(rows)),
+        squeeze=False,
     )
     for r, (camera, kind) in enumerate(rows):
-        for step in range(steps):
-            axis = axes[r][step]
-            image = kept[camera]["held"] if kind == "held" else kept[camera][kind][step]
-            axis.imshow(image)
+        parts = kept[camera]
+        truth = [parts["held"], *parts["actual"]]
+        guess = [parts.get("held_recon"), *parts["predicted"]]
+        for column in range(columns):
+            axis = axes[r][column]
             axis.set_xticks([])
             axis.set_yticks([])
+            if kind == "actual":
+                image = truth[column]
+            elif guess[column] is None:
+                image = None
+            elif kind == "predicted":
+                image = guess[column]
+            else:
+                image = difference_image(truth[column], guess[column])
+            if image is None:
+                axis.axis("off")
+            else:
+                axis.imshow(image)
             if r == 0:
-                axis.set_title(f"step {step + 1}", fontsize=9)
-            if step == 0:
+                axis.set_title("seen" if column == 0 else f"step {column}", fontsize=9)
+            if column == 0:
                 label = f"{camera}\n{kind}" if kind == "actual" else kind
                 axis.set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
     # The title needs its own band: left to tight_layout it lands on the
@@ -287,7 +322,8 @@ def evaluate_frame(
     the ground truth along with the prediction. See :func:`preprocess`.
 
     ``keep``, when given, receives the IMAGES behind the numbers -- per camera,
-    the last observed frame, the actual future and the predicted one -- so a
+    the last observed frame (and its reconstruction), the actual future and the
+    predicted one -- so a
     filmstrip shows the frames that were scored and not a separate rollout.
 
     ``composites`` names any tiled camera's parts, so every number is reported
@@ -355,6 +391,11 @@ def evaluate_frame(
             {
                 key.split(".")[-1]: {
                     "held": as_uint8(context[key][0, -1]),
+                    "held_recon": (
+                        None
+                        if reconstructed is None
+                        else as_uint8(reconstructed[key][0, -1])
+                    ),
                     "actual": [as_uint8(f) for f in actual[key][0]],
                     "predicted": [as_uint8(f) for f in predicted[key][0]],
                 }

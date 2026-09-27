@@ -56,11 +56,12 @@ from actoris_harena.analysis.perturb import (  # noqa: E402
     BASELINES,
     baseline_frame,
     occlusion,
+    patch_occlusion,
     ranking,
 )
 from actoris_harena.analysis.sources import DatasetSource, RunSource  # noqa: E402
 
-METHODS = ("occlusion", "ig", "gradcam", "attention")
+METHODS = ("occlusion", "ig", "gradcam", "attention", "patches")
 JOINT_NAMES = [
     "L_pan",
     "L_lift",
@@ -109,6 +110,17 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             "all": result["all"],
             "baseline": result["baseline"],
             "direction": result["direction"],
+        }
+    if "patches" in args.method:
+        # Grad-CAM's question -- where in the frame -- for a model with no
+        # convolutional feature map. Tactile streams only unless asked: at a
+        # hundred forward passes a camera, the overhead view would double it.
+        cameras = [c for c in images if args.patch_cameras == "all" or _tactile(c)]
+        rows, cols = args.patch_grid
+        grids = {c: _grid_for(c, rows, cols) for c in cameras}
+        out["patches"] = {
+            c: patch_occlusion(inference, state, images, [c], grids[c])[c].tolist()
+            for c in cameras
         }
     needs_batch = {"ig", "gradcam", "attention"} & set(args.method)
     if not needs_batch:
@@ -160,6 +172,21 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             # the method does not apply to this policy. It does; let it raise.
             out["gradcam_unavailable"] = str(problem)
     return out
+
+
+#: Fingertip composites and their tile grid: a patch grid over one is scaled by
+#: the tile grid, so each sensor gets the grid a separate camera would and no
+#: cell straddles two sensors.
+COMPOSITES = {"tactile_quad": (2, 2)}
+
+
+def _tactile(camera: str) -> bool:
+    return "gripper" in camera or camera in COMPOSITES
+
+
+def _grid_for(camera: str, rows: int, cols: int) -> "tuple[int, int]":
+    tiles = COMPOSITES.get(camera, (1, 1))
+    return (rows * tiles[0], cols * tiles[1])
 
 
 def camera_slug(inference, source) -> "str | None":
@@ -250,6 +277,18 @@ def main() -> None:
         type=int,
         default=64,
         help="Integration steps (see common/analysis/gradients.py)",
+    )
+    parser.add_argument(
+        "--patch-grid",
+        type=lambda text: tuple(int(v) for v in text.split("x")),
+        default=(10, 10),
+        help="ROWSxCOLS cells per sensor for the patches method (default 10x10)",
+    )
+    parser.add_argument(
+        "--patch-cameras",
+        default="tactile",
+        choices=("tactile", "all"),
+        help="Which cameras the patches method maps (default the fingertips)",
     )
     parser.add_argument("--device", default=None, help="cpu/cuda (default auto)")
     parser.add_argument(
