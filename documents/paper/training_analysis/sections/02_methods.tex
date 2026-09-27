@@ -41,6 +41,11 @@ with a ResNet-18 encoder, \new{shared by all five cameras} and trained from
 scratch. Flow matching \citep{lipman2023flow} learns to move noise to an action
 chunk along straight lines. \new{It sees only the current frame and plans 50
 steps.} The model therefore separates pi0.5's objective from its pretraining.
+\new{The run reported here kept a default meant for small images: each camera
+frame, $480\times640$ pixels, is cropped to a random $84\times84$ patch in
+training and to the central one at test time, without being resized first. It
+therefore sees about 2\,\% of each image. We retrain it with Diffusion's
+handling, resizing to $180\times240$ without cropping.}
 
 \textbf{pi0.5} \citep{pi05} is a vision-language-action model: a pretrained
 vision-language model reads the images and a written instruction, and a

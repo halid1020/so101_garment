@@ -44,3 +44,10 @@ fold-short-from-flattend-tactile harena_diffusion_crop  all                     
 fold-short-from-flattend-tactile harena_dreamzero_crop  all                                                  80000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
 fold-short-from-flattend-tactile harena_pi05_crop       central,left_arm_left_gripper,right_arm_left_gripper 30000   1      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
 fold-short-from-flattend-tactile harena_fastwam_crop    central,tactile_quad                                 30000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
+
+# 6. Flow matching as it should have been configured. Row 3 kept the Diffusion
+#    Policy default crop_shape (84, 84) with no resize, so on 480x640 frames each
+#    camera showed it a patch of about 2 % of the image (the centre one at test
+#    time): its plan was 98.7 % proprioception. This row resizes to 180x240 and
+#    does not crop, as the Diffusion baseline does. Tag: <view>__resize.
+fold-short-from-flattend-tactile harena_flowmatch       all                                                  60000   16     36     -      --dataset.eval_split=0.1 --policy.resize_shape=[180,240] --policy.crop_shape=null

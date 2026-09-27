@@ -52,7 +52,12 @@ converge (7.6 each at step 24), and by step 32 Diffusion is slightly ahead
 (9.2 against 9.8). Flow matching and pi0.5 share their training objective, and
 flow matching's error over the first ten steps is half pi0.5's (4.5 against
 9.0). On our data, pi0.5's pretraining with our narrow LoRA does worse than
-training a small model from scratch.}
+training a small model from scratch. This flow-matching run sees only a small
+central patch of each camera (Section~\ref{sec:models}), and 98.7\,\% of what
+moves its plan is proprioception (Figure~\ref{fig:streams}). That a policy
+which barely sees plans the first ten steps best says that over a third of a
+second the arms' own positions predict the next commands almost entirely.}
+\pending{flow matching retrained on resized, uncropped images.}
 
 \textbf{Diffusion is \new{the most accurate of the other behaviour-cloning
 policies} for the first steps of a plan, but its error grows fastest.} On the
