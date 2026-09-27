@@ -60,6 +60,10 @@ The main findings are these.
   edges.
   \item \textbf{Touch matters in short bursts.} ACT nearly ignores the tactile
   cameras most of the time and leans on them heavily around contact.
+  \new{Retrained on the overhead camera alone, ACT does better on held-out
+  demonstrations, so on this data the fingertips do not help it generalise.}
+  \item \new{\textbf{Training pi0.5 three times longer changes almost
+  nothing.} Its narrow LoRA, not too little training, is the likelier limit.}
   \item \textbf{A frame-averaged image score can miss a correct prediction} of
   a small moving part, such as a gripper.
 \end{itemize}

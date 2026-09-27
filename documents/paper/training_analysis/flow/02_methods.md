@@ -1,29 +1,38 @@
 # 2 Methods
 
-P0  intro: models, then data and split, then the measures, then the crop
-2.1 The models
-P1  one short paragraph per model: original version (paper) -> our version
-    (what we changed and why): ACT, Diffusion Policy, pi0.5, flow matching,
-    DreamZero, FastWAM
-T1  table of differences: inputs (cameras), horizon, trained from scratch or
-    pretrained, trainable parameters, steps/batch, predicts images?
-2.2 Data and split
-P2  one session, 65 recordings, 30 Hz; Figure: 20 frames of one recording
-P3  the split in plain words: training on the first 58, testing on the last 7
-    ("last seven"); the control repeats it with 7 picked at random ("random
-    seven") to check that the gap is not the session drifting
-2.3 How we measure
-P4  action error: RMSE between planned and recorded commands, per step of the
-    plan; common first-10 steps for cross-model comparison
-P5  Grad-CAM, how it is computed (gradient of planned action wrt the last
-    feature map -> channel weights -> weighted sum -> ReLU -> upsample)
-P6  input contribution percentages: replace one input with its dataset mean,
-    measure the change in the plan, normalise to 100 %
-P7  world models: reconstruction (seen frames through own autoencoder) vs
-    prediction (future frames, generated with the model's own actions),
-    PSNR/SSIM per sensor, against "repeat the last frame seen"
+P0  intro: models, then data and split, then evaluation, then the crop
+2.1 Models
+P1  shared: proprioception, chunks at 30 Hz; the rate checked in the recordings
+    (frame age median 16 ms, p90 30 ms -> 30 Hz cameras, not 25)
+P2  one paragraph per model, original -> ours, each saying how the cameras are
+    encoded (shared vs per-camera ResNet, tokens, tiling, composite) and how
+    much history it sees: ACT, Diffusion, flow matching, pi0.5 (authors
+    finetune fully; LoRA literature: OpenVLA r=32 all layers ~ full,
+    Biderman: learns less; ours r=16 action expert only), DreamZero (authors
+    finetune the 14B model on ~30 min; ours 59M from scratch; tiles 5 cameras
+    into a 3x3 grid; also given 1.6 s of past commands), FastWAM (Wan2.2,
+    authors finetune per task; overhead | 2x2 composite; skips video at test)
+T1  models: type, plan, fingertips, starts from, parameters, history
+F1  the images each model receives
+2.2 The demonstrations and the split
+P3  one session = 65 demonstrations in one afternoon (~1 h 45 min); fixed start
+F2  20 frames of one test demonstration
+P4  last seven are the latest; drift would make them harder for reasons other
+    than generalisation; random seven sit between training demos in time, so
+    drift would make them easier -> the control
+2.3 Evaluation
+P5  action error, with the sample counts explained (every 25th frame, ~18 per
+    demonstration, 1127 / 111); first ten steps for comparison
+P6  Grad-CAM (ResNet models only; why not pi0.5 or the WAMs)
+P7  patch occlusion maps: the same question for every model
+P8  input contribution
+P9  world action models: reconstruction vs prediction; PSNR (what dB means),
+    SSIM, both higher is better; the repeat-last-frame baseline and margin
 2.4 The tactile crop
-P8  what we saw (edge attention) and what we measured in the images (edges
-    brighter before contact, but a brighter ridge inside the gel); Figure
-P9  three crops: rows only (top/bottom tenth), rows without stretching,
-    all four edges; resized back; applied at training AND test time
+F3  the Grad-CAM picture that raised the question, with edge ratios
+P10 the images before contact: edges 10-21 % brighter, but the ridge at ~0.3
+    across is the brightest feature (up to 32 %)
+F4  rim evidence with the ridge marked and all crop boxes
+P11 four crops: rows only (and why not columns), rows unstretched (ACT),
+    four edges, ridge crop (rows 0.1-0.9, columns 0.36-0.9); in the saved
+    pipeline, so applied at test time too

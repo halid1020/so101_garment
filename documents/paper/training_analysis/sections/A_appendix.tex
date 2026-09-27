@@ -14,6 +14,21 @@ closed. The frames are converted to brightness and averaged. Each row and each
 column is then averaged, and divided by the mean of the middle fifth of the
 image.
 
+\new{\textbf{Figure~\ref{fig:inputs}.} One moment of test demonstration 58,
+laid out as each model's own code lays it out: DreamZero's $3\times3$ grid of
+74-pixel cells, FastWAM's overhead view beside a two-by-two composite, each
+$224\times224$, and pi0.5's three images padded to $224\times224$.}
+
+\new{\textbf{Figure~\ref{fig:gradcamevidence}.} ACT's Grad-CAM maps from our
+first attribution run, frame 180 of training demonstration 0, overlaid on the
+frames they were computed from. On that demonstration the edge ratio rises above
+two in two stretches (frames 160 to 200 and 360 to 420) and sits well below one
+elsewhere; the frame shown is from the first stretch.}
+
+\new{\textbf{Recording rate.} From the recorder's own timing file: the gap
+between stored frames is 34.5\,ms on average (29\,Hz), and each camera frame's
+age when stored has a median of 16\,ms and a 90th percentile of 30\,ms.}
+
 \textbf{Action error (Tables~\ref{tab:actions}, \ref{tab:crop},
 \ref{tab:sensors}, Figure~\ref{fig:horizon}).} Every 25th frame is given to
 the model with the past frames it expects. The planned chunk is compared step by
@@ -40,7 +55,15 @@ the reviewed draft said each input was replaced by its dataset average. It is
 replaced by a flat image of its own average colour, and the joint positions by a
 constant; this text now says so.
 
-\textbf{World models (Tables~\ref{tab:wm}, Figures~\ref{fig:predmargin},
+\new{\textbf{Patch occlusion maps and input contribution of the world action
+models.} Test demonstration 58. Patch maps use a $10\times10$ grid on each
+fingertip image ($5\times5$ per sensor for FastWAM's composite, to keep its
+cost manageable), 20 frames for the policies and fewer for FastWAM. Each
+frame's map is scaled to sum to one before averaging. For DreamZero every
+perturbation is applied to all the frames of its window, and its past commands
+are replaced by a constant as a stream of their own.}
+
+\textbf{World action models (Tables~\ref{tab:wm}, Figures~\ref{fig:predmargin},
 \ref{fig:filmstrip}, \ref{fig:fastwamstrip}).} One frame in thirty of the test
 demonstrations, 24 frames in all, is given to each model with its sampler fixed
 to one seed. The filmstrips are the frames those numbers were computed from.

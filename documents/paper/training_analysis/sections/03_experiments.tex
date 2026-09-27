@@ -180,8 +180,10 @@ arm.}
 Figure~\ref{fig:streams} shows which inputs the policies actually use. ACT
 relies most on the overhead camera, then proprioception, with the fingertips
 last. Diffusion and pi0.5 rely mostly on proprioception: about three quarters
-of what moves pi0.5's plan is where the arms are. \pending{input contribution
-of DreamZero and FastWAM.}
+of what moves pi0.5's plan is where the arms are. \new{FastWAM leans on
+proprioception most of all, 86\,\%, with 11\,\% for the overhead camera and
+3\,\% for the fingertips.} \pending{input contribution of flow matching and
+DreamZero, including DreamZero's past commands.}
 
 \begin{figure}[t]
   \centering
