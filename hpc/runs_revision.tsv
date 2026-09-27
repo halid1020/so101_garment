@@ -1,0 +1,36 @@
+# The report revision's runs (supervisor comments, 2026-09-27). Same columns as
+# runs.tsv. Kept apart from it because runs.tsv allows one row per (dataset,
+# policy, cameras), and the four-edge crop arms share that triple with the
+# rows-only crop arms already there -- they differ in one flag, and in the run
+# directory, which is set per submission with SO101_RUN_TAG.
+#
+# Every row is the matched recipe of the run it is compared with (eval_split 0.1,
+# so the last 7 of 65 recordings are held out; seed 1000, LeRobot's default)
+# with ONE thing changed. The batches are the baselines' own, for the reason the
+# crop block in runs.tsv gives.
+#
+# dataset                         policy                 cameras                                              steps   batch  hours  slots  extra
+
+# 1. The four-edge crop: 10 % off every edge of every fingertip image, then
+#    resized back, on all five models. Submit each with the tag
+#    SO101_RUN_TAG=<view>__edges so it lands beside, not on top of, its baseline.
+#    ACT ran on thanos (tool: the same train_config.json, one override).
+fold-short-from-flattend-tactile harena_act_crop        all                                                  80000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]
+fold-short-from-flattend-tactile harena_diffusion_crop  all                                                  100000  8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]
+fold-short-from-flattend-tactile harena_dreamzero_crop  all                                                  80000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]
+fold-short-from-flattend-tactile harena_pi05_crop       central,left_arm_left_gripper,right_arm_left_gripper 30000   1      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]
+fold-short-from-flattend-tactile harena_fastwam_crop    central,tactile_quad                                 30000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]
+
+# 2. Which sensors ACT needs: overhead only, overhead plus one fingertip per arm
+#    (the pair pi0.5 reads), against the existing all-camera run. ACT always
+#    reads proprioception. Ran on thanos.
+fold-short-from-flattend-tactile act                    central                                              80000   8      36     -      --dataset.eval_split=0.1
+fold-short-from-flattend-tactile act                    central,left_arm_left_gripper,right_arm_left_gripper 80000   8      36     -      --dataset.eval_split=0.1
+
+# 3. The flow-matching policy, on the held-out split every other row uses.
+fold-short-from-flattend-tactile harena_flowmatch       all                                                  60000   16     36     -      --dataset.eval_split=0.1
+
+# 4. pi0.5 for longer: its matched run took 30 000 steps at batch 1, about one
+#    pass over the training recordings, and never fitted them. 70 000 is about
+#    three passes, everything else unchanged. Tag: <view>__long.
+fold-short-from-flattend-tactile pi05                   central,left_arm_left_gripper,right_arm_left_gripper 70000   1      36     -      --dataset.eval_split=0.1

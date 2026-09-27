@@ -135,11 +135,13 @@ while IFS= read -r line || [ -n "$line" ]; do
         harena_act|harena_diffusion|harena_pi05|harena_flowmatch|harena_dreamzero) ;;
         harena_fastwam|harena_fastwam_predict) ;;
         harena_act_crop|harena_diffusion_crop|harena_pi05_crop) ;;
+        harena_dreamzero_crop|harena_fastwam_crop) ;;
         *) echo "❌ $MANIFEST:$LINE_NO unknown policy '$policy'" >&2
            echo "   want: act|diffusion|pi05|fastwam, or one of the repo-local" >&2
            echo "   harena_act|harena_diffusion|harena_pi05|harena_flowmatch|harena_dreamzero," >&2
            echo "   harena_fastwam|harena_fastwam_predict," >&2
-           echo "   or a cropped-tactile variant harena_act_crop|harena_diffusion_crop|harena_pi05_crop" >&2
+           echo "   or a cropped-tactile variant harena_act_crop|harena_diffusion_crop|harena_pi05_crop|" >&2
+           echo "   harena_dreamzero_crop|harena_fastwam_crop" >&2
            exit 2;;
     esac
     # A space here would silently shift every later column into `extra`, so the

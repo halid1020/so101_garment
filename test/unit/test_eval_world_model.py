@@ -443,3 +443,109 @@ class SamplerPinTest(unittest.TestCase):
         # nothing -- which is how this test read on its first attempt.
         torch.manual_seed(999)
         self.assertNotEqual(self.draw(None, reset=False), self.draw(None, reset=False))
+
+
+class CroppedTruthTest(unittest.TestCase):
+    """A model trained on cropped fingertips is scored against cropped truth."""
+
+    KEY = "observation.images.left_arm_left_gripper"
+
+    def rimmed(self):
+        img = torch.zeros(1, 2, 3, 20, 20)
+        img[..., :2, :] = 1.0
+        img[..., -2:, :] = 1.0
+        return img
+
+    def test_the_checkpoint_s_crop_reaches_the_truth(self):
+        from actoris_harena.policies.common.tactile import (
+            HarenaTactileCropProcessorStep,
+        )
+
+        from tool.eval_world_model import truth_batch
+
+        class Pipeline:
+            steps = [HarenaTactileCropProcessorStep(fraction=(0.6, 1.0)), lambda b: b]
+
+        out = truth_batch(Pipeline(), {self.KEY: self.rimmed(), "task": "fold"})
+        self.assertEqual(float(out[self.KEY].max()), 0.0)
+        self.assertEqual(out["task"], "fold")
+
+    def test_nothing_else_in_the_pipeline_touches_it(self):
+        # Normalisation must never reach the truth; only the crop does.
+        from tool.eval_world_model import truth_batch
+
+        class Pipeline:
+            steps = [lambda b: {k: v * 0 for k, v in b.items()}]
+
+        raw = {self.KEY: self.rimmed()}
+        self.assertTrue(
+            torch.equal(truth_batch(Pipeline(), raw)[self.KEY], raw[self.KEY])
+        )
+
+
+class SplitCompositesTest(unittest.TestCase):
+    def test_each_tile_becomes_its_own_sensor(self):
+        from tool.eval_world_model import split_composites
+
+        quad = torch.zeros(1, 1, 3, 4, 6)
+        for index in range(4):
+            row, col = divmod(index, 2)
+            quad[..., row * 2 : (row + 1) * 2, col * 3 : (col + 1) * 3] = index
+        views = {
+            "observation.images.tactile_quad": quad,
+            "observation.images.central": quad,
+        }
+        out = split_composites(views, {"tactile_quad": ("a", "b", "c", "d")})
+        self.assertEqual(
+            sorted(out), ["a", "b", "c", "d", "observation.images.central"]
+        )
+        for index, name in enumerate("abcd"):
+            self.assertEqual(tuple(out[name].shape), (1, 1, 3, 2, 3))
+            self.assertTrue(torch.all(out[name] == index), name)
+
+
+class ReconstructionTest(unittest.TestCase):
+    """The observed frames through the model's own autoencoder: the ceiling."""
+
+    class Blurry:
+        class config:
+            n_context_chunks = 1
+            latent_frames_per_chunk = 1
+
+        def tile_cameras(self, batch):
+            return batch["frames"]
+
+        def predict_future_frames(self, batch):
+            return batch["frames"][:, 1:]
+
+        def untile_cameras(self, tiled):
+            return {"central": tiled}
+
+        def reconstruct_frames(self, frames):
+            return frames * 0.5
+
+    def test_a_perfect_autoencoder_is_not_needed_to_score_one(self):
+        from tool.eval_world_model import evaluate_frame
+
+        frames = torch.rand(1, 3, 3, 16, 16) * 0.5 + 0.25
+        row = evaluate_frame(self.Blurry(), {"frames": frames}, seed=0)["central"]
+        self.assertEqual(len(row["recon_psnr"]), 1)
+        self.assertLess(row["recon_psnr"][0], 40.0)
+        self.assertIn("recon_ssim", row)
+
+    def test_both_world_models_can_reconstruct(self):
+        from actoris_harena.policies.dreamzero.modeling_dreamzero import (
+            HarenaDreamzeroPolicy,
+        )
+        from actoris_harena.policies.fastwam_predict.modeling_fastwam_predict import (
+            HarenaFastwamPredictPolicy,
+        )
+
+        for cls in (HarenaDreamzeroPolicy, HarenaFastwamPredictPolicy):
+            self.assertTrue(callable(getattr(cls, "reconstruct_frames", None)), cls)
+
+    def test_the_report_shows_the_ceiling(self):
+        summary = {
+            "central": {**frame([20.0], [18.0])["central"], "recon_psnr": [27.5]}
+        }
+        self.assertIn("27.50", report(summary))

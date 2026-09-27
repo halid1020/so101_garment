@@ -372,7 +372,7 @@ train_cell() {
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
         flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
         dreamzero) steps="$DREAMZERO_STEPS"; batch="$DREAMZERO_BATCH"; save="$DREAMZERO_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, act|diffusion|pi05 also _crop suffixed, and fastwam also _predict suffixed)";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, act|diffusion|pi05|dreamzero|fastwam also _crop suffixed, and fastwam also _predict suffixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.

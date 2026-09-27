@@ -43,6 +43,8 @@ class TestTheRealDriver(unittest.TestCase):
             ("harena_act_crop", "act"),
             ("harena_diffusion_crop", "diffusion"),
             ("harena_pi05_crop", "pi05"),
+            ("harena_dreamzero_crop", "dreamzero"),
+            ("harena_fastwam_crop", "fastwam"),
         ):
             with self.subTest(policy=crop):
                 self.assertEqual(self._base_policy(crop), twin)

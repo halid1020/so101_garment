@@ -99,6 +99,56 @@ def preprocess(pre, batch: dict, device) -> dict:
     }
 
 
+def truth_batch(pre, batch: dict) -> dict:
+    """The raw batch with the checkpoint's tactile CROP applied, and nothing else.
+
+    The truth comes from the raw batch so that normalisation can never move it
+    along with the prediction (see :func:`preprocess`). But a model trained on
+    cropped fingertips predicts cropped fingertips, and scoring that against the
+    uncropped frame would charge it for the rim it was never shown. So the crop
+    steps -- and only those -- are taken from the checkpoint's own pipeline and
+    applied here too. A checkpoint with no crop gets the batch back unchanged.
+    """
+    from actoris_harena.policies.common.tactile import HarenaTactileCropProcessorStep
+
+    out = dict(batch)
+    for step in getattr(pre, "steps", []):
+        if isinstance(step, HarenaTactileCropProcessorStep):
+            out = step.observation(out)
+    return out
+
+
+def split_composites(
+    views: "dict[str, torch.Tensor]", composites: "dict[str, tuple[str, ...]]"
+) -> "dict[str, torch.Tensor]":
+    """A composite camera split back into one entry per sensor.
+
+    FastWAM reads the four fingertips as one tiled image, so without this its
+    numbers are per COMPOSITE while DreamZero's are per sensor, and the two
+    cannot share a table. The tiles are cut on the grid the composite was
+    written with (``recording.dataset_view.composite_grid``), in the order its
+    parts are listed, which is the order they were tiled in.
+    """
+    from actoris_harena.recording.dataset_view import composite_grid
+
+    out: "dict[str, torch.Tensor]" = {}
+    for key, value in views.items():
+        parts = composites.get(key.split(".")[-1])
+        if not parts:
+            out[key] = value
+            continue
+        rows, cols = composite_grid(len(parts))
+        tile_h, tile_w = value.shape[-2] // rows, value.shape[-1] // cols
+        for index, part in enumerate(parts):
+            row, col = divmod(index, cols)
+            out[part] = value[
+                ...,
+                row * tile_h : (row + 1) * tile_h,
+                col * tile_w : (col + 1) * tile_w,
+            ]
+    return out
+
+
 def make_batch(item: dict, device) -> dict:
     """One dataset row as a batch of one, keeping what is not a tensor.
 
@@ -227,6 +277,7 @@ def evaluate_frame(
     seed: "int | None" = None,
     model_batch: "dict | None" = None,
     keep: "list | None" = None,
+    composites: "dict[str, tuple[str, ...]] | None" = None,
 ) -> "dict[str, dict[str, list[float]]]":
     """Predicted vs actual for one observation, per camera, per horizon step.
 
@@ -238,6 +289,14 @@ def evaluate_frame(
     ``keep``, when given, receives the IMAGES behind the numbers -- per camera,
     the last observed frame, the actual future and the predicted one -- so a
     filmstrip shows the frames that were scored and not a separate rollout.
+
+    ``composites`` names any tiled camera's parts, so every number is reported
+    per SENSOR (see :func:`split_composites`).
+
+    When the model can round-trip frames through its own autoencoder, the
+    observed frames are also scored that way -- ``recon_psnr`` / ``recon_ssim``,
+    one value averaged over the context frames. That is the ceiling on the
+    prediction: what the model loses by compressing an image it was shown.
 
     ``seed`` pins the sampler. It is not optional in spirit, only in signature:
     DreamZero integrates its flow from ``torch.randn`` and FastWAM's
@@ -278,9 +337,18 @@ def evaluate_frame(
     context_tiled = actual_tiled[:, :context_frames]
     future_tiled = actual_tiled[:, context_frames:]
 
-    predicted = policy.untile_cameras(predicted_tiled)
-    actual = policy.untile_cameras(future_tiled)
-    context = policy.untile_cameras(context_tiled)
+    parts = composites or {}
+    predicted = split_composites(policy.untile_cameras(predicted_tiled), parts)
+    actual = split_composites(policy.untile_cameras(future_tiled), parts)
+    context = split_composites(policy.untile_cameras(context_tiled), parts)
+    reconstructed = None
+    if hasattr(policy, "reconstruct_frames"):
+        reconstructed = split_composites(
+            policy.untile_cameras(
+                policy.reconstruct_frames(context_tiled).to(context_tiled.device)
+            ),
+            parts,
+        )
 
     if keep is not None:
         keep.append(
@@ -297,10 +365,18 @@ def evaluate_frame(
     out = {}
     for key in predicted:
         result = metrics.compare(predicted[key], actual[key], context[key])
-        out[key.split(".")[-1]] = {
+        row = {
             name: [round(float(v), 4) for v in value.tolist()]
             for name, value in result.items()
         }
+        if reconstructed is not None:
+            row["recon_psnr"] = [
+                round(float(metrics.psnr(reconstructed[key], context[key]).mean()), 4)
+            ]
+            row["recon_ssim"] = [
+                round(float(metrics.ssim(reconstructed[key], context[key]).mean()), 4)
+            ]
+        out[key.split(".")[-1]] = row
     return out
 
 
@@ -323,8 +399,8 @@ def report(summary: "dict[str, dict[str, list[float]]]") -> str:
     """A table a person can read, and the verdict that matters."""
     lines = [
         "",
-        f"{'camera':<28} {'PSNR':>8} {'held':>8} {'SSIM':>7} {'held':>7}  beats held?",
-        "-" * 74,
+        f"{'camera':<28} {'recon':>7} {'PSNR':>8} {'held':>8} {'SSIM':>7} {'held':>7}  beats held?",
+        "-" * 82,
     ]
     for camera, values in summary.items():
         model_psnr = float(np.mean(values["psnr"]))
@@ -334,14 +410,18 @@ def report(summary: "dict[str, dict[str, list[float]]]") -> str:
         steps = sum(1 for a, b in zip(values["psnr"], values["psnr_baseline"]) if a > b)
         total = len(values["psnr"])
         verdict = f"{steps}/{total} steps"
+        recon = values.get("recon_psnr")
+        recon_text = f"{recon[0]:>7.2f}" if recon else f"{'-':>7}"
         lines.append(
-            f"{camera:<28} {model_psnr:>8.2f} {held_psnr:>8.2f} "
+            f"{camera:<28} {recon_text} {model_psnr:>8.2f} {held_psnr:>8.2f} "
             f"{model_ssim:>7.3f} {held_ssim:>7.3f}  {verdict}"
         )
     lines.append("")
     lines.append(
         "'held' is the last observed frame repeated. A model that does not beat it "
-        "has not\nlearned that camera's dynamics, whatever its PSNR says."
+        "has not\nlearned that camera's dynamics, whatever its PSNR says. 'recon' is "
+        "the frames it was\nshown, through its own autoencoder and back: the "
+        "sharpest a prediction can be."
     )
     return "\n".join(lines)
 
@@ -416,6 +496,11 @@ def main() -> int:
             "observations, so there is no future to score."
         )
 
+    from actoris_harena.recording import camera_profile
+
+    import common  # noqa: F401  -- declares this rig's cameras to actoris_harena
+
+    composites = dict(camera_profile.profile().composites)
     pinned = None if args.seed < 0 else args.seed
     episodes = parse_range(args.episodes)
     dataset = load_dataset(policy, args.dataset, episodes)
@@ -437,10 +522,11 @@ def main() -> int:
             collected.append(
                 evaluate_frame(
                     policy,
-                    batch,
+                    truth_batch(pre, batch),
                     seed=pinned,
                     model_batch=preprocess(pre, batch, device),
                     keep=strips.setdefault(index, []) if index in wanted else None,
+                    composites=composites,
                 )
             )
         except ValueError as exc:  # a frame too near an episode edge to pad
