@@ -64,9 +64,12 @@ perturbation is applied to all the frames of its window, and its past commands
 are replaced by a constant as a stream of their own.}
 
 \textbf{World action models (Tables~\ref{tab:wm}, Figures~\ref{fig:predmargin},
-\ref{fig:filmstrip}, \ref{fig:fastwamstrip}).} One frame in thirty of the test
+\ref{fig:filmstrip}, \ref{fig:filmstripearly}).} One frame in thirty of the test
 demonstrations, 24 frames in all, is given to each model with its sampler fixed
-to one seed. The filmstrips are the frames those numbers were computed from.
+to one seed. \new{The head-to-head filmstrips come from a separate run of the same scorer
+on demonstration 58 alone, so that both models could be given the same seen
+frame: FastWAM last sees frame $k$, and DreamZero, whose last seen frame is 24
+frames before its sample, is sampled at $k+24$.}
 For a cropped world model the true frames are cropped the same way before
 scoring, and FastWAM's fingertip composite is cut back into its four sensors so
 both models are scored per sensor.
@@ -140,10 +143,11 @@ still 7.4, above the 5.3 of the last seven.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\textwidth]{fastwam_filmstrip.png}
-  \caption{FastWAM's prediction over its horizon; columns are about
-  \SI{0.13}{\second} apart. The fingertip row is its two-by-two composite.}
-  \label{fig:fastwamstrip}
+  \includegraphics[width=\textwidth]{filmstrip_h2h_early.png}
+  \caption{\new{As Figure~\ref{fig:filmstrip}, 4\,s into test demonstration
+  58, as the arms lift the waistband. FastWAM moves the grippers but barely
+  lifts the cloth; DreamZero predicts the fold, blurred and late.}}
+  \label{fig:filmstripearly}
 \end{figure}
 
 \section{Threats to validity}

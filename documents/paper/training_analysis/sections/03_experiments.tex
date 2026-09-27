@@ -245,13 +245,18 @@ on every sensor, from \SI{1.6}{\second} ahead onwards.} Its margin is roughly 3
 to 8\,dB, and largest on the fingertips, where repeating the last frame is
 already strong because the gels change only at contact. At \SI{0.8}{\second} it
 only ties, because the future still looks almost exactly like the present.
+\new{In Figure~\ref{fig:filmstrip} its reconstruction of the seen frame is
+already blurred, but it predicts the arms leaving and the folded shorts staying
+where they are, as really happened.}
 
-\textbf{FastWAM predicts sharp, correctly moving frames, but a frame-averaged
-score barely rewards them.} It predicts only about a second ahead. On the
-overhead camera it ties with repeating the last frame, although its frames show
-the grippers moving at the right pace (Figure~\ref{fig:filmstrip}). The garment
-fills most of the frame and hardly moves within a second, so repeating the last
-frame is already right about most pixels. \textbf{A score averaged over the
+\textbf{FastWAM predicts sharp frames, but a frame-averaged score barely
+rewards them.} It predicts only about a second ahead. On the overhead camera it
+ties with repeating the last frame, although its frames move the grippers in
+the right direction (Figure~\ref{fig:filmstrip}). \new{Its difference row
+shows the error concentrated on the moving arms and cloth, where its motion lags
+the real one; everywhere else it is flat grey.} The garment fills most of the
+frame and hardly moves within a second, so repeating the last frame is already
+right about most pixels. \textbf{A score averaged over the
 whole frame can rate a correct prediction of a small moving part as no better
 than doing nothing.} On the fingertips, where contact changes many pixels,
 FastWAM starts below repeating the last frame and ends 3 to 6\,dB above it on
@@ -260,10 +265,15 @@ FastWAM is ahead on both panels of Appendix Figure~\ref{fig:predmargin}.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.85\textwidth]{dreamzero_filmstrip.png}
-  \caption{One test moment as DreamZero predicted it; columns are
-  \SI{0.8}{\second} apart. \pending{head-to-head DreamZero and FastWAM
-  filmstrip: actual row starting with the last seen frame, predicted row
-  starting with its reconstruction, and a difference row.}}
+  \includegraphics[width=\textwidth]{filmstrip_h2h.png}
+  \caption{\new{FastWAM and DreamZero predicting from the same seen frame
+  (test demonstration 58, 8\,s in, as the arms release the folded shorts), on
+  one time axis. For the overhead camera and one fingertip (LLG) the rows are
+  what happened, each model's prediction, and its difference from what happened
+  (truth minus prediction, rescaled so that mid-grey is no error). The
+  \emph{seen} column shows each model's reconstruction of the frame it was
+  given. Blank cells are times a model does not predict. Each model is shown at
+  its own resolution. Appendix Figure~\ref{fig:filmstripearly} shows an earlier
+  moment.}}
   \label{fig:filmstrip}
 \end{figure}
