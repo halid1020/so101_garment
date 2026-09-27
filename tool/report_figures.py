@@ -893,6 +893,9 @@ def main() -> int:
             print(f"  per-sensor prediction: no {key} result at {path}")
     write_wm_table(revised, out / "wm_table.tex")
     draw_rim_attention([Path(a) for a in args.attribution], out / "rim_attention.png")
+    draw_stream_shares_all(
+        [(label, Path(path)) for label, path in STREAM_DECKS], out / "stream_shares.png"
+    )
     if args.h2h:
         from tool.eval_world_model import load_filmstrip
 
@@ -1485,8 +1488,9 @@ def write_crop_table(results: "dict[str, dict]", out: Path) -> Path:
                 cells.append(f"{rmse_over(results[arm], 'validation'):.2f}")
             else:
                 cells.append("--")
-        # Bold within a row: the question is which crop suits THIS model.
-        row = bold_lowest([cells], list(range(len(cells))))[0]
+        # Bold within a row: the question is which crop suits THIS model. The
+        # row is bolded as a one-column table, so the minimum runs along it.
+        row = [r[0] for r in bold_lowest([[c] for c in cells], [0])]
         lines.append(" & ".join([label, *row]) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
@@ -2054,6 +2058,21 @@ def draw_patch_rim(
     for key, value in values.items():
         print(f"    {key[0]:<12} {key[1]:<12} x{value:.2f}")
     return out
+
+
+#: The input-contribution runs behind the all-model share figure, on held-out
+#: demonstration 58: every 5th frame, 60 frames, the mean baseline.
+STREAM_DECKS = (
+    ("ACT", "outputs/analysis/2026-09-18/heldout-act/attribution.json"),
+    ("Diffusion", "outputs/analysis/2026-09-18/heldout-diffusion/attribution.json"),
+    (
+        "Flow\nmatching",
+        "outputs/analysis/2026-09-27/patches-flowmatch/attribution.json",
+    ),
+    ("pi0.5", "outputs/analysis/2026-09-25/heldout-pi05/attribution.json"),
+    ("DreamZero", "outputs/analysis/2026-09-27/patches-dreamzero/attribution.json"),
+    ("FastWAM", "outputs/analysis/2026-09-27/heldout-fastwam/attribution.json"),
+)
 
 
 def draw_stream_shares_all(
