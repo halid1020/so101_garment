@@ -291,11 +291,15 @@ fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 # it would kill a resume at the point it was meant to recover.
 # A crop override in EXTRA must reach a pretrained base's SAVED pipeline too:
 # a run that starts from a base trains with the pipeline on disk, not with the
-# command line. Prints `--tactile-crop H,W` for the retarget, or nothing.
+# command line. Prints `--tactile-crop H,W` and `--tactile-crop-centre R,C`
+# for the retarget, whichever EXTRA overrides, or nothing.
 crop_override_args() {
-    local crop
+    local crop centre out=""
     crop="$(sed -nE 's/.*--policy\.tactile_crop=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p' <<<"$EXTRA")"
-    [ -n "$crop" ] && echo "--tactile-crop $crop"
+    centre="$(sed -nE 's/.*--policy\.tactile_crop_centre=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p' <<<"$EXTRA")"
+    [ -n "$crop" ] && out="--tactile-crop $crop"
+    [ -n "$centre" ] && out="$out --tactile-crop-centre $centre"
+    echo "$out"
     return 0
 }
 

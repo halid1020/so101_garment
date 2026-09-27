@@ -104,10 +104,16 @@ class CompatibilityTest(unittest.TestCase):
         )
         # The crop adds fields and never removes one, which is the direction
         # that matters: config_as reads the source's fields off the target.
-        # `tactile_resize` joined them when the crop-without-resize arm landed.
+        # `tactile_resize` joined them when the crop-without-resize arm landed,
+        # `tactile_crop_centre` when the ridge crop did.
         self.assertEqual(
             sorted(theirs - ours),
-            ["tactile_cameras", "tactile_crop", "tactile_resize"],
+            [
+                "tactile_cameras",
+                "tactile_crop",
+                "tactile_crop_centre",
+                "tactile_resize",
+            ],
         )
 
 
@@ -241,6 +247,31 @@ class RetargetCarriesTheCropStepTest(unittest.TestCase):
         )
         out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
         self.assertEqual(out.stdout.split("\n")[:2], ["--tactile-crop 0.8,0.8", "[]"])
+
+    def test_the_ridge_crop_s_centre_reaches_the_saved_pipeline(self):
+        # An off-centre box written as a centred one would keep the ridge.
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(
+            self.base(), "harena_pi05_crop", out, crop=(0.8, 0.54), centre=(0.5, 0.63)
+        )
+        blob = json.loads((out / "policy_preprocessor.json").read_text())
+        self.assertEqual(blob["steps"][0]["config"]["centre"], [0.5, 0.63])
+        self.assertEqual(blob["steps"][0]["config"]["fraction"], [0.8, 0.54])
+
+    def test_the_driver_s_helper_passes_the_centre_on(self):
+        driver = Path(__file__).resolve().parents[2] / "test/system/long_vla_real.sh"
+        script = (
+            f'eval "$(sed -n "/^crop_override_args()/,/^}}/p" {driver})"\n'
+            'EXTRA="--policy.tactile_crop=[0.8,0.54] '
+            '--policy.tactile_crop_centre=[0.5,0.63]"\n'
+            "crop_override_args\n"
+        )
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(
+            out.stdout.strip(), "--tactile-crop 0.8,0.54 --tactile-crop-centre 0.5,0.63"
+        )
 
     def test_a_plain_target_gains_nothing(self):
         from tool.retarget_checkpoint import retarget

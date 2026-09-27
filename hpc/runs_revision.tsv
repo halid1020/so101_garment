@@ -34,3 +34,13 @@ fold-short-from-flattend-tactile harena_flowmatch       all                     
 #    pass over the training recordings, and never fitted them. 70 000 is about
 #    three passes, everything else unchanged. Tag: <view>__long.
 fold-short-from-flattend-tactile pi05                   central,left_arm_left_gripper,right_arm_left_gripper 70000   1      36     -      --dataset.eval_split=0.1
+
+# 5. The ridge crop (second round of comments): the four-edge box, with its left
+#    edge moved to the right of the vertical ridge every gel shows a third of the
+#    way across (brightest column at 0.28-0.34 on all four sensors). Rows
+#    0.10-0.90, columns 0.36-0.90, then resized back. Tag: <view>__ridge.
+fold-short-from-flattend-tactile harena_act_crop        all                                                  80000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
+fold-short-from-flattend-tactile harena_diffusion_crop  all                                                  100000  8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
+fold-short-from-flattend-tactile harena_dreamzero_crop  all                                                  80000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
+fold-short-from-flattend-tactile harena_pi05_crop       central,left_arm_left_gripper,right_arm_left_gripper 30000   1      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]
+fold-short-from-flattend-tactile harena_fastwam_crop    central,tactile_quad                                 30000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.54] --policy.tactile_crop_centre=[0.5,0.63]

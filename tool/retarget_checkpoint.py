@@ -118,6 +118,7 @@ def retarget(
     out: Path,
     force: bool = False,
     crop: "tuple[float, float] | None" = None,
+    centre: "tuple[float, float] | None" = None,
 ) -> Path:
     """Rewrite the type, and give the base the pipeline its target declares.
 
@@ -127,7 +128,8 @@ def retarget(
     default fraction is the crop the run trains with, whatever the command line
     said. MEASURED 2026-09-27: a four-edge pi0.5 smoke run saved
     ``fraction [0.8, 1.0]`` -- the rows-only default -- under a
-    ``--policy.tactile_crop=[0.8,0.8]`` override.
+    ``--policy.tactile_crop=[0.8,0.8]`` override. ``centre`` is the same for
+    ``--policy.tactile_crop_centre``, the ridge crop's off-centre box.
     """
     config_path = source / "config.json"
     if not config_path.is_file():
@@ -158,7 +160,7 @@ def retarget(
         ):
             # Reused, but the pipeline is rewritten from the source every time,
             # so a base made for one crop cannot serve a run asking for another.
-            _carry_extra_processor_steps(source, out, target_type, crop)
+            _carry_extra_processor_steps(source, out, target_type, crop, centre)
             return out
         raise SystemExit(
             f"❌ {out} exists and is not a {target_type} checkpoint; pass --force"
@@ -177,7 +179,7 @@ def retarget(
 
     config["type"] = target_type
     (out / "config.json").write_text(json.dumps(config, indent=4) + "\n")
-    _carry_extra_processor_steps(source, out, target_type, crop)
+    _carry_extra_processor_steps(source, out, target_type, crop, centre)
     return out
 
 
@@ -186,6 +188,7 @@ def _carry_extra_processor_steps(
     out: Path,
     target_type: str,
     crop: "tuple[float, float] | None" = None,
+    centre: "tuple[float, float] | None" = None,
 ) -> None:
     """Put the target's own preprocessor steps into the retargeted base.
 
@@ -214,7 +217,7 @@ def _carry_extra_processor_steps(
     except (OSError, ValueError):
         return
 
-    extra = _target_only_steps(target_type, crop)
+    extra = _target_only_steps(target_type, crop, centre)
     if not extra:
         return
     present = {step.get("registry_name") for step in pipeline.get("steps", [])}
@@ -239,7 +242,9 @@ def _carry_extra_processor_steps(
 
 
 def _target_only_steps(
-    target_type: str, crop_override: "tuple[float, float] | None" = None
+    target_type: str,
+    crop_override: "tuple[float, float] | None" = None,
+    centre_override: "tuple[float, float] | None" = None,
 ) -> "list[dict]":
     """The serialised steps this policy adds over the one it is a variant of.
 
@@ -261,6 +266,9 @@ def _target_only_steps(
         return []
     if crop_override is not None:
         crop = crop_override
+    centre = getattr(config, "tactile_crop_centre", (0.5, 0.5))
+    if centre_override is not None:
+        centre = centre_override
     from actoris_harena.policies.common.tactile import (
         TACTILE_CAMERAS,
         HarenaTactileCropProcessorStep,
@@ -272,6 +280,7 @@ def _target_only_steps(
         # FastWAM reads the fingertips as one tiled composite; without the grid
         # the step would find no fingertip camera by name and crop nothing.
         tiled=dict(getattr(config, "tactile_tiled", None) or {}),
+        centre=tuple(centre),
     )
     return [
         {
@@ -298,22 +307,33 @@ def main() -> int:
         "default crop (its --policy.tactile_crop)",
     )
     parser.add_argument(
+        "--tactile-crop-centre",
+        default=None,
+        help="ROW,COLUMN centre of the kept box, when the run overrides it "
+        "(its --policy.tactile_crop_centre)",
+    )
+    parser.add_argument(
         "--print-path",
         action="store_true",
         help="print only the resulting path, for a shell to capture",
     )
     args = parser.parse_args()
 
-    crop = None
-    if args.tactile_crop:
-        height, width = (float(v) for v in args.tactile_crop.strip("[]").split(","))
-        crop = (height, width)
+    def pair(text: "str | None") -> "tuple[float, float] | None":
+        if not text:
+            return None
+        first, second = (float(v) for v in text.strip("[]").split(","))
+        return (first, second)
+
+    crop = pair(args.tactile_crop)
+    centre = pair(args.tactile_crop_centre)
     result = retarget(
         resolve(args.checkpoint),
         args.to,
         Path(args.out).expanduser(),
         args.force,
         crop=crop,
+        centre=centre,
     )
     if args.print_path:
         print(result)
