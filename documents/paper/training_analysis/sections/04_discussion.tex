@@ -15,9 +15,9 @@ behaviour does not depend on them in a way we can measure.
 
 \new{Pretraining did not help as we used it. pi0.5, finetuned through a narrow
 LoRA, plans worse than a small flow-matching policy with the same objective
-trained from scratch on our 58 demonstrations. Whether full finetuning, or
-longer training, closes that gap is the question the three-pass pi0.5 run
-begins to answer.}
+trained from scratch on our 58 demonstrations. Training three times longer
+did not close the gap, which points at the narrow LoRA rather than too little
+training.}
 
 Touch is used, but briefly. ACT ignores the fingertips for seconds at a time
 and then leans on them heavily around contact, so averaged contributions

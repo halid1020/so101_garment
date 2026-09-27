@@ -82,8 +82,12 @@ only a tenth above its training error, but its error on the demonstrations it
 trained on is already higher than Diffusion's error on demonstrations it never
 saw. It trained for about one pass over the data, adapting only the small LoRA
 addition, so it never fitted the training set. We therefore trained it for
-about three passes (\num{70000} steps), changing nothing else. \pending{pi0.5
-at \num{70000} steps: training and test error, and whether the gap opens.}
+about three passes (\num{70000} steps), changing nothing else. \new{It barely
+moved: training error fell from 17.1 to 16.4 and test error from 18.4 to 18.0,
+changes smaller than rescoring the first run with another random seed moves it
+(Appendix Table~\ref{tab:floor}). Training longer does not make pi0.5 fit the
+task; what it is allowed to change, the narrow LoRA of
+Section~\ref{sec:models}, is the likelier limit.}
 
 \subsection{Cropping the tactile images}
 \label{sec:crop}
