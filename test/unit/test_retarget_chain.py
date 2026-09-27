@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,6 +180,40 @@ class RetargetCarriesTheCropStepTest(unittest.TestCase):
         out = Path(tempfile.mkdtemp()) / "out"
         retarget(self.base(), "harena_pi05_crop", out)
         self.assertEqual(self.steps_of(out)[0], "so101_tactile_crop")
+
+    def crop_of(self, directory: Path) -> "list[float]":
+        blob = json.loads((directory / "policy_preprocessor.json").read_text())
+        return blob["steps"][0]["config"]["fraction"]
+
+    def test_the_run_s_crop_override_reaches_the_saved_pipeline(self):
+        # The four-edge arm: a default-fraction step here would train rows-only.
+        from tool.retarget_checkpoint import retarget
+
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(self.base(), "harena_pi05_crop", out, crop=(0.8, 0.8))
+        self.assertEqual(self.crop_of(out), [0.8, 0.8])
+
+    def test_a_reused_base_is_rewritten_for_a_different_crop(self):
+        from tool.retarget_checkpoint import retarget
+
+        src, out = self.base(), Path(tempfile.mkdtemp()) / "out"
+        retarget(src, "harena_pi05_crop", out)
+        self.assertEqual(self.crop_of(out), [0.8, 1.0])
+        retarget(src, "harena_pi05_crop", out, crop=(0.8, 0.8))
+        self.assertEqual(self.crop_of(out), [0.8, 0.8])
+        self.assertEqual(self.steps_of(out).count("so101_tactile_crop"), 1)
+
+    def test_the_driver_passes_the_override_on(self):
+        text = (
+            Path(__file__).resolve().parents[2] / "test/system/long_vla_real.sh"
+        ).read_text()
+        self.assertIn("--tactile-crop", text)
+        extra = "--dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]"
+        pattern = r"s/.*--policy\.tactile_crop=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p"
+        got = subprocess.run(
+            ["sed", "-nE", pattern], input=extra, capture_output=True, text=True
+        ).stdout.strip()
+        self.assertEqual(got, "0.8,0.8")
 
     def test_a_plain_target_gains_nothing(self):
         from tool.retarget_checkpoint import retarget

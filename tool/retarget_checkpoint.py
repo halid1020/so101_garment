@@ -112,7 +112,23 @@ def compatible(source_type: str, target_type: str) -> bool:
     )
 
 
-def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> Path:
+def retarget(
+    source: Path,
+    target_type: str,
+    out: Path,
+    force: bool = False,
+    crop: "tuple[float, float] | None" = None,
+) -> Path:
+    """Rewrite the type, and give the base the pipeline its target declares.
+
+    ``crop`` is the run's ``--policy.tactile_crop``, when it overrides the
+    target's default. It has to arrive here, not only at the trainer: a
+    finetune loads the base's SAVED pipeline, so a crop step written with the
+    default fraction is the crop the run trains with, whatever the command line
+    said. MEASURED 2026-09-27: a four-edge pi0.5 smoke run saved
+    ``fraction [0.8, 1.0]`` -- the rows-only default -- under a
+    ``--policy.tactile_crop=[0.8,0.8]`` override.
+    """
     config_path = source / "config.json"
     if not config_path.is_file():
         raise SystemExit(f"❌ no config.json in {source}")
@@ -140,6 +156,9 @@ def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> 
             existing.is_file()
             and json.loads(existing.read_text()).get("type") == target_type
         ):
+            # Reused, but the pipeline is rewritten from the source every time,
+            # so a base made for one crop cannot serve a run asking for another.
+            _carry_extra_processor_steps(source, out, target_type, crop)
             return out
         raise SystemExit(
             f"❌ {out} exists and is not a {target_type} checkpoint; pass --force"
@@ -158,11 +177,16 @@ def retarget(source: Path, target_type: str, out: Path, force: bool = False) -> 
 
     config["type"] = target_type
     (out / "config.json").write_text(json.dumps(config, indent=4) + "\n")
-    _carry_extra_processor_steps(source, out, target_type)
+    _carry_extra_processor_steps(source, out, target_type, crop)
     return out
 
 
-def _carry_extra_processor_steps(source: Path, out: Path, target_type: str) -> None:
+def _carry_extra_processor_steps(
+    source: Path,
+    out: Path,
+    target_type: str,
+    crop: "tuple[float, float] | None" = None,
+) -> None:
     """Put the target's own preprocessor steps into the retargeted base.
 
     THE BUG THIS EXISTS FOR, and it is silent. `make_pre_post_processors` begins
@@ -190,7 +214,7 @@ def _carry_extra_processor_steps(source: Path, out: Path, target_type: str) -> N
     except (OSError, ValueError):
         return
 
-    extra = _target_only_steps(target_type)
+    extra = _target_only_steps(target_type, crop)
     if not extra:
         return
     present = {step.get("registry_name") for step in pipeline.get("steps", [])}
@@ -214,7 +238,9 @@ def _carry_extra_processor_steps(source: Path, out: Path, target_type: str) -> N
     )
 
 
-def _target_only_steps(target_type: str) -> "list[dict]":
+def _target_only_steps(
+    target_type: str, crop_override: "tuple[float, float] | None" = None
+) -> "list[dict]":
     """The serialised steps this policy adds over the one it is a variant of.
 
     Built from the target's CONFIG rather than by constructing the policy: the
@@ -233,6 +259,8 @@ def _target_only_steps(target_type: str) -> "list[dict]":
     crop = getattr(config, "tactile_crop", None)
     if crop is None:
         return []
+    if crop_override is not None:
+        crop = crop_override
     from actoris_harena.policies.common.tactile import (
         TACTILE_CAMERAS,
         HarenaTactileCropProcessorStep,
@@ -261,14 +289,28 @@ def main() -> int:
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
+        "--tactile-crop",
+        default=None,
+        help="HEIGHT,WIDTH fractions kept, when the run overrides the target's "
+        "default crop (its --policy.tactile_crop)",
+    )
+    parser.add_argument(
         "--print-path",
         action="store_true",
         help="print only the resulting path, for a shell to capture",
     )
     args = parser.parse_args()
 
+    crop = None
+    if args.tactile_crop:
+        height, width = (float(v) for v in args.tactile_crop.strip("[]").split(","))
+        crop = (height, width)
     result = retarget(
-        resolve(args.checkpoint), args.to, Path(args.out).expanduser(), args.force
+        resolve(args.checkpoint),
+        args.to,
+        Path(args.out).expanduser(),
+        args.force,
+        crop=crop,
     )
     if args.print_path:
         print(result)

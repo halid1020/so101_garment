@@ -452,9 +452,15 @@ train_cell() {
         # rewrites one field.
         local base_path="$PI05_BASE"
         if local_policy "$policy"; then
+            # A crop override in EXTRA must reach the base's saved pipeline too:
+            # a finetune trains with the pipeline on disk, not the command line.
+            local crop_args=()
+            local crop
+            crop="$(sed -nE 's/.*--policy\.tactile_crop=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p' <<<"$EXTRA")"
+            [ -n "$crop" ] && crop_args=(--tactile-crop "$crop")
             base_path="$("$PY" "$REPO_ROOT/tool/retarget_checkpoint.py" \
                 --checkpoint "$PI05_BASE" --to "$policy" \
-                --out "$RUN_DIR/base_${policy}" --print-path)" \
+                --out "$RUN_DIR/base_${policy}" "${crop_args[@]}" --print-path)" \
                 || fail "retarget $PI05_BASE to $policy"
             echo "  base retargeted: $base_path"
         fi
