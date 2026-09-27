@@ -31,6 +31,9 @@
 #                     its own nodes advertise, taking only `gpu:1`. Passing it
 #                     here rather than forking the sbatch keeps one file for
 #                     every site.
+#   --mem M           host memory per task         (default: the sbatch's 48G;
+#                     DreamZero's five-camera loader was OOM-killed at 48G
+#                     on Viking, 2026-09-27)
 #   --account A       Slurm account, if enforced
 #   --exclude NODES   Slurm nodes to keep off, comma-separated. Use it when a
 #                     node has an unhealthy GPU: the driver refuses one that
@@ -57,6 +60,7 @@ FILTER_CAMERAS=""
 EXCLUDE=""
 SCRATCH="${SO101_SCRATCH:-/scratch/users/${USER:-$(id -un)}}"
 GRES=""
+MEM=""
 PARTITION=""
 ACCOUNT=""
 CONCURRENCY=""
@@ -73,6 +77,7 @@ while [ $# -gt 0 ]; do
         --scratch) SCRATCH="$2"; shift 2;;
         --partition) PARTITION="$2"; shift 2;;
         --gres) GRES="$2"; shift 2;;
+        --mem) MEM="$2"; shift 2;;
         --account) ACCOUNT="$2"; shift 2;;
         --concurrency) CONCURRENCY="$2"; shift 2;;
         --job-name) JOB_NAME="$2"; shift 2;;
@@ -265,6 +270,7 @@ for hours in $HOURS_SET; do
     # about and expensive to discover from a queued job that asked for the
     # wrong card.
     [ -n "$GRES" ] && cmd+=(--gres="$GRES")
+    [ -n "$MEM" ] && cmd+=(--mem="$MEM")
     [ -n "$ACCOUNT" ] && cmd+=(--account="$ACCOUNT")
     [ -n "$EXCLUDE" ] && cmd+=(--exclude="$EXCLUDE")
     cmd+=(--export="ALL,SO101_REPO_ROOT=$REPO_ROOT,SO101_SCRATCH=$SCRATCH,SO101_MANIFEST=$group_file"

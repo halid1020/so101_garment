@@ -269,6 +269,9 @@ def _target_only_steps(
     step = HarenaTactileCropProcessorStep(
         fraction=tuple(crop),
         cameras=tuple(getattr(config, "tactile_cameras", TACTILE_CAMERAS)),
+        # FastWAM reads the fingertips as one tiled composite; without the grid
+        # the step would find no fingertip camera by name and crop nothing.
+        tiled=dict(getattr(config, "tactile_tiled", None) or {}),
     )
     return [
         {

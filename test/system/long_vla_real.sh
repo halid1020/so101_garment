@@ -289,6 +289,16 @@ fail() { echo; echo "❌ Real-VLA long run FAILED during: $1"; exit 1; }
 # so101_ is what it registered before it was shared. A run matrix row or a
 # resubmitted job may still carry the old one, and a driver that failed to route
 # it would kill a resume at the point it was meant to recover.
+# A crop override in EXTRA must reach a pretrained base's SAVED pipeline too:
+# a run that starts from a base trains with the pipeline on disk, not with the
+# command line. Prints `--tactile-crop H,W` for the retarget, or nothing.
+crop_override_args() {
+    local crop
+    crop="$(sed -nE 's/.*--policy\.tactile_crop=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p' <<<"$EXTRA")"
+    [ -n "$crop" ] && echo "--tactile-crop $crop"
+    return 0
+}
+
 base_policy()  {
     # A variant takes its twin's budget on purpose. `_crop` reads a narrower
     # input of the same shape and `_predict` only exposes a prediction the twin
@@ -301,6 +311,7 @@ base_policy()  {
 }
 local_policy() { case "$1" in harena_*|so101_*) return 0;; *) return 1;; esac; }
 SO101_POLICY_PACKAGE="actoris_harena.policies"
+FASTWAM_BASE="${SO101_FASTWAM_BASE:-lerobot/fastwam_base}"
 
 # lerobot-train writes a checkpoint every --save_freq steps and never removes an
 # older one, so a 100k-step diffusion run parks ten ~3.3 GB copies and an 80k-step
@@ -452,12 +463,8 @@ train_cell() {
         # rewrites one field.
         local base_path="$PI05_BASE"
         if local_policy "$policy"; then
-            # A crop override in EXTRA must reach the base's saved pipeline too:
-            # a finetune trains with the pipeline on disk, not the command line.
             local crop_args=()
-            local crop
-            crop="$(sed -nE 's/.*--policy\.tactile_crop=\[?([0-9.]+,[0-9.]+)\]?.*/\1/p' <<<"$EXTRA")"
-            [ -n "$crop" ] && crop_args=(--tactile-crop "$crop")
+            read -r -a crop_args <<<"$(crop_override_args)"
             base_path="$("$PY" "$REPO_ROOT/tool/retarget_checkpoint.py" \
                 --checkpoint "$PI05_BASE" --to "$policy" \
                 --out "$RUN_DIR/base_${policy}" "${crop_args[@]}" --print-path)" \
@@ -523,6 +530,24 @@ PYDIM
                --policy.action_horizon="$FASTWAM_HORIZON"
                --policy.n_action_steps="$FASTWAM_N_ACTION_STEPS"
                --policy.image_size="$FASTWAM_IMAGE_SIZE")
+        # FastWAM names its base itself (`base_model_id`, then `pretrained_path`),
+        # and LeRobot then loads the BASE's saved pipeline instead of calling the
+        # policy's factory -- so a crop arm's crop step would never exist.
+        # MEASURED 2026-09-27: a harena_fastwam_crop smoke run saved no crop step
+        # at all. The fix is pi0.5's: a retargeted base carrying the step.
+        case "$policy" in
+            *_crop)
+                local fw_crop=()
+                read -r -a fw_crop <<<"$(crop_override_args)"
+                local fw_base
+                fw_base="$("$PY" "$REPO_ROOT/tool/retarget_checkpoint.py" \
+                    --checkpoint "$FASTWAM_BASE" --to "$policy" \
+                    --out "$RUN_DIR/base_${policy}" "${fw_crop[@]}" --print-path)" \
+                    || fail "retarget $FASTWAM_BASE to $policy"
+                args+=(--policy.base_model_id="$fw_base")
+                echo "  fastwam base : $fw_base (retargeted, carries the crop)"
+                ;;
+        esac
         echo "  fastwam dims : action=${dims%% *} proprio=${dims##* }"
         echo "  fastwam image: $FASTWAM_IMAGE_SIZE"
     fi

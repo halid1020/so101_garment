@@ -215,6 +215,33 @@ class RetargetCarriesTheCropStepTest(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(got, "0.8,0.8")
 
+    def test_fastwam_s_crop_names_its_composite(self):
+        # FastWAM reads the fingertips as one tiled image. A step that only
+        # knew the four camera names would match nothing and crop nothing.
+        from tool.retarget_checkpoint import compatible, retarget
+
+        src = self.base()
+        (src / "config.json").write_text(json.dumps({"type": "fastwam"}))
+        self.assertTrue(compatible("fastwam", "harena_fastwam_crop"))
+        out = Path(tempfile.mkdtemp()) / "out"
+        retarget(src, "harena_fastwam_crop", out, crop=(0.8, 0.8))
+        blob = json.loads((out / "policy_preprocessor.json").read_text())
+        step = blob["steps"][0]["config"]
+        self.assertEqual(step["tiled"], {"tactile_quad": [2, 2]})
+        self.assertEqual(step["fraction"], [0.8, 0.8])
+
+    def test_the_driver_s_override_helper(self):
+        driver = Path(__file__).resolve().parents[2] / "test/system/long_vla_real.sh"
+        script = (
+            f'eval "$(sed -n "/^crop_override_args()/,/^}}/p" {driver})"\n'
+            'EXTRA="--dataset.eval_split=0.1 --policy.tactile_crop=[0.8,0.8]"\n'
+            "crop_override_args\n"
+            'EXTRA="--dataset.eval_split=0.1"\n'
+            'echo "[$(crop_override_args)]"\n'
+        )
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.stdout.split("\n")[:2], ["--tactile-crop 0.8,0.8", "[]"])
+
     def test_a_plain_target_gains_nothing(self):
         from tool.retarget_checkpoint import retarget
 
