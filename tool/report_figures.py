@@ -1920,5 +1920,224 @@ def draw_filmstrip_h2h(
     return out
 
 
+def patch_maps(path: Path) -> "dict[str, np.ndarray]":
+    """Each fingertip's patch map, averaged over the analysed frames.
+
+    Every frame's map is first scaled to sum to one, so a frame where the plan
+    moved a lot does not outweigh the rest. A composite (FastWAM's fingertips) is
+    cut back into its four sensors, in the order it was tiled.
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    payload = json.loads(path.read_text())
+    sums: "dict[str, list[np.ndarray]]" = {}
+    for episode in payload["episodes"].values():
+        for frame in episode["frames"]:
+            for camera, values in (frame.get("patches") or {}).items():
+                grid = np.asarray(values, dtype=float)
+                parts = {camera: grid}
+                if camera == "tactile_quad":
+                    rows, cols = grid.shape[0] // 2, grid.shape[1] // 2
+                    parts = {
+                        name: grid[
+                            (i // 2) * rows : (i // 2 + 1) * rows,
+                            (i % 2) * cols : (i % 2 + 1) * cols,
+                        ]
+                        for i, name in enumerate(TACTILE_CAMERAS)
+                    }
+                for name, part in parts.items():
+                    total = part.sum()
+                    if total > 0:
+                        sums.setdefault(name, []).append(part / total)
+    return {name: np.mean(maps, axis=0) for name, maps in sums.items()}
+
+
+def patch_edge_ratio(maps: "dict[str, np.ndarray]", band: float = 0.2) -> float:
+    """Share of a patch map in the outer ``band``, over that band's share of area.
+
+    The band is in normalised coordinates (a cell counts if its centre lies in
+    it), so a 10 x 10 grid and a 5 x 5 one both give the outer fifth 64 % of the
+    area. 1 is no preference; the four sensors are averaged.
+    """
+    from tool.rim_attention import rim_mask
+
+    ratios = []
+    for grid in maps.values():
+        mask = rim_mask(grid.shape, band)
+        total = grid.sum()
+        if total > 0 and mask.any():
+            ratios.append(float(grid[mask].sum() / total / mask.mean()))
+    return float(np.mean(ratios)) if ratios else float("nan")
+
+
+def draw_patch_maps(entries: "list[tuple[str, Path]]", out: Path) -> "Path | None":
+    """Where each model's plan comes from in the fingertip images.
+
+    One column per model (and crop), one row per sensor: the mean patch map,
+    darker where painting that cell over moved the plan more. Each map is scaled
+    to its own peak, so compare where the dark cells are, not how dark.
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    found = [(label, patch_maps(path)) for label, path in entries if path.is_file()]
+    found = [(label, maps) for label, maps in found if maps]
+    if not found:
+        print("  patch maps: none found")
+        return None
+    figure, axes = plt.subplots(
+        4, len(found), figsize=(1.35 * len(found) + 0.8, 4.4), squeeze=False
+    )
+    for c, (label, maps) in enumerate(found):
+        for r, camera in enumerate(TACTILE_CAMERAS):
+            axis = axes[r][c]
+            axis.set_xticks([])
+            axis.set_yticks([])
+            grid = maps.get(camera)
+            if grid is not None:
+                axis.imshow(grid / grid.max(), cmap="Greys", vmin=0, vmax=1)
+            if r == 0:
+                axis.set_title(label, fontsize=7)
+            if c == 0:
+                axis.set_ylabel(SENSOR_SHORT[camera], fontsize=7)
+    figure.tight_layout(pad=0.2)
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  patch maps: {[label for label, _ in found]} -> {out}")
+    return out
+
+
+def draw_patch_rim(
+    groups: "list[tuple[str, list[tuple[str, Path]]]]", out: Path
+) -> "Path | None":
+    """The edge measure from patch maps, per model and crop.
+
+    ``groups`` is ``[(model, [(crop label, attribution.json), ...]), ...]``; a
+    missing file is a gap, never a zero.
+    """
+    crops = []
+    for _model, arms in groups:
+        for crop, _path in arms:
+            if crop not in crops:
+                crops.append(crop)
+    values = {
+        (model, crop): patch_edge_ratio(patch_maps(path))
+        for model, arms in groups
+        for crop, path in arms
+        if path.is_file()
+    }
+    if not values:
+        print("  patch rim: none found")
+        return None
+    figure, axis = plt.subplots(figsize=(1.3 * len(groups) + 2.5, 2.8))
+    width = 0.8 / len(crops)
+    shades = ["#4a3aa7", "#e8743b", "#19a979", "#3fd0ff"]
+    for k, crop in enumerate(crops):
+        xs = [i + (k - (len(crops) - 1) / 2) * width for i in range(len(groups))]
+        ys = [values.get((model, crop), np.nan) for model, _ in groups]
+        axis.bar(xs, ys, width * 0.9, label=crop, color=shades[k % len(shades)])
+    axis.axhline(1.0, color=MUTED, ls="--", lw=1)
+    axis.set_xticks(range(len(groups)))
+    axis.set_xticklabels([model for model, _ in groups], fontsize=8)
+    axis.set_ylabel("edge weight / edge area", fontsize=8)
+    axis.legend(
+        fontsize=7,
+        frameon=False,
+        ncol=len(crops),
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+    )
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  patch rim: {len(values)} arms -> {out}")
+    for key, value in values.items():
+        print(f"    {key[0]:<12} {key[1]:<12} x{value:.2f}")
+    return out
+
+
+def draw_stream_shares_all(
+    entries: "list[tuple[str, Path]]", out: Path
+) -> "Path | None":
+    """What moves each model's plan: proprioception, past commands, overhead, touch.
+
+    Stacked to 100 % because the shares are normalised within a model. Past
+    commands appear only for DreamZero, the one model given them as input.
+    """
+    rows = []
+    for label, path in entries:
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        totals: "dict[str, list[float]]" = {}
+        for episode in payload["episodes"].values():
+            for frame in episode["frames"]:
+                for name, effect in (
+                    (frame.get("occlusion") or {}).get("streams", {}).items()
+                ):
+                    totals.setdefault(name, []).append(effect["share"])
+        shares = {k: float(np.mean(v)) for k, v in totals.items()}
+        rows.append(
+            (
+                label,
+                [
+                    shares.get("state", 0.0),
+                    shares.get("past actions", 0.0),
+                    shares.get("central", 0.0),
+                    sum(
+                        v
+                        for k, v in shares.items()
+                        if "gripper" in k or k == "tactile_quad"
+                    ),
+                ],
+            )
+        )
+    if not rows:
+        return None
+    bands = (
+        ("proprioception", "#4a3aa7"),
+        ("past commands", "#9b8bd6"),
+        ("overhead", "#8a8a8a"),
+        ("fingertips", "#e8743b"),
+    )
+    figure, axis = plt.subplots(figsize=(1.1 * len(rows) + 2.2, 3.0))
+    bottom = np.zeros(len(rows))
+    for k, (name, colour) in enumerate(bands):
+        values = np.array([r[1][k] for r in rows]) * 100
+        if not values.any():
+            continue
+        axis.bar(
+            [r[0] for r in rows], values, 0.6, bottom=bottom, color=colour, label=name
+        )
+        for i, (v, b) in enumerate(zip(values, bottom)):
+            if v >= 6:
+                axis.annotate(
+                    f"{v:.0f}%",
+                    (i, b + v / 2),
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color="white",
+                    fontweight="bold",
+                )
+        bottom += values
+    axis.set_ylim(0, 100)
+    axis.set_ylabel("share of what moved the plan (%)", fontsize=8)
+    axis.tick_params(labelsize=7)
+    axis.legend(
+        fontsize=7,
+        frameon=False,
+        ncol=4,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.12),
+    )
+    tidy(axis)
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  stream shares, all models: {[r[0] for r in rows]} -> {out}")
+    return out
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
