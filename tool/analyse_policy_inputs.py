@@ -227,7 +227,15 @@ def windowed_record(inference, item: dict, args, context_actions: int) -> dict:
         return plan(inference, inference.to_device(inference.pre(batch)), DEFAULT_SEED)
 
     reference = planned(item)
-    cameras = sorted(k for k in item if k.startswith("observation.images."))
+    # The window also carries each camera's padding flags, named
+    # `observation.images.<camera>_is_pad` -- booleans, not images.
+    cameras = sorted(
+        k
+        for k, v in item.items()
+        if k.startswith("observation.images.")
+        and not k.endswith("_is_pad")
+        and getattr(v, "is_floating_point", lambda: False)()
+    )
     out: "dict[str, Any]" = {}
     if "occlusion" in args.method:
 

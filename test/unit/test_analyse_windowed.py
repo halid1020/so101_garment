@@ -49,6 +49,8 @@ def window():
         "observation.images.central": torch.rand(2, 3, 4, 4),
         "observation.state": torch.arange(24, dtype=torch.float32).view(2, 12),
         "action": torch.arange(48, dtype=torch.float32).view(4, 12),
+        # A real window carries padding flags beside each camera.
+        "observation.images.tip_is_pad": torch.zeros(2, dtype=torch.bool),
     }
 
 
