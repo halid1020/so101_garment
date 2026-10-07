@@ -238,7 +238,7 @@ def write_grasp_table(numbers: "dict[str, dict[str, float]]", out: Path) -> Path
     lines = [
         r"\begin{tabular}{lrrr}",
         r"\toprule",
-        r"condition & error & change from recorded & real change \\",
+        r"condition & error & change from recorded & repeat-last error \\",
         r"\midrule",
     ]
     for name, n in numbers.items():
@@ -317,8 +317,9 @@ def draw_grasp_strip(
         f"episode {grasp['episode']}, {short}: the gripper is commanded closed at "
         f"+{onset:.2f} s",
         fontsize=8,
+        y=1.0,
     )
-    figure.tight_layout(pad=0.2, h_pad=0.2, w_pad=0.1)
+    figure.tight_layout(pad=0.2, h_pad=0.2, w_pad=0.1, rect=(0, 0, 1, 0.94))
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  grasp filmstrip -> {out}")

@@ -277,3 +277,52 @@ FastWAM is ahead on both panels of Appendix Figure~\ref{fig:predmargin}.
   moment.}}
   \label{fig:filmstrip}
 \end{figure}
+
+\rev{\subsection{Does FastWAM's touch prediction follow the gripper?}
+\label{sec:grasp}
+
+We scored FastWAM's fingertip predictions over the 36 grasps of the test
+demonstrations (35 distinct windows, since two grasps start on the same frame),
+on the two fingertips of the grasping arm. Table~\ref{tab:grasp} gives the mean
+absolute pixel error as a percentage of the pixel range, and
+Figure~\ref{fig:grasp} shows one grasp.
+
+\begin{table}[t]
+  \centering
+  \caption{FastWAM around the 36 test grasps: mean absolute pixel error (\% of
+  the pixel range) of the grasping arm's two fingertips, over the eight
+  predicted frames. \emph{Change from recorded} is how far the prediction moves
+  when the current gripper position given to the model is changed from the
+  recorded (open) value to closed. \emph{Repeat-last error} is the error of
+  repeating the seen frame, which is also how much the gel really changes.}
+  \label{tab:grasp}
+  \small
+  \input{tables/grasp_table_state}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{grasp_filmstrip_state.png}
+  \caption{One grasp (test demonstration 60, left arm, fingertip LLG). Rows:
+  what happened; FastWAM's prediction with the recorded gripper position;
+  its prediction when told the gripper is already closed; and the difference
+  between the two predictions (mid-grey is none). The \emph{seen} column shows
+  the model's reconstruction of the frame it was given. The gripper is
+  commanded closed at \SI{0.5}{\second}; the gel darkens at contact about a
+  tenth of a second later.}
+  \label{fig:grasp}
+\end{figure}
+
+\textbf{FastWAM predicts the contact, and when it happens, from the image it
+sees.} In Figure~\ref{fig:grasp} it darkens the gel at the same moment the real
+gel darkens, about a tenth of a second after the closing command, and it never
+saw that command. Over all 36 grasps its error (5.4\,\%) is a third lower than
+repeating the seen frame (8.0\,\%).
+
+\textbf{Telling it the gripper is already closed changes almost nothing.} The
+prediction moves by 1.4\,\% when the gripper position is set to closed, against
+8.0\,\% of real change in the gel, and its error is the same (5.5\,\%). The
+difference row of Figure~\ref{fig:grasp} is flat grey. FastWAM reads the
+coming grasp from the images (where the arm is, where the cloth is), not from
+the gripper's position. \pending{the FastWAM whose video reads the actions,
+with the grasp commanded and with the gripper held open.}}
