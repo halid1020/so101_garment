@@ -34,11 +34,12 @@ with a ResNet-18 encoder, \new{shared by all five cameras} and trained from
 scratch. Flow matching \citep{lipman2023flow} learns to move noise to an action
 chunk along straight lines. \new{It sees only the current frame and plans 50
 steps.} The model therefore separates pi0.5's objective from its pretraining.
-\new{The run reported here kept a default meant for small images: each camera
-frame, $480\times640$ pixels, is cropped to a random $84\times84$ patch in
-training and to the central one at test time, without being resized first. It
-therefore sees about 2\,\% of each image. We retrain it with Diffusion's
-handling, resizing to $180\times240$ without cropping.}
+\rev{Our first run kept a default meant for small images: each camera frame,
+$480\times640$ pixels, was cropped to a random $84\times84$ patch in training
+and to the central one at test time, without being resized first, so it saw
+about 2\,\% of each image. The model reported here is retrained with
+Diffusion's handling instead, resizing each frame to $180\times240$ without
+cropping; the first run appears only in Section~\ref{sec:compare}.}
 
 \textbf{pi0.5} \citep{pi05} is a vision-language-action model: a pretrained
 vision-language model reads the images and a written instruction, and a
@@ -205,6 +206,54 @@ a model that has learned nothing about motion, and assumes nothing will change,
 would predict. A model's \emph{margin} is its PSNR minus this baseline's. A
 positive margin means the model predicts the future better than assuming
 nothing moves.}
+
+\rev{\textbf{How different the recordings look.} A held-out demonstration can be
+hard because it asks for different motions or because it looks different. We
+measure the second in each model's own terms: every frame of every
+demonstration goes through the model's preprocessing and vision encoder, and
+we keep the encoder's summary of each camera, scaled to unit length and joined
+across cameras. For ACT this is its ResNet-18's feature map averaged over the
+image; for Diffusion and flow matching, each camera encoder's output; for
+pi0.5, the image tokens averaged; for the two world action models, their image
+autoencoder's latent averaged onto a coarse grid. The two autoencoders are
+pretrained and frozen, so their features show what the model is shown, not
+what our training taught it. Two demonstrations show the same fold at
+different paces, so frame $t$ of one is not frame $t$ of the other. If
+demonstration $B$ has $M$ frames and $A$ has $N \ge M$, we match every frame of
+$B$ to a different frame of $A$, keeping the order:
+\begin{equation}
+  d(A,B) = \min_{i_0 < i_1 < \dots < i_{M-1}} \frac{1}{M}\sum_{j=0}^{M-1}
+  \bigl(1 - \cos(f^A_{i_j}, f^B_j)\bigr),
+\end{equation}
+where $f$ is a frame's feature vector. Dynamic programming finds the best
+match exactly. Doing this for every pair of the 65 demonstrations gives a
+$65\times65$ matrix, which we divide by its largest entry so that every model
+reads from 0 to 1. The question is whether the test demonstrations are further
+from their nearest training demonstration than the training demonstrations are
+from each other.}
+
+\rev{\textbf{Learning curves.} The runs above kept only their last checkpoints,
+so we retrain each of the six models with the same settings and keep a
+checkpoint every 5000 steps (10\,000 for flow matching and DreamZero). We score
+the action error of every checkpoint on the training and test demonstrations
+exactly as above, so the last point of each curve is the model's row in
+Table~\ref{tab:actions}.}
+
+\rev{\textbf{Does FastWAM's touch prediction follow the gripper?} We find every
+grasp in the seven test demonstrations: a moment where the gripper command
+falls from open (about 0.2) to closed (about 0.02), 36 in all. We start
+FastWAM's prediction half a second before each closing, so the second it
+predicts spans the contact, and compare its predicted fingertip images with
+the recorded ones. In our FastWAM, as in the original, the predicted video
+cannot see the planned actions at all; it sees only the current images, the
+instruction and the current joint positions. So we test two things. First, on
+our FastWAM, we change the current gripper position it is given from the
+recorded (open) value to closed. Second, we train a FastWAM whose video
+\emph{can} read the action chunk, and give it the recorded commands either
+unchanged or with the gripper held open, so that the grasp is never
+commanded. If the model has learned how the gel responds to grasping, the
+predicted fingertip images should show contact only when the grasp is
+commanded.}
 
 \subsection{The tactile crop}
 \label{sec:cropmethod}

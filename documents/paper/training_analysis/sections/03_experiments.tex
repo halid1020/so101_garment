@@ -46,18 +46,19 @@ random seeds (Appendix Table~\ref{tab:floor}). It does not prove that
 predicting the future is what helps: FastWAM starts from a pretrained video
 model, and DreamZero \new{is given the past \SI{1.6}{\second} of arm commands}.
 
-\new{\textbf{Flow matching is the most accurate behaviour-cloning policy over
-the first ten steps}, at 4.5 against Diffusion's 5.0. Further ahead the two
-converge (7.6 each at step 24), and by step 32 Diffusion is slightly ahead
-(9.2 against 9.8). Flow matching and pi0.5 share their training objective, and
-flow matching's error over the first ten steps is half pi0.5's (4.5 against
-9.0). On our data, pi0.5's pretraining with our narrow LoRA does worse than
-training a small model from scratch. This flow-matching run sees only a small
-central patch of each camera (Section~\ref{sec:models}), and 98.7\,\% of what
-moves its plan is proprioception (Figure~\ref{fig:streams}). That a policy
-which barely sees plans the first ten steps best says that over a third of a
-second the arms' own positions predict the next commands almost entirely.}
-\pending{flow matching retrained on resized, uncropped images.}
+\rev{\textbf{Flow matching is the most accurate behaviour-cloning policy}, over
+the first ten steps and further ahead: 4.3 against Diffusion's 5.0 over ten
+steps, 7.3 against 7.6 over 24 and 9.0 against 9.2 over 32. Flow matching and
+pi0.5 share their training objective, and flow matching's error over the first
+ten steps is half pi0.5's (4.3 against 9.0). On our data, pi0.5's pretraining
+with our narrow LoRA does worse than training a small model from scratch. Our
+first flow-matching run saw only a random \(84\times84\) patch of each camera
+image, about 2\,\% of it (Section~\ref{sec:models}), and 98.7\,\% of what moved
+its plan was proprioception (Figure~\ref{fig:streams}). Retrained on whole,
+resized images, it improves on the test demonstrations from 14.4 to 11.5 over
+its plan, but only from 4.5 to 4.3 over the first ten steps. Over a third of a
+second the arms' own positions predict the next commands almost entirely;
+seeing the cameras matters further ahead.}
 
 \textbf{Diffusion's error starts low but grows fastest.} On the test
 demonstrations it rises from 3.9 at the first step to 13.9 by step 32, a factor
@@ -186,7 +187,8 @@ the overhead camera alone.}
   \caption{How much each input moves each model's plan (input contribution,
   Section~\ref{sec:measures}). Each bar adds up to 100\,\%, so compare the
   order of inputs within a bar, not heights between bars. pi0.5 reads two
-  fingertips; the others read four.}
+  fingertips; the others read four. \rev{The flow-matching bar is our first
+  run, which saw a 2\,\% patch of each camera.}}
   \label{fig:streams}
 \end{figure}
 
@@ -195,8 +197,8 @@ relies most on the overhead camera, then proprioception, with the fingertips
 last. Diffusion and pi0.5 rely mostly on proprioception: about three quarters
 of what moves pi0.5's plan is where the arms are. \new{FastWAM leans on
 proprioception most of all, 86\,\%, with 11\,\% for the overhead camera and
-3\,\% for the fingertips.} \pending{input contribution of flow matching and
-DreamZero, including DreamZero's past commands.}
+3\,\% for the fingertips.} \pending{input contribution of the retrained flow
+matching and of DreamZero, including DreamZero's past commands.}
 
 
 \subsection{How well the world action models predict the cameras}
