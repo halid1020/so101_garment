@@ -118,6 +118,11 @@ WORKERS="${SO101_LOADER_WORKERS:-${SLURM_CPUS_PER_TASK:-$(nproc 2>/dev/null || e
 # How many step checkpoints to keep per policy once training finishes (see
 # prune_checkpoints below for why this is not simply "all of them"). 0 => keep all.
 KEEP_CKPTS=2
+# 1 => a superseded checkpoint loses only its training_state/ (the optimiser,
+# about two thirds of it) and keeps pretrained_model/, so a learning curve can
+# score every step after the run. From the environment, so a Slurm array row
+# needs no new column: SO101_KEEP_WEIGHTS=1 hpc/submit_real.sh ...
+KEEP_WEIGHTS="${SO101_KEEP_WEIGHTS:-0}"
 EXTRA=""                           # raw lerobot-train flags, appended last
 SKIP_TRAIN=0
 
@@ -155,6 +160,7 @@ while [ $# -gt 0 ]; do
         --save-freq) SAVE_FREQ="$2"; shift 2;;
         --workers) WORKERS="$2"; shift 2;;
         --keep-checkpoints) KEEP_CKPTS="$2"; shift 2;;
+        --keep-weights) KEEP_WEIGHTS=1; shift;;
         --eval-split) EVAL_SPLIT="$2"; shift 2;;
         --eval-steps) EVAL_STEPS="$2"; shift 2;;
         --extra) EXTRA="$2"; shift 2;;
@@ -353,8 +359,13 @@ prune_checkpoints() {
     while read -r s; do
         [ -n "$s" ] || continue
         [ "$s" = "$keep_last" ] && continue
-        echo "  ✂ pruning superseded checkpoint ${policy}/${s}"
-        rm -rf "${ck:?}/${s}"
+        if [ "$KEEP_WEIGHTS" = "1" ]; then
+            echo "  ✂ pruning the optimiser state of ${policy}/${s} (weights kept)"
+            rm -rf "${ck:?}/${s}/training_state"
+        else
+            echo "  ✂ pruning superseded checkpoint ${policy}/${s}"
+            rm -rf "${ck:?}/${s}"
+        fi
     done < <(printf '%s\n' "${steps[@]}" | sort -n | head -n "$drop")
 }
 

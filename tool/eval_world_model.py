@@ -168,6 +168,61 @@ def make_batch(item: dict, device) -> dict:
     return batch
 
 
+def parse_overrides(text: str, stats: "dict | None" = None) -> "dict[int, float]":
+    """``"5=0.02,11=max"`` -> ``{5: 0.02, 11: <that column's max>}``.
+
+    ``min`` and ``max`` read the dataset's own ``observation.state`` statistics,
+    so "gripper closed" and "gripper open" are values the recordings contain
+    rather than numbers typed in from memory of the arm.
+    """
+    out: "dict[int, float]" = {}
+    for part in filter(None, (p.strip() for p in text.split(","))):
+        column, _, value = part.partition("=")
+        index = int(column)
+        if value in ("min", "max"):
+            if not stats:
+                raise ValueError(f"{part}: min/max needs the dataset's stats")
+            out[index] = float(stats["observation.state"][value][index])
+        else:
+            out[index] = float(value)
+    return out
+
+
+def override_state(batch: dict, values: "dict[int, float]") -> dict:
+    """The raw batch with chosen state columns replaced at every time step."""
+    if not values:
+        return batch
+    out = dict(batch)
+    state = batch["observation.state"].clone()
+    for column, value in values.items():
+        state[..., column] = value
+    out["observation.state"] = state
+    return out
+
+
+def conditioning_actions(
+    model_batch: dict, horizon: int, mode: str, gripper_columns: "tuple[int, ...]"
+) -> "torch.Tensor | None":
+    """The action chunk an action-conditioned video model is shown, or None.
+
+    ``recorded`` is what the operator actually commanded next. ``hold-gripper``
+    is the same chunk with each gripper column frozen at its first value, so a
+    grasp that the recording closes on never gets its closing command. Taken
+    from the PREPROCESSED batch, in the normalised units the model trained on;
+    the normaliser is affine per column, so holding a normalised value holds the
+    raw one.
+    """
+    if mode == "none":
+        return None
+    actions = model_batch["action"][:, :horizon].clone()
+    if mode == "hold-gripper":
+        for column in gripper_columns:
+            actions[:, :, column] = actions[:, :1, column]
+    elif mode != "recorded":
+        raise ValueError(f"unknown action conditioning {mode!r}")
+    return actions
+
+
 def check_coverage(scored: int, skipped: "list[str]") -> str:
     """Refuse a result that rests on nothing; warn about one resting on little.
 
@@ -313,6 +368,7 @@ def evaluate_frame(
     model_batch: "dict | None" = None,
     keep: "list | None" = None,
     composites: "dict[str, tuple[str, ...]] | None" = None,
+    predict_kwargs: "dict | None" = None,
 ) -> "dict[str, dict[str, list[float]]]":
     """Predicted vs actual for one observation, per camera, per horizon step.
 
@@ -325,6 +381,9 @@ def evaluate_frame(
     the last observed frame (and its reconstruction), the actual future and the
     predicted one -- so a
     filmstrip shows the frames that were scored and not a separate rollout.
+
+    ``predict_kwargs`` go to ``predict_future_frames`` as they are -- the action
+    chunk an action-conditioned model is shown, for one.
 
     ``composites`` names any tiled camera's parts, so every number is reported
     per SENSOR (see :func:`split_composites`).
@@ -367,7 +426,7 @@ def evaluate_frame(
     context_frames = config.n_context_chunks * config.latent_frames_per_chunk
 
     predicted_tiled = policy.predict_future_frames(
-        batch if model_batch is None else model_batch
+        batch if model_batch is None else model_batch, **(predict_kwargs or {})
     )
     actual_tiled = policy.tile_cameras(batch)
     context_tiled = actual_tiled[:, :context_frames]
@@ -525,6 +584,27 @@ def main() -> int:
         help="frame indices (as the loop counts them, within the loaded "
         "episodes) to draw as actual / predicted / held filmstrips",
     )
+    parser.add_argument(
+        "--frames",
+        type=int,
+        nargs="*",
+        default=[],
+        help="score exactly these frame indices (within the loaded episodes) "
+        "instead of every --every-th; each also gets a filmstrip",
+    )
+    parser.add_argument(
+        "--state-override",
+        default="",
+        help='replace state columns before the model sees them, e.g. "5=min,11=min" '
+        "(min/max: the dataset's own range for that column)",
+    )
+    parser.add_argument(
+        "--condition-actions",
+        choices=["auto", "none", "recorded", "hold-gripper"],
+        default="auto",
+        help="the action chunk an action-conditioned video model is shown; auto "
+        "is recorded for such a model and none otherwise",
+    )
     args = parser.parse_args()
 
     from tool.eval_sim_policy import load_policy
@@ -540,22 +620,47 @@ def main() -> int:
     from actoris_harena.recording import camera_profile
 
     import common  # noqa: F401  -- declares this rig's cameras to actoris_harena
+    from common.robot_schema import GRIPPER_COLUMNS
 
     composites = dict(camera_profile.profile().composites)
+    stats_path = Path(args.dataset).expanduser() / "meta" / "stats.json"
+    stats = json.loads(stats_path.read_text()) if stats_path.exists() else None
+    overrides = parse_overrides(args.state_override, stats)
+    video_config = getattr(policy.config, "video_dit_config", None) or {}
+    conditioned = bool(video_config.get("action_conditioned"))
+    mode = args.condition_actions
+    if mode == "auto":
+        mode = "recorded" if conditioned else "none"
+    if mode != "none" and not conditioned:
+        print(
+            "⚠️  this model's video never reads an action, so the chunk passed "
+            "with --condition-actions cannot change a predicted frame"
+        )
+    if overrides:
+        print(f"state override: {overrides}")
+    print(f"actions    : {mode}")
     pinned = None if args.seed < 0 else args.seed
     episodes = parse_range(args.episodes)
     dataset = load_dataset(policy, args.dataset, episodes)
     print(f"checkpoint : {args.checkpoint}\npolicy     : {policy_type}")
     print(f"dataset    : {args.dataset} ({dataset.num_frames} frames)")
 
-    wanted = set(args.filmstrip)
+    wanted = set(args.filmstrip) | set(args.frames)
     strips: "dict[int, list]" = {}
     collected: "list[dict]" = []
     skipped: "list[str]" = []
-    for index in range(0, dataset.num_frames, args.every):
+    indices = args.frames or range(0, dataset.num_frames, args.every)
+    for index in indices:
         if len(collected) >= args.max_frames:
             break
-        batch = make_batch(dataset[index], device)
+        batch = override_state(make_batch(dataset[index], device), overrides)
+        model_batch = preprocess(pre, batch, device)
+        actions = conditioning_actions(
+            model_batch,
+            int(getattr(policy.config, "action_horizon", 0) or 0),
+            mode,
+            GRIPPER_COLUMNS,
+        )
         try:
             # The SAME seed for every frame, not seed+index: each frame is an
             # independent prediction, and what has to be reproducible is the
@@ -565,9 +670,10 @@ def main() -> int:
                     policy,
                     truth_batch(pre, batch),
                     seed=pinned,
-                    model_batch=preprocess(pre, batch, device),
+                    model_batch=model_batch,
                     keep=strips.setdefault(index, []) if index in wanted else None,
                     composites=composites,
+                    predict_kwargs=None if actions is None else {"action": actions},
                 )
             )
         except ValueError as exc:  # a frame too near an episode edge to pad
@@ -591,6 +697,8 @@ def main() -> int:
         "frames": len(collected),
         "skipped": len(skipped),
         "seed": pinned,
+        "state_override": {str(k): v for k, v in overrides.items()},
+        "condition_actions": mode,
         "per_camera": summary,
     }
     (out_dir / "prediction.json").write_text(json.dumps(payload, indent=2) + "\n")

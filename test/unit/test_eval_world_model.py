@@ -576,3 +576,42 @@ class ReconstructionTest(unittest.TestCase):
             "central": {**frame([20.0], [18.0])["central"], "recon_psnr": [27.5]}
         }
         self.assertIn("27.50", report(summary))
+
+
+class GripperExperimentTest(unittest.TestCase):
+    """The controls of the grasp experiment change only what they name."""
+
+    def test_overrides_parse_numbers_and_the_dataset_range(self):
+        from tool.eval_world_model import parse_overrides
+
+        stats = {
+            "observation.state": {
+                "min": [0.0] * 12,
+                "max": [float(i) for i in range(12)],
+            }
+        }
+        self.assertEqual(parse_overrides("5=0.02,11=max", stats), {5: 0.02, 11: 11.0})
+        self.assertEqual(parse_overrides(""), {})
+        with self.assertRaises(ValueError):
+            parse_overrides("5=min")
+
+    def test_state_override_touches_only_its_columns(self):
+        from tool.eval_world_model import override_state
+
+        batch = {"observation.state": torch.zeros(1, 3, 12)}
+        out = override_state(batch, {5: 1.0})
+        self.assertTrue(torch.all(out["observation.state"][..., 5] == 1.0))
+        self.assertEqual(float(out["observation.state"].sum()), 3.0)
+        self.assertEqual(float(batch["observation.state"].sum()), 0.0)
+
+    def test_hold_gripper_freezes_only_the_grippers(self):
+        from tool.eval_world_model import conditioning_actions
+
+        actions = torch.arange(40 * 12, dtype=torch.float32).view(1, 40, 12)
+        batch = {"action": actions}
+        self.assertIsNone(conditioning_actions(batch, 32, "none", (5, 11)))
+        recorded = conditioning_actions(batch, 32, "recorded", (5, 11))
+        self.assertTrue(torch.equal(recorded, actions[:, :32]))
+        held = conditioning_actions(batch, 32, "hold-gripper", (5, 11))
+        self.assertTrue(torch.all(held[0, :, 5] == actions[0, 0, 5]))
+        self.assertTrue(torch.equal(held[..., :5], actions[:, :32, :5]))

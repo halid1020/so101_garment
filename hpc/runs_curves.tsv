@@ -1,0 +1,32 @@
+# Learning curves and the action-conditioned FastWAM (report, third round,
+# 2026-10-07). Same columns as runs.tsv.
+#
+# 1. LEARNING CURVES. The six main-table models retrained with their own recipes
+#    (eval_split 0.1, so the last 7 of 65 recordings are held out; seed 1000;
+#    the baselines' batches), because the original runs kept only their last two
+#    checkpoints. Submit with SO101_KEEP_WEIGHTS=1, so every saved step keeps its
+#    weights (the optimiser state of superseded steps is still removed), and
+#    with SO101_RUN_TAG=<dataset>__<cameras>__curve, so a curve run lands beside
+#    its baseline and not on top of it. --eval_steps adds LeRobot's own held-out
+#    LOSS at each save. tool/score_curve.py then scores every step's action
+#    error; its last point must reproduce the main table.
+#    Checkpoints every 5000 steps (10000 for flow matching and DreamZero), the
+#    driver's defaults per policy.
+#
+# 2. FASTWAM WITH ACTION-CONDITIONED VIDEO. The FastWAM crop arm with the crop
+#    switched off ((1.0, 1.0) is the uncropped baseline) and its video expert
+#    allowed to read the action chunk. In the main-table FastWAM the video never
+#    attends to an action, so a commanded grasp cannot change a predicted
+#    fingertip frame; this run is what lets the gripper experiment ask that.
+#    Tag: <dataset>__central+tactile_quad__actvideo.
+#
+# dataset                         policy            cameras                                              steps   batch  hours  slots  extra
+# 1.
+fold-short-from-flattend-tactile act               all                                                  80000   8      36     -      --dataset.eval_split=0.1 --eval_steps=5000
+fold-short-from-flattend-tactile diffusion         all                                                  100000  8      36     -      --dataset.eval_split=0.1 --eval_steps=5000
+fold-short-from-flattend-tactile harena_flowmatch  all                                                  60000   16     36     -      --dataset.eval_split=0.1 --eval_steps=10000 --policy.resize_shape=[180,240] --policy.crop_shape=null
+fold-short-from-flattend-tactile pi05              central,left_arm_left_gripper,right_arm_left_gripper 30000   1      36     -      --dataset.eval_split=0.1 --eval_steps=5000
+fold-short-from-flattend-tactile harena_dreamzero  all                                                  80000   8      36     -      --dataset.eval_split=0.1 --eval_steps=10000
+fold-short-from-flattend-tactile harena_fastwam    central,tactile_quad                                 30000   8      36     -      --dataset.eval_split=0.1 --eval_steps=5000
+# 2.
+fold-short-from-flattend-tactile harena_fastwam_crop central,tactile_quad                               30000   8      36     -      --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.action_conditioned_video=true
