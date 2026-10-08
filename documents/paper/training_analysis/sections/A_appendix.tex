@@ -95,10 +95,14 @@ computed during training on the seven test demonstrations.}
 
 \rev{\textbf{Grasps (Table~\ref{tab:grasp}, Figure~\ref{fig:grasp}).} A grasp
 is a fall of the gripper command from above 0.1 to below 0.05 within 15 frames
-(\SI{0.5}{\second}); its prediction starts 15 frames before. Both conditions use
-the same checkpoint (the FastWAM of Table~\ref{tab:actions}), the same frames
-and the same sampler seed. ``Closed'' sets both gripper positions of the state
-to their smallest recorded value. Errors are mean absolute differences of
+(\SI{0.5}{\second}); its prediction starts 15 frames before. Every condition
+uses the same frames and the same sampler seed. The first two use the FastWAM of
+Table~\ref{tab:actions}; ``closed'' sets both gripper positions of the state to
+their smallest recorded value. The last two use a FastWAM retrained with the
+same data and settings but with its video expert's action conditioning on (each
+latent frame attends to the four commands of its own time step); it is given
+the recorded command chunk in the normalised units it trained on, or that chunk
+with both gripper columns held at their first value. Errors are mean absolute differences of
 8-bit pixels, as a percentage of 255.}
 
 \section{Additional results}

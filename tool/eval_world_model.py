@@ -171,7 +171,7 @@ def make_batch(item: dict, device) -> dict:
 def as_predictor(policy):
     """A FastWAM of any variant, given the methods the scorer asks for.
 
-    ``harena_fastwam_predict`` adds three methods and two config fields to
+    ``harena_fastwam_predict`` adds four methods and two config fields to
     FastWAM and changes nothing else, and a checkpoint is normally retargeted
     to it. A SIBLING variant cannot be: the action-conditioned run is a
     ``harena_fastwam_crop`` (with the crop switched off), and the retarget
@@ -194,7 +194,12 @@ def as_predictor(policy):
 
     if not isinstance(policy, HarenaFastwamPolicy):
         return policy
-    for name in ("predict_future_frames", "tile_cameras", "untile_cameras"):
+    for name in (
+        "predict_future_frames",
+        "tile_cameras",
+        "untile_cameras",
+        "reconstruct_frames",
+    ):
         method = getattr(HarenaFastwamPredictPolicy, name)
         object.__setattr__(policy, name, types.MethodType(method, policy))
     config = policy.config

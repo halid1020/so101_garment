@@ -403,12 +403,11 @@ Figure~\ref{fig:grasp} shows one grasp.
   \caption{FastWAM around the 36 test grasps: mean absolute pixel error (\% of
   the pixel range) of the grasping arm's two fingertips, over the eight
   predicted frames. \emph{Change from recorded} is how far the prediction moves
-  when the current gripper position given to the model is changed from the
-  recorded (open) value to closed. \emph{Repeat-last error} is the error of
+  under the changed condition. \emph{Repeat-last error} is the error of
   repeating the seen frame, which is also how much the gel really changes.}
   \label{tab:grasp}
   \small
-  \input{tables/grasp_table_state}
+  \input{tables/grasp_table}
 \end{table}
 
 \begin{figure}[t]
@@ -435,5 +434,26 @@ prediction moves by 1.4\,\% when the gripper position is set to closed, against
 8.0\,\% of real change in the gel, and its error is the same (5.5\,\%). The
 difference row of Figure~\ref{fig:grasp} is flat grey. FastWAM reads the
 coming grasp from the images (where the arm is, where the cloth is), not from
-the gripper's position. \pending{the FastWAM whose video reads the actions,
-with the grasp commanded and with the gripper held open.}}
+the gripper's position.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{grasp_filmstrip_actions.png}
+  \caption{The grasp of Figure~\ref{fig:grasp}, predicted by the FastWAM whose
+  video reads the commanded actions: given the recorded commands, and given
+  the same commands with the gripper held open. The last row is their
+  difference. This run did not save the reconstruction of the seen frame.}
+  \label{fig:graspactions}
+\end{figure}
+
+\textbf{A FastWAM whose video reads the commands predicts touch from the
+command.} We retrained FastWAM with the same data and settings, letting each
+predicted frame attend to the commands of its own stretch of time. Given the
+recorded commands it predicts the grasping fingertips best of all: 3.4\,\%
+against 5.4\,\% for the original (Table~\ref{tab:grasp}). With the gripper
+held open, so that the grasp is never commanded, it predicts no contact: the
+gel stays as it was (Figure~\ref{fig:graspactions}), the prediction moves by
+4.2\,\% and the error rises to 5.8\,\%. The difference appears only from
+\SI{0.67}{\second}, the moment the real gel is pressed. This model has learned
+how the gel responds to a commanded grasp, which the original, by design,
+could not express.

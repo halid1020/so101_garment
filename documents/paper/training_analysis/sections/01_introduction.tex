@@ -77,7 +77,9 @@ The main findings are these.
   a small moving part, such as a gripper.
   \item \rev{\textbf{FastWAM predicts when the gel will be touched from the
   image alone.} It foresees the contact of a grasp at the right moment, and
-  telling it the gripper is already closed changes nothing.}
+  telling it the gripper is already closed changes nothing. Retrained so that
+  its predicted video reads the commands, it predicts the touch more accurately,
+  and predicts none when the grasp is not commanded.}
   \item \rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
   together move its plan by about 2\,\%; proprioception and its own past
   commands carry the rest.}

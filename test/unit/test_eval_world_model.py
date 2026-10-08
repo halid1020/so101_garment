@@ -631,7 +631,12 @@ class AsPredictorTest(unittest.TestCase):
         torch.nn.Module.__init__(policy)
         policy.config = types.SimpleNamespace()
         out = as_predictor(policy)
-        for name in ("predict_future_frames", "tile_cameras", "untile_cameras"):
+        for name in (
+            "predict_future_frames",
+            "tile_cameras",
+            "untile_cameras",
+            "reconstruct_frames",
+        ):
             self.assertTrue(callable(getattr(out, name)))
         self.assertEqual(out.config.n_context_chunks, 1)
         self.assertEqual(out.config.predict_inference_steps, 20)
