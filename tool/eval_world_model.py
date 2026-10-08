@@ -168,6 +168,46 @@ def make_batch(item: dict, device) -> dict:
     return batch
 
 
+def as_predictor(policy):
+    """A FastWAM of any variant, given the methods the scorer asks for.
+
+    ``harena_fastwam_predict`` adds three methods and two config fields to
+    FastWAM and changes nothing else, and a checkpoint is normally retargeted
+    to it. A SIBLING variant cannot be: the action-conditioned run is a
+    ``harena_fastwam_crop`` (with the crop switched off), and the retarget
+    refuses to cross from one variant to another, rightly, since their configs
+    differ. So the predict class's methods are bound onto the loaded policy
+    instead, and its config gains the predict defaults. Any other policy, and
+    a FastWAM that already predicts, comes back unchanged.
+    """
+    if hasattr(policy, "predict_future_frames"):
+        return policy
+    import types
+
+    from actoris_harena.policies.fastwam.modeling_fastwam import HarenaFastwamPolicy
+    from actoris_harena.policies.fastwam_predict.configuration_fastwam_predict import (
+        HarenaFastwamPredictConfig,
+    )
+    from actoris_harena.policies.fastwam_predict.modeling_fastwam_predict import (
+        HarenaFastwamPredictPolicy,
+    )
+
+    if not isinstance(policy, HarenaFastwamPolicy):
+        return policy
+    for name in ("predict_future_frames", "tile_cameras", "untile_cameras"):
+        method = getattr(HarenaFastwamPredictPolicy, name)
+        object.__setattr__(policy, name, types.MethodType(method, policy))
+    config = policy.config
+    defaults = HarenaFastwamPredictConfig.__dataclass_fields__
+    for name in ("predict_inference_steps", "predict_seed"):
+        if not hasattr(config, name):
+            setattr(config, name, defaults[name].default)
+    # The predict config's context arithmetic: one observed frame, see there.
+    config.n_context_chunks = 1
+    config.latent_frames_per_chunk = 1
+    return policy
+
+
 def parse_overrides(text: str, stats: "dict | None" = None) -> "dict[int, float]":
     """``"5=0.02,11=max"`` -> ``{5: 0.02, 11: <that column's max>}``.
 
@@ -611,6 +651,7 @@ def main() -> int:
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     policy, pre, _post, policy_type = load_policy(args.checkpoint, device)
+    policy = as_predictor(policy)
     if not hasattr(policy, "predict_future_frames"):
         raise SystemExit(
             f"❌ {policy_type} is not a world model: it predicts actions but not "

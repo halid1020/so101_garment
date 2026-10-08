@@ -615,3 +615,30 @@ class GripperExperimentTest(unittest.TestCase):
         held = conditioning_actions(batch, 32, "hold-gripper", (5, 11))
         self.assertTrue(torch.all(held[0, :, 5] == actions[0, 0, 5]))
         self.assertTrue(torch.equal(held[..., :5], actions[:, :32, :5]))
+
+
+class AsPredictorTest(unittest.TestCase):
+    """A FastWAM variant that cannot be retargeted still gets scored."""
+
+    def test_a_fastwam_variant_gains_the_scorer_methods(self):
+        import types
+
+        from actoris_harena.policies.fastwam.modeling_fastwam import HarenaFastwamPolicy
+
+        from tool.eval_world_model import as_predictor
+
+        policy = HarenaFastwamPolicy.__new__(HarenaFastwamPolicy)
+        torch.nn.Module.__init__(policy)
+        policy.config = types.SimpleNamespace()
+        out = as_predictor(policy)
+        for name in ("predict_future_frames", "tile_cameras", "untile_cameras"):
+            self.assertTrue(callable(getattr(out, name)))
+        self.assertEqual(out.config.n_context_chunks, 1)
+        self.assertEqual(out.config.predict_inference_steps, 20)
+
+    def test_any_other_policy_is_left_alone(self):
+        from tool.eval_world_model import as_predictor
+
+        policy = torch.nn.Linear(1, 1)
+        self.assertIs(as_predictor(policy), policy)
+        self.assertFalse(hasattr(policy, "predict_future_frames"))
