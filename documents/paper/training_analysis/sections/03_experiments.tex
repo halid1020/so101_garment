@@ -138,6 +138,49 @@ too. DreamZero and FastWAM barely show it, probably because our features for
 them average each fingertip onto about four cells of the autoencoder's latent,
 too coarse to see the ridge move.}
 
+\rev{\subsection{Learning curves}
+\label{sec:curves}
+
+Figure~\ref{fig:curves} follows each model's training and test error over the
+first ten steps through training (Section~\ref{sec:measures}). The last point
+of each curve reproduces the model's row of Table~\ref{tab:actions} to within
+what a rerun moves it: the curves come from fresh runs with the same settings,
+and ACT's last point over the first ten steps is 8.7 against 7.9 in the table.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\textwidth]{curves.png}
+  \caption{Action error over the first ten steps on the training (dashed) and
+  test (solid) demonstrations, at every saved checkpoint of a rerun with the
+  same settings. The dotted line marks the checkpoint with the lowest test
+  error.}
+  \label{fig:curves}
+\end{figure}
+
+\textbf{The test error stops improving long before training ends; the training
+error does not.} Diffusion's test error levels off at about 5.2 by
+\num{40000} of its \num{100000} steps, while its training error keeps falling,
+from 3.5 to 1.8. Flow matching's levels off by \num{20000} of \num{60000}.
+ACT's training error falls from 8.4 to 2.5 over the whole run, while its test
+error moves only from 10.5 to about 8, and over its whole plan not at all (14.7
+at \num{5000} steps, 14.3 at the end). The large gaps of
+Table~\ref{tab:actions} are therefore built late in training: the extra steps
+fit the training demonstrations more closely without helping on new ones.
+They do not make the test error worse either, so stopping earlier would save
+time, not improve the models.
+
+\textbf{pi0.5 never pulls apart.} Its training and test errors fall together
+and level off at about \num{20000} steps, with a gap of 1.1 throughout: it
+stops learning rather than overfitting, as Section~\ref{sec:compare} found.
+
+\textbf{The trainer's own held-out loss would have misled us.} LeRobot also
+reports each model's training loss on the test demonstrations. For Diffusion
+it rises fourfold from \num{10000} steps (0.029 to 0.119), and for flow
+matching it rises too, which reads as severe overfitting, yet neither model's
+test action error gets worse. These losses score how well a model removes
+noise from the recorded actions, not how close its plan is to them.
+\pending{DreamZero and FastWAM learning curves.}}
+
 \subsection{Cropping the tactile images}
 \label{sec:crop}
 
