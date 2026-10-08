@@ -76,6 +76,31 @@ For a cropped world model the true frames are cropped the same way before
 scoring, and FastWAM's fingertip composite is cut back into its four sensors so
 both models are scored per sensor.
 
+\rev{\textbf{Recording distances (Figure~\ref{fig:recordings},
+Table~\ref{tab:recordings}, Figure~\ref{fig:sensorshift}).} Every frame of all
+65 demonstrations (\num{30141} frames) goes through each checkpoint of
+Table~\ref{tab:actions}, except that DreamZero's and FastWAM's features come
+from their frozen image autoencoders, which training does not change. Each
+camera's vector is scaled to unit length before the cameras are joined; for
+the two world action models their autoencoder's latent is averaged onto a
+$6\times6$ (DreamZero) or $4\times8$ (FastWAM) grid. The distance between two
+frames is one minus the cosine of their vectors. The per-camera split averages
+each demonstration's frames per camera and chooses the boundary that best
+separates the demonstrations before it from those after.}
+
+\rev{\textbf{Learning curves (Figure~\ref{fig:curves}).} Fresh runs with each
+model's settings and seed, keeping the weights of every checkpoint, scored with
+the protocol of Table~\ref{tab:actions}. The held-out loss is LeRobot's own,
+computed during training on the seven test demonstrations.}
+
+\rev{\textbf{Grasps (Table~\ref{tab:grasp}, Figure~\ref{fig:grasp}).} A grasp
+is a fall of the gripper command from above 0.1 to below 0.05 within 15 frames
+(\SI{0.5}{\second}); its prediction starts 15 frames before. Both conditions use
+the same checkpoint (the FastWAM of Table~\ref{tab:actions}), the same frames
+and the same sampler seed. ``Closed'' sets both gripper positions of the state
+to their smallest recorded value. Errors are mean absolute differences of
+8-bit pixels, as a percentage of 255.}
+
 \section{Additional results}
 \label{sec:extra}
 

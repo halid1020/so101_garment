@@ -52,7 +52,16 @@ The main findings are these.
   steps.}
   \item \textbf{Every policy is much worse on held-out demonstrations.} The gap
   is largest for ACT, which almost memorises its training demonstrations. It is
-  not caused by the recording session drifting over time.
+  not caused by the recording session drifting over time\rev{, nor by the
+  held-out demonstrations looking unfamiliar: to every model's vision encoder
+  they look as close to training demonstrations as training ones look to each
+  other. The one visual change in the session, a fingertip sensor's view
+  shifting at demonstration 43, falls inside the training set.}
+  \item \rev{\textbf{Test error stops improving long before training ends.}
+  Training error keeps falling, so the gaps are built by extra training that
+  fits the training demonstrations without helping, or harming, on new ones.
+  LeRobot's own held-out loss rises meanwhile and would wrongly suggest
+  overfitting.}
   \item \textbf{Diffusion's plans are accurate for the first steps, but their
   error grows fastest;} ACT's grows slowly.
   \item \textbf{Cropping the tactile images changes almost nothing} on any
@@ -66,6 +75,12 @@ The main findings are these.
   nothing.} Its narrow LoRA, not too little training, is the likelier limit.}
   \item \textbf{A frame-averaged image score can miss a correct prediction} of
   a small moving part, such as a gripper.
+  \item \rev{\textbf{FastWAM predicts when the gel will be touched from the
+  image alone.} It foresees the contact of a grasp at the right moment, and
+  telling it the gripper is already closed changes nothing.}
+  \item \rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
+  together move its plan by about 2\,\%; proprioception and its own past
+  commands carry the rest.}
 \end{itemize}
 
 Section~\ref{sec:methods} describes the models, the data and how we evaluate
