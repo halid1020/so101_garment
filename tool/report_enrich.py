@@ -326,6 +326,53 @@ def draw_grasp_strip(
     return out
 
 
+def draw_sensor_shift(
+    dataset: Path,
+    out: Path,
+    camera: str = "left_arm_left_gripper",
+    before: "tuple[int, int]" = (30, 42),
+    after: "tuple[int, int]" = (42, 54),
+    frames: int = 3,
+) -> Path:
+    """A fingertip's untouched view before and after a step change in the session.
+
+    Each image is the mean of the first ``frames`` frames of each episode in the
+    range (the arms at rest, the gel untouched), so what differs is the sensor,
+    not the contact. Episode ranges are zero-based and half-open.
+    """
+    from actoris_harena.analysis.sources import DatasetSource
+
+    source = DatasetSource(str(dataset), "", 1)
+    key = f"observation.images.{camera}"
+
+    def rest(lo: int, hi: int) -> np.ndarray:
+        images = [
+            np.asarray(source.dataset[row][key]).transpose(1, 2, 0)
+            for episode in range(lo, hi)
+            for row in source.rows(episode)[:frames]
+        ]
+        return np.mean(images, axis=0)
+
+    first, second = rest(*before), rest(*after)
+    difference = np.clip(0.5 + 3.0 * (second - first), 0.0, 1.0)
+    figure, axes = plt.subplots(1, 3, figsize=(7.2, 2.0))
+    titles = (
+        f"demonstrations {before[0] + 1}-{before[1]}",
+        f"demonstrations {after[0] + 1}-{after[1]}",
+        "difference (x3, grey = none)",
+    )
+    for axis, image, title in zip(axes, (first, second, difference), titles):
+        axis.imshow(image)
+        axis.set_title(title, fontsize=8, color=INK)
+        axis.set_xticks([])
+        axis.set_yticks([])
+    figure.tight_layout()
+    figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  sensor shift: {camera} -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--recordings", nargs="*", default=[])
@@ -340,6 +387,7 @@ def main() -> int:
         "--grasp-example", type=int, default=0, help="index into grasps.json"
     )
     parser.add_argument("--tag", default="", help="suffix for the grasp outputs")
+    parser.add_argument("--dataset", default=None, help="for the sensor-shift figure")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -348,6 +396,8 @@ def main() -> int:
     recordings = pairs(args.recordings)
     draw_recordings(recordings, out / "recordings.png")
     write_recordings_table(recordings, out / "recordings_table.tex")
+    if args.dataset:
+        draw_sensor_shift(Path(args.dataset).expanduser(), out / "sensor_shift.png")
     curves = pairs(args.curves)
     if draw_curves(curves, out / "curves.png"):
         curve_summary(curves)

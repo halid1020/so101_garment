@@ -893,6 +893,9 @@ def main() -> int:
             print(f"  per-sensor prediction: no {key} result at {path}")
     write_wm_table(revised, out / "wm_table.tex")
     draw_rim_attention([Path(a) for a in args.attribution], out / "rim_attention.png")
+    draw_patch_maps(
+        [(label, Path(path)) for label, path in PATCH_DECKS], out / "patch_maps.png"
+    )
     draw_stream_shares_all(
         [(label, Path(path)) for label, path in STREAM_DECKS], out / "stream_shares.png"
     )
@@ -2063,6 +2066,30 @@ def draw_patch_rim(
     return out
 
 
+#: The patch-map runs behind the all-model patch figure, on held-out
+#: demonstration 58 (10x10 grid per fingertip; FastWAM 5x5 per sensor of its
+#: composite). Label, attribution.json.
+PATCH_DECKS = (
+    ("ACT", "outputs/analysis/2026-09-27/patches-act/attribution.json"),
+    (
+        "ACT\nfour-edge",
+        "outputs/analysis/2026-09-27/patches-act_crop_edges/attribution.json",
+    ),
+    ("Diffusion", "outputs/analysis/2026-10-08/patches-diffusion/attribution.json"),
+    ("pi0.5", "outputs/analysis/2026-10-08/patches-pi05/attribution.json"),
+    (
+        "pi0.5\nfour-edge",
+        "outputs/analysis/2026-09-27/patches-pi05_crop_edges/attribution.json",
+    ),
+    (
+        "Flow\nmatching",
+        "outputs/analysis/2026-10-08/patches-flowmatch_resize/attribution.json",
+    ),
+    ("DreamZero", "outputs/analysis/2026-10-08/patches-dreamzero/attribution.json"),
+    ("FastWAM", "outputs/analysis/2026-09-27/patches-fastwam/attribution.json"),
+)
+
+
 #: The input-contribution runs behind the all-model share figure, on held-out
 #: demonstration 58: every 5th frame, 60 frames, the mean baseline.
 STREAM_DECKS = (
@@ -2070,10 +2097,10 @@ STREAM_DECKS = (
     ("Diffusion", "outputs/analysis/2026-09-18/heldout-diffusion/attribution.json"),
     (
         "Flow\nmatching",
-        "outputs/analysis/2026-09-27/patches-flowmatch/attribution.json",
+        "outputs/analysis/2026-10-08/patches-flowmatch_resize/attribution.json",
     ),
     ("pi0.5", "outputs/analysis/2026-09-25/heldout-pi05/attribution.json"),
-    ("DreamZero", "outputs/analysis/2026-09-27/patches-dreamzero/attribution.json"),
+    ("DreamZero", "outputs/analysis/2026-10-08/patches-dreamzero/attribution.json"),
     ("FastWAM", "outputs/analysis/2026-09-27/heldout-fastwam/attribution.json"),
 )
 
@@ -2151,7 +2178,7 @@ def draw_stream_shares_all(
         frameon=False,
         ncol=4,
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.12),
+        bbox_to_anchor=(0.5, -0.2),
     )
     tidy(axis)
     figure.tight_layout()

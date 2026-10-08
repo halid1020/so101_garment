@@ -54,7 +54,7 @@ ten steps is half pi0.5's (4.3 against 9.0). On our data, pi0.5's pretraining
 with our narrow LoRA does worse than training a small model from scratch. Our
 first flow-matching run saw only a random \(84\times84\) patch of each camera
 image, about 2\,\% of it (Section~\ref{sec:models}), and 98.7\,\% of what moved
-its plan was proprioception (Figure~\ref{fig:streams}). Retrained on whole,
+its plan was proprioception. Retrained on whole,
 resized images, it improves on the test demonstrations from 14.4 to 11.5 over
 its plan, but only from 4.5 to 4.3 over the first ten steps. Over a third of a
 second the arms' own positions predict the next commands almost entirely;
@@ -85,6 +85,59 @@ from 17.1 to 16.4 and test error from 18.4 to 18.0, less than rescoring with
 another seed moves it (Appendix Table~\ref{tab:floor}). The narrow LoRA, not
 too little training, is the likelier limit.}
 
+\rev{\subsection{Do the test demonstrations look different?}
+\label{sec:recordings}
+
+Figure~\ref{fig:recordings} shows how far apart every pair of the 65
+demonstrations looks to each model's own vision encoder
+(Section~\ref{sec:measures}), and Table~\ref{tab:recordings} asks the question
+that matters for the gap above: is a test demonstration further from its
+nearest training demonstration than a training demonstration is from its
+nearest neighbour?
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\textwidth]{recordings.png}
+  \caption{How different every pair of demonstrations looks to each model's
+  vision encoder: the mean feature distance after matching their frames in
+  order, scaled so that 1 is the most different pair. Demonstrations are in
+  recording order; the lines mark the seven test demonstrations (58--65).}
+  \label{fig:recordings}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \caption{Distance from each demonstration to its nearest training
+  demonstration (itself excluded), averaged over the 58 training and the 7 test
+  demonstrations, on the scale of Figure~\ref{fig:recordings}.}
+  \label{tab:recordings}
+  \small
+  \input{tables/recordings_table}
+\end{table}
+
+\textbf{To every model, the test demonstrations look like training ones.} A
+test demonstration is between 0.90 and 1.16 times as far from its nearest
+training demonstration as a training demonstration is from its own nearest
+neighbour (Table~\ref{tab:recordings}). Each test demonstration has training
+demonstrations that look about as similar as training demonstrations look to
+each other, so the large gaps of Section~\ref{sec:compare} are not caused by
+the test demonstrations looking unfamiliar.
+
+\textbf{The session does contain one visual change, at demonstration 43.} ACT,
+Diffusion and pi0.5 split the session into two blocks
+(Figure~\ref{fig:recordings}). Splitting each encoder's features by camera
+puts the boundary in the left arm's left fingertip (LLG) between demonstrations
+42 and 43, for ACT, Diffusion, flow matching and pi0.5 alike; no other camera
+changes at a common point. The untouched gel's image shows why: between those
+two demonstrations the sensor's view shifted, moving the ridge and the pad's
+edges and adding new marks on the gel (Appendix Figure~\ref{fig:sensorshift}).
+The shift is a step, not a drift: every demonstration before it looks like the
+earlier ones and every one after it like the later ones. It does not separate
+test from training, since 15 training demonstrations (43--57) come after it
+too. DreamZero and FastWAM barely show it, probably because our features for
+them average each fingertip onto about four cells of the autoencoder's latent,
+too coarse to see the ridge move.}
+
 \subsection{Cropping the tactile images}
 \label{sec:crop}
 
@@ -108,8 +161,11 @@ directions. That is within what repeating a run with another random seed moves
 Diffusion and pi0.5 (Appendix Table~\ref{tab:floor}). \new{The four-edge crop
 leaves pi0.5 and Diffusion unchanged (18.34 against 18.35, 9.10 against 9.18)
 and costs ACT as much as the rows-only crop does (14.70 against 14.68 and 14.09
-uncropped).} \pending{four-edge and ridge
-crops on the remaining models.} For ACT, the one place the rows-only crop looked
+uncropped).} \rev{FastWAM's four-edge crop leaves it unchanged too (3.99
+against 3.94). The ridge crop, which also removes the gel's bright ridge, is no
+different: pi0.5 18.49, Diffusion 9.06 and ACT 14.63, again within a few per
+cent of uncropped and, for ACT, the same cost as its other crops.}
+\pending{DreamZero's four-edge and ridge crops, and FastWAM's ridge crop.} For ACT, the one place the rows-only crop looked
 harmful, over the far end of its plan, disappears when the image is not
 stretched. So the stretching, not the loss of the rim, caused that small
 penalty.
@@ -128,7 +184,7 @@ nearest the edge used to be further in.
   \centering
   \includegraphics[width=0.6\textwidth]{patch_maps.png}
   \caption{\new{Patch occlusion maps: where in each fingertip image the plan
-  comes from, averaged over 20 frames of test demonstration 58 (FastWAM:
+  comes from, averaged over 20 to 60 frames of test demonstration 58 (FastWAM:
   8 frames, $5\times5$ cells per sensor). Darker cells moved the plan more when
   painted over; each map is scaled to its own peak. A cropped model's map is
   drawn over the full image, so the white border is what it never sees. pi0.5
@@ -144,12 +200,18 @@ the gel's ridge at about 0.3, and the outer fifth of the image gets 0.68 of its
 share by area, in line with Grad-CAM. With the four-edge crop they move to 0.45
 to 0.69, the right half of the gel, where the contact marks form. pi0.5 with the
 four-edge crop still peaks at 0.33 to 0.35, on the ridge, which is what the
-ridge crop removes. Flow matching's map shows only the central patch it was
-given. FastWAM's map is nearly flat: painting any cell moves its plan by at
+ridge crop removes. FastWAM's map is nearly flat: painting any cell moves its plan by at
 least 40\,\% as much as the most important cell. Its pinned plan repeats
 exactly, so this is the model and not sampling noise: it reacts to a change
 anywhere in a fingertip image by about the same amount.}
-\pending{Diffusion, pi0.5 and DreamZero patch maps.}
+\rev{Uncropped Diffusion peaks 0.37 to 0.53 across, just right of the ridge;
+uncropped pi0.5 peaks in different places on its two sensors (0.61 and 0.23)
+and its maps are flatter than the behaviour-cloning policies'; DreamZero's
+peaks are scattered (0.13 to 0.73), and retrained flow matching's lie between
+0.21 and 0.55. \textbf{No model over-weights the image edges:} the outer fifth
+of the image gets 0.78 (Diffusion), 0.88 (DreamZero), 0.91 (pi0.5) and 0.95
+(flow matching) of its share by area, all below one. Uncropped ACT, at 0.68, is
+the most centred.}
 
 \subsection{Which sensors the models use}
 \label{sec:sensors}
@@ -187,8 +249,8 @@ the overhead camera alone.}
   \caption{How much each input moves each model's plan (input contribution,
   Section~\ref{sec:measures}). Each bar adds up to 100\,\%, so compare the
   order of inputs within a bar, not heights between bars. pi0.5 reads two
-  fingertips; the others read four. \rev{The flow-matching bar is our first
-  run, which saw a 2\,\% patch of each camera.}}
+  fingertips; the others read four. \rev{DreamZero alone is given its past
+  arm commands as an input.}}
   \label{fig:streams}
 \end{figure}
 
@@ -197,8 +259,13 @@ relies most on the overhead camera, then proprioception, with the fingertips
 last. Diffusion and pi0.5 rely mostly on proprioception: about three quarters
 of what moves pi0.5's plan is where the arms are. \new{FastWAM leans on
 proprioception most of all, 86\,\%, with 11\,\% for the overhead camera and
-3\,\% for the fingertips.} \pending{input contribution of the retrained flow
-matching and of DreamZero, including DreamZero's past commands.}
+3\,\% for the fingertips.} \rev{Retrained on whole images, flow matching
+uses its cameras: proprioception falls to 75\,\% (98.7\,\% in the first run),
+with 9\,\% for the overhead camera and 16\,\% for the fingertips, the largest
+fingertip share of any model. DreamZero leans on proprioception most of all
+(88\,\%), then on its past commands (10\,\%); all five cameras together move
+its plan by only 2.3\,\%. The model that plans the next ten steps second best
+barely reads its cameras to do it.}
 
 
 \subsection{How well the world action models predict the cameras}
