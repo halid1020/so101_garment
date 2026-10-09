@@ -281,8 +281,10 @@ Diffusion and pi0.5 (Table~\ref{tab:floor}). The ridge crop, which also
 removes the gel's bright ridge, is no different. The one consistent cost is
 ACT's: every crop that stretches the image costs it about 0.6 (14.6 to 14.7
 against 14.1), while the unstretched rows-only crop costs nothing, so the
-stretching, not the loss of the rim, is to blame.} \pending{FastWAM's ridge
-crop.}
+stretching, not the loss of the rim, is to blame.} \gr{The one exception is FastWAM's ridge crop, 4.21 against 3.94 uncropped
+(7\,\% worse), more than rescoring with other sampler seeds moves FastWAM
+(Appendix Table~\ref{tab:floor}). It is a single training run, so part of it may
+be what a rerun would move; its four-edge crop changed nothing.}
 
 \textbf{The policies do not over-weight the edges of the tactile images.}
 Measured with Grad-CAM on a test demonstration (Figure~\ref{fig:rim}),
