@@ -3,47 +3,32 @@
 
 \textbf{What we learned.} The largest effect in this report is not a difference
 between models. It is the drop from training to unseen demonstrations, which
-every model shows and which is not caused by drift over the session. ACT shows
-it most clearly: it replays familiar demonstrations almost exactly and does
-much worse on new ones. Fifty-eight demonstrations of one task from one session
-are not enough for any of these models to generalise to a fifty-ninth.
+every model shows and which is not caused by drift over the session. \rev{Nor is
+it caused by the test demonstrations looking unfamiliar, and it is built late in
+training: test error levels off early while training error keeps falling.}
+Fifty-eight demonstrations of one task from one session are not enough for any
+of these models to generalise to a fifty-ninth.
 
 Cropping the tactile images is not the lever. It changes almost nothing on any
-model, and on average the policies do not over-weight the image edges that
-motivated it. The edges are brighter than the centre, but the policies'
-behaviour does not depend on them in a way we can measure.
+model, and \rev{no model} over-weights the image edges that motivated it.
+\new{Pretraining did not help as we used it: pi0.5, finetuned through a narrow
+LoRA, plans worse than a small flow-matching policy trained from scratch, and
+three times more training did not close the gap.}
 
-\new{Pretraining did not help as we used it. pi0.5, finetuned through a narrow
-LoRA, plans worse than a small flow-matching policy with the same objective
-trained from scratch on our 58 demonstrations. Training three times longer
-did not close the gap, which points at the narrow LoRA rather than too little
-training.}
+Touch is used, but briefly, \new{and removing the fingertips altogether made
+ACT slightly better on held-out demonstrations. On a task this consistent, the
+overhead camera and the joint positions may already say what the next commands
+should be.} \rev{Yet touch is predictable: a FastWAM whose video reads the
+commands foresees how the gel responds to a grasp, and predicts no contact when
+the grasp is not commanded. A model can learn what touch will show without its
+plan needing it.} The two world action models plan the near future best, though
+DreamZero barely reads its cameras to do so.
 
-Touch is used, but briefly. ACT ignores the fingertips for seconds at a time
-and then leans on them heavily around contact, so averaged contributions
-understate what the tactile sensors do. \new{Yet removing the fingertips
-altogether made ACT slightly better on held-out demonstrations. On a task this
-consistent, with a fixed garment and a fixed folding strategy, the overhead
-camera and the joint positions may already say what the next commands should
-be; the tactile sensors may matter more on tasks whose outcome depends on how
-firmly the cloth is held.}
-
-The two world action models plan the near future best, and DreamZero predicts the
-cameras better than assuming nothing moves. FastWAM predicts sharper frames,
-but only a second ahead, and frame-averaged scores undersell it.
-
-\textbf{Next steps.}
-\begin{enumerate}
-  \item \textbf{Collect more varied demonstrations} (sessions, garments,
-  starting positions): the most direct attack on the generalisation gap.
-  \item \textbf{Test on the robot.} Agreement with recorded commands is not
-  folding the garment, nor recovering from states the demonstrator never
-  visited.
-  \item \new{\textbf{Finetune pi0.5 fully, or with LoRA on every layer,} as
-  the published recipes do; this needs a larger GPU.}
-  \item \textbf{Gate touch on contact,} which fits how ACT uses the fingertips
-  and removes the pre-contact images that raised the edge question.
-  \item \textbf{Predict further, and score motion.} Train FastWAM to predict
-  beyond one second, and score predictions on the pixels that change, which
-  frame-averaged PSNR ignores.
-\end{enumerate}
+\textbf{Next steps.} \textbf{Collect more varied demonstrations} (sessions,
+garments, starting positions), the most direct attack on the generalisation
+gap. \textbf{Test on the robot}, since agreement with recorded commands is not
+folding the garment. \new{\textbf{Finetune pi0.5 fully, or with LoRA on every
+layer,} as the published recipes do.} \rev{\textbf{Use predicted touch:} a
+policy that plans with a model which foresees contact, such as the
+action-conditioned FastWAM, could act on touch before it happens.}
+\textbf{Score motion, not whole frames}, which frame-averaged PSNR ignores.

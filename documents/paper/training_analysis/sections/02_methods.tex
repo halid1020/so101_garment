@@ -14,12 +14,11 @@ each one receives. For each model we give its original design first and then wha
 changed.
 
 \textbf{ACT} \citep{zhao2023act} \new{encodes each camera image separately with
-one shared ResNet-18, turns each feature map into a set of tokens, and joins
-the tokens of all cameras with the proprioception.} A transformer then decodes a
-whole chunk at once; the model is trained as a conditional variational
-autoencoder. \new{It sees only the current frame.} The original smooths
-overlapping chunks at test time. We use the LeRobot implementation unchanged,
-with all five cameras and a chunk of 100 steps (\SI{3.3}{\second}).
+one shared ResNet-18 and joins the resulting tokens with the proprioception.}
+A transformer, trained as a conditional variational autoencoder, decodes a
+whole chunk at once. \new{It sees only the current frame.} We use the LeRobot
+implementation unchanged, with all five cameras and a chunk of 100 steps
+(\SI{3.3}{\second}).
 
 \textbf{Diffusion Policy} \citep{chi2023diffusion} starts from random noise and
 removes it step by step to produce a chunk, using a one-dimensional
@@ -45,26 +44,20 @@ cropping; the first run appears only in Section~\ref{sec:compare}.}
 vision-language model reads the images and a written instruction, and a
 smaller ``action expert'' produces the chunk by flow matching. \new{Its vision
 encoder turns each image into tokens; it sees only the current frame.}
-\new{Its authors finetune the whole model on each new task; their code also
-offers LoRA \citep{hu2022lora}, which trains small low-rank corrections to
-chosen weights and freezes the rest. On OpenVLA, LoRA of rank 32 on every
-linear layer matched full finetuning \citep{kim2024openvla}; on language
-models LoRA learns less of a new task, though it forgets less
-\citep{biderman2024lora}. Ours is narrower than either, chosen to fit a 24\,GB
-GPU: rank 16 on the action expert's attention and state and action layers only,
-about 1.3 million trained weights, with the vision-language model frozen.} pi0.5 has three image slots, so it reads the
+\rev{We finetune it with a narrow LoRA \citep{hu2022lora}, chosen to fit a
+24\,GB GPU: rank 16 on the action expert's attention and state and action
+layers only, about 1.3 million trained weights, with the vision-language model
+frozen. Its authors finetune the whole model; Appendix~\ref{sec:modeldetails}
+compares the published LoRA recipes.} pi0.5 has three image slots, so it reads the
 overhead camera and one fingertip per arm. It is given the instruction ``fold
 the short'' and plans 50 steps.
 
 \textbf{DreamZero} \citep{dreamzero} is a world action model: it predicts
 future video and future actions together, under one flow-matching objective.
-The original is built on a 14-billion-parameter pretrained video generator.
-\new{Its authors adapt it to a new robot by finetuning that pretrained model on
-about 30 minutes of the robot's play data, not by training from scratch.} The
-pretrained model is far too large for our GPUs, so ours has the same objective
-and chunking but about 59 million parameters, and is trained from scratch on
-our demonstrations. \new{It therefore tests the method, not the pretrained
-model.} \new{Like the original, it \emph{tiles} the cameras: all five are
+\rev{The original finetunes a 14-billion-parameter pretrained video generator
+(Appendix~\ref{sec:modeldetails}), far too large for our GPUs; ours has the
+same objective and chunking but about 59 million parameters, trained from
+scratch, so it tests the method, not the pretrained model.} \new{Like the original, it \emph{tiles} the cameras: all five are
 squashed into the cells of a $3\times3$ grid inside one $224\times224$ frame
 (Appendix Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.} It
 sees two frames, the latest and one \SI{0.8}{\second} earlier, \new{and is also
@@ -73,9 +66,8 @@ given the arm commands of the past \SI{1.6}{\second}}. It predicts frames every
 
 \textbf{FastWAM} \citep{fastwam} is also a world action model, built on a
 pretrained five-billion-parameter video generator, Wan2.2 \citep{wan2025},
-with a smaller action expert beside it. \new{Its authors finetune the pretrained
-video model on each task's demonstrations, as we do; we start from the public
-LeRobot base model.} \new{Its image input is one frame of fixed size, made by
+with a smaller action expert beside it. \new{We finetune it on our demonstrations, as its
+authors do, from the public LeRobot base model.} \new{Its image input is one frame of fixed size, made by
 setting cameras side by side. We give it the overhead camera beside a
 two-by-two composite of the four fingertips (Appendix Figure~\ref{fig:inputs}c). It sees
 only the current frame.} It predicts nine frames over about a second and plans
@@ -236,7 +228,7 @@ gel.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.75\textwidth]{gradcam_evidence.png}
+  \includegraphics[width=0.66\textwidth]{gradcam_evidence.png}
   \caption{\new{Grad-CAM of ACT on the four fingertips, frame 180 of training
   demonstration 0. Red is where the plan's gradient is largest. The dashed box
   marks the outer tenth of each image; the number is the weight inside that band

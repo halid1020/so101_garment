@@ -30,7 +30,7 @@ with how far ahead the model plans.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.72\textwidth]{horizon_all.png}
+  \includegraphics[width=0.62\textwidth]{horizon_all.png}
   \caption{Action error at each step of the plan, against how far ahead that
   step is, for every model on one linear scale. Left: test demonstrations.
   Right: training demonstrations. The shaded band is the first ten steps, which
@@ -50,15 +50,12 @@ model, and DreamZero \new{is given the past \SI{1.6}{\second} of arm commands}.
 the first ten steps and further ahead: 4.3 against Diffusion's 5.0 over ten
 steps, 7.3 against 7.6 over 24 and 9.0 against 9.2 over 32. Flow matching and
 pi0.5 share their training objective, and flow matching's error over the first
-ten steps is half pi0.5's (4.3 against 9.0). On our data, pi0.5's pretraining
-with our narrow LoRA does worse than training a small model from scratch. Our
-first flow-matching run saw only a random \(84\times84\) patch of each camera
-image, about 2\,\% of it (Section~\ref{sec:models}), and 98.7\,\% of what moved
-its plan was proprioception. Retrained on whole,
-resized images, it improves on the test demonstrations from 14.4 to 11.5 over
-its plan, but only from 4.5 to 4.3 over the first ten steps. Over a third of a
-second the arms' own positions predict the next commands almost entirely;
-seeing the cameras matters further ahead.}
+ten steps is half pi0.5's (4.3 against 9.0): on our data, pi0.5's pretraining
+with our narrow LoRA does worse than a small model trained from scratch. Our
+first flow-matching run, which saw a 2\,\% patch of each camera
+(Section~\ref{sec:models}), scored 14.4 over its plan but almost the same over
+the first ten steps (4.5): over a third of a second the arms' own positions
+predict the next commands almost entirely.}
 
 \textbf{Diffusion's error starts low but grows fastest.} On the test
 demonstrations it rises from 3.9 at the first step to 13.9 by step 32, a factor
@@ -141,7 +138,7 @@ and ACT's last point over the first ten steps is 8.7 against 7.9 in the table.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.85\textwidth]{curves.png}
+  \includegraphics[width=0.72\textwidth]{curves.png}
   \caption{Action error over the first ten steps on the training (dashed) and
   test (solid) demonstrations, at every saved checkpoint of a rerun with the
   same settings. The dotted line marks the checkpoint with the lowest test
@@ -201,14 +198,11 @@ stretching, not the loss of the rim, is to blame.} \pending{FastWAM's ridge
 crop.}
 
 \textbf{The policies do not over-weight the edges of the tactile images.}
-Appendix Figure~\ref{fig:rim} measures this directly with Grad-CAM. A value of 1 means the edge band
-gets exactly its share of the weight by area; above 1, the model favours the
-edge. On a test demonstration, every uncropped model sits between two thirds
-and nine tenths of its share, at every band width. \new{So the strong edge
-weighting of Figure~\ref{fig:gradcamevidence} happens at some moments but does
-not hold on average.} Cropping moves the weight slightly towards the new edge,
-partly for a mechanical reason: after cropping and stretching, the pixels
-nearest the edge used to be further in.
+Measured with Grad-CAM on a test demonstration (Appendix Figure~\ref{fig:rim}),
+the edge band of every uncropped model gets two thirds to nine tenths of its
+share of the weight by area (1 would be no preference), at every band width:
+\new{the strong edge weighting of Figure~\ref{fig:gradcamevidence} happens at
+some moments but does not hold on average.}
 
 
 
@@ -230,19 +224,11 @@ its pinned plan repeats exactly, this is the model, not sampling noise.}
 
 We retrained ACT with three sets of inputs, all with proprioception: the
 overhead camera alone; the overhead camera and one fingertip per arm (the pair
-pi0.5 reads); and all five cameras. Table~\ref{tab:sensors} gives the result.
+pi0.5 reads); and all five cameras. Appendix Table~\ref{tab:sensors} gives the result.
 \new{The overhead-only model tests the reading of Appendix Figure~\ref{fig:framewise}: if
 ACT uses touch only briefly, removing touch altogether should cost little.}
 
-\begin{table}[t]
-  \centering
-  \caption{ACT trained on three sets of cameras, all with proprioception.
-  Action error (RMSE) over its own 100-step plan and over the first ten steps.
-  \new{The lowest error in each column is in bold.}}
-  \label{tab:sensors}
-  \small
-  \input{tables/sensor_table}
-\end{table}
+
 
 \new{\textbf{ACT generalises better without the fingertips.} Trained on the
 overhead camera alone, it fits its training demonstrations exactly as well as
@@ -271,7 +257,7 @@ barely reads its cameras to do it.}
 \subsection{How well the world action models predict the cameras}
 \label{sec:wm}
 
-Table~\ref{tab:wm} scores both world action models on every sensor. The first
+Appendix Table~\ref{tab:wm} scores both world action models on every sensor. The first
 column is reconstruction, the frames the model saw passed through its own
 autoencoder, which is the sharpest any of its predictions can be. \new{For
 DreamZero this is its frozen image autoencoder, applied to each frame; for
@@ -279,21 +265,7 @@ FastWAM it is Wan2.2's video autoencoder, which compresses groups of four
 frames together.} The next columns compare its predicted future frames with the
 real ones and with repeating the last frame it saw.
 
-\begin{table}[t]
-  \centering
-  \caption{World action models on the seven test demonstrations, per sensor, in
-  PSNR (dB, higher is better). \emph{Reconstruction}: seen frames through the
-  model's own autoencoder. \emph{Prediction}: predicted future frames.
-  \new{\emph{Repeat last}: the last seen frame used as the prediction for every
-  future time.} Both averaged over the prediction horizon. \emph{Margin}:
-  prediction minus repeat last, at \SI{0.8}{\second} ahead and at the end of
-  each model's horizon (\SI{4.8}{\second} for DreamZero, \SI{1.1}{\second} for
-  FastWAM). Each model works at its own resolution, so compare margins, not
-  PSNR, between models.}
-  \label{tab:wm}
-  \small
-  \input{tables/wm_table}
-\end{table}
+
 
 \rev{\textbf{Most of the prediction error comes from predicting, not from
 compressing the images.} FastWAM's pretrained autoencoder reproduces a seen
@@ -326,49 +298,30 @@ Figure~\ref{fig:predmargin}).}
 \rev{\subsection{Does FastWAM's touch prediction follow the gripper?}
 \label{sec:grasp}
 
-We scored FastWAM's fingertip predictions over the 36 grasps of the test
-demonstrations (35 distinct windows, since two grasps start on the same frame),
-on the two fingertips of the grasping arm. Table~\ref{tab:grasp} gives the mean
-absolute pixel error as a percentage of the pixel range, and
-Appendix Figure~\ref{fig:grasp} shows one grasp.
+Appendix Table~\ref{tab:grasp} scores FastWAM's predictions of the grasping arm's two
+fingertips over the 36 test grasps; Appendix Figures~\ref{fig:grasp}
+and~\ref{fig:graspactions} show one.
 
-\begin{table}[t]
-  \centering
-  \caption{FastWAM around the 36 test grasps: mean absolute pixel error (\% of
-  the pixel range) of the grasping arm's two fingertips, over the eight
-  predicted frames. \emph{Change from recorded} is how far the prediction moves
-  under the changed condition. \emph{Repeat-last error} is the error of
-  repeating the seen frame, which is also how much the gel really changes.}
-  \label{tab:grasp}
-  \small
-  \input{tables/grasp_table}
-\end{table}
+
 
 
 
 \textbf{FastWAM predicts the contact, and when it happens, from the image it
-sees.} In Appendix Figure~\ref{fig:grasp} it darkens the gel at the same moment the real
-gel darkens, about a tenth of a second after the closing command, and it never
-saw that command. Over all 36 grasps its error (5.4\,\%) is a third lower than
-repeating the seen frame (8.0\,\%).
-
-\textbf{Telling it the gripper is already closed changes almost nothing.} The
-prediction moves by 1.4\,\% when the gripper position is set to closed, against
-8.0\,\% of real change in the gel, and its error is the same (5.5\,\%). The
-difference row of Appendix Figure~\ref{fig:grasp} is flat grey. FastWAM reads the
-coming grasp from the images (where the arm is, where the cloth is), not from
-the gripper's position.
+sees.} It darkens the gel at the moment the real gel darkens, about a tenth of
+a second after a closing command it never saw, and over all 36 grasps its error
+(5.4\,\%) is a third lower than repeating the seen frame (8.0\,\%).
+\textbf{Telling it the gripper is already closed changes almost nothing:} the
+prediction moves by 1.4\,\% against 8.0\,\% of real change in the gel. It reads
+the coming grasp from the images, not from the gripper's position.
 
 
 
 \textbf{A FastWAM whose video reads the commands predicts touch from the
-command.} We retrained FastWAM with the same data and settings, letting each
-predicted frame attend to the commands of its own stretch of time. Given the
-recorded commands it predicts the grasping fingertips best of all: 3.4\,\%
-against 5.4\,\% for the original (Table~\ref{tab:grasp}). With the gripper
-held open, so that the grasp is never commanded, it predicts no contact: the
-gel stays as it was (Appendix Figure~\ref{fig:graspactions}), the prediction moves by
-4.2\,\% and the error rises to 5.8\,\%. The difference appears only from
-\SI{0.67}{\second}, the moment the real gel is pressed. This model has learned
+command.} Retrained so that each predicted frame attends to the commands of
+its own stretch of time, FastWAM predicts the grasping fingertips best of all
+given the recorded commands (3.4\,\% against 5.4\,\%). With the gripper held
+open it predicts no contact: the gel stays as it was, the prediction moves by
+4.2\,\% and the error rises to 5.8\,\%, with the difference appearing only
+from \SI{0.67}{\second}, when the real gel is pressed. This model has learned
 how the gel responds to a commanded grasp, which the original, by design,
 could not express.}
