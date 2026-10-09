@@ -411,6 +411,65 @@ def draw_sensor_shift(
     return out
 
 
+# -- input contributions under two baselines --------------------------------
+
+
+def stream_shares(path: Path) -> "dict[str, float]":
+    """Mean share (%) of proprioception, past commands, overhead and fingertips."""
+    payload = json.loads(path.read_text())
+    totals: "dict[str, list[float]]" = {}
+    for episode in payload["episodes"].values():
+        for frame in episode["frames"]:
+            streams = (frame.get("occlusion") or {}).get("streams", {})
+            for name, effect in streams.items():
+                totals.setdefault(name, []).append(effect["share"])
+    mean = {k: 100 * float(np.mean(v)) for k, v in totals.items()}
+    return {
+        "proprioception": mean.get("state", 0.0),
+        "past commands": mean.get("past actions", 0.0),
+        "overhead": mean.get("central", 0.0),
+        "fingertips": sum(
+            v for k, v in mean.items() if "gripper" in k or k == "tactile_quad"
+        ),
+    }
+
+
+def write_baseline_table(root: Path, out: Path) -> "Path | None":
+    """Shares under the default baseline beside the all-zeros check, per model."""
+    lines = [
+        r"\begin{tabular}{lrrrrrrrr}",
+        r"\toprule",
+        r"& \multicolumn{4}{c}{mean colour, training-mean joints} & "
+        r"\multicolumn{4}{c}{all zeros} \\",
+        r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}",
+        r"model & joints & past & overhead & fingertips & joints & past & "
+        r"overhead & fingertips \\",
+        r"\midrule",
+    ]
+    found = False
+    for key, label, _ in ALL_MODELS:
+        cells: "list[str]" = []
+        for baseline in ("mean", "zeros"):
+            path = root / f"occ-{key}-{baseline}" / "attribution.json"
+            if not path.is_file():
+                cells = []
+                break
+            shares = stream_shares(path)
+            cells += [
+                f"{shares[k]:.0f}"
+                for k in ("proprioception", "past commands", "overhead", "fingertips")
+            ]
+        if cells:
+            found = True
+            lines.append(f"{label} & " + " & ".join(cells) + r" \\")
+    if not found:
+        return None
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    out.write_text("\n".join(lines) + "\n")
+    print(f"  baseline table -> {out}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--recordings", nargs="*", default=[])
@@ -426,6 +485,9 @@ def main() -> int:
     )
     parser.add_argument("--tag", default="", help="suffix for the grasp outputs")
     parser.add_argument("--dataset", default=None, help="for the sensor-shift figure")
+    parser.add_argument(
+        "--occlusion", default=None, help="root of occ-<model>-<baseline> runs"
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -443,6 +505,8 @@ def main() -> int:
     write_recordings_table(groups, out / "recordings_table.tex")
     if args.dataset:
         draw_sensor_shift(Path(args.dataset).expanduser(), out / "sensor_shift.png")
+    if args.occlusion:
+        write_baseline_table(Path(args.occlusion), out / "baseline_table.tex")
     curves = pairs(args.curves)
     if draw_curves(curves, out / "curves.png"):
         curve_summary(curves)

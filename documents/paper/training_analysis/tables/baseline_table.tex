@@ -1,0 +1,14 @@
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{4}{c}{mean colour, training-mean joints} & \multicolumn{4}{c}{all zeros} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+model & joints & past & overhead & fingertips & joints & past & overhead & fingertips \\
+\midrule
+ACT & 17 & 0 & 69 & 14 & 23 & 0 & 65 & 13 \\
+Diffusion & 69 & 0 & 13 & 19 & 74 & 0 & 11 & 15 \\
+pi0.5 & 74 & 0 & 11 & 15 & 72 & 0 & 9 & 18 \\
+Flow matching & 72 & 0 & 11 & 17 & 72 & 0 & 10 & 18 \\
+DreamZero & 63 & 30 & 2 & 5 & 70 & 23 & 1 & 5 \\
+FastWAM & 73 & 0 & 21 & 6 & 86 & 0 & 9 & 5 \\
+\bottomrule
+\end{tabular}

@@ -2091,17 +2091,18 @@ PATCH_DECKS = (
 
 
 #: The input-contribution runs behind the all-model share figure, on held-out
-#: demonstration 58: every 5th frame, 60 frames, the mean baseline.
+#: demonstration 58: every 5th frame, 60 frames; images at their mean colour,
+#: joints (and DreamZero's past commands) at their training mean.
 STREAM_DECKS = (
-    ("ACT", "outputs/analysis/2026-09-18/heldout-act/attribution.json"),
-    ("Diffusion", "outputs/analysis/2026-09-18/heldout-diffusion/attribution.json"),
+    ("ACT", "outputs/analysis/2026-10-09/occ-act-mean/attribution.json"),
+    ("Diffusion", "outputs/analysis/2026-10-09/occ-diffusion-mean/attribution.json"),
     (
         "Flow\nmatching",
-        "outputs/analysis/2026-10-08/patches-flowmatch_resize/attribution.json",
+        "outputs/analysis/2026-10-09/occ-flowmatch-mean/attribution.json",
     ),
-    ("pi0.5", "outputs/analysis/2026-09-25/heldout-pi05/attribution.json"),
-    ("DreamZero", "outputs/analysis/2026-10-08/patches-dreamzero/attribution.json"),
-    ("FastWAM", "outputs/analysis/2026-09-27/heldout-fastwam/attribution.json"),
+    ("pi0.5", "outputs/analysis/2026-10-09/occ-pi05-mean/attribution.json"),
+    ("DreamZero", "outputs/analysis/2026-10-09/occ-dreamzero-mean/attribution.json"),
+    ("FastWAM", "outputs/analysis/2026-10-09/occ-fastwam-mean/attribution.json"),
 )
 
 

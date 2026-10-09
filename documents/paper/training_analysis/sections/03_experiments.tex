@@ -362,17 +362,21 @@ training run (Appendix~\ref{sec:threats}).}
 
 
 
-Figure~\ref{fig:streams} shows which inputs the policies actually use. ACT
-relies most on the overhead camera, then proprioception, with the fingertips
-last. Diffusion and pi0.5 rely mostly on proprioception: about three quarters
-of what moves pi0.5's plan is where the arms are. \new{FastWAM leans on
-proprioception most of all, 86\,\%, with 11\,\% for the overhead camera and
-3\,\% for the fingertips.} \gr{Flow matching spreads its use most
-evenly: 75\,\% proprioception, 9\,\% the overhead camera and 16\,\% the
-fingertips, the largest fingertip share of any model.}\rev{ DreamZero leans on proprioception most of all
-(88\,\%), then on its past commands (10\,\%); all five cameras together move
-its plan by only 2.3\,\%. The model that plans the next ten steps second best
-barely reads its cameras to do it.} \pending{input contributions recomputed with the training-mean joint baseline, and the all-zeros check.}
+\gr{Figure~\ref{fig:streams} shows which inputs the models actually use. ACT is
+the only model led by a camera: the overhead view carries 69\,\% of what moves
+its plan, the joint positions 17\,\% and the fingertips 14\,\%. Diffusion, flow
+matching, pi0.5 and FastWAM all rely mostly on the joint positions (69 to 74\,\%);
+of these, Diffusion, flow matching and pi0.5 give the fingertips more (15 to
+19\,\%) than the overhead camera (11 to 13\,\%), while FastWAM gives the overhead
+camera 21\,\% and the fingertips 6\,\%. DreamZero leans on its joint positions
+(63\,\%) and its past commands (30\,\%); all five cameras together move its plan
+by only 7\,\%, so the model that plans the next ten steps second best barely
+reads its cameras to do it. Replacing everything with zeros instead changes
+these shares by a few points and the order of no model's inputs
+(Appendix Table~\ref{tab:baselines}). An earlier version of this measure
+replaced the joints by one number, each frame's average over all twelve
+joints, a pose no arm takes; it overstated the joints' share, most for ACT (42\,\%
+then, 17\,\% now).}
 
 \begin{figure}[t]
   \centering
