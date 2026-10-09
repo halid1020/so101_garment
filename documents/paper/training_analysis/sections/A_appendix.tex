@@ -120,40 +120,13 @@ model's settings and seed, keeping the weights of every checkpoint, scored with
 the protocol of Table~\ref{tab:actions}. The held-out loss is LeRobot's own,
 computed during training on the seven test demonstrations.}
 
-\rev{\textbf{Grasps (Table~\ref{tab:grasp}, Figure~\ref{fig:grasp}).} A grasp
-is a fall of the gripper command from above 0.1 to below 0.05 within 15 frames
-(\SI{0.5}{\second}); its prediction starts 15 frames before. Every condition
-uses the same frames and the same sampler seed. The first two use the FastWAM of
-Table~\ref{tab:actions}; ``closed'' sets both gripper positions of the state to
-their smallest recorded value. The last two use a FastWAM retrained with the
-same data and settings but with its video expert's action conditioning on (each
-latent frame attends to the four commands of its own time step); it is given
-the recorded command chunk in the normalised units it trained on, or that chunk
-with both gripper columns held at their first value. Errors are mean absolute differences of
-8-bit pixels, as a percentage of 255.}
 
 \section{Additional results}
 \label{sec:extra}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.9\textwidth]{model_inputs.png}
-  \caption{\new{The images each model receives, at one moment of held-out
-  demonstration 58. LLG, LRG, RLG and RRG are the fingertip sensors: left arm
-  left gripper finger, left arm right finger, right arm left finger and right
-  arm right finger.}}
-  \label{fig:inputs}
-\end{figure}
 
-\begin{table}[h]
-  \centering
-  \caption{Change between repeated scorings with three random seeds, lowest
-  and highest RMSE on the test demonstrations. A difference between two models
-  smaller than this spread is not a finding.}
-  \label{tab:floor}
-  \small
-  \input{tables/floor_table}
-\end{table}
+
+
 
 \begin{figure}[h]
   \centering
@@ -173,16 +146,7 @@ with both gripper columns held at their first value. Errors are mean absolute di
   \label{fig:predmargin}
 \end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.72\textwidth]{rim_attention.png}
-  \caption{How much Grad-CAM weight falls in a band around the edge of the
-  tactile images, relative to a completely flat map (dashed line at 1), over
-  60 frames of test demonstration 58 and all four fingertips. Below the line, a
-  model looks at the edge \emph{less} than a model that ignored position would.
-  Three band widths are shown.}
-  \label{fig:rim}
-\end{figure}
+
 
 \begin{figure}[h]
   \centering
@@ -245,147 +209,25 @@ still 7.4, above the 5.3 of the last seven.
   \label{fig:filmstripearly}
 \end{figure}
 
-\rev{\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\textwidth]{sensor_shift.png}
-  \caption{The left arm's left fingertip (LLG) at rest, before and after the
-  step change of Section~\ref{sec:recordings}: the mean of the first three
-  frames (arms at rest, gel untouched) of demonstrations 31--42 and of 43--54,
-  and their difference, enlarged three times. The ridge and the pad's edges
-  move and new marks appear.}
-  \label{fig:sensorshift}
-\end{figure}}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.5\textwidth]{trajectory_strip.png}
-  \caption{One held-out demonstration seen by the overhead camera, 20 frames
-  evenly spaced from start to end. The arms grasp the waistband, fold the shorts
-  over and release.}
-  \label{fig:trajectory}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.74\textwidth]{rim_evidence.png}
-  \caption{The four fingertip sensors before contact. Top: the first frame of
-  one demonstration with the crops drawn on it: rows only (white, dashed), four
-  edges (yellow) \new{and the ridge crop (blue, dash-dot); the arrow marks the
-  gel's ridge.} Bottom: brightness of each row and column relative to the centre
-  of the gel, averaged over the first frame of all 65 demonstrations; dotted
-  lines mark the four-edge crop \new{and the blue line the ridge crop's left
-  edge.}}
-  \label{fig:rimevidence}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.85\textwidth]{recordings.png}
-  \caption{How different every pair of demonstrations looks to each model's
-  vision encoder: the mean feature distance after matching their frames in
-  order, scaled so that 1 is the most different pair. Demonstrations are in
-  recording order; the lines mark the seven test demonstrations (58--65).}
-  \label{fig:recordings}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.6\textwidth]{patch_maps.png}
-  \caption{\new{Patch occlusion maps: where in each fingertip image the plan
-  comes from, averaged over 20 to 60 frames of test demonstration 58 (FastWAM:
-  8 frames, $5\times5$ cells per sensor). Darker cells moved the plan more when
-  painted over; each map is scaled to its own peak. A cropped model's map is
-  drawn over the full image, so the white border is what it never sees. pi0.5
-  reads only LLG and RLG.}}
-  \label{fig:patchmaps}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=\textwidth]{grasp_filmstrip_state.png}
-  \caption{One grasp (test demonstration 60, left arm, fingertip LLG). Rows:
-  what happened; FastWAM's prediction with the recorded gripper position;
-  its prediction when told the gripper is already closed; and the difference
-  between the two predictions (mid-grey is none). The \emph{seen} column shows
-  the model's reconstruction of the frame it was given. The gripper is
-  commanded closed at \SI{0.5}{\second}; the gel darkens at contact about a
-  tenth of a second later.}
-  \label{fig:grasp}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.6\textwidth]{filmstrip_h2h.png}
-  \caption{\new{FastWAM and DreamZero predicting from the same seen frame
-  (test demonstration 58, 8\,s in, as the arms release the folded shorts), on
-  one time axis. For the overhead camera and one fingertip (LLG) the rows are
-  what happened, each model's prediction, and its difference from what happened
-  (truth minus prediction, rescaled so that mid-grey is no error). The
-  \emph{seen} column shows each model's reconstruction of the frame it was
-  given. Blank cells are times a model does not predict. Each model is shown at
-  its own resolution. Appendix Figure~\ref{fig:filmstripearly} shows an earlier
-  moment.}}
-  \label{fig:filmstrip}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.5\textwidth]{stream_shares.png}
-  \caption{How much each input moves each model's plan (input contribution,
-  Section~\ref{sec:measures}). Each bar adds up to 100\,\%, so compare the
-  order of inputs within a bar, not heights between bars. pi0.5 reads two
-  fingertips; the others read four. \rev{DreamZero alone is given its past
-  arm commands as an input.}}
-  \label{fig:streams}
-\end{figure}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=\textwidth]{grasp_filmstrip_actions.png}
-  \caption{The grasp of Appendix Figure~\ref{fig:grasp}, predicted by the FastWAM whose
-  video reads the commanded actions: given the recorded commands, and given
-  the same commands with the gripper held open. The last row is their
-  difference. This run did not save the reconstruction of the seen frame.}
-  \label{fig:graspactions}
-\end{figure}
 
-\begin{table}[h]
-  \centering
-  \caption{World action models on the seven test demonstrations, per sensor, in
-  PSNR (dB, higher is better). \emph{Reconstruction}: seen frames through the
-  model's own autoencoder. \emph{Prediction}: predicted future frames.
-  \new{\emph{Repeat last}: the last seen frame used as the prediction for every
-  future time.} Both averaged over the prediction horizon. \emph{Margin}:
-  prediction minus repeat last, at \SI{0.8}{\second} ahead and at the end of
-  each model's horizon (\SI{4.8}{\second} for DreamZero, \SI{1.1}{\second} for
-  FastWAM). Each model works at its own resolution, so compare margins, not
-  PSNR, between models.}
-  \label{tab:wm}
-  \small
-  \input{tables/wm_table}
-\end{table}
 
-\begin{table}[h]
-  \centering
-  \caption{ACT trained on three sets of cameras, all with proprioception.
-  Action error (RMSE) over its own 100-step plan and over the first ten steps.
-  \new{The lowest error in each column is in bold.}}
-  \label{tab:sensors}
-  \small
-  \input{tables/sensor_table}
-\end{table}
 
-\begin{table}[h]
-  \centering
-  \caption{FastWAM around the 36 test grasps: mean absolute pixel error (\% of
-  the pixel range) of the grasping arm's two fingertips, over the eight
-  predicted frames. \emph{Change from recorded} is how far the prediction moves
-  under the changed condition. \emph{Repeat-last error} is the error of
-  repeating the seen frame, which is also how much the gel really changes.}
-  \label{tab:grasp}
-  \small
-  \input{tables/grasp_table}
-\end{table}
+
+
+
+
+
+
+
+
 
 \section{Threats to validity}
 \label{sec:threats}
@@ -410,6 +252,49 @@ ACT.
 same as folding the garment.
 
 \begin{thebibliography}{99}
+\bibitem{gelsight} W.~Yuan, S.~Dong and E.~H. Adelson. GelSight: high-resolution
+robot tactile sensors for estimating geometry and force. \emph{Sensors}, 17(12),
+2017.
+\bibitem{digit} M.~Lambeta et al. DIGIT: a novel design for a low-cost compact
+high-resolution tactile sensor with application to in-hand manipulation.
+\emph{IEEE RA-L}, 5(3), 2020.
+\bibitem{bi2026vlatouch} J.~Bi, K.~Y. Ma, C.~Hao, M.~Z. Shou and H.~Soh.
+VLA-Touch: enhancing vision-language-action models with dual-level tactile
+feedback. \emph{IEEE RA-L}, 11(7):8487--8494, 2026.
+\bibitem{helmut2026farm} E.~Helmut, N.~Funk, T.~Schneider, C.~de~Farias and
+J.~Peters. Tactile-conditioned diffusion policy for force-aware robotic
+manipulation. \emph{ICRA}, 2026.
+\bibitem{heng2026vitacformer} L.~Heng, H.~Geng, K.~Zhang, P.~Abbeel and
+J.~Malik. ViTacFormer: learning cross-modal representation for visuo-tactile
+dexterous manipulation. \emph{RSS}, 2026.
+\bibitem{higuera2025sparsh} C.~Higuera et al. Sparsh: self-supervised touch
+representations for vision-based tactile sensing. \emph{CoRL}, PMLR
+270:885--915, 2025.
+\bibitem{higuera2025sparshx} C.~Higuera et al. Tactile beyond pixels:
+multisensory touch representations for robot manipulation. \emph{CoRL}, PMLR
+305:105--123, 2025.
+\bibitem{huang2025vitac} B.~Huang, Y.~Wang, X.~Yang, Y.~Luo and Y.~Li. 3D-ViTac:
+learning fine-grained manipulation with visuo-tactile sensing. \emph{CoRL}, PMLR
+270:2557--2578, 2025.
+\bibitem{li2026tacthru} Y.~Li, Y.~Chen, Z.~Zhao, P.~Li, T.~Liu, S.~Huang and
+Y.~Zhu. Simultaneous tactile-visual perception for learning multimodal robot
+manipulation. \emph{IEEE RA-L}, 11:5254--5261, 2026.
+\bibitem{xue2025rdp} H.~Xue et al. Reactive diffusion policy: slow-fast
+visual-tactile policy learning for contact-rich manipulation. \emph{RSS}, 2025.
+\bibitem{zhao2025polytouch} J.~Zhao, N.~Kuppuswamy, S.~Feng, B.~Burchfiel and
+E.~Adelson. PolyTouch: a robust multi-modal tactile sensor for contact-rich
+manipulation using tactile-diffusion policies. \emph{ICRA}, 104--110, 2025.
+\bibitem{zhu2025touchwild} X.~Zhu, B.~Huang and Y.~Li. Touch in the wild:
+learning fine-grained manipulation with a portable visuo-tactile gripper.
+\emph{NeurIPS}, 2025.
+\bibitem{ye2025dreamtacvla} G.~Ye et al. Learning to feel the future:
+DreamTacVLA for contact-rich manipulation. arXiv:2512.23864, 2025.
+\bibitem{higuera2026vtwm} C.~Higuera, S.~Arnaud, B.~Boots, M.~Mukadam,
+F.~R. Hogan and F.~Meier. Visuo-tactile world models. arXiv:2602.06001, 2026.
+\bibitem{zheng2026omnivta} Y.~Zheng et al. OmniVTA: visuo-tactile world modeling
+for contact-rich robotic manipulation. arXiv:2603.19201, 2026.
+\bibitem{lou2026dreamtac} Y.~Lou et al. Dream-Tac: a unified tactile world action
+model for contact-rich robot manipulation. arXiv:2606.08737, 2026.
 \bibitem{zhao2023act} T.~Z. Zhao, V.~Kumar, S.~Levine and C.~Finn. Learning
 fine-grained bimanual manipulation with low-cost hardware. \emph{RSS}, 2023.
 \bibitem{chi2023diffusion} C.~Chi et al. Diffusion Policy: visuomotor policy

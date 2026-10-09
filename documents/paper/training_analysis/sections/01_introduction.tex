@@ -46,10 +46,12 @@ This report answers three questions, in order of importance.
 
 The main findings are these.
 \begin{itemize}
-  \item \textbf{On held-out demonstrations, the two world action models plan
-  the next \new{ten steps (a third of a second)} most accurately.} \new{Among the
-  behaviour-cloning policies, flow matching is the most accurate over those
-  steps.}
+  \item \gr{\textbf{The two world action models plan best on demonstrations
+  they never saw.} We measure how far each model's planned arm commands are
+  from the commands the operator actually sent, over the next ten steps (a
+  third of a second). On the held-out demonstrations FastWAM and DreamZero have
+  the smallest error of all six models (Table~\ref{tab:actions}); flow matching
+  has the smallest of the three behaviour-cloning policies.}
   \item \textbf{Every policy is much worse on held-out demonstrations.} The gap
   is largest for ACT, which almost memorises its training demonstrations. It is
   not caused by the recording session drifting over time\rev{, nor by the
@@ -57,7 +59,8 @@ The main findings are these.
   The session's one visual change, a fingertip sensor shifting at
   demonstration 43, falls inside the training set.}
   \item \rev{\textbf{Test error stops improving long before training ends}
-  while training error keeps falling, for every model but FastWAM; the extra
+  while training error keeps falling, for every model but FastWAM
+  \gr{(Figure~\ref{fig:curves})}; the extra
   training neither helps nor harms on new demonstrations. LeRobot's own held-out loss would wrongly
   suggest overfitting.}
   \item \textbf{Diffusion's plans are accurate for the first steps, but their
@@ -72,10 +75,6 @@ The main findings are these.
   nothing.} Its narrow LoRA, not too little training, is the likelier limit.}
   \item \textbf{A frame-averaged image score can miss a correct prediction} of
   a small moving part, such as a gripper.
-  \item \rev{\textbf{FastWAM foresees a grasp's touch from the image
-  alone;} the gripper position it is given changes nothing. Retrained so its
-  predicted video reads the commands, it predicts touch more accurately, and
-  none when the grasp is not commanded.}
   \item \rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
   together move its plan by about 2\,\%; proprioception and its own past
   commands carry the rest.}

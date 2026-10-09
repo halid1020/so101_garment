@@ -19,17 +19,11 @@ three times more training did not close the gap.}
 Touch is used, but briefly, \new{and removing the fingertips altogether made
 ACT slightly better on held-out demonstrations. On a task this consistent, the
 overhead camera and the joint positions may already say what the next commands
-should be.} \rev{Yet touch is predictable: a FastWAM whose video reads the
-commands foresees how the gel responds to a grasp, and predicts no contact when
-the grasp is not commanded. A model can learn what touch will show without its
-plan needing it.} The two world action models plan the near future best, though
+should be.} The two world action models plan the near future best, though
 DreamZero barely reads its cameras to do so.
 
 \textbf{Next steps.} \textbf{Collect more varied demonstrations} (sessions,
 garments, starting positions), the most direct attack on the generalisation
 gap. \textbf{Test on the robot}, since agreement with recorded commands is not
 folding the garment. \new{\textbf{Finetune pi0.5 fully, or with LoRA on every
-layer,} as the published recipes do.} \rev{\textbf{Use predicted touch:} a
-policy that plans with a model which foresees contact, such as the
-action-conditioned FastWAM, could act on touch before it happens.}
-\textbf{Score motion, not whole frames}, which frame-averaged PSNR ignores.
+layer,} as the published recipes do.} \textbf{Score motion, not whole frames}, which frame-averaged PSNR ignores.

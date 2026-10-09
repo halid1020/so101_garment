@@ -9,9 +9,19 @@ call \emph{proprioception}) and some of the cameras. Each outputs a
 \emph{chunk}: a plan of future arm commands at \SI{30}{\hertz}, the rate at
 which the demonstrations were recorded. \new{(We checked the camera rate in
 the recordings; Appendix~\ref{sec:provenance}.)} Table~\ref{tab:models} lists
-how the models differ, and Appendix Figure~\ref{fig:inputs} shows the images
+how the models differ, and Figure~\ref{fig:inputs} shows the images
 each one receives. For each model we give its original design first and then what we
 changed.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\textwidth]{model_inputs.png}
+  \caption{\new{The images each model receives, at one moment of held-out
+  demonstration 58. LLG, LRG, RLG and RRG are the fingertip sensors: left arm
+  left gripper finger, left arm right finger, right arm left finger and right
+  arm right finger.}}
+  \label{fig:inputs}
+\end{figure}
 
 \textbf{ACT} \citep{zhao2023act} \new{encodes each camera image separately with
 one shared ResNet-18 and joins the resulting tokens with the proprioception.}
@@ -33,12 +43,8 @@ with a ResNet-18 encoder, \new{shared by all five cameras} and trained from
 scratch. Flow matching \citep{lipman2023flow} learns to move noise to an action
 chunk along straight lines. \new{It sees only the current frame and plans 50
 steps.} The model therefore separates pi0.5's objective from its pretraining.
-\rev{Our first run kept a default meant for small images: each camera frame,
-$480\times640$ pixels, was cropped to a random $84\times84$ patch in training
-and to the central one at test time, without being resized first, so it saw
-about 2\,\% of each image. The model reported here is retrained with
-Diffusion's handling instead, resizing each frame to $180\times240$ without
-cropping; the first run appears only in Section~\ref{sec:compare}.}
+\gr{Each camera frame is resized from $480\times640$ to $180\times240$ pixels,
+as for Diffusion, so the encoder sees the whole image.}
 
 \textbf{pi0.5} \citep{pi05} is a vision-language-action model: a pretrained
 vision-language model reads the images and a written instruction, and a
@@ -59,7 +65,7 @@ future video and future actions together, under one flow-matching objective.
 same objective and chunking but about 59 million parameters, trained from
 scratch, so it tests the method, not the pretrained model.} \new{Like the original, it \emph{tiles} the cameras: all five are
 squashed into the cells of a $3\times3$ grid inside one $224\times224$ frame
-(Appendix Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.} It
+(Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.} It
 sees two frames, the latest and one \SI{0.8}{\second} earlier, \new{and is also
 given the arm commands of the past \SI{1.6}{\second}}. It predicts frames every
 \SI{0.8}{\second} up to \SI{4.8}{\second} ahead, with 24 action steps per chunk.
@@ -69,7 +75,7 @@ pretrained five-billion-parameter video generator, Wan2.2 \citep{wan2025},
 with a smaller action expert beside it. \new{We finetune it on our demonstrations, as its
 authors do, from the public LeRobot base model.} \new{Its image input is one frame of fixed size, made by
 setting cameras side by side. We give it the overhead camera beside a
-two-by-two composite of the four fingertips (Appendix Figure~\ref{fig:inputs}c). It sees
+two-by-two composite of the four fingertips (Figure~\ref{fig:inputs}c). It sees
 only the current frame.} It predicts nine frames over about a second and plans
 32 action steps, of which it executes 10. \new{The authors skip the video
 prediction at test time, since it is needed only in training; we run it to
@@ -105,15 +111,26 @@ We recorded one task in \new{one session: all 65 demonstrations were recorded
 one after another on one afternoon, in about an hour and three quarters.} A pair
 of shorts, already laid flat, is folded once by the two arms. Each
 demonstration lasts about 15 seconds; there are 30141 frames in all at
-\SI{30}{\hertz}. Appendix Figure~\ref{fig:trajectory} shows one demonstration from
+\SI{30}{\hertz}. Figure~\ref{fig:trajectory} shows one demonstration from
 start to end.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.5\textwidth]{trajectory_strip.png}
+  \caption{One held-out demonstration seen by the overhead camera, 20 frames
+  evenly spaced from start to end. The arms grasp the waistband, fold the shorts
+  over and release.}
+  \label{fig:trajectory}
+\end{figure}
 
 
 
 We train every model on the first 58 demonstrations and test it on the
 \emph{last seven}, which it never sees. \new{The last seven are also the
-latest, so a slow change over the afternoon (daylight, wear on the gels) could
-make them harder for that reason alone. To test this we retrain ACT and
+latest, so a slow change over the afternoon could make them harder for that
+reason alone. \gr{The lighting cannot drift (the rig is in a basement lab under
+constant artificial light), but the gels can wear and the operator can tire or
+get faster.} To test this we retrain ACT and
 Diffusion holding out a \emph{random seven} from across the session instead:
 a slow drift would make those \emph{easier}, since each was recorded between
 training demonstrations (Section~\ref{sec:compare}).}
@@ -186,36 +203,38 @@ would predict. A model's \emph{margin} is its PSNR minus this baseline's. A
 positive margin means the model predicts the future better than assuming
 nothing moves.}
 
-\rev{\textbf{How different the recordings look.} A held-out demonstration can be
-hard because it asks for different motions or because it looks different. We
-measure the second in each model's own terms: every frame goes through the
-model's preprocessing and vision encoder, and we keep each camera's summary
-(Appendix~\ref{sec:provenance}), scaled to unit length and joined across
-cameras. Two demonstrations show the same fold at different paces, so if $B$
-has $M$ frames and $A$ has $N \ge M$, we match every frame of $B$ to a
-different frame of $A$, keeping the order:
+\gr{\textbf{How different the recordings look.} A held-out demonstration can be
+hard for a model for two reasons: it asks for different movements, or its
+images look different from those the model was trained on. This measure tests
+the second reason, as each model sees the images. We pass every frame of every
+demonstration through the model's own image preprocessing and vision encoder.
+For each camera we keep the encoder's output for that frame as one vector of
+numbers (its \emph{feature vector}): for ACT, its ResNet-18's feature map
+averaged over the image; for Diffusion and flow matching, the output of that
+camera's encoder; for pi0.5, its image tokens averaged; for the two world action
+models, their autoencoder's latent averaged onto a coarse grid
+(Appendix~\ref{sec:provenance}). Each camera's vector is scaled to length one,
+so that no camera counts more than another because its encoder outputs larger
+numbers, and the cameras' vectors are placed end to end to give one vector per
+frame. Two frames are compared by cosine distance, one minus the cosine of the
+angle between their vectors: 0 for identical directions, and the same scale
+(0 to 2) for every model, so the models can be compared directly. Two
+demonstrations show the same fold at different paces, so if $B$ has $M$ frames
+and $A$ has $N \ge M$, we match every frame of $B$ to a different frame of $A$,
+keeping the order:
 \begin{equation}
   d(A,B) = \min_{i_0 < i_1 < \dots < i_{M-1}} \frac{1}{M}\sum_{j=0}^{M-1}
   \bigl(1 - \cos(f^A_{i_j}, f^B_j)\bigr),
 \end{equation}
-where $f$ is a frame's feature vector; dynamic programming finds the best
-match exactly. Every pair of the 65 demonstrations gives a $65\times65$ matrix,
-divided by its largest entry so every model reads from 0 to 1.}
+where $f$ is a frame's feature vector; dynamic programming finds the best match
+exactly. Every pair of the 65 demonstrations gives a $65\times65$ matrix. We
+compute it three times per model: with all its cameras, with the overhead
+camera alone, and with the fingertips alone.}
 
 \rev{\textbf{Learning curves.} The runs above kept only their last checkpoints,
 so we retrain each model with the same settings, keep a checkpoint every 5000
 or \num{10000} steps, and score each as above.}
 
-\rev{\textbf{Does FastWAM's touch prediction follow the gripper?} The seven
-test demonstrations hold 36 grasps, moments where the gripper command falls
-from open (about 0.2) to closed (about 0.02). We start FastWAM's prediction
-half a second before each, so the second it predicts spans the contact. In
-FastWAM, as in the original, the predicted video cannot see the planned
-actions; it sees only the current images, the instruction and the joint
-positions. So we test two things: on our FastWAM, we set the current gripper
-position it is given to closed; and we train a FastWAM whose video \emph{can}
-read the commands, and give it the recorded commands either unchanged or with
-the gripper held open, so that the grasp is never commanded.}
 
 \subsection{The tactile crop}
 \label{sec:cropmethod}
@@ -236,14 +255,27 @@ gel.
   \label{fig:gradcamevidence}
 \end{figure}
 
-Appendix Figure~\ref{fig:rimevidence} measures what the images themselves show before
+Figure~\ref{fig:rimevidence} measures what the images themselves show before
 contact. On each sensor the brightest edge is 10 to 21\,\% brighter than the
 centre, which fits light leaking in at the gel boundary. \new{But the edges are
 not the brightest part of the image. On every sensor the brightest feature is a
 vertical ridge in the gel, about 0.3 of the way across (marked in
-Appendix Figure~\ref{fig:rimevidence}), up to 32\,\% brighter than the centre. So light
+Figure~\ref{fig:rimevidence}), up to 32\,\% brighter than the centre. So light
 leakage at the edges is real but small, and the ridge is a larger bright
 feature that the four-edge crop keeps.}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.74\textwidth]{rim_evidence.png}
+  \caption{The four fingertip sensors before contact. Top: the first frame of
+  one demonstration with the crops drawn on it: rows only (white, dashed), four
+  edges (yellow) \new{and the ridge crop (blue, dash-dot); the arrow marks the
+  gel's ridge.} Bottom: brightness of each row and column relative to the centre
+  of the gel, averaged over the first frame of all 65 demonstrations; dotted
+  lines mark the four-edge crop \new{and the blue line the ridge crop's left
+  edge.}}
+  \label{fig:rimevidence}
+\end{figure}
 
 
 

@@ -17,9 +17,10 @@
 \definecolor{newgreen}{RGB}{0,128,60}
 \newcommand{\new}[1]{{\color{black}#1}}
 \newenvironment{newtext}{\color{black}}{}
-% Material added in the third round (2026-10-07) is set in blue.
-\definecolor{newblue}{RGB}{0,70,200}
-\newcommand{\rev}[1]{{\color{newblue}#1}}
+% Third-round material (2026-10-07), now reviewed: black.
+\newcommand{\rev}[1]{{\color{black}#1}}
+% Material added in the fourth round (2026-10-09) is set in green.
+\newcommand{\gr}[1]{{\color{newgreen}#1}}
 % A result whose run has not finished. None may survive into a shared version.
 \newcommand{\pending}[1]{{\color{red}[pending: #1]}}
 
@@ -61,15 +62,16 @@ rely on?} And how well do the world action models predict what the cameras will
 see next? \new{We find that the world action models, which also predict the
 future camera images, plan their next actions most accurately on unseen
 demonstrations.} Every model is much worse on unseen demonstrations than on the
-ones it trained on, and cropping the tactile images does not change that. We
-describe how every figure was made, so that each claim can be checked.
+ones it trained on.
 \end{abstract}
 
 \input{sections/01_introduction}
+\input{sections/01b_related}
 \input{sections/02_methods}
 \input{sections/03_experiments}
 \input{sections/04_discussion}
 
+\clearpage
 \appendix
 \input{sections/A_appendix}
 

@@ -127,8 +127,16 @@ def draw_curves(entries: "list[tuple[str, Path]]", out: Path) -> "Path | None":
         return None
     cols = min(3, len(entries))
     rows = int(np.ceil(len(entries) / cols))
+    # One y-axis for every panel, so the models' errors can be compared
+    # directly; the scale is set by the largest error any panel shows.
     figure, axes = plt.subplots(
-        rows, cols, figsize=(2.6 * cols, 2.1 * rows), squeeze=False
+        rows, cols, figsize=(2.6 * cols, 2.1 * rows), squeeze=False, sharey=True
+    )
+    top = max(
+        point[half]["rmse_first10"]
+        for _, path in entries
+        for point in json.loads(path.read_text())["steps"].values()
+        for half in ("train", "validation")
     )
     for axis, (key, path) in zip(axes.flat, entries):
         payload = json.loads(path.read_text())
@@ -147,8 +155,8 @@ def draw_curves(entries: "list[tuple[str, Path]]", out: Path) -> "Path | None":
         axis.axvline(int(best) / 1000, color=MUTED, lw=0.8, ls=":")
         axis.set_title(LABELS.get(key, key), fontsize=9, color=INK)
         axis.set_xlabel("training step (thousands)", fontsize=7)
-        axis.tick_params(labelsize=7)
-        axis.set_ylim(bottom=0)
+        axis.tick_params(labelsize=7, labelleft=True)
+        axis.set_ylim(0, top * 1.05)
         tidy(axis)
     for axis in list(axes.flat)[len(entries) :]:
         axis.axis("off")
