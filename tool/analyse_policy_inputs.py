@@ -54,6 +54,7 @@ from actoris_harena.analysis.inference import Inference  # noqa: E402
 from actoris_harena.analysis.paths import analysis_dir, content_name  # noqa: E402
 from actoris_harena.analysis.perturb import (  # noqa: E402
     BASELINES,
+    STATE_BASELINES,
     baseline_frame,
     occlusion,
     patch_occlusion,
@@ -101,6 +102,8 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             baseline=args.baseline,
             alternative=alternative,
             direction=args.direction,
+            state_baseline=getattr(args, "state_baseline", None),
+            state_mean=inference.stat_mean("observation.state"),
         )
         out["occlusion"] = {
             "streams": {
@@ -109,6 +112,7 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             },
             "all": result["all"],
             "baseline": result["baseline"],
+            "state_baseline": result.get("state_baseline", result["baseline"]),
             "direction": result["direction"],
         }
     if "patches" in args.method:
@@ -170,8 +174,30 @@ def analyse_frame(inference, state, images, args, alternative=None) -> dict:
             # Deliberately NOT `RuntimeError`: an out-of-memory error is one of
             # those, and recording a full GPU as "unavailable" tells a reader
             # the method does not apply to this policy. It does; let it raise.
-            out["gradcam_unavailable"] = str(problem)
+            from actoris_harena.analysis.features import encoder_kind
+
+            if encoder_kind(inference.policy) == "fastwam":
+                out.update(fastwam_grad_cam(inference, batch))
+            else:
+                out["gradcam_unavailable"] = str(problem)
     return out
+
+
+def fastwam_grad_cam(inference, batch: dict) -> dict:
+    """Grad-CAM at FastWAM's frozen video autoencoder, split into its inputs.
+
+    FastWAM sets its inputs side by side in sorted key order, so the map of the
+    whole frame is cut into equal-width columns, one per input; the fingertip
+    composite's own 2x2 split happens where every composite map is drawn.
+    """
+    cam = grads.autoencoder_grad_cam(inference.policy, inference.chunk_tensor, batch)
+    names = sorted(k.split(".")[-1] for k in inference.image_keys())
+    width = 1.0 / len(names)
+    boxes = {name: (0.0, i * width, 1.0, width) for i, name in enumerate(names)}
+    return {
+        "gradcam": {k: v.tolist() for k, v in grads.split_map(cam, boxes).items()},
+        "gradcam_layer": "autoencoder encoder.mid_block",
+    }
 
 
 #: Fingertip composites and their tile grid: a patch grid over one is scaled by
@@ -238,17 +264,36 @@ def windowed_record(inference, item: dict, args, context_actions: int) -> dict:
     )
     out: "dict[str, Any]" = {}
     if "occlusion" in args.method:
+        state_kind = getattr(args, "state_baseline", None) or "dataset"
+        image_kind = getattr(args, "baseline", "mean")
+
+        def constant_like(values, key: str):
+            """The joints (or commands) replaced: training mean, or zeros."""
+            if state_kind == "zeros":
+                return torch.zeros_like(values)
+            if state_kind == "dataset":
+                mean = inference.stat_mean(key)
+                if mean is None:
+                    raise ValueError(f"no training mean for {key} in this checkpoint")
+                return (
+                    torch.as_tensor(mean, dtype=values.dtype).expand_as(values).clone()
+                )
+            return torch.full_like(values, float(values.mean()))
 
         def replaced(window: dict, name: str) -> dict:
             moved = dict(window)
             if name == "state":
-                state = moved["observation.state"]
-                moved["observation.state"] = torch.full_like(state, float(state.mean()))
+                moved["observation.state"] = constant_like(
+                    moved["observation.state"], "observation.state"
+                )
             elif name == "past actions":
                 action = moved["action"].clone()
-                past = action[:context_actions]
-                action[:context_actions] = float(past.mean())
+                action[:context_actions] = constant_like(
+                    action[:context_actions], "action"
+                )
                 moved["action"] = action
+            elif image_kind == "zeros":
+                moved[name] = torch.zeros_like(moved[name])
             else:
                 moved[name] = _flat_frames(moved[name])
             return moved
@@ -268,9 +313,37 @@ def windowed_record(inference, item: dict, args, context_actions: int) -> dict:
         out["occlusion"] = {
             "streams": streams,
             "all": chunk_delta(reference, planned(everything)),
-            "baseline": "mean",
+            "baseline": image_kind,
+            "state_baseline": state_kind,
             "direction": "leave_one_out",
         }
+    if "gradcam" in args.method:
+        # The world model's own autoencoder feature map, for the last frame it
+        # observes, through its pinned sampler.
+        from actoris_harena.analysis.diffusion import pinned
+
+        policy = inference.policy
+        model_batch = inference.to_device(
+            inference.pre(make_batch(item, inference.device))
+        )
+        observed = (
+            policy.config.n_context_chunks * policy.config.latent_frames_per_chunk
+        )
+
+        def chunk_fn(window):
+            with pinned(inference):
+                return policy.predict_action_chunk(window)
+
+        cam = grads.autoencoder_grad_cam(
+            policy, chunk_fn, model_batch, frame=observed - 1
+        )
+        size = float(policy.config.image_size)
+        boxes = {
+            key.split(".")[-1]: (top / size, left / size, side / size, side / size)
+            for key, (top, left, side) in policy.camera_cells().items()
+        }
+        out["gradcam"] = {k: v.tolist() for k, v in grads.split_map(cam, boxes).items()}
+        out["gradcam_layer"] = "autoencoder encoder.mid_block"
     if "patches" in args.method:
         rows, cols = args.patch_grid
         maps = {}
@@ -397,7 +470,14 @@ def main() -> None:
         "--baseline",
         default="mean",
         choices=list(BASELINES),
-        help="What a removed stream is replaced by (default mean)",
+        help="What a removed image is replaced by (default mean)",
+    )
+    parser.add_argument(
+        "--state-baseline",
+        default="dataset",
+        choices=list(STATE_BASELINES),
+        help="What the removed joint positions (and DreamZero's past commands) "
+        "are replaced by (default dataset: the per-joint training mean)",
     )
     parser.add_argument(
         "--direction", default="leave_one_out", choices=("leave_one_out", "only_one_in")

@@ -1,0 +1,15 @@
+# Fourth round of the training-analysis report (2026-10-09). Same columns as
+# runs.tsv.
+#
+# pi0.5 with a WIDE LoRA, to test why the narrow one under-fits. The main-table
+# pi0.5 trains rank 16 on the action expert's q/v and the state/action layers only
+# (about 1.3 M weights), at batch 1, so 30k steps are one pass over the data.
+# This row puts rank-32 adapters on the attention AND feed-forward layers of both
+# the language model and the action expert (the openpi LoRA recipe adapts both),
+# at batch 8, with gradient checkpointing for memory; everything else -- split,
+# steps, cameras, seed -- as the main-table run. Tag:
+# SO101_RUN_TAG=fold-short-from-flattend-tactile__central+left_arm_left_gripper+right_arm_left_gripper__lorawide
+# The target pattern has no spaces, so the extra column carries it whole.
+#
+# dataset                         policy cameras                                              steps  batch hours slots extra
+fold-short-from-flattend-tactile pi05   central,left_arm_left_gripper,right_arm_left_gripper 30000  8     36    -     --dataset.eval_split=0.1 --peft.r=32 --peft.target_modules=.*\.(language_model|gemma_expert)\..*\.(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)|.*model\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out) --policy.gradient_checkpointing=true

@@ -28,6 +28,10 @@ class WindowReader:
     def pre(self, batch):
         return batch
 
+    def stat_mean(self, key):
+        """A training mean of all sevens, so a replaced stream is recognisable."""
+        return np.full(12, 7.0, dtype=np.float32)
+
     def to_device(self, batch):
         return batch
 
@@ -58,6 +62,48 @@ def args(**overrides):
     base = dict(method=["occlusion", "patches"], patch_grid=(2, 2), patch_cameras="all")
     base.update(overrides)
     return types.SimpleNamespace(**base)
+
+
+class Recording(WindowReader):
+    """Keeps the last batch it planned from."""
+
+    seen: "list[dict]" = []
+
+    def chunk_from(self, batch):
+        Recording.seen.append({k: v.clone() for k, v in batch.items()})
+        return super().chunk_from(batch)
+
+
+class StateBaselineTest(unittest.TestCase):
+    """The joints are replaced by the training mean, not by their own average."""
+
+    def test_dataset_baseline_uses_the_training_mean(self):
+        from tool.analyse_policy_inputs import windowed_record
+
+        Recording.seen = []
+        windowed_record(Recording(), window(), args(method=["occlusion"]), 2)
+        # The second plan is the one with the state replaced (state is first).
+        replaced = Recording.seen[1]["observation.state"]
+        self.assertTrue(torch.all(replaced == 7.0))
+
+    def test_zeros_baseline_zeroes_state_and_images(self):
+        from tool.analyse_policy_inputs import windowed_record
+
+        Recording.seen = []
+        windowed_record(
+            Recording(),
+            window(),
+            args(method=["occlusion"], state_baseline="zeros", baseline="zeros"),
+            2,
+        )
+        self.assertTrue(torch.all(Recording.seen[1]["observation.state"] == 0))
+        last_camera = Recording.seen[-2]  # the final single-stream plan: a camera
+        flat = [
+            k
+            for k in last_camera
+            if k.startswith("observation.images.") and not k.endswith("_is_pad")
+        ]
+        self.assertTrue(any(torch.all(last_camera[k] == 0) for k in flat))
 
 
 class WindowedRecordTest(unittest.TestCase):

@@ -61,10 +61,66 @@ def cached_features(inference, source, cache: Path) -> "list[np.ndarray]":
     return out
 
 
+def image_keys_of(checkpoint: str) -> "list[str]":
+    """The checkpoint's camera keys, in its own order, from config.json alone."""
+    config = json.loads((Path(checkpoint) / "config.json").read_text())
+    return [
+        key
+        for key, feature in (config.get("input_features") or {}).items()
+        if (feature or {}).get("type") == "VISUAL"
+    ]
+
+
+def camera_group(
+    features: "list[np.ndarray]", kind: str, image_keys: "list[str]", group: str
+) -> "list[np.ndarray]":
+    """Each episode's features restricted to one group of cameras."""
+    from actoris_harena.analysis.features import OVERHEAD_NAMES, feature_groups
+
+    groups = feature_groups(kind, image_keys, int(features[0].shape[1]))
+    wanted = [
+        name for name in groups if (name in OVERHEAD_NAMES) == (group == "overhead")
+    ]
+    if not wanted:
+        raise SystemExit(f"❌ this model reads no {group} camera ({', '.join(groups)})")
+    columns = sorted(i for name in wanted for i in groups[name])
+    print(f"   {group}: {', '.join(wanted)} ({len(columns)} features)")
+    return [f[:, columns] for f in features]
+
+
+def from_cache(args) -> int:
+    """A camera group's matrix from features already cached by a full run."""
+    out = Path(args.out).expanduser() / "recordings"
+    full = json.loads((out / f"matrix_every{args.every}.json").read_text())
+    cache = out / f"features_every{args.every}"
+    episodes = full["episodes"]
+    features = [np.load(cache / f"episode_{e:03d}.npy") for e in episodes]
+    features = camera_group(
+        features, full["encoder"], image_keys_of(full["checkpoint"]), args.cameras
+    )
+    raw = rec.distance_matrix(features)
+    held = [i for i, e in enumerate(episodes) if e in set(full["held"])]
+    payload = {
+        **{
+            k: full[k] for k in ("checkpoint", "policy", "encoder", "every", "episodes")
+        },
+        "cameras": args.cameras,
+        "feature_dim": int(features[0].shape[1]),
+        "held": full["held"],
+        "raw": raw.round(6).tolist(),
+        "summary": rec.split_summary(raw, held),
+    }
+    path = out / f"matrix_every{args.every}_{args.cameras}.json"
+    path.write_text(json.dumps(payload, indent=1))
+    print(json.dumps(payload["summary"], indent=1))
+    print(f"💾 {path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--dataset", default=None)
     parser.add_argument("--episodes", default="", help="e.g. 0-64; default all")
     parser.add_argument("--held", default="58-64", help="the held-out episodes")
     parser.add_argument("--every", type=int, default=1, help="keep 1 frame in N")
@@ -72,8 +128,21 @@ def main() -> int:
     parser.add_argument("--device", default=None)
     parser.add_argument("--name", default=None, help="analysis directory name")
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--cameras",
+        default="all",
+        choices=("all", "overhead", "fingertips"),
+        help="overhead or fingertips: one group's matrix from the features a full "
+        "run cached under --out (no model is loaded)",
+    )
     args = parser.parse_args()
+    if args.cameras != "all":
+        if not args.out:
+            raise SystemExit("❌ --cameras needs --out, the full run's directory")
+        return from_cache(args)
 
+    if not (args.checkpoint and args.dataset):
+        raise SystemExit("❌ a full run needs --checkpoint and --dataset")
     from tool.analyse_policy_inputs import camera_slug, task_prompt
     from tool.eval_sim_policy import build_batch, load_policy
     from tool.eval_world_model import parse_range
@@ -118,7 +187,10 @@ def main() -> int:
         "held": [source.episodes[i] for i in held],
         "raw": raw.round(6).tolist(),
         "normalised": normalised.round(6).tolist(),
-        "summary": rec.split_summary(normalised, held),
+        # On the raw cosine distances: already one scale (0 to 2) for every
+        # model, so models can be compared directly.
+        "summary": rec.split_summary(raw, held),
+        "summary_normalised": rec.split_summary(normalised, held),
     }
     path = out / f"matrix_every{args.every}.json"
     path.write_text(json.dumps(payload, indent=1))
