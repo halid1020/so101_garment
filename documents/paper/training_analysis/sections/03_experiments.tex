@@ -168,7 +168,13 @@ it rises fourfold from \num{10000} steps (0.029 to 0.119), and for flow
 matching it rises too, which reads as severe overfitting, yet neither model's
 test action error gets worse. These losses score how well a model removes
 noise from the recorded actions, not how close its plan is to them.
-\pending{DreamZero and FastWAM learning curves.}}
+
+\textbf{The world action models differ.} DreamZero reaches its best test error
+by \num{20000} of its \num{80000} steps (3.9) and then drifts up slightly, to
+4.1, while its training error falls from 1.7 to 0.8; its held-out loss rises
+2.5-fold. FastWAM is the only model still improving at the end: its test error
+falls from 4.6 to 4.1 to 3.9 over its \num{30000} steps, so it would probably
+gain from longer training, although its held-out loss rises here too.}
 
 \subsection{Cropping the tactile images}
 \label{sec:crop}
