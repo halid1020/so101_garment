@@ -88,20 +88,25 @@ score the predicted frames.}
   \caption{The six models. \emph{Plan} is the number of steps each model
   commits to and we score (at \SI{30}{\hertz}). \emph{Fingertips} is how many
   of the four tactile cameras the model reads. \new{\emph{History} is how many
-  frames it sees.} Parameters count the whole model; for pi0.5 only the LoRA
-  addition is trained.}
+  frames it sees.} \gr{\emph{Total} counts every weight in the model,
+  \emph{trained} those the optimiser updated (for pi0.5, its LoRA adapters);
+  the world action models' frozen image autoencoders, and FastWAM's frozen text
+  encoder, are counted in neither. \emph{Batch} and \emph{steps} are the
+  training run's; \emph{passes} is how many times, on average, it saw each of the
+  \num{27465} training frames.}}
   \label{tab:models}
-  \small
-  \begin{tabular}{llrrlrr}
+  \footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{llrrlrrrrrr}
     \toprule
-    model & type & plan & fingertips & starts from & parameters & history \\
+    model & type & plan & fingertips & starts from & total & trained & batch & steps & passes & history \\
     \midrule
-    ACT & behaviour cloning & 100 & 4 & ImageNet encoder & \SI{52}{M} & 1 \\
-    Diffusion & behaviour cloning & 32 & 4 & scratch & \SI{323}{M} & 2 \\
-    Flow matching & behaviour cloning & 50 & 4 & scratch & \new{\SI{37}{M}} & 1 \\
-    pi0.5 & VLA & 50 & 2 & robot-pretrained & \SI{4.1}{B} & 1 \\
-    DreamZero & WAM & 24 & 4 & scratch & \SI{59}{M} & 2 \\
-    FastWAM & WAM & 10 & 4 (composite) & video-pretrained & \SI{6.0}{B} & 1 \\
+    ACT & BC & 100 & 4 & ImageNet encoder & \SI{51.6}{M} & \SI{51.6}{M} & 8 & \num{80000} & 23.3 & 1 \\
+    Diffusion & BC & 32 & 4 & scratch & \SI{322.8}{M} & \SI{322.8}{M} & 8 & \num{100000} & 29.1 & 2 \\
+    Flow matching & BC & 50 & 4 & scratch & \SI{37.0}{M} & \SI{37.0}{M} & 16 & \num{60000} & 35.0 & 1 \\
+    pi0.5 & VLA & 50 & 2 & robot-pretrained & \SI{4.14}{B} & \SI{1.29}{M} & 1 & \num{30000} & 1.1 & 1 \\
+    DreamZero & WAM & 24 & 4 & scratch & \SI{58.6}{M} & \SI{58.6}{M} & 8 & \num{80000} & 23.3 & 2 \\
+    FastWAM & WAM & 10 & 4 (composite) & video-pretrained & \SI{6.02}{B} & \SI{6.02}{B} & 8 & \num{30000} & 8.7 & 1 \\
     \bottomrule
   \end{tabular}
 \end{table}
