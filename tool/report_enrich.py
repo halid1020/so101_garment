@@ -58,8 +58,29 @@ def pairs(items: "list[str]") -> "list[tuple[str, Path]]":
 # -- 1. recordings ----------------------------------------------------------
 
 
-def draw_recordings(entries: "list[tuple[str, Path]]", out: Path) -> "Path | None":
-    """One normalised distance matrix per model, the test recordings boxed."""
+def in_typical_units(payload: dict) -> "tuple[np.ndarray, dict]":
+    """The raw distance matrix divided by the model's typical training gap.
+
+    Raw cosine distances are on one nominal scale (0 to 2) but not comparable
+    between models: an encoder whose features all point in nearly the same
+    direction (pi0.5's averaged image tokens) puts every pair close to 0. So
+    each matrix is expressed in units of its own typical gap -- the mean
+    distance from a training demonstration to its nearest training neighbour
+    -- and 1 means "as different as two training demonstrations usually are",
+    for every model. Returns the scaled matrix and the raw-scale summary.
+    """
+    from actoris_harena.analysis import recordings as rec
+
+    raw = np.array(payload["raw"])
+    held = [payload["episodes"].index(e) for e in payload["held"]]
+    summary = rec.split_summary(raw, held)
+    return raw / summary["nearest_train"], summary
+
+
+def draw_recordings(
+    entries: "list[tuple[str, Path]]", out: Path, vmax: float = 3.0
+) -> "Path | None":
+    """One distance matrix per model, in typical-gap units, test recordings marked."""
     if not entries:
         return None
     cols = min(3, len(entries))
@@ -70,9 +91,9 @@ def draw_recordings(entries: "list[tuple[str, Path]]", out: Path) -> "Path | Non
     image = None
     for axis, (key, path) in zip(axes.flat, entries):
         payload = json.loads(path.read_text())
-        matrix = np.array(payload["normalised"])
+        matrix, _ = in_typical_units(payload)
         held = [payload["episodes"].index(e) for e in payload["held"]]
-        image = axis.imshow(matrix, cmap="Blues", vmin=0.0, vmax=1.0)
+        image = axis.imshow(matrix, cmap="Blues", vmin=0.0, vmax=vmax)
         if held:
             edge = min(held) - 0.5
             for line in (axis.axhline, axis.axvline):
@@ -85,8 +106,10 @@ def draw_recordings(entries: "list[tuple[str, Path]]", out: Path) -> "Path | Non
     for axis in list(axes.flat)[len(entries) :]:
         axis.axis("off")
     figure.tight_layout()
-    bar = figure.colorbar(image, ax=axes.ravel().tolist(), shrink=0.8, pad=0.02)
-    bar.set_label("distance (1 = largest pair)", fontsize=8)
+    bar = figure.colorbar(
+        image, ax=axes.ravel().tolist(), shrink=0.8, pad=0.02, extend="max"
+    )
+    bar.set_label("distance / typical training gap", fontsize=8)
     bar.ax.tick_params(labelsize=7)
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
@@ -95,23 +118,30 @@ def draw_recordings(entries: "list[tuple[str, Path]]", out: Path) -> "Path | Non
 
 
 def write_recordings_table(
-    entries: "list[tuple[str, Path]]", out: Path
+    groups: "dict[str, list[tuple[str, Path]]]", out: Path
 ) -> "Path | None":
-    """Nearest-training-recording distance, training vs test, per model."""
-    if not entries:
+    """Test/training nearest-neighbour ratio per model, per camera group."""
+    names = [g for g in ("all", "overhead", "fingertips") if groups.get(g)]
+    if not names:
         return None
+    by_model: "dict[str, dict[str, float]]" = {}
+    for group in names:
+        for key, path in groups[group]:
+            _, summary = in_typical_units(json.loads(path.read_text()))
+            ratio = summary["nearest_held"] / summary["nearest_train"]
+            by_model.setdefault(key, {})[group] = ratio
+    header = {"all": "all cameras", "overhead": "overhead", "fingertips": "fingertips"}
     lines = [
-        r"\begin{tabular}{lrrr}",
+        r"\begin{tabular}{l" + "r" * len(names) + "}",
         r"\toprule",
-        r"model & training & test & test / training \\",
+        "model & " + " & ".join(header[g] for g in names) + r" \\",
         r"\midrule",
     ]
-    for key, path in entries:
-        s = json.loads(path.read_text())["summary"]
-        train, test = s["nearest_train"], s["nearest_held"]
-        lines.append(
-            f"{LABELS.get(key, key)} & {train:.2f} & {test:.2f} & {test / train:.2f} \\\\"
-        )
+    for key in [k for k, _, _ in ALL_MODELS if k in by_model]:
+        cells = [
+            f"{by_model[key][g]:.2f}" if g in by_model[key] else "--" for g in names
+        ]
+        lines.append(f"{LABELS.get(key, key)} & " + " & ".join(cells) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     out.write_text("\n".join(lines) + "\n")
     print(f"  recordings table -> {out}")
@@ -403,7 +433,14 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     recordings = pairs(args.recordings)
     draw_recordings(recordings, out / "recordings.png")
-    write_recordings_table(recordings, out / "recordings_table.tex")
+    groups = {"all": recordings}
+    for group in ("overhead", "fingertips"):
+        groups[group] = [
+            (key, path.with_name(path.stem + f"_{group}" + path.suffix))
+            for key, path in recordings
+            if path.with_name(path.stem + f"_{group}" + path.suffix).is_file()
+        ]
+    write_recordings_table(groups, out / "recordings_table.tex")
     if args.dataset:
         draw_sensor_shift(Path(args.dataset).expanduser(), out / "sensor_shift.png")
     curves = pairs(args.curves)

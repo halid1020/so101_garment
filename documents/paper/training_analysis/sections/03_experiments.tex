@@ -104,8 +104,10 @@ nearest neighbour?
   \includegraphics[width=0.85\textwidth]{recordings.png}
   \caption{How different every pair of demonstrations looks to each model's
   vision encoder: the mean feature distance after matching their frames in
-  order, scaled so that 1 is the most different pair. Demonstrations are in
-  recording order; the lines mark the seven test demonstrations (58--65).}
+  order, \gr{in units of that model's typical training gap (the average distance
+  from a training demonstration to its nearest training neighbour), so that 1
+  means equally different for every model.} Demonstrations are in recording
+  order; the lines mark the seven test demonstrations (58--65).}
   \label{fig:recordings}
 \end{figure}
 
@@ -113,9 +115,14 @@ nearest neighbour?
 
 \begin{table}[t]
   \centering
-  \caption{Distance from each demonstration to its nearest training
-  demonstration (itself excluded), averaged over the 58 training and the 7 test
-  demonstrations, on the scale of Figure~\ref{fig:recordings}.}
+  \caption{\gr{How far the test demonstrations are from the training ones,
+  relative to how far training demonstrations are from each other: the average
+  distance from a test demonstration to its nearest training demonstration,
+  divided by the average distance from a training demonstration to its nearest
+  other training demonstration. 1 means the test demonstrations look as
+  familiar as the training ones. Computed with all of a model's cameras, the
+  overhead camera alone, and the fingertips alone (pi0.5 reads two fingertips,
+  the others four).}}
   \label{tab:recordings}
   \small
   \input{tables/recordings_table}
@@ -127,7 +134,14 @@ training demonstration as a training demonstration is from its own nearest
 neighbour (Table~\ref{tab:recordings}). Each test demonstration has training
 demonstrations that look about as similar as training demonstrations look to
 each other, so the large gaps of Section~\ref{sec:compare} are not caused by
-the test demonstrations looking unfamiliar.
+the test demonstrations looking unfamiliar. \gr{\textbf{Split by camera, the
+fingertips differ slightly more than the overhead view.} With the overhead
+camera alone the ratio is 0.67 to 1.04, at or below one for every model; with
+the fingertips alone it is 0.92 to 1.17, above one for ACT, flow matching,
+DreamZero and FastWAM. The test demonstrations' fingertip images are a little
+less like the training ones than their overhead images are, but by at most 17\,\%,
+not enough to explain test errors up to seven times the training errors
+(Table~\ref{tab:actions}).}
 
 \gr{\textbf{The session does contain one visual change, at demonstration 43.} In
 Figure~\ref{fig:recordings}, ACT, Diffusion and pi0.5 see the session as two

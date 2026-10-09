@@ -229,8 +229,13 @@ models, their autoencoder's latent averaged onto a coarse grid
 so that no camera counts more than another because its encoder outputs larger
 numbers, and the cameras' vectors are placed end to end to give one vector per
 frame. Two frames are compared by cosine distance, one minus the cosine of the
-angle between their vectors: 0 for identical directions, and the same scale
-(0 to 2) for every model, so the models can be compared directly. Two
+angle between their vectors: 0 for identical directions. \gr{Raw cosine
+distances are not comparable between models, because an encoder whose features
+all point in nearly the same direction (pi0.5's averaged image tokens) puts every
+pair close to zero. So each model's distances are expressed in units of its own
+typical training gap, the average distance from a training demonstration to its
+nearest training neighbour: 1 then means ``as different as two training
+demonstrations usually are'' for every model.} Two
 demonstrations show the same fold at different paces, so if $B$ has $M$ frames
 and $A$ has $N \ge M$, we match every frame of $B$ to a different frame of $A$,
 keeping the order:
