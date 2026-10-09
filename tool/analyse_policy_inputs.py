@@ -190,7 +190,16 @@ def fastwam_grad_cam(inference, batch: dict) -> dict:
     whole frame is cut into equal-width columns, one per input; the fingertip
     composite's own 2x2 split happens where every composite map is drawn.
     """
-    cam = grads.autoencoder_grad_cam(inference.policy, inference.chunk_tensor, batch)
+    scheduler = inference.policy.model.infer_action_scheduler
+
+    def chunk_fn(window):
+        # infer_action detaches the chunk it returns, so the gradient is taken
+        # from the sampler's last step, the same values with the graph kept.
+        with grads.last_output_of(scheduler, "step") as steps:
+            inference.chunk_tensor(window)
+        return steps[-1]
+
+    cam = grads.autoencoder_grad_cam(inference.policy, chunk_fn, batch)
     names = sorted(k.split(".")[-1] for k in inference.image_keys())
     width = 1.0 / len(names)
     boxes = {name: (0.0, i * width, 1.0, width) for i, name in enumerate(names)}
