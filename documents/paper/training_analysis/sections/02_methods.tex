@@ -174,12 +174,22 @@ shows which parts of the image the plan depends on. It needs only the model's
 output, so it works for pi0.5 and the world action models too. For pi0.5 the
 common alternative is to read the transformer's attention, but attention
 weights show what the model looked at, not what changed its output.}
+\gr{We paint a cell with the image's average colour rather than with black
+because a black square is something the model never saw in training: a gel
+image is never black, so the plan would move partly because the input is
+strange, not because the information under the cell is gone. The average colour
+keeps the cell's brightness and removes its detail.}
 
 \textbf{Input contribution.} To ask how much a model uses one input, we replace
 that input with an uninformative version and measure how far the plan moves.
 An image is replaced by a flat image of its own average colour (keeping its
-brightness, removing its structure), the joint positions by a constant. The
-distance between two plans is the mean Euclidean distance between their
+brightness, removing its structure). \gr{The joint positions are replaced by
+their average over the training demonstrations, joint by joint: a typical
+posture, which removes what the current posture says without handing the model a
+pose it never saw. Replacing everything with zeros instead (a black image, and
+every joint at zero degrees, a folded posture the arms never took) asks how the
+model reacts to impossible inputs, so we use it only as a check
+(Appendix~\ref{sec:extra}).} The distance between two plans is the mean Euclidean distance between their
 commands. Each input's distance is divided by the sum over inputs, so one
 model's contributions add up to 100\,\% and rank its inputs, but cannot be
 compared in size between models. Models that sample keep their seed fixed, since
