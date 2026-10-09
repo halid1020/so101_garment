@@ -22,6 +22,207 @@ Wan2.2 video model with its action expert on each task's demonstrations
 do the same, starting from the public LeRobot base, and run the video
 prediction only to score it.}
 
+\gr{\subsection*{Architectures}
+
+Figure~\ref{fig:arch} draws each model as it runs here, from the inputs it
+reads to the chunk it outputs, and Tables~\ref{tab:hyper-bc}
+and~\ref{tab:hyper-big} give every setting that differs between them. All six
+read the twelve joint positions and are trained on the first 58 demonstrations
+with seed 1000; all actions and joint positions are normalised by the training
+data's mean and standard deviation (pi0.5: its own quantile normalisation),
+and their outputs are un-normalised to degrees before scoring.
+
+\textbf{ACT.} Each camera image ($480\times640$) passes through one shared
+ResNet-18, initialised from ImageNet; its last feature map ($15\times20$ cells,
+512 channels) becomes one token per cell, so each camera contributes 300
+tokens. These, a token for the joint positions and a latent token join a
+4-layer transformer encoder ($d=512$, 8 heads); a 1-layer decoder with 100
+learned queries outputs the 100-step chunk in one pass. In training a
+4-layer encoder over the recorded chunk produces a 32-dimensional latent, a
+conditional variational autoencoder trained with an L1 action loss plus a KL
+term weighted 10; at test time the latent is zero, so the plan is
+deterministic.
+
+\textbf{Diffusion Policy.} Each camera has its own ResNet-18, trained from
+scratch, on images resized to $180\times240$; a spatial-softmax layer turns its
+feature map into 32 keypoints, so each camera gives a 64-number vector. The last
+two frames of every camera and the joint positions condition, through FiLM, a
+1-D convolutional U-Net (channels 512, 1024, 2048; kernel 5) that removes noise
+from a 64-step action sequence. Training follows DDPM with 100 noise levels
+(squared-cosine schedule) and predicts the added noise; at test time all 100
+denoising steps run from a fixed seed, and the first 32 steps are executed.
+
+\textbf{Flow matching.} One ResNet-18 with GroupNorm, shared by the five
+cameras and trained from scratch, sees each image resized to $180\times240$ and
+ends in the same 32-keypoint spatial softmax; a linear layer turns each camera's
+keypoints into one token, and the joint positions into another. These six
+tokens and the 50 noisy action tokens pass through an 8-layer transformer
+($d=512$, 8 heads, pre-norm, GELU) with a time embedding added to every token,
+which predicts the flow-matching velocity. Training samples the flow time from
+a Beta(1.5, 1) distribution as pi0.5 does; at test time 10 Euler steps integrate
+from noise, from a fixed seed.
+
+\textbf{pi0.5.} Three cameras (overhead, LLG, RLG) fill its base and two
+wrist slots, each resized with padding to $224\times224$, encoded by the SigLIP
+vision tower into 256 tokens and read, with the tokenised instruction, by the
+Gemma 2B language model. A Gemma 300M action expert attends to that prefix and
+predicts the flow-matching velocity of a 50-step chunk; the joint positions,
+padded to 32 numbers, enter through a projection. Ten Euler steps produce the
+plan. Only the LoRA adapters train (rank 16 on the action expert's query and
+value projections, with the state and action projections), with
+everything else frozen at the \texttt{pi05\_base} weights.
+
+\textbf{DreamZero.} The five cameras are tiled into one $224\times224$ frame on
+a $3\times3$ grid of 74-pixel cells and encoded, frame by frame, by a frozen
+Stable Diffusion image autoencoder into $4\times28\times28$ latents. The model
+works in chunks of 48 steps (\SI{1.6}{\second}): one context chunk of 2 latent
+frames, with that chunk's 48 recorded commands, conditions the prediction of
+the next 3 chunks' latent frames and actions. A 12-layer transformer ($d=512$,
+8 heads) over $4\times4$ latent patches and action tokens, with a block-causal
+mask so a chunk never reads its own or later clean actions, denoises video and
+actions together under one flow-matching loss. Four Euler steps produce the
+plan, of which 24 steps are executed.
+
+\textbf{FastWAM.} The overhead image and the $2\times2$ fingertip composite are
+each resized to $224\times224$ and set side by side ($224\times448$), then
+encoded by the frozen Wan2.2 video autoencoder into a $48\times14\times28$
+latent. The 30-layer Wan2.2 video transformer ($d=3072$) and a 30-layer action
+expert ($d=1024$) form one mixture of transformers: video tokens attend only to
+video, and action tokens to themselves and to the first frame's video tokens.
+The instruction (UMT5 embedding) and the joint positions enter as context
+tokens. Training denoises 9 latent frames (33 video frames) and a 32-step chunk
+together; at test time the video is prefilled once and 10 denoising steps
+produce the actions, of which 10 are executed.}
+
+\gr{\begin{figure}[p]
+  \centering
+  \tikzset{
+    box/.style={draw, rounded corners=2pt, align=center, font=\scriptsize,
+      minimum height=5mm, inner sep=2pt},
+    frozen/.style={box, fill=gray!15},
+    arrow/.style={-{Latex[length=1.6mm]}, thin},
+  }
+    \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {5 cameras\\$480\times640$};
+    \node[box, below=of cam] (st) {joints (12)};
+    \node[box, right=of cam] (enc) {ResNet-18\\(shared, ImageNet init)};
+    \node[box, right=of enc] (tf) {transformer\\enc 4 / dec 1};
+    \node[box, right=of tf] (out) {chunk\\100 steps};
+    \node[box, above=of tf] (z) {CVAE latent\\(0 at test)};
+    \draw[arrow] (cam) -- (enc);
+    \draw[arrow] (enc) -- (tf); \draw[arrow] (st) -| (tf);
+    \draw[arrow] (z) -- (tf); \draw[arrow] (tf) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (a) ACT}\\[2.5mm]
+  \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {5 cameras, 2 frames\\resized $180\times240$};
+    \node[box, below=of cam] (st) {joints (12)};
+    \node[box, right=of cam] (enc) {5 ResNet-18s\\+ spatial softmax};
+    \node[box, right=of enc] (unet) {1-D conv U-Net\\100 DDPM steps};
+    \node[box, right=of unet] (out) {chunk\\64 (32 run)};
+    \draw[arrow] (cam) -- (enc); \draw[arrow] (enc) -- (unet);
+    \draw[arrow] (st) -| (unet); \draw[arrow] (unet) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (b) Diffusion Policy}\\[2.5mm]
+  \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {5 cameras\\resized $180\times240$};
+    \node[box, below=of cam] (st) {joints (12)};
+    \node[box, right=of cam] (enc) {ResNet-18 (shared)\\+ spatial softmax};
+    \node[box, right=of enc] (tf) {transformer\\8 layers, 10 steps};
+    \node[box, right=of tf] (out) {chunk\\50 steps};
+    \draw[arrow] (cam) -- (enc);
+    \draw[arrow] (enc) -- (tf); \draw[arrow] (st) -| (tf); \draw[arrow] (tf) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (c) Flow matching}\\[2.5mm]
+  \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {3 cameras\\$224\times224$ + text};
+    \node[box, below=of cam] (st) {joints (pad 32)};
+    \node[frozen, right=of cam] (vlm) {SigLIP + Gemma 2B\\(frozen)};
+    \node[box, right=of vlm] (ex) {Gemma 300M expert\\LoRA r16, 10 steps};
+    \node[box, right=of ex] (out) {chunk\\50 steps};
+    \draw[arrow] (cam) -- (vlm); \draw[arrow] (vlm) -- (ex);
+    \draw[arrow] (st) -| (ex); \draw[arrow] (ex) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (d) pi0.5}\\[2.5mm]
+  \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {5 cameras tiled\\$3\times3$ in $224^2$};
+    \node[box, below=of cam] (st) {joints + past\\48 commands};
+    \node[frozen, right=of cam] (vae) {SD autoencoder\\(frozen)};
+    \node[box, right=of vae] (tf) {transformer 12 layers\\video + actions, 4 steps};
+    \node[box, right=of tf] (out) {chunk\\48 (24 run)\\+ future frames};
+    \draw[arrow] (cam) -- (vae); \draw[arrow] (vae) -- (tf);
+    \draw[arrow] (st) -| (tf); \draw[arrow] (tf) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (e) DreamZero}\\[2.5mm]
+  \begin{tikzpicture}[node distance=3mm and 4mm]
+    \node[box] (cam) {overhead $|$ fingertip\\quad, $224\times448$};
+    \node[box, below=of cam] (st) {joints + text};
+    \node[frozen, right=of cam] (vae) {Wan2.2 autoencoder\\(frozen)};
+    \node[box, right=of vae] (vid) {video DiT\\30 layers, 5B};
+    \node[box, right=of vid] (act) {action expert\\30 layers, 10 steps};
+    \node[box, below=of act] (out) {chunk 32 (10 run)};
+    \draw[arrow] (cam) -- (vae); \draw[arrow] (vae) -- (vid);
+    \draw[arrow] (vid) -- (act);
+    \draw[arrow] (st) -| (vid); \draw[arrow] (act) -- (out);
+  \end{tikzpicture}\\[0.5mm]
+  {\footnotesize (f) FastWAM}\\[2.5mm]
+  \caption{The six models as they run here. Grey boxes are frozen pretrained
+  parts; every other box is trained on our demonstrations (for pi0.5, only its
+  LoRA adapters). ``Steps'' are the sampler's denoising or integration steps at
+  test time.}
+  \label{fig:arch}
+\end{figure}}
+
+\gr{\begin{table}[p]
+  \centering
+  \caption{Training and test settings of the three behaviour-cloning policies,
+  read from each checkpoint's saved configuration. \emph{Passes} is batch size
+  times update steps divided by the \num{27465} training frames.}
+  \label{tab:hyper-bc}
+  \scriptsize
+  \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    & ACT & Diffusion Policy & Flow matching \\
+    \midrule
+    images & 5 cameras, $480\times640$, 1 frame & 5 cameras, resized $180\times240$, 2 frames & 5 cameras, resized $180\times240$, 1 frame \\
+    vision encoder & ResNet-18, shared, ImageNet init & ResNet-18 per camera, scratch, spatial softmax (32 keypoints) & ResNet-18 shared, scratch, GroupNorm, spatial softmax (32) \\
+    core & transformer enc 4 / dec 1, $d$ 512, 8 heads, FFN 3200, dropout 0.1; CVAE latent 32 & 1-D conv U-Net (512/1024/2048), kernel 5, FiLM & transformer 8 layers, $d$ 512, 8 heads, FFN 2048, dropout 0.1 \\
+    objective & L1 + 10 $\times$ KL & DDPM, 100 levels, predicts noise & flow matching, Beta(1.5, 1) time \\
+    plan / executed & 100 / 100 & 64 / 32 & 50 / 50 \\
+    optimiser & AdamW, lr $10^{-5}$ (backbone $10^{-5}$), wd $10^{-4}$, clip 10 & Adam, lr $10^{-4}$, $\beta$ (0.95, 0.999), wd $10^{-6}$, clip 10 & AdamW, lr $10^{-4}$ (backbone $10^{-5}$), $\beta$ (0.9, 0.95), wd $10^{-6}$ \\
+    schedule & constant & cosine, 500 warm-up steps & cosine decay to $2.5\times10^{-6}$, 1000 warm-up \\
+    batch, steps, passes & 8, \num{80000}, 23.3 & 8, \num{100000}, 29.1 & 16, \num{60000}, 35.0 \\
+    parameters (trained) & 51.6\,M (all) & 322.8\,M (all) & \pending{count} \\
+    test-time sampling & one pass, latent 0 & 100 denoising steps, fixed seed & 10 Euler steps, fixed seed \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[p]
+  \centering
+  \caption{Training and test settings of pi0.5 and the two world action models,
+  as Table~\ref{tab:hyper-bc}.}
+  \label{tab:hyper-big}
+  \scriptsize
+  \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    & pi0.5 & DreamZero & FastWAM \\
+    \midrule
+    images & overhead, LLG, RLG; $224\times224$ padded; 1 frame & 5 cameras tiled in $224\times224$; context chunk of 2 latent frames & overhead $|$ fingertip quad, $224\times448$; 1 frame \\
+    vision encoder & SigLIP (frozen) & SD image autoencoder (frozen), $4\times28\times28$ & Wan2.2 video autoencoder (frozen), $48\times14\times28$ \\
+    core & Gemma 2B (frozen) + Gemma 300M action expert & transformer 12 layers, $d$ 512, 8 heads, patch 4 & Wan2.2 5B video DiT + 30-layer action expert ($d$ 1024) \\
+    other inputs & instruction, joints (padded to 32) & joints, past 48 commands & instruction (UMT5), joints \\
+    objective & flow matching & flow matching on video and actions & flow matching on video and actions \\
+    plan / executed & 50 / 50 & 48 / 24 & 32 / 10 \\
+    optimiser & AdamW, lr $2.5\times10^{-5}$, $\beta$ (0.9, 0.95), wd 0.01, clip 1 & AdamW, lr $10^{-4}$, $\beta$ (0.9, 0.95), wd $10^{-4}$ & AdamW, lr $10^{-4}$, wd 0.01 \\
+    schedule & cosine decay to $2.5\times10^{-6}$, 1000 warm-up & cosine decay to $2.5\times10^{-6}$, 1000 warm-up & as configured \pending{check} \\
+    batch, steps, passes & 1, \num{30000}, 1.1 & 8, \num{80000}, 23.3 & 8, \num{30000}, 8.7 \\
+    parameters (trained) & 4.1\,B (1.3\,M, LoRA r16) & \pending{count} & \pending{count} \\
+    test-time sampling & 10 Euler steps, fixed seed & 4 Euler steps, fixed seed & 10 steps, video prefilled once, fixed seed \\
+    \bottomrule
+  \end{tabularx}
+\end{table}}
+
 \section{How each figure and table was made}
 \label{sec:provenance}
 

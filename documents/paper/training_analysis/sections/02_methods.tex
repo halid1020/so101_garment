@@ -38,8 +38,10 @@ resized to $180\times240$.} It reads the last two frames, predicts 64 steps and
 executes 32, so we score the 32 it executes.
 
 \textbf{Flow matching} is our own small policy. It keeps pi0.5's training
-objective and action expert but replaces the pretrained vision-language model
-with a ResNet-18 encoder, \new{shared by all five cameras} and trained from
+objective and the design of its action expert \gr{(a transformer that reads the
+noisy action chunk with a time embedding, here much smaller and trained from
+scratch)} but replaces the pretrained vision-language model with a ResNet-18
+encoder, \new{shared by all five cameras} and trained from
 scratch. Flow matching \citep{lipman2023flow} learns to move noise to an action
 chunk along straight lines. \new{It sees only the current frame and plans 50
 steps.} The model therefore separates pi0.5's objective from its pretraining.
