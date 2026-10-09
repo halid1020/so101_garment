@@ -340,8 +340,12 @@ def windowed_record(inference, item: dict, args, context_actions: int) -> dict:
         )
 
         def chunk_fn(window):
+            # The first predicted chunk before DreamZero's Savitzky-Golay
+            # smoothing, which runs in numpy and so detaches the plan; the
+            # filter is a small linear correction to the same chunk.
             with pinned(inference):
-                return policy.predict_action_chunk(window)
+                _, actions = policy.predict_future(window)
+            return actions[:, 0]
 
         cam = grads.autoencoder_grad_cam(
             policy, chunk_fn, model_batch, frame=observed - 1
