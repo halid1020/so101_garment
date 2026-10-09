@@ -80,10 +80,13 @@ both models are scored per sensor.
 Table~\ref{tab:recordings}, Figure~\ref{fig:sensorshift}).} Every frame of all
 65 demonstrations (\num{30141} frames) goes through each checkpoint of
 Table~\ref{tab:actions}, except that DreamZero's and FastWAM's features come
-from their frozen image autoencoders, which training does not change. Each
-camera's vector is scaled to unit length before the cameras are joined; for
-the two world action models their autoencoder's latent is averaged onto a
-$6\times6$ (DreamZero) or $4\times8$ (FastWAM) grid. The distance between two
+from their frozen image autoencoders, which training does not change. A
+camera's summary is, for ACT, its ResNet-18's feature map averaged over the
+image; for Diffusion and flow matching, that camera encoder's output; for
+pi0.5, its image tokens averaged; for the two world action models, their
+autoencoder's latent of the whole tiled frame averaged onto a $6\times6$
+(DreamZero) or $4\times8$ (FastWAM) grid. Each vector is scaled to unit length
+before the cameras are joined. The distance between two
 frames is one minus the cosine of their vectors. The per-camera split averages
 each demonstration's frames per camera and chooses the boundary that best
 separates the demonstrations before it from those after.}
@@ -228,6 +231,99 @@ still 7.4, above the 5.3 of the last seven.
   move and new marks appear.}
   \label{fig:sensorshift}
 \end{figure}}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.5\textwidth]{trajectory_strip.png}
+  \caption{One held-out demonstration seen by the overhead camera, 20 frames
+  evenly spaced from start to end. The arms grasp the waistband, fold the shorts
+  over and release.}
+  \label{fig:trajectory}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.74\textwidth]{rim_evidence.png}
+  \caption{The four fingertip sensors before contact. Top: the first frame of
+  one demonstration with the crops drawn on it: rows only (white, dashed), four
+  edges (yellow) \new{and the ridge crop (blue, dash-dot); the arrow marks the
+  gel's ridge.} Bottom: brightness of each row and column relative to the centre
+  of the gel, averaged over the first frame of all 65 demonstrations; dotted
+  lines mark the four-edge crop \new{and the blue line the ridge crop's left
+  edge.}}
+  \label{fig:rimevidence}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\textwidth]{recordings.png}
+  \caption{How different every pair of demonstrations looks to each model's
+  vision encoder: the mean feature distance after matching their frames in
+  order, scaled so that 1 is the most different pair. Demonstrations are in
+  recording order; the lines mark the seven test demonstrations (58--65).}
+  \label{fig:recordings}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\textwidth]{patch_maps.png}
+  \caption{\new{Patch occlusion maps: where in each fingertip image the plan
+  comes from, averaged over 20 to 60 frames of test demonstration 58 (FastWAM:
+  8 frames, $5\times5$ cells per sensor). Darker cells moved the plan more when
+  painted over; each map is scaled to its own peak. A cropped model's map is
+  drawn over the full image, so the white border is what it never sees. pi0.5
+  reads only LLG and RLG.}}
+  \label{fig:patchmaps}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{grasp_filmstrip_state.png}
+  \caption{One grasp (test demonstration 60, left arm, fingertip LLG). Rows:
+  what happened; FastWAM's prediction with the recorded gripper position;
+  its prediction when told the gripper is already closed; and the difference
+  between the two predictions (mid-grey is none). The \emph{seen} column shows
+  the model's reconstruction of the frame it was given. The gripper is
+  commanded closed at \SI{0.5}{\second}; the gel darkens at contact about a
+  tenth of a second later.}
+  \label{fig:grasp}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\textwidth]{filmstrip_h2h.png}
+  \caption{\new{FastWAM and DreamZero predicting from the same seen frame
+  (test demonstration 58, 8\,s in, as the arms release the folded shorts), on
+  one time axis. For the overhead camera and one fingertip (LLG) the rows are
+  what happened, each model's prediction, and its difference from what happened
+  (truth minus prediction, rescaled so that mid-grey is no error). The
+  \emph{seen} column shows each model's reconstruction of the frame it was
+  given. Blank cells are times a model does not predict. Each model is shown at
+  its own resolution. Appendix Figure~\ref{fig:filmstripearly} shows an earlier
+  moment.}}
+  \label{fig:filmstrip}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.5\textwidth]{stream_shares.png}
+  \caption{How much each input moves each model's plan (input contribution,
+  Section~\ref{sec:measures}). Each bar adds up to 100\,\%, so compare the
+  order of inputs within a bar, not heights between bars. pi0.5 reads two
+  fingertips; the others read four. \rev{DreamZero alone is given its past
+  arm commands as an input.}}
+  \label{fig:streams}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{grasp_filmstrip_actions.png}
+  \caption{The grasp of Appendix Figure~\ref{fig:grasp}, predicted by the FastWAM whose
+  video reads the commanded actions: given the recorded commands, and given
+  the same commands with the gripper held open. The last row is their
+  difference. This run did not save the reconstruction of the seen frame.}
+  \label{fig:graspactions}
+\end{figure}
 
 \section{Threats to validity}
 \label{sec:threats}

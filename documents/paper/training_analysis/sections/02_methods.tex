@@ -113,29 +113,18 @@ We recorded one task in \new{one session: all 65 demonstrations were recorded
 one after another on one afternoon, in about an hour and three quarters.} A pair
 of shorts, already laid flat, is folded once by the two arms. Each
 demonstration lasts about 15 seconds; there are 30141 frames in all at
-\SI{30}{\hertz}. Figure~\ref{fig:trajectory} shows one demonstration from
+\SI{30}{\hertz}. Appendix Figure~\ref{fig:trajectory} shows one demonstration from
 start to end.
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.5\textwidth]{trajectory_strip.png}
-  \caption{One held-out demonstration seen by the overhead camera, 20 frames
-  evenly spaced from start to end. The arms grasp the waistband, fold the shorts
-  over and release.}
-  \label{fig:trajectory}
-\end{figure}
+
 
 We train every model on the first 58 demonstrations and test it on the
-\emph{last seven}, which it never sees. \new{Because the demonstrations were
-recorded in order, the last seven are also the latest. If something changed
-slowly over the afternoon, for example the daylight in the room or the wear on
-the gels, the last seven would differ from the first 58 for that reason alone,
-and a model could score worse on them without generalising any worse. To test
-this, we retrain ACT and Diffusion on a second split: we hold out a
-\emph{random seven}, drawn from across the whole session, and train on the
-other 58. A slow drift would make the random seven \emph{easier} than the last
-seven, because each of them was recorded between training demonstrations.
-Section~\ref{sec:compare} compares the two splits.}
+\emph{last seven}, which it never sees. \new{The last seven are also the
+latest, so a slow change over the afternoon (daylight, wear on the gels) could
+make them harder for that reason alone. To test this we retrain ACT and
+Diffusion holding out a \emph{random seven} from across the session instead:
+a slow drift would make those \emph{easier}, since each was recorded between
+training demonstrations (Section~\ref{sec:compare}).}
 
 \subsection{Evaluation}
 \label{sec:measures}
@@ -177,15 +166,13 @@ weights show what the model looked at, not what changed its output.}
 
 \textbf{Input contribution.} To ask how much a model uses one input, we replace
 that input with an uninformative version and measure how far the plan moves.
-An image is replaced by a flat image of its own average colour, which keeps its
-brightness but removes all structure. The joint positions are replaced by a
-constant. The distance between the two plans is the mean, over the chunk, of the
-Euclidean distance between their commands. We do this for each input in turn
-and divide each distance by their sum, so the contributions of one model add up
-to 100\,\%. Because they are normalised within a model, the percentages rank a
-model's inputs; they cannot be compared in size between models. For models
-that sample, the seed is fixed during this, since otherwise sampling noise
-alone moves the plan by far more than removing a camera does.
+An image is replaced by a flat image of its own average colour (keeping its
+brightness, removing its structure), the joint positions by a constant. The
+distance between two plans is the mean Euclidean distance between their
+commands. Each input's distance is divided by the sum over inputs, so one
+model's contributions add up to 100\,\% and rank its inputs, but cannot be
+compared in size between models. Models that sample keep their seed fixed, since
+sampling noise alone moves the plan more than removing a camera.
 
 \textbf{World action models.} We score frames in two ways.
 \emph{Reconstruction} passes frames the model has already seen through its own
@@ -209,51 +196,34 @@ nothing moves.}
 
 \rev{\textbf{How different the recordings look.} A held-out demonstration can be
 hard because it asks for different motions or because it looks different. We
-measure the second in each model's own terms: every frame of every
-demonstration goes through the model's preprocessing and vision encoder, and
-we keep the encoder's summary of each camera, scaled to unit length and joined
-across cameras. For ACT this is its ResNet-18's feature map averaged over the
-image; for Diffusion and flow matching, each camera encoder's output; for
-pi0.5, the image tokens averaged; for the two world action models, their image
-autoencoder's latent averaged onto a coarse grid. The two autoencoders are
-pretrained and frozen, so their features show what the model is shown, not
-what our training taught it. Two demonstrations show the same fold at
-different paces, so frame $t$ of one is not frame $t$ of the other. If
-demonstration $B$ has $M$ frames and $A$ has $N \ge M$, we match every frame of
-$B$ to a different frame of $A$, keeping the order:
+measure the second in each model's own terms: every frame goes through the
+model's preprocessing and vision encoder, and we keep each camera's summary
+(Appendix~\ref{sec:provenance}), scaled to unit length and joined across
+cameras. Two demonstrations show the same fold at different paces, so if $B$
+has $M$ frames and $A$ has $N \ge M$, we match every frame of $B$ to a
+different frame of $A$, keeping the order:
 \begin{equation}
   d(A,B) = \min_{i_0 < i_1 < \dots < i_{M-1}} \frac{1}{M}\sum_{j=0}^{M-1}
   \bigl(1 - \cos(f^A_{i_j}, f^B_j)\bigr),
 \end{equation}
-where $f$ is a frame's feature vector. Dynamic programming finds the best
-match exactly. Doing this for every pair of the 65 demonstrations gives a
-$65\times65$ matrix, which we divide by its largest entry so that every model
-reads from 0 to 1. The question is whether the test demonstrations are further
-from their nearest training demonstration than the training demonstrations are
-from each other.}
+where $f$ is a frame's feature vector; dynamic programming finds the best
+match exactly. Every pair of the 65 demonstrations gives a $65\times65$ matrix,
+divided by its largest entry so every model reads from 0 to 1.}
 
 \rev{\textbf{Learning curves.} The runs above kept only their last checkpoints,
-so we retrain each of the six models with the same settings and keep a
-checkpoint every 5000 steps (10\,000 for flow matching and DreamZero). We score
-the action error of every checkpoint on the training and test demonstrations
-exactly as above, so the last point of each curve is the model's row in
-Table~\ref{tab:actions}.}
+so we retrain each model with the same settings, keep a checkpoint every 5000
+or \num{10000} steps, and score each as above.}
 
-\rev{\textbf{Does FastWAM's touch prediction follow the gripper?} We find every
-grasp in the seven test demonstrations: a moment where the gripper command
-falls from open (about 0.2) to closed (about 0.02), 36 in all. We start
-FastWAM's prediction half a second before each closing, so the second it
-predicts spans the contact, and compare its predicted fingertip images with
-the recorded ones. In our FastWAM, as in the original, the predicted video
-cannot see the planned actions at all; it sees only the current images, the
-instruction and the current joint positions. So we test two things. First, on
-our FastWAM, we change the current gripper position it is given from the
-recorded (open) value to closed. Second, we train a FastWAM whose video
-\emph{can} read the action chunk, and give it the recorded commands either
-unchanged or with the gripper held open, so that the grasp is never
-commanded. If the model has learned how the gel responds to grasping, the
-predicted fingertip images should show contact only when the grasp is
-commanded.}
+\rev{\textbf{Does FastWAM's touch prediction follow the gripper?} The seven
+test demonstrations hold 36 grasps, moments where the gripper command falls
+from open (about 0.2) to closed (about 0.02). We start FastWAM's prediction
+half a second before each, so the second it predicts spans the contact. In
+FastWAM, as in the original, the predicted video cannot see the planned
+actions; it sees only the current images, the instruction and the joint
+positions. So we test two things: on our FastWAM, we set the current gripper
+position it is given to closed; and we train a FastWAM whose video \emph{can}
+read the commands, and give it the recorded commands either unchanged or with
+the gripper held open, so that the grasp is never commanded.}
 
 \subsection{The tactile crop}
 \label{sec:cropmethod}
@@ -274,27 +244,16 @@ gel.
   \label{fig:gradcamevidence}
 \end{figure}
 
-Figure~\ref{fig:rimevidence} measures what the images themselves show before
+Appendix Figure~\ref{fig:rimevidence} measures what the images themselves show before
 contact. On each sensor the brightest edge is 10 to 21\,\% brighter than the
 centre, which fits light leaking in at the gel boundary. \new{But the edges are
 not the brightest part of the image. On every sensor the brightest feature is a
 vertical ridge in the gel, about 0.3 of the way across (marked in
-Figure~\ref{fig:rimevidence}), up to 32\,\% brighter than the centre. So light
+Appendix Figure~\ref{fig:rimevidence}), up to 32\,\% brighter than the centre. So light
 leakage at the edges is real but small, and the ridge is a larger bright
 feature that the four-edge crop keeps.}
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.74\textwidth]{rim_evidence.png}
-  \caption{The four fingertip sensors before contact. Top: the first frame of
-  one demonstration with the crops drawn on it: rows only (white, dashed), four
-  edges (yellow) \new{and the ridge crop (blue, dash-dot); the arrow marks the
-  gel's ridge.} Bottom: brightness of each row and column relative to the centre
-  of the gel, averaged over the first frame of all 65 demonstrations; dotted
-  lines mark the four-edge crop \new{and the blue line the ridge crop's left
-  edge.}}
-  \label{fig:rimevidence}
-\end{figure}
+
 
 We test \new{four} crops, each applied to all four fingertip images, and each
 resizing the cropped image back to its original shape, which stretches it.

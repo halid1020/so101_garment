@@ -53,20 +53,17 @@ The main findings are these.
   \item \textbf{Every policy is much worse on held-out demonstrations.} The gap
   is largest for ACT, which almost memorises its training demonstrations. It is
   not caused by the recording session drifting over time\rev{, nor by the
-  held-out demonstrations looking unfamiliar: to every model's vision encoder
-  they look as close to training demonstrations as training ones look to each
-  other. The one visual change in the session, a fingertip sensor's view
-  shifting at demonstration 43, falls inside the training set.}
-  \item \rev{\textbf{Test error stops improving long before training ends.}
-  Training error keeps falling, so the gaps are built by extra training that
-  fits the training demonstrations without helping, or harming, on new ones.
-  LeRobot's own held-out loss rises meanwhile and would wrongly suggest
-  overfitting.}
+  held-out demonstrations looking unfamiliar to the models' vision encoders.
+  The session's one visual change, a fingertip sensor shifting at
+  demonstration 43, falls inside the training set.}
+  \item \rev{\textbf{Test error stops improving long before training ends}
+  while training error keeps falling; the extra training neither helps nor
+  harms on new demonstrations. LeRobot's own held-out loss would wrongly
+  suggest overfitting.}
   \item \textbf{Diffusion's plans are accurate for the first steps, but their
   error grows fastest;} ACT's grows slowly.
   \item \textbf{Cropping the tactile images changes almost nothing} on any
-  model scored so far, and on average the policies do not over-weight the image
-  edges.
+  model, and no model over-weights the image edges.
   \item \textbf{Touch matters in short bursts.} ACT nearly ignores the tactile
   cameras most of the time and leans on them heavily around contact.
   \new{Retrained on the overhead camera alone, ACT does better on held-out
@@ -75,11 +72,10 @@ The main findings are these.
   nothing.} Its narrow LoRA, not too little training, is the likelier limit.}
   \item \textbf{A frame-averaged image score can miss a correct prediction} of
   a small moving part, such as a gripper.
-  \item \rev{\textbf{FastWAM predicts when the gel will be touched from the
-  image alone.} It foresees the contact of a grasp at the right moment, and
-  telling it the gripper is already closed changes nothing. Retrained so that
-  its predicted video reads the commands, it predicts the touch more accurately,
-  and predicts none when the grasp is not commanded.}
+  \item \rev{\textbf{FastWAM foresees a grasp's touch from the image
+  alone;} the gripper position it is given changes nothing. Retrained so its
+  predicted video reads the commands, it predicts touch more accurately, and
+  none when the grasp is not commanded.}
   \item \rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
   together move its plan by about 2\,\%; proprioception and its own past
   commands carry the rest.}
