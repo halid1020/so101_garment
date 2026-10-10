@@ -12,9 +12,11 @@ of these models to generalise to a fifty-ninth.
 
 Cropping the tactile images is not the lever. It changes almost nothing on any
 model, and \rev{no model} over-weights the image edges that motivated it.
-\new{Pretraining did not help as we used it: pi0.5, finetuned through a narrow
-LoRA, plans worse than a small flow-matching policy trained from scratch, and
-three times more training did not close the gap.}
+\gn{How a pretrained model is finetuned matters more than for how long: through
+a narrow LoRA pi0.5 planned worse than a small flow-matching policy trained from
+scratch, and three times more training did not close the gap, but adapters on
+every attention and feed-forward layer, at a batch of eight, brought it close
+to the best models (Section~\ref{sec:pi05}).}
 
 Touch is used, but briefly, \new{and removing the fingertips altogether made
 ACT slightly better on held-out demonstrations. On a task this consistent, the
@@ -25,5 +27,39 @@ DreamZero barely reads its cameras to do so.
 \textbf{Next steps.} \textbf{Collect more varied demonstrations} (sessions,
 garments, starting positions), the most direct attack on the generalisation
 gap. \textbf{Test on the robot}, since agreement with recorded commands is not
-folding the garment. \new{\textbf{Finetune pi0.5 fully, or with LoRA on every
-layer,} as the published recipes do.} \textbf{Score motion, not whole frames}, which frame-averaged PSNR ignores.
+folding the garment. \textbf{Score motion, not whole frames}, which frame-averaged PSNR ignores.
+\gn{Section~\ref{sec:future} proposes two longer-term directions.}
+
+\gn{\section{Future work}
+\label{sec:future}
+
+\textbf{Fusing touch according to the grasp.} Our results suggest that naive
+tactile input is either ignored or harmful for most of a demonstration: touch
+matters around contact and is noise elsewhere (Section~\ref{sec:sensors}). The
+gripper itself says when touch should matter. When it is wide open, the
+fingertips touch nothing and their images should carry little weight; when it
+is closing, or holding the cloth, they carry the state the overhead camera
+cannot see, such as whether one layer or two has been pinched. We therefore
+propose to weight the tactile tokens by a gate computed from the gripper's
+commanded and measured opening, and from how much each fingertip image has
+changed since the previous frame. Related designs exist. Visuotactile-RL blocks
+tactile features, and their gradients, when no contact is detected
+\citep{hansen2022vtrl}; TacVLA switches its tactile tokens on only during contact
+\citep{zhang2026tacvla}; Dream-Tac biases attention towards the tactile tokens in
+proportion to how much the fingertip images change \citep{lou2026dreamtac}; and
+ReTac-ACT gates its fusion with a network conditioned on proprioception
+\citep{ruan2026retacact}. None of these gates on the grasp of a parallel gripper
+folding cloth, where the moment of contact, the closing of the gripper, is known
+from the robot's own state before the tactile image changes.
+
+\textbf{A more durable and consistent tactile sensor.} The gel sensors wear and
+see differently from finger to finger (Section~\ref{sec:rw-sensors}). We plan to
+replace the gel with a frosted acrylic sheet filmed from behind, which can be
+made identically for every finger, and to repeat the comparison of
+Section~\ref{sec:sensors} with it.
+
+\textbf{More history.} No model here sees more than two frames
+(Table~\ref{tab:models}), yet whether a fold is half done, or a grasp has
+slipped, is easier to tell from a short history than from one frame. Giving the
+policies a longer window of past frames and tactile readings is a direct test
+of whether this limits them.}

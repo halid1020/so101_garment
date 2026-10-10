@@ -893,9 +893,17 @@ def main() -> int:
             print(f"  per-sensor prediction: no {key} result at {path}")
     write_wm_table(revised, out / "wm_table.tex")
     draw_rim_attention([Path(a) for a in args.attribution], out / "rim_attention.png")
-    draw_patch_maps(
-        [(label, Path(path)) for label, path in PATCH_DECKS], out / "patch_maps.png"
-    )
+    decks = [(label, Path(path)) for label, path in PATCH_DECKS]
+    if args.dataset:
+        draw_patch_overlays(
+            decks,
+            Path(args.dataset).expanduser(),
+            args.episode,
+            0.45,
+            out / "patch_maps.png",
+        )
+    else:
+        draw_patch_maps(decks, out / "patch_maps.png")
     draw_stream_shares_all(
         [(label, Path(path)) for label, path in STREAM_DECKS], out / "stream_shares.png"
     )
@@ -1566,6 +1574,34 @@ WM_SENSORS = (("central", "overhead"),) + tuple(
 )
 
 
+def bold_wm_best(rows: "list[list[str]]") -> "list[list[str]]":
+    """Bold the better of prediction and repeat-last in each row (higher PSNR),
+    and, per sensor, the model with the larger margin at each instant.
+
+    Reconstruction is left alone: it is a ceiling, not a competitor, and each
+    model reconstructs at its own resolution.
+    """
+    out = [list(row) for row in rows]
+
+    def bold(i: int, j: int) -> None:
+        out[i][j] = rf"\textbf{{{rows[i][j]}}}"
+
+    for i, row in enumerate(rows):
+        prediction, repeat = float(row[3]), float(row[4])
+        if prediction >= repeat:
+            bold(i, 3)
+        if repeat >= prediction:
+            bold(i, 4)
+    for sensor in {row[0] for row in rows}:
+        members = [i for i, row in enumerate(rows) if row[0] == sensor]
+        for column in (5, 6):
+            best = max(float(rows[i][column]) for i in members)
+            for i in members:
+                if float(rows[i][column]) == best:
+                    bold(i, column)
+    return out
+
+
 def write_wm_table(
     predictions: "dict[str, dict]", out: Path, at: float = 0.8
 ) -> "Path | None":
@@ -1617,7 +1653,7 @@ def write_wm_table(
         rf"at \SI{{{at}}}{{\second}} & at end \\",
         r"\midrule",
     ]
-    lines += [" & ".join(row) + r" \\" for row in rows]
+    lines += [" & ".join(row) + r" \\" for row in bold_wm_best(rows)]
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  world-model sensor table: {len(rows)} rows -> {out}")
@@ -1640,8 +1676,21 @@ RIM_ARMS = (
             ("diffusion_crop_edges", "four edges"),
         ),
     ),
+    (
+        "wam",
+        "World action models (no crop)",
+        (("fastwam", "FastWAM"), ("dreamzero", "DreamZero")),
+    ),
 )
 RIM_BANDS = (0.10, 0.15, 0.20)
+
+#: Grad-CAM runs of the world action models, through their frozen autoencoders
+#: (`analysis.gradients.autoencoder_grad_cam`). Not ``heldout-gradcam-<arm>``
+#: runs: they were made later, by `analyse_policy_inputs.py` directly.
+WAM_GRADCAM = {
+    "fastwam": Path("outputs/analysis/2026-10-09/gradcam-fastwam/attribution.json"),
+    "dreamzero": Path("outputs/analysis/2026-10-10/gradcam-dreamzero/attribution.json"),
+}
 
 
 def draw_rim_attention(directories: "list[Path]", out: Path) -> "Path | None":
@@ -1655,17 +1704,21 @@ def draw_rim_attention(directories: "list[Path]", out: Path) -> "Path | None":
     from tool.rim_attention import pooled
 
     def find(arm: str) -> "Path | None":
+        if arm in WAM_GRADCAM:
+            return WAM_GRADCAM[arm] if WAM_GRADCAM[arm].is_file() else None
         hits = [d / f"heldout-gradcam-{arm}" / "attribution.json" for d in directories]
         hits = [h for h in hits if h.is_file()]
         return hits[-1] if hits else None
 
-    figure, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharey=True)
+    figure, axes = plt.subplots(1, len(RIM_ARMS), figsize=(14, 3.6), sharey=True)
     styles = ({"alpha": 1.0}, {"alpha": 0.55}, {"alpha": 0.55, "hatch": "///"})
     drawn = []
     for axis, (family, title, bars) in zip(axes, RIM_ARMS):
         xs = np.arange(len(RIM_BANDS))
         width = 0.26
         for offset, ((arm, label), style) in enumerate(zip(bars, styles)):
+            if family == "wam":  # two models side by side, neither a crop
+                style = {"alpha": 1.0}
             path = find(arm)
             if path is None:
                 continue
@@ -1673,12 +1726,12 @@ def draw_rim_attention(directories: "list[Path]", out: Path) -> "Path | None":
             for band in RIM_BANDS:
                 observed, flat, _n = pooled(path, band)
                 values.append(observed / flat)
-            position = xs + (offset - 1) * width
+            position = xs + (offset - (len(bars) - 1) / 2) * width
             axis.bar(
                 position,
                 values,
                 width * 0.92,
-                color=FAMILY[family],
+                color=FAMILY[family if family in FAMILY else family_of(arm)],
                 edgecolor="white",
                 label=label,
                 zorder=3,
@@ -2034,6 +2087,80 @@ def draw_patch_maps(entries: "list[tuple[str, Path]]", out: Path) -> "Path | Non
     figure.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(figure)
     print(f"  patch maps: {[label for label, _ in found]} -> {out}")
+    return out
+
+
+def draw_patch_overlays(
+    entries: "list[tuple[str, Path]]",
+    dataset: Path,
+    episode: int,
+    fraction: float,
+    out: Path,
+) -> "Path | None":
+    """The patch maps of :func:`draw_patch_maps`, laid over the fingertip images.
+
+    The background is each sensor's frame at ``fraction`` of the recording (the
+    moment Figure ``model_inputs`` shows), in grey, so the colour is the map
+    alone. A cell a cropped model never sees is left uncoloured. Each map is
+    scaled to its own peak: compare where the bright cells are, not how bright.
+    """
+    from actoris_harena.policies.common.tactile import TACTILE_CAMERAS
+
+    found = [(label, patch_maps(path)) for label, path in entries if path.is_file()]
+    found = [(label, maps) for label, maps in found if maps]
+    if not found:
+        print("  patch overlays: none found")
+        return None
+    backgrounds = {
+        camera: episode_frames(
+            dataset, f"observation.images.{camera}", episode, [fraction]
+        )[0][1]
+        for camera in TACTILE_CAMERAS
+    }
+    figure, axes = plt.subplots(
+        4, len(found), figsize=(1.75 * len(found) + 0.6, 5.6), squeeze=False
+    )
+    image = None
+    for c, (label, maps) in enumerate(found):
+        for r, camera in enumerate(TACTILE_CAMERAS):
+            axis = axes[r][c]
+            axis.set_xticks([])
+            axis.set_yticks([])
+            for spine in axis.spines.values():
+                spine.set_visible(False)
+            grid = maps.get(camera)
+            if grid is None:
+                # A sensor this model does not read (pi0.5 reads two).
+                axis.axis("off")
+            else:
+                frame = backgrounds[camera]
+                height, width = frame.shape[:2]
+                axis.imshow(frame.mean(axis=2), cmap="gray", vmin=0, vmax=255)
+                shown = np.where(grid > 0, grid / np.nanmax(grid), np.nan)
+                # Opacity follows the value, so unimportant cells let the gel
+                # show through and the important ones stand out on it.
+                colours = plt.get_cmap("inferno")(np.nan_to_num(shown))
+                colours[..., 3] = np.where(
+                    np.isnan(shown), 0.0, 0.15 + 0.7 * np.nan_to_num(shown)
+                )
+                axis.imshow(
+                    colours, interpolation="nearest", extent=(0, width, height, 0)
+                )
+                image = plt.cm.ScalarMappable(cmap="inferno", norm=plt.Normalize(0, 1))
+            if r == 0:
+                axis.set_title(label, fontsize=7)
+            if c == 0:
+                axis.axis("on")
+                axis.set_xticks([])
+                axis.set_yticks([])
+                axis.set_ylabel(SENSOR_SHORT[camera], fontsize=7)
+    if image is not None:
+        bar = figure.colorbar(image, ax=axes, fraction=0.02, pad=0.01)
+        bar.set_label("plan moved (scaled to peak)", fontsize=7)
+        bar.ax.tick_params(labelsize=6)
+    figure.savefig(out, dpi=170, bbox_inches="tight")
+    plt.close(figure)
+    print(f"  patch overlays: {[label for label, _ in found]} -> {out}")
     return out
 
 

@@ -39,14 +39,33 @@ def rim_mask(shape, frac):
     return (yy < frac) | (yy > 1 - frac) | (xx < frac) | (xx > 1 - frac)
 
 
+#: The 2x2 fingertip composite FastWAM reads, tiled row-major in this order
+#: (``common/rig_profile.COMPOSITES``). Its map is cut back into four sensors, so
+#: each sensor's own rim is measured, not the composite's outer edge.
+COMPOSITE_TILES = {"tactile_quad": TACTILE}
+
+
+def camera_maps(gradcam):
+    """(camera, map) pairs, with a composite's map split into its tiles."""
+    for camera, values in (gradcam or {}).items():
+        cam_map = np.asarray(values, dtype=float)
+        tiles = COMPOSITE_TILES.get(camera)
+        if tiles is None:
+            yield camera, cam_map
+            continue
+        h, w = cam_map.shape[0] // 2, cam_map.shape[1] // 2
+        for index, name in enumerate(tiles):
+            row, column = divmod(index, 2)
+            yield name, cam_map[row * h : (row + 1) * h, column * w : (column + 1) * w]
+
+
 def per_camera(path, frac):
     """{camera: (observed share, uniform share, n frames)}."""
     payload = json.load(open(path))
     seen = {}
     for episode in payload["episodes"].values():
         for frame in episode["frames"]:
-            for camera, values in (frame.get("gradcam") or {}).items():
-                cam_map = np.asarray(values, dtype=float)
+            for camera, cam_map in camera_maps(frame.get("gradcam")):
                 total = cam_map.sum()
                 if total <= 0:
                     continue

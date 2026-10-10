@@ -22,8 +22,11 @@
 \newenvironment{newtext}{\color{black}}{}
 % Third-round material (2026-10-07), now reviewed: black.
 \newcommand{\rev}[1]{{\color{black}#1}}
-% Material added in the fourth round (2026-10-09) is set in green.
-\newcommand{\gr}[1]{{\color{newgreen}#1}}
+% Fourth-round material (2026-10-09), now reviewed: black.
+\newcommand{\gr}[1]{{\color{black}#1}}
+% Material added in the fifth round (2026-10-10) is set in green.
+\newcommand{\gn}[1]{{\color{newgreen}#1}}
+\newenvironment{gntext}{\color{newgreen}}{}
 % A result whose run has not finished. None may survive into a shared version.
 \newcommand{\pending}[1]{{\color{red}[pending: #1]}}
 
@@ -59,12 +62,11 @@ cameras: one overhead and four tactile sensors on the fingertips.} \new{We train
 three behaviour-cloning policies, one vision-language-action policy and two
 world action models} from the same teleoperated demonstrations. We ask three
 questions. \new{How does each policy perform on the demonstrations it was
-trained on, and on demonstrations it never saw? Does cropping the edges of the
-tactile images help, and does it change which parts of those images the models
-rely on?} And how well do the world action models predict what the cameras will
-see next? \new{We find that the world action models, which also predict the
+trained on, and on demonstrations it never saw?} \gn{Does naive integration
+of tactile images help to improve the policy performance?} And how well do the
+world action models predict \gn{the future observations}? \new{We find that the world action models, which also predict the
 future camera images, plan their next actions most accurately on unseen
-demonstrations.} Every model is much worse on unseen demonstrations than on the
+demonstrations.} \gn{In general, every} model is much worse on unseen demonstrations than on the
 ones it trained on.
 \end{abstract}
 

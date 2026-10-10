@@ -93,11 +93,11 @@ def draw_recordings(
         payload = json.loads(path.read_text())
         matrix, _ = in_typical_units(payload)
         held = [payload["episodes"].index(e) for e in payload["held"]]
-        image = axis.imshow(matrix, cmap="Blues", vmin=0.0, vmax=vmax)
+        image = axis.imshow(matrix, cmap="turbo", vmin=0.0, vmax=vmax)
         if held:
             edge = min(held) - 0.5
             for line in (axis.axhline, axis.axvline):
-                line(edge, color="#c2407e", lw=1.0)
+                line(edge, color="white", lw=1.2)
         axis.set_title(LABELS.get(key, key), fontsize=9, color=INK)
         axis.set_xticks([0, 29, 57, len(matrix) - 1])
         axis.set_yticks([0, 29, 57, len(matrix) - 1])
