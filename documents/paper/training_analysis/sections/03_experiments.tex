@@ -229,7 +229,13 @@ ten steps is half pi0.5's (4.3 against 9.0): on our data, pi0.5's pretraining
 with our narrow LoRA does worse than a small model trained from scratch}
 \gn{; with a wide LoRA it comes close (4.6, Section~\ref{sec:pi05}).
 Unlike ACT, flow matching trains its ResNet-18 from scratch. Retrained from
-ACT's ImageNet weights, \pending{flow matching with an ImageNet encoder}. Its
+ACT's ImageNet weights, with the encoder's batch normalisation kept as
+pretrained weights require, it is worse, not better: its training error doubles
+(9.9 against 4.8 over its plan) and its test error rises from 11.5 to 13.1 (4.5
+against 4.3 over the first ten steps). With the encoder's learning rate kept at
+a tenth of the rest, as in the from-scratch run, the pretrained features seem
+too slow to adapt to gel images and an overhead view of cloth; one run cannot
+say whether another learning rate would reverse this. Its
 sampler takes 10 Euler steps from noise to a plan. Scored with only 4, without
 retraining, it is no worse: 11.5 over its plan, as with 10, and 4.1 against 4.3
 over the first ten steps. Flow matching is trained to follow straight
