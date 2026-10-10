@@ -167,9 +167,14 @@ per channel, and sum the channels with these weights. Negative values are set
 to zero, and the map is scaled so its peak is one and enlarged to the image
 size. Grad-CAM needs a convolutional feature map, so it applies to ACT,
 Diffusion and flow matching but not to pi0.5, whose vision encoder is a
-transformer. \new{The world action models' image autoencoders are
-convolutional, but they are frozen and sit before a transformer, so a Grad-CAM
-map there would describe the autoencoder, not the policy.}
+transformer. \gr{The world action models' image autoencoders are
+convolutional too. They are frozen, which means they are not trained, not that
+gradients cannot pass through them: the gradient of the planned chunk flows back
+through the transformer and the sampler into the autoencoder's feature maps. We
+take Grad-CAM at the last feature map of each autoencoder's encoder (its middle
+block), which covers the whole tiled frame, and cut the map into the cameras'
+regions. For FastWAM this map is $14\times28$ cells, so each fingertip gets only
+$7\times7$.}
 
 \new{\textbf{Patch occlusion maps} answer the same question for every model.
 We divide each fingertip image into a $10\times10$ grid. For each cell in turn
