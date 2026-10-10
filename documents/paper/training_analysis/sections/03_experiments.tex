@@ -496,7 +496,11 @@ pi0.5, DreamZero and FastWAM.}}
 gel images through one shared ResNet-18, so one encoder must serve two very
 different kinds of image. We retrained it with one ResNet-18 for the overhead
 camera and a second, shared by the four fingertips, both from ImageNet weights.
-\pending{ACT split-encoder result.}}
+It fits the training demonstrations as well as before (2.60 against 2.67) but
+does no better on the test demonstrations: 14.7 against 14.1 over its plan, and
+8.1 against 7.9 over the first ten steps, both still above the overhead camera
+alone (13.8 and 5.8). So giving touch its own encoder does not make the
+fingertips useful to ACT on this data.}
 
 
 
