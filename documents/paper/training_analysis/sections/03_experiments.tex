@@ -230,8 +230,11 @@ with our narrow LoRA does worse than a small model trained from scratch}
 \gn{; with a wide LoRA it comes close (4.6, Section~\ref{sec:pi05}).
 Unlike ACT, flow matching trains its ResNet-18 from scratch. Retrained from
 ACT's ImageNet weights, \pending{flow matching with an ImageNet encoder}. Its
-sampler takes 10 Euler steps; with 4, \pending{flow matching at 4 Euler
-steps}.}
+sampler takes 10 Euler steps from noise to a plan. Scored with only 4, without
+retraining, it is no worse: 11.5 over its plan, as with 10, and 4.1 against 4.3
+over the first ten steps. Flow matching is trained to follow straight
+paths from noise to action, which plausibly need few integration steps; the
+action expert could then be run 4 times per plan instead of 10.}
 
 \textbf{Diffusion's error starts low but grows fastest.} On the test
 demonstrations it rises from 3.9 at the first step to 13.9 by step 32, a factor
