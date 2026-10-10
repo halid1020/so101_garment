@@ -1,11 +1,27 @@
-\begin{tabular}{lrrrrr}
+\begin{tabular}{llrrrrrr}
 \toprule
-& \multicolumn{3}{c}{over its 100-step plan} & \multicolumn{2}{c}{first 10 steps} \\
-\cmidrule(lr){2-4}\cmidrule(lr){5-6}
-cameras & train & test & gap & test & gap \\
+& & & \multicolumn{3}{c}{over its own plan} & \multicolumn{2}{c}{first 10 steps} \\
+\cmidrule(lr){4-6}\cmidrule(lr){7-8}
+model & cameras & plan & train & test & gap & test & gap \\
 \midrule
-overhead & \textbf{2.62} & \textbf{13.78} & 5.3 & \textbf{5.75} & 2.5 \\
-overhead + one fingertip per arm & 2.73 & 14.82 & 5.4 & 7.51 & 2.9 \\
-overhead + all four fingertips & 2.67 & 14.09 & 5.3 & 7.88 & 3.4 \\
+ACT & overhead & 100 & \textbf{2.62} & \textbf{13.78} & 5.3 & \textbf{5.75} & 2.5 \\
+ & overhead + one fingertip per arm & 100 & 2.73 & 14.82 & 5.4 & 7.51 & 2.9 \\
+ & overhead + four fingertips & 100 & 2.67 & 14.09 & 5.3 & 7.88 & 3.4 \\
+ & overhead + four, separate touch encoder & -- & -- & -- & -- & -- & -- \\
+\midrule
+Diffusion & overhead & -- & -- & -- & -- & -- & -- \\
+ & overhead + four fingertips & 32 & 4.74 & 9.18 & 1.9 & 5.03 & 2.8 \\
+\midrule
+Flow matching & overhead & -- & -- & -- & -- & -- & -- \\
+ & overhead + four fingertips & 50 & 4.75 & 11.52 & 2.4 & 4.31 & 1.6 \\
+\midrule
+pi0.5, wide LoRA & overhead & -- & -- & -- & -- & -- & -- \\
+ & overhead + one fingertip per arm & 50 & 4.88 & 12.75 & 2.6 & 4.61 & 1.5 \\
+\midrule
+DreamZero & overhead & -- & -- & -- & -- & -- & -- \\
+ & overhead + four fingertips & 24 & 0.94 & 7.02 & 7.4 & 4.17 & 5.3 \\
+\midrule
+FastWAM & overhead & -- & -- & -- & -- & -- & -- \\
+ & overhead + four fingertips & 10 & 1.53 & 3.94 & 2.6 & 3.94 & 2.6 \\
 \bottomrule
 \end{tabular}

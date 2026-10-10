@@ -1530,30 +1530,90 @@ def write_crop_table(results: "dict[str, dict]", out: Path) -> Path:
     return out
 
 
-SENSOR_ROWS = (
-    ("act_central", "overhead"),
-    ("act_central_2tactile", "overhead + one fingertip per arm"),
-    ("act", "overhead + all four fingertips"),
+#: The sensor table: per model, (arm key, cameras) rows; every row also reads
+#: the joint positions. Each model's rows share its main-table budget, so a
+#: row differs from its neighbours in the cameras alone -- except ACT's last,
+#: which keeps the cameras and gives the fingertips their own encoder.
+SENSOR_GROUPS = (
+    (
+        "ACT",
+        (
+            ("act_central", "overhead"),
+            ("act_central_2tactile", "overhead + one fingertip per arm"),
+            ("act", "overhead + four fingertips"),
+            ("act_splitenc", "overhead + four, separate touch encoder"),
+        ),
+    ),
+    (
+        "Diffusion",
+        (
+            ("diffusion_overhead", "overhead"),
+            ("diffusion", "overhead + four fingertips"),
+        ),
+    ),
+    (
+        "Flow matching",
+        (
+            ("flowmatch_overhead", "overhead"),
+            ("flowmatch", "overhead + four fingertips"),
+        ),
+    ),
+    (
+        "pi0.5, wide LoRA",
+        (
+            ("pi05_lorawide_overhead", "overhead"),
+            ("pi05_lorawide", "overhead + one fingertip per arm"),
+        ),
+    ),
+    (
+        "DreamZero",
+        (
+            ("dreamzero_overhead", "overhead"),
+            ("dreamzero", "overhead + four fingertips"),
+        ),
+    ),
+    (
+        "FastWAM",
+        (("fastwam_overhead", "overhead"), ("fastwam", "overhead + four fingertips")),
+    ),
 )
 
 
 def write_sensor_table(results: "dict[str, dict]", out: Path, common: int = 10) -> Path:
-    """ACT on three camera sets, all with proprioception."""
+    """Every model with and without the fingertips, all with proprioception.
+
+    The lowest error is bolded within each model's rows only: plans differ in
+    length between models, so a column is not comparable across them.
+    """
     lines = [
-        r"\begin{tabular}{lrrrrr}",
+        r"\begin{tabular}{llrrrrrr}",
         r"\toprule",
-        r"& \multicolumn{3}{c}{over its 100-step plan} & "
+        r"& & & \multicolumn{3}{c}{over its own plan} & "
         rf"\multicolumn{{2}}{{c}}{{first {common} steps}} \\",
-        r"\cmidrule(lr){2-4}\cmidrule(lr){5-6}",
-        r"cameras & train & test & gap & test & gap \\",
-        r"\midrule",
+        r"\cmidrule(lr){4-6}\cmidrule(lr){7-8}",
+        r"model & cameras & plan & train & test & gap & test & gap \\",
     ]
-    rows = []
-    for arm, label in SENSOR_ROWS:
-        result = results.get(arm)
-        near = _cells(result, common)
-        rows.append([label, *_cells(result), near[1], near[2]])
-    lines += [" & ".join(row) + r" \\" for row in bold_lowest(rows, [1, 2, 4])]
+    for g, (model, members) in enumerate(SENSOR_GROUPS):
+        rows: "list[list[str]]" = []
+        for arm, cameras in members:
+            result = results.get(arm)
+            plan = str(result["validation"]["horizon"]) if result else "--"
+            near = _cells(result, common)
+            rows.append(
+                [
+                    model if not rows else "",
+                    cameras,
+                    plan,
+                    *_cells(result),
+                    near[1],
+                    near[2],
+                ]
+            )
+        lines.append(r"\midrule")
+        # Bold only a comparison: a model with one scored row has no best row.
+        scored = sum(row[3] != "--" for row in rows)
+        shown = bold_lowest(rows, [3, 4, 6]) if scored > 1 else rows
+        lines += [" & ".join(row) + r" \\" for row in shown]
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  sensor table -> {out}")
