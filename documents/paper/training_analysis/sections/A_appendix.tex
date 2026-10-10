@@ -273,7 +273,14 @@ are held out. Everything else, including the random seed, is unchanged.
 each tactile Grad-CAM map is defined as a fraction of the image, so that maps of
 different resolution are treated alike. The weight inside the band is divided by
 the weight a flat map of the same size would put there. The maps come from test demonstration 58, every fifth frame; the
-reviewed draft used training demonstrations.
+reviewed draft used training demonstrations. \gn{For the world action models the maps are taken
+at the last feature map of each frozen autoencoder's encoder (its middle block)
+and back-propagated from the planned chunk, with gradients enabled
+through the sampler: for FastWAM from its last denoising step, for DreamZero
+from the chunk before its action smoothing, which would otherwise cut the
+gradient. FastWAM's fingertip map is cut from the composite's $14\times14$ cells
+into four $7\times7$ tiles; DreamZero's is cut by the $3\times3$ grid of its tiled
+frame. Both use 60 frames of test demonstration 58, every fifth frame.}
 
 \textbf{Input contribution (Figures~\ref{fig:streams} and~\ref{fig:framewise}).}
 As in Section~\ref{sec:measures}. Figure~\ref{fig:framewise} uses every fifth

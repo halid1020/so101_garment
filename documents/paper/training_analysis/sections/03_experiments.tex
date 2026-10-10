@@ -601,9 +601,11 @@ frames of a test demonstration, the edge band of every uncropped policy receives
 only two thirds to nine tenths of the Grad-CAM weight its area would get
 (Figure~\ref{fig:rim}), at every band width; the strong edge weighting of
 Figure~\ref{fig:gradcamevidence} occurs at some moments but not on average.
-FastWAM's fingertip edges receive 1.09 times their share, close to no
-preference, and its overhead image's edges 0.95 to 1.01. \pending{DreamZero's
-Grad-CAM edge ratio.}
+The world action models, whose maps are much coarser, show no preference
+either: FastWAM's fingertip edges receive 1.09 times their share and DreamZero's
+1.01 to 1.03, against 0.95 to 1.01 (FastWAM) and 1.07 to 1.24 (DreamZero) for
+the edges of the overhead image. Single DreamZero sensors range from 0.80 to
+1.36, with no sensor's edge consistently favoured across band widths.
 
 \begin{figure}[t]
   \centering
@@ -614,7 +616,8 @@ Grad-CAM edge ratio.}
   model looks at the edge \emph{less} than a model that ignored position would.
   Three band widths are shown.} \gn{The world action models' maps come from
   their frozen autoencoders (Section~\ref{sec:measures}); FastWAM's is $7\times7$
-  cells per fingertip, so all three bands are its outer ring of cells.}
+  cells per fingertip and DreamZero's $9\times9$, so for FastWAM all three bands
+  are its outer ring of cells.}
   \label{fig:rim}
 \end{figure}
 
