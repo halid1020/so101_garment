@@ -277,6 +277,26 @@ def render(headers: "list[str]", rows: "list[list[str]]") -> str:
     return "\n".join(out)
 
 
+def config_overrides(pairs: "list[str]") -> "dict":
+    """``FIELD=VALUE`` strings to a dict, each value read as a Python literal.
+
+    A value that is not a literal stays a string, so ``mode=fast`` works without
+    quoting while ``num_inference_steps=4`` arrives as the int a config wants.
+    """
+    import ast
+
+    out: "dict" = {}
+    for pair in pairs:
+        field, sep, text = pair.partition("=")
+        if not sep or not field:
+            raise SystemExit(f"❌ --set wants FIELD=VALUE, got {pair!r}")
+        try:
+            out[field] = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            out[field] = text
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -306,6 +326,14 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="Pins a stochastic sampler")
     parser.add_argument("--name", default=None, help="Output directory name")
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--set",
+        nargs="*",
+        default=[],
+        metavar="FIELD=VALUE",
+        help="override a field of the loaded policy's config before scoring, "
+        "e.g. num_inference_steps=4; a field the config does not have is refused",
+    )
     args = parser.parse_args()
 
     if args.compare:
@@ -323,6 +351,12 @@ def main() -> None:
         load_policy=load_policy,
         build_batch=build_batch,
     )
+    overrides = config_overrides(args.set)
+    for field, value in overrides.items():
+        if not hasattr(inference.policy.config, field):
+            raise SystemExit(f"❌ {inference.type} has no config field {field!r}")
+        setattr(inference.policy.config, field, value)
+        print(f"🔧 {field} = {value!r}")
     print(f"📦 {inference.describe()}")
 
     source = DatasetSource(args.dataset, args.episodes, args.every, inference.cameras)
@@ -349,6 +383,7 @@ def main() -> None:
         "dataset": str(Path(args.dataset).name),
         "eval_split": split,
         "seed": args.seed,
+        "overrides": overrides,
         "episodes": {"train": train, "validation": validation},
     }
 

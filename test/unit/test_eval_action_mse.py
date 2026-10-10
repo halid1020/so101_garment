@@ -227,5 +227,21 @@ class SplitFromCheckpointTest(unittest.TestCase):
         self.assertEqual(split_from_checkpoint(tempfile.mkdtemp()), 0.0)
 
 
+class ConfigOverridesTest(unittest.TestCase):
+    def test_values_are_read_as_literals(self):
+        from tool.eval_action_mse import config_overrides
+
+        self.assertEqual(
+            config_overrides(["num_inference_steps=4", "mode=fast", "crop=[1.0,1.0]"]),
+            {"num_inference_steps": 4, "mode": "fast", "crop": [1.0, 1.0]},
+        )
+
+    def test_a_pair_without_a_value_is_refused(self):
+        from tool.eval_action_mse import config_overrides
+
+        with self.assertRaises(SystemExit):
+            config_overrides(["num_inference_steps"])
+
+
 if __name__ == "__main__":
     unittest.main()

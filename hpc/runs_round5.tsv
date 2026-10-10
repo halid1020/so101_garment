@@ -1,0 +1,35 @@
+# Fifth round of the training-analysis report (2026-10-10). Same columns as
+# runs.tsv. Every row is unique by (policy, cameras), so one row is submitted at a
+# time with `--only <policy> --cameras <set>` and, where the default run
+# directory (<dataset>__<camera slug>) would collide with an earlier run, its own
+# SO101_RUN_TAG:
+#
+#   row                          SO101_RUN_TAG
+#   fastwam 80k                  fastwam-split10-80k
+#   pi05 overhead, wide LoRA     fold-short-from-flattend-tactile__central__lorawide
+#   act split encoders           fold-short-from-flattend-tactile__all__splitenc
+#   flowmatch ImageNet           fold-short-from-flattend-tactile__all__resize__imagenet
+#   the other overhead rows      (default: fold-short-from-flattend-tactile__central)
+#
+# 1. Does naive touch help? Every model on the overhead camera alone, with the
+#    joint positions, at its main-table budget. ACT's is already trained
+#    (runs_revision.tsv). DreamZero's one-camera grid is 1x1, so the overhead
+#    fills its frame; FastWAM stretches it across its 224x448 frame. pi0.5 uses
+#    the wide LoRA of runs_round4.tsv, the recipe that fitted.
+# 2. ACT with one ResNet for the overhead camera and one, shared by the four
+#    fingertips, for touch: harena_act_crop with no crop and
+#    separate_tactile_backbone.
+# 3. Flow matching with ACT's ImageNet ResNet-18. A pretrained trunk keeps its
+#    BatchNorm, so group norm is off (the encoder refuses both together).
+# 4. FastWAM for 80k steps (about 23 passes over the training frames, as ACT),
+#    against the main table's 30k (8.7 passes). About 24 h on an H100.
+#
+# dataset                         policy            cameras             steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_fastwam    central,tactile_quad 80000  8     40    -     --dataset.eval_split=0.1
+fold-short-from-flattend-tactile harena_fastwam    central             30000  8     36    -     --dataset.eval_split=0.1
+fold-short-from-flattend-tactile diffusion         central             100000 8     36    -     --dataset.eval_split=0.1
+fold-short-from-flattend-tactile harena_flowmatch  central             60000  16    36    -     --dataset.eval_split=0.1 --policy.resize_shape=[180,240] --policy.crop_shape=null
+fold-short-from-flattend-tactile harena_dreamzero  central             80000  8     36    -     --dataset.eval_split=0.1
+fold-short-from-flattend-tactile pi05              central             30000  8     36    -     --dataset.eval_split=0.1 --peft.r=32 --peft.target_modules=.*\.(language_model|gemma_expert)\..*\.(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)|.*model\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out) --policy.gradient_checkpointing=true
+fold-short-from-flattend-tactile harena_act_crop   all                 80000  8     36    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.separate_tactile_backbone=true
+fold-short-from-flattend-tactile harena_flowmatch  all                 60000  16    36    -     --dataset.eval_split=0.1 --policy.resize_shape=[180,240] --policy.crop_shape=null --policy.pretrained_backbone_weights=ResNet18_Weights.IMAGENET1K_V1 --policy.use_group_norm=false

@@ -1379,10 +1379,31 @@ ACTION_ROWS = (
     ("diffusion", "Diffusion"),
     ("pi05", "pi0.5"),
     ("pi05_long", "pi0.5, three passes"),
+    ("pi05_lorawide", "pi0.5, wide LoRA"),
     ("flowmatch", "Flow matching"),
     ("dreamzero", "DreamZero"),
     ("fastwam", "FastWAM"),
 )
+
+#: What each model reads, in the table's shorthand: O the overhead camera, nT n
+#: fingertips, q the twelve joint positions, a the past commands. Keyed by the
+#: family, so every pi0.5 variant reads the same.
+MODEL_INPUTS = {
+    "act": "O+4T+q",
+    "diffusion": "O+4T+q",
+    "pi05": "O+2T+q",
+    "flowmatch": "O+4T+q",
+    "dreamzero": "O+4T+q+a",
+    "fastwam": "O+4T+q",
+}
+
+
+def inputs_of(arm: str) -> str:
+    """The input shorthand for an arm key such as ``pi05_lorawide``."""
+    for family in sorted(MODEL_INPUTS, key=len, reverse=True):
+        if arm == family or arm.startswith(family + "_"):
+            return MODEL_INPUTS[family]
+    raise KeyError(arm)
 
 
 def bold_lowest(rows: "list[list[str]]", columns: "list[int]") -> "list[list[str]]":
@@ -1425,12 +1446,12 @@ def write_action_table(results: "dict[str, dict]", out: Path, common: int = 10) 
     a row silently reads as a complete comparison.
     """
     lines = [
-        r"\begin{tabular}{lrrrrrr}",
+        r"\begin{tabular}{llrrrrrr}",
         r"\toprule",
-        rf"& & \multicolumn{{3}}{{c}}{{over its own plan}} & "
+        rf"& & & \multicolumn{{3}}{{c}}{{over its own plan}} & "
         rf"\multicolumn{{2}}{{c}}{{over the first {common} steps}} \\",
-        r"\cmidrule(lr){3-5}\cmidrule(lr){6-7}",
-        r"model & plan & train & test & gap & test & gap \\",
+        r"\cmidrule(lr){4-6}\cmidrule(lr){7-8}",
+        r"model & inputs & plan & train & test & gap & test & gap \\",
         r"\midrule",
     ]
     rows = []
@@ -1439,10 +1460,10 @@ def write_action_table(results: "dict[str, dict]", out: Path, common: int = 10) 
         plan = str(result["validation"]["horizon"]) if result else "--"
         own = _cells(result)
         near = _cells(result, common)
-        rows.append([label, plan, *own, near[1], near[2]])
+        rows.append([label, inputs_of(arm), plan, *own, near[1], near[2]])
     # Train, test and the shared-steps test; never the gap, where small is not
     # good -- pi0.5's is small because it never fitted its training set.
-    lines += [" & ".join(row) + r" \\" for row in bold_lowest(rows, [2, 3, 5])]
+    lines += [" & ".join(row) + r" \\" for row in bold_lowest(rows, [3, 4, 6])]
     lines += [r"\bottomrule", r"\end{tabular}", ""]
     out.write_text("\n".join(lines))
     print(f"  action table -> {out}")
