@@ -1,37 +1,37 @@
 \section{Methods}
 \label{sec:methods}
 
-\gn{This section defines what every model is asked to do, then describes the
+\gn{\bl{This section defines what every model is asked to do, then describes the
 six models, the demonstrations they learn from and how we split them, and the
-measures we use to analyse the trained models. Section~\ref{sec:experiments}
-then reports the experiments.}
+measures we use to analyse the trained models.} \bl{Section~\ref{sec:experiments}
+then reports the experiments.}}
 
 \subsection{Models}
 \label{sec:models}
 
-\gn{\textbf{The common problem.} At time $t$ a model observes
+\gn{\bl{\textbf{The common problem.}} \bl{At time $t$ a model observes
 $o_t = \big(q_t,\ I_t^{1},\dots,I_t^{C}\big)$, where $q_t\in\mathbb{R}^{12}$ is
 the joint positions of both arms (five joints and a gripper per arm, which we
 call \emph{proprioception}) and $I_t^{c}$ is the image from camera $c$ of the
-$C$ it reads. Some models also see earlier observations (Table~\ref{tab:models},
-\emph{history}). It outputs an \emph{action chunk}
+$C$ it reads.} \bl{Some models also see earlier observations (Table~\ref{tab:models},
+\emph{history}).} \bl{It outputs an \emph{action chunk}
 $\hat A_t=(\hat a_t,\hat a_{t+1},\dots,\hat a_{t+H-1})$, a plan of the next $H$
 joint commands $\hat a\in\mathbb{R}^{12}$ at \SI{30}{\hertz}, the rate at which
-the demonstrations were recorded. Training teaches it to reproduce the chunk
-$A_t$ the operator actually sent. Table~\ref{tab:models} lists how the models
-differ, and Figure~\ref{fig:inputs} shows the images each one receives. For each
+the demonstrations were recorded.} \bl{Training teaches it to reproduce the chunk
+$A_t$ the operator actually sent.} \bl{Table~\ref{tab:models} lists how the models
+differ, and Figure~\ref{fig:inputs} shows the images each one receives.} \bl{For each
 model we give its original design first and then what we changed;
-Appendix~\ref{sec:modeldetails} gives every architecture and setting in full.}
+Appendix~\ref{sec:modeldetails} gives every architecture and setting in full.}}
 
-\gn{\textbf{How the families differ.} The three behaviour-cloning policies learn
+\gn{\bl{\textbf{How the families differ.}} \bl{The three behaviour-cloning policies learn
 only to map observations to actions, from our demonstrations alone, with small
 image encoders. pi0.5 brings a large vision-language model pretrained on web
-and robot data, and is adapted to our task. The two world action models are
+and robot data, and is adapted to our task.} \bl{The two world action models are
 also trained to predict the future camera images, so that predicting how the
-scene will look teaches them how it moves. All six see at most two frames, and
+scene will look teaches them how it moves.} \bl{All six see at most two frames, and
 most see only the current one; none can recall what happened more than
 \SI{1.6}{\second} earlier, a limitation we return to in
-Section~\ref{sec:future}.}
+Section~\ref{sec:future}.}}
 
 \begin{figure}[t]
   \centering
@@ -43,24 +43,24 @@ Section~\ref{sec:future}.}
   \label{fig:inputs}
 \end{figure}
 
-\textbf{ACT} \citep{zhao2023act} \gn{reads each $480\times640$ camera image at
+\bl{\textbf{ACT} \citep{zhao2023act}} \gn{\bl{reads each $480\times640$ camera image at
 full resolution through one ResNet-18, shared by all five cameras and
-initialised from ImageNet. The network's last feature map is a $15\times20$
+initialised from ImageNet.} \bl{The network's last feature map is a $15\times20$
 grid of 512-dimensional features, and each grid cell becomes one token, with a
 two-dimensional sinusoidal position embedding: 300 tokens per camera, 1500 for
-all five. One more token carries the proprioception and one a latent style
-variable $z$. A four-layer transformer encoder mixes all these tokens, and a
+all five.} \bl{One more token carries the proprioception and one a latent style
+variable $z$.} \bl{A four-layer transformer encoder mixes all these tokens, and a
 one-layer decoder turns 100 learned queries into the 100 actions of the chunk
-($H=100$, \SI{3.3}{\second}), all at once. The camera and touch tokens are thus
-joined simply by concatenation; every token can attend to every other. ACT is
+($H=100$, \SI{3.3}{\second}), all at once.} \bl{The camera and touch tokens are thus
+joined simply by concatenation; every token can attend to every other.} \bl{ACT is
 trained as a conditional variational autoencoder: during training a second
 transformer reads the proprioception and the operator's true chunk and encodes
 them as a 32-dimensional Gaussian over $z$, from which $z$ is sampled, and a
 Kullback--Leibler penalty (weight 10) keeps that Gaussian close to a standard
-normal. The variable $z$ absorbs the variation between demonstrations, the
-operator's style. At test time there is no true chunk, so $z$ is set to zero,
-the mean style.} It sees only the current frame. We use the LeRobot
-implementation unchanged, with all five cameras.
+normal.} \bl{The variable $z$ absorbs the variation between demonstrations, the
+operator's style.} \bl{At test time there is no true chunk, so $z$ is set to zero,
+the mean style.}} It sees only the current frame. \bl{We use the LeRobot
+implementation unchanged, with all five cameras.}
 
 \textbf{Diffusion Policy} \citep{chi2023diffusion} starts from random noise and
 removes it step by step to produce a chunk, using a one-dimensional
@@ -69,86 +69,86 @@ camera has its own ResNet-18 encoder; ours are trained from scratch, on images
 resized to $180\times240$.} It reads the last two frames, predicts 64 steps and
 executes 32, so we score the 32 it executes.
 
-\textbf{Flow matching} is our own small policy. It keeps pi0.5's training
+\textbf{Flow matching} is our own small policy. \bl{It keeps pi0.5's training
 objective and the design of its action expert \gr{(a transformer that reads the
 noisy action chunk with a time embedding, here much smaller and trained from
 scratch)} but replaces the pretrained vision-language model with a ResNet-18
 encoder, \new{shared by all five cameras} and trained from
-scratch. Flow matching \citep{lipman2023flow} learns to move noise to an action
+scratch.} Flow matching \citep{lipman2023flow} learns to move noise to an action
 chunk along straight lines. \new{It sees only the current frame and plans 50
 steps.} The model therefore separates pi0.5's objective from its pretraining.
-\gr{Each camera frame is resized from $480\times640$ to $180\times240$ pixels,
-as for Diffusion, so the encoder sees the whole image.}
+\bl{\gr{Each camera frame is resized from $480\times640$ to $180\times240$ pixels,
+as for Diffusion, so the encoder sees the whole image.}}
 
 \textbf{pi0.5} \citep{pi05} is a vision-language-action model: a pretrained
 vision-language model reads the images and a written instruction, and a
-smaller ``action expert'' produces the chunk by flow matching. \new{Its vision
+smaller ``action expert'' produces the chunk by flow matching. \bl{\new{Its vision
 encoder} \gn{is a SigLIP vision transformer, which cuts each image, resized to
 $224\times224$, into patches and turns each patch into a token;} \new{it sees
-only the current frame.} \rev{We finetune it with a narrow LoRA
+only the current frame.}} \rev{\bl{We finetune it with a narrow LoRA
 \citep{hu2022lora}, chosen to fit a 24\,GB GPU: rank 16 on the action expert's
 attention and state and action layers only, about 1.3 million trained weights,
-with the vision-language model frozen. Its authors finetune the whole model;}
-\gn{their reference implementation needs more than 70\,GB of GPU memory for
+with the vision-language model frozen.} \bl{Its authors finetune the whole model;}}
+\bl{\gn{their reference implementation needs more than 70\,GB of GPU memory for
 that, an 80\,GB A100 or H100, against more than 22.5\,GB for LoRA
-\citep{openpi}.} \rev{Appendix~\ref{sec:modeldetails} compares the published
-LoRA recipes.} \gn{We also train a wide LoRA, on every attention and
+\citep{openpi}.}} \bl{\rev{Appendix~\ref{sec:modeldetails} compares the published
+LoRA recipes.}} \bl{\gn{We also train a wide LoRA, on every attention and
 feed-forward layer of both the language model and the action expert (rank 32,
 53 million trained weights, batch 8), on an 80\,GB H100
 (Section~\ref{sec:pi05}).} pi0.5 has three image slots, so it reads the
-overhead camera and one fingertip per arm. It is given the instruction ``fold
+overhead camera and one fingertip per arm.} It is given the instruction ``fold
 the short'' and plans 50 steps.
 
 \textbf{DreamZero} \citep{dreamzero} is a world action model: it predicts
 future video and future actions together, under one flow-matching objective.
-\rev{The original finetunes a 14-billion-parameter pretrained video generator
+\bl{\rev{The original finetunes a 14-billion-parameter pretrained video generator
 (Appendix~\ref{sec:modeldetails}), far too large for our GPUs; ours has the
 same objective and chunking but about 59 million parameters, trained from
-scratch, so it tests the method, not the pretrained model.} \new{Like the original, it \emph{tiles} the cameras: all five are
+scratch, so it tests the method, not the pretrained model.}} \bl{\new{Like the original, it \emph{tiles} the cameras: all five are
 squashed into the cells of a $3\times3$ grid inside one $224\times224$ frame
-(Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.}
-\gn{Each camera therefore gets a cell of about $75\times75$ pixels.} It
+(Figure~\ref{fig:inputs}b), which a frozen image autoencoder compresses.}}
+\bl{\gn{Each camera therefore gets a cell of about $75\times75$ pixels.}} It
 sees two frames, the latest and one \SI{0.8}{\second} earlier, \new{and is also
-given the arm commands of the past \SI{1.6}{\second}}. \gn{Its actions are
+given the arm commands of the past \SI{1.6}{\second}}. \gn{\bl{Its actions are
 planned at \SI{30}{\hertz} like every other model's; only its video is
-coarser. DreamZero groups time into chunks of 48 action steps
+coarser.} \bl{DreamZero groups time into chunks of 48 action steps
 (\SI{1.6}{\second}) and represents each chunk by two video frames, so it
 predicts one frame per 24 action steps, every \SI{0.8}{\second}, up to
-\SI{4.8}{\second} ahead. It executes 24 action steps (\SI{0.8}{\second}),
-one video frame's worth, before planning again.}
+\SI{4.8}{\second} ahead.} \bl{It executes 24 action steps (\SI{0.8}{\second}),
+one video frame's worth, before planning again.}}
 
 \textbf{FastWAM} \citep{fastwam} is also a world action model, built on a
 pretrained five-billion-parameter video generator, Wan2.2 \citep{wan2025},
-with a smaller action expert beside it. \new{We finetune it on our demonstrations, as its
-authors do, from the public LeRobot base model.} \new{Its image input is one frame of fixed size, made by
-setting cameras side by side. We give it the overhead camera beside a
-two-by-two composite of the four fingertips (Figure~\ref{fig:inputs}c).}
-\gn{The frame is $224\times448$: the overhead camera fills a $224\times224$
-half, and each fingertip a $112\times112$ quarter of the other.} \new{It sees
+with a smaller action expert beside it. \bl{\new{We finetune it on our demonstrations, as its
+authors do, from the public LeRobot base model.}} \new{Its image input is one frame of fixed size, made by
+setting cameras side by side. \bl{We give it the overhead camera beside a
+two-by-two composite of the four fingertips (Figure~\ref{fig:inputs}c).}}
+\bl{\gn{The frame is $224\times448$: the overhead camera fills a $224\times224$
+half, and each fingertip a $112\times112$ quarter of the other.}} \new{It sees
 only the current frame.} It predicts nine frames over about a second and plans
 32 action steps, of which it executes 10. \new{The authors skip the video
 prediction at test time, since it is needed only in training; we run it to
 score the predicted frames.}
 
-\gn{The fingertip images every model receives are therefore far coarser than
+\gn{\bl{The fingertip images every model receives are therefore far coarser than
 the sensors record: from $480\times640$ down to $224\times224$ for pi0.5,
 $180\times240$ for Diffusion and flow matching, $112\times112$ for FastWAM and
-about $75\times75$ for DreamZero; only ACT reads them at full resolution. Fine
+about $75\times75$ for DreamZero; only ACT reads them at full resolution.} \bl{Fine
 detail of the gel's deformation, such as the texture of the cloth pressed into
-it, is lost before any model sees it.}
+it, is lost before any model sees it.}}
 
 \begin{table}[t]
   \centering
-  \caption{The six models. \emph{Plan} is the number of steps each model
-  commits to and we score (at \SI{30}{\hertz}), \gn{and the time it covers}.
+  \caption{The six models. \bl{\emph{Plan} is the number of steps each model
+  commits to and we score (at \SI{30}{\hertz}), \gn{and the time it covers}.}
   \emph{Fingertips} is how many of the four tactile cameras the model reads.
-  \new{\emph{History} is how many frames it sees.} \gr{\emph{Total} counts every
+  \new{\emph{History} is how many frames it sees.} \gr{\bl{\emph{Total} counts every
   weight in the model, \emph{trained} those the optimiser updated (for pi0.5,
   its LoRA adapters); the world action models' frozen image autoencoders, and
-  FastWAM's frozen text encoder, are counted in neither. \emph{Batch} $B$ and
+  FastWAM's frozen text encoder, are counted in neither.} \bl{\emph{Batch} $B$ and
   \emph{steps} $S$ are the training run's; \emph{passes} is how many times, on
-  average, it saw each of the $N=\num{27465}$ training frames,}
-  \gn{$\text{passes} = B\,S/N$.}}
+  average, it saw each of the $N=\num{27465}$ training frames,}}
+  \bl{\gn{$\text{passes} = B\,S/N$.}}}
   \label{tab:models}
   \footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -190,11 +190,11 @@ start to end.
 
 
 We train every model on the first 58 demonstrations and test it on the
-\emph{last seven}, which it never sees. \new{The last seven are also the
+\emph{last seven}, which it never sees. \new{\bl{The last seven are also the
 latest, so a slow change over the afternoon could make them harder for that
-reason alone. \gr{The lighting cannot drift (the rig is in a basement lab under
+reason alone.} \bl{\gr{The lighting cannot drift (the rig is in a basement lab under
 constant artificial light), but the gels can wear and the operator can tire or
-get faster.} To test this we retrain ACT and
+get faster.}} \bl{To test this we retrain ACT and
 Diffusion holding out a \emph{random seven} from across the session instead:
 a slow drift would make those \emph{easier}, since each was recorded between
-training demonstrations (Section~\ref{sec:compare}).}
+training demonstrations (Section~\ref{sec:compare}).}}

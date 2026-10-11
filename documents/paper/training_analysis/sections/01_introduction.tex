@@ -32,71 +32,71 @@ This report answers three questions, in order of importance.
   \item \new{\textbf{How does each policy perform on the demonstrations it was
   trained on, and on held-out demonstrations it never saw?}} This is the main
   comparison (Section~\ref{sec:compare}).
-  \item \gn{\textbf{Does naive integration of tactile images help to improve the
-  policy performance?} By \emph{naive} we mean that the fingertip images are
+  \item \gn{\bl{\textbf{Does naive integration of tactile images help to improve the
+  policy performance?}} \bl{By \emph{naive} we mean that the fingertip images are
   given to each model as further camera images, with no tactile-specific
-  encoder or fusion. We retrain every model without them, measure how much each
+  encoder or fusion.} \bl{We retrain every model without them, measure how much each
   model's plan depends on them, and test whether the bright edges of the gel
-  images mislead the models (Section~\ref{sec:sensors}).}
-  \item \textbf{How well do the world action models predict \gn{the future
-  observations}?} We score how well they reproduce frames they have seen and how
+  images mislead the models (Section~\ref{sec:sensors}).}}
+  \item \bl{\textbf{How well do the world action models predict \gn{the future
+  observations}?}} We score how well they reproduce frames they have seen and how
   well they predict frames they have not (Section~\ref{sec:wm}).
 \end{enumerate}
 
-\gn{Section~\ref{sec:related} reviews how touch has been brought into robot
-learning. Section~\ref{sec:methods} describes the models, the data and the
+\gn{\bl{Section~\ref{sec:related} reviews how touch has been brought into robot
+learning.} \bl{Section~\ref{sec:methods} describes the models, the data and the
 measures we use, Section~\ref{sec:experiments} reports the experiments,
 Section~\ref{sec:discussion} discusses what we learned, and
-Section~\ref{sec:future} proposes what to do next. The appendices give each
+Section~\ref{sec:future} proposes what to do next.} \bl{The appendices give each
 model's full architecture and settings and explain how every figure and table
-was made.}
+was made.}}
 
-\gn{The main findings are these, grouped by question.}
+\bl{\gn{The main findings are these, grouped by question.}}
 
-\gn{\textbf{Question 1: performance on seen and unseen demonstrations.}}
+\bl{\gn{\textbf{Question 1: performance on seen and unseen demonstrations.}}}
 \begin{itemize}
-  \item \gr{\textbf{The two world action models plan best on demonstrations
-  they never saw.} We measure how far each model's planned arm commands are
+  \item \gr{\bl{\textbf{The two world action models plan best on demonstrations
+  they never saw.}} \bl{We measure how far each model's planned arm commands are
   from the commands the operator actually sent, over the next ten steps (a
-  third of a second). On the held-out demonstrations FastWAM and DreamZero have
+  third of a second).} \bl{On the held-out demonstrations FastWAM and DreamZero have
   the smallest error of all six models (Table~\ref{tab:actions}); flow matching
-  has the smallest of the three behaviour-cloning policies.}
-  \item \gn{\textbf{In general, every model is much worse on held-out
-  demonstrations than on the ones it trained on.}} The gap is largest for ACT,
+  has the smallest of the three behaviour-cloning policies.}}
+  \item \bl{\gn{\textbf{In general, every model is much worse on held-out
+  demonstrations than on the ones it trained on.}}} The gap is largest for ACT,
   which almost memorises its training demonstrations.
-  \item \rev{\textbf{Test error stops improving long before training ends}
+  \item \bl{\rev{\textbf{Test error stops improving long before training ends}
   while training error keeps falling, for every model but FastWAM
   \gr{(Figure~\ref{fig:curves})}; the extra training neither helps nor harms
-  on new demonstrations.}
-  \item \gn{\textbf{pi0.5 was held back by its narrow LoRA, not by too little
-  training.} Training it three times longer changes almost nothing, but
+  on new demonstrations.}}
+  \item \gn{\bl{\textbf{pi0.5 was held back by its narrow LoRA, not by too little
+  training.}} \bl{Training it three times longer changes almost nothing, but
   adapting forty times more of its weights, at a batch of eight, cuts its test
   error over the first ten steps from 9.0 to 4.6 degrees, close to the best
-  models (Section~\ref{sec:pi05}).}
+  models (Section~\ref{sec:pi05}).}}
 \end{itemize}
 
-\gn{\textbf{Question 2: does naive touch help?}}
+\bl{\gn{\textbf{Question 2: does naive touch help?}}}
 \begin{itemize}
-  \item \gn{\textbf{Touch matters only around contact.} ACT nearly ignores the
+  \item \gn{\bl{\textbf{Touch matters only around contact.}} \bl{ACT nearly ignores the
   tactile cameras most of the time and leans on them heavily when the gripper
-  closes on the cloth.}
-  \item \new{\textbf{Retrained on the overhead camera alone, ACT does better on
+  closes on the cloth.}}
+  \item \bl{\new{\textbf{Retrained on the overhead camera alone, ACT does better on
   held-out demonstrations}, so on this data the fingertips do not help it
-  generalise.} \gn{Of the other models, only flow matching does slightly better with the
-fingertips, and Diffusion and DreamZero slightly better without them.
-\pending{overhead-only result for pi0.5 and FastWAM.}}
-  \item \rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
+  generalise.}} \gn{\bl{Of the other models, only flow matching does slightly better with the
+fingertips, and Diffusion and DreamZero slightly better without them.}
+\bl{\pending{overhead-only result for pi0.5 and FastWAM.}}}
+  \item \bl{\rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
   together move its plan by about \gr{7}\,\%; proprioception and its own past
-  commands carry the rest.}
-  \item \textbf{Cropping the tactile images changes almost nothing} on any
-  model, and no model over-weights the image edges.
+  commands carry the rest.}}
+  \item \bl{\textbf{Cropping the tactile images changes almost nothing} on any
+  model, and no model over-weights the image edges.}
 \end{itemize}
 
-\gn{\textbf{Question 3: predicting the future observations.}}
+\bl{\gn{\textbf{Question 3: predicting the future observations.}}}
 \begin{itemize}
-  \item \gn{\textbf{An image score averaged over the whole frame can miss a
-  correct prediction of a small moving part.} The grippers cover only a few per
+  \item \gn{\bl{\textbf{An image score averaged over the whole frame can miss a
+  correct prediction of a small moving part.}} \bl{The grippers cover only a few per
   cent of the overhead image, so FastWAM, which predicts their motion
   correctly, scores no better than simply repeating the last frame, which gets
-  the static background right and the grippers wrong (Section~\ref{sec:wm}).}
+  the static background right and the grippers wrong (Section~\ref{sec:wm}).}}
 \end{itemize}

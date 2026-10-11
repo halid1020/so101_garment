@@ -15,18 +15,18 @@
 % Guideline convention: flag design choices that lack a solid reason.
 \newcommand{\unjustified}{\textbf{[!]}~\emph{Unjustified choice:}}
 
-% Material added since the second annotated draft (2026-09-27) is set in green,
-% as the reviewer asked; everything reviewed before is black.
-\definecolor{newgreen}{RGB}{0,128,60}
-\newcommand{\new}[1]{{\color{black}#1}}
-\newenvironment{newtext}{\color{black}}{}
-% Third-round material (2026-10-07), now reviewed: black.
-\newcommand{\rev}[1]{{\color{black}#1}}
-% Fourth-round material (2026-10-09), now reviewed: black.
-\newcommand{\gr}[1]{{\color{black}#1}}
-% Material added in the fifth round (2026-10-10) is set in green.
-\newcommand{\gn}[1]{{\color{newgreen}#1}}
-\newenvironment{gntext}{\color{newgreen}}{}
+% Every sentence that is new or changed since the version of 28 September 2026
+% (commit b10f99a) is set in blue, as the reviewer asked; tool/mark_new_sentences.py
+% places the \bl marks and is re-run after every edit. The earlier rounds' macros
+% are kept as plain pass-throughs so that nothing inside a blue span turns black.
+\definecolor{newblue}{RGB}{0,70,200}
+\newcommand{\bl}[1]{{\color{newblue}#1}}
+\newcommand{\new}[1]{#1}
+\newenvironment{newtext}{}{}
+\newcommand{\rev}[1]{#1}
+\newcommand{\gr}[1]{#1}
+\newcommand{\gn}[1]{#1}
+\newenvironment{gntext}{}{}
 % A result whose run has not finished. None may survive into a shared version.
 \newcommand{\pending}[1]{{\color{red}[pending: #1]}}
 
@@ -62,12 +62,12 @@ cameras: one overhead and four tactile sensors on the fingertips.} \new{We train
 three behaviour-cloning policies, one vision-language-action policy and two
 world action models} from the same teleoperated demonstrations. We ask three
 questions. \new{How does each policy perform on the demonstrations it was
-trained on, and on demonstrations it never saw?} \gn{Does naive integration
-of tactile images help to improve the policy performance?} And how well do the
-world action models predict \gn{the future observations}? \new{We find that the world action models, which also predict the
+trained on, and on demonstrations it never saw?} \bl{\gn{Does naive integration
+of tactile images help to improve the policy performance?}} \bl{And how well do the
+world action models predict \gn{the future observations}?} \new{We find that the world action models, which also predict the
 future camera images, plan their next actions most accurately on unseen
-demonstrations.} \gn{In general, every} model is much worse on unseen demonstrations than on the
-ones it trained on.
+demonstrations.} \bl{\gn{In general, every} model is much worse on unseen demonstrations than on the
+ones it trained on.}
 \end{abstract}
 
 \input{sections/01_introduction}
