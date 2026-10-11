@@ -100,7 +100,12 @@ PI05_LORA_R=16                     # 0 => full finetuning (needs a very large GP
 # order), which is right for most rows; an ablation that needs a particular
 # assignment pins it here and the run matrix carries it in one column.
 PI05_SLOTS=""
-STEPS=""; BATCH=""; SAVE_FREQ=""   # per-run overrides for the selected policy
+STEPS=""; BATCH=""   # per-run overrides for the selected policy
+# The save interval may also come from the environment, so a Slurm array row
+# needs no new column: SO101_SAVE_FREQ=20000 hpc/submit_real.sh ... A run whose
+# checkpoint is 34 GB (FastWAM) cannot hold one every 5000 steps under a 512 GB
+# quota, because pruning only happens once training finishes.
+SAVE_FREQ="${SO101_SAVE_FREQ:-}"
 # Every sample decodes one video frame per camera, so the loader is the floor on
 # training speed. Follow the CPUs the job was actually given rather than a fixed
 # 4: reading a dataset over network scratch with too few workers is the likeliest
@@ -440,6 +445,9 @@ train_cell() {
             --dataset.repo_id="$REPO_ID" --dataset.root="$DATASET_ROOT"
             --steps="$steps" --num_workers="$WORKERS"
         )
+        # An interval asked for explicitly may change on a resume, like the
+        # step target: it is how a run that outgrew its quota is finished.
+        [ -n "$SAVE_FREQ" ] && args+=(--save_freq="$save")
         # The ONE exception to "the checkpoint carries everything". Plugin
         # discovery is read from sys.argv and the package imported BEFORE
         # draccus opens the config file (lerobot/configs/parser.py), so a
