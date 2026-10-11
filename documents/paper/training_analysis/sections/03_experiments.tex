@@ -489,8 +489,16 @@ with all five cameras (2.62 against 2.67), but its test error is lower: 13.8
 against 14.1 over its plan, and 5.8 against 7.9 over the first ten steps. So on
 new demonstrations the fingertips do not help ACT, and may hurt it. One
 fingertip per arm lands between the two (14.8 and 7.5). Each setting is one
-training run.} \gn{\pending{overhead-only results for Diffusion, flow matching,
-pi0.5, DreamZero and FastWAM.}}
+training run.} \gn{\textbf{The other models gain little or nothing from the fingertips.}
+Without them, Diffusion's test error is slightly lower (9.00 against 9.18 over
+its plan, 4.7 against 5.0 over the first ten steps), and so is DreamZero's over
+its plan (6.6 against 7.0, with 4.3 against 4.2 over the first ten steps). Flow
+matching is the one model whose test error is lower with the fingertips (11.5
+against 12.6 over its plan, 4.3 against 4.6 over the first ten steps). These
+differences are small next to the gap between train and test error, and each
+setting is one training run, so we read them as \emph{no consistent benefit}
+from adding touch this way, not as touch hurting.
+\pending{overhead-only results for pi0.5 and FastWAM.}}
 
 \gn{\textbf{A separate encoder for touch.} ACT passes the overhead view and the
 gel images through one shared ResNet-18, so one encoder must serve two very
