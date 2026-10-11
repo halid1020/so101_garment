@@ -93,7 +93,9 @@ ABBREVIATIONS = {
     "No",
 }
 _CMD = re.compile(r"\\([A-Za-z@]+\*?|.)", re.S)
-_BOUNDARY = re.compile(r"[.?!]['\")}]*\s+(?=[A-Z\\$(`])")
+#: A sentence starts with a capital, a command, maths or a bracket -- or with
+#: "pi0.5", the one model name this report writes in lower case.
+_BOUNDARY = re.compile(r"[.?!]['\")}]*\s+(?=[A-Z\\$(`]|pi0)")
 _COLOUR_MACROS = re.compile(r"\\(?:new|rev|gr|gn|bl)(?![A-Za-z@])")
 
 

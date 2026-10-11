@@ -498,7 +498,9 @@ against 12.6 over its plan, 4.3 against 4.6 over the first ten steps).} \bl{Thes
 differences are small next to the gap between train and test error, and each
 setting is one training run, so we read them as \emph{no consistent benefit}
 from adding touch this way, not as touch hurting.}
-\bl{\pending{overhead-only results for pi0.5 and FastWAM.}}}
+\bl{pi0.5 (wide LoRA) is unchanged without its two fingertips: 12.65 against 12.75
+over its plan, and 4.63 against 4.61 over the first ten steps.}
+\bl{\pending{overhead-only result for FastWAM.}}}
 
 \gn{\bl{\textbf{A separate encoder for touch.}} \bl{ACT passes the overhead view and the
 gel images through one shared ResNet-18, so one encoder must serve two very
@@ -648,7 +650,7 @@ fingertip images.} \bl{The outer fifth of the image gets between 0.68 (ACT) and 
 (flow matching, FastWAM) of its share by area, below one for every model.}
 \bl{Uncropped ACT's five most important cells on each sensor sit around the ridge
 (0.31 to 0.47 of the way across); with the four-edge crop they move to where the
-contact marks form (0.45 to 0.69). pi0.5 with the four-edge crop still peaks on
+contact marks form (0.45 to 0.69).} \bl{pi0.5 with the four-edge crop still peaks on
 the ridge (0.33 to 0.35), which is what the ridge crop removes.} \bl{Diffusion peaks just right
 of the ridge, DreamZero's peaks are scattered, and FastWAM's map is nearly flat:
 painting any cell moves its plan by at least 40\,\% as much as the most important
@@ -669,8 +671,8 @@ should make more consistent from finger to finger
   sensor's image at the moment of Figure~\ref{fig:inputs}.} \bl{Brighter and more
   opaque cells moved the plan more when painted over; each map is scaled to its
   own peak, so compare where the bright cells are, not how bright.} \bl{A cropped
-  model's map leaves the border it never sees uncoloured.}} \bl{\new{pi0.5 reads only
-  LLG and RLG.}}}
+  model's map leaves the border it never sees uncoloured.}} \new{pi0.5 reads only
+  LLG and RLG.}}
   \label{fig:patchmaps}
 \end{figure}
 \subsection{\bl{How well the world action models predict \gn{the future observations}}}

@@ -25,7 +25,7 @@ Appendix~\ref{sec:modeldetails} gives every architecture and setting in full.}}
 
 \gn{\bl{\textbf{How the families differ.}} \bl{The three behaviour-cloning policies learn
 only to map observations to actions, from our demonstrations alone, with small
-image encoders. pi0.5 brings a large vision-language model pretrained on web
+image encoders.} \bl{pi0.5 brings a large vision-language model pretrained on web
 and robot data, and is adapted to our task.} \bl{The two world action models are
 also trained to predict the future camera images, so that predicting how the
 scene will look teaches them how it moves.} \bl{All six see at most two frames, and
@@ -95,8 +95,8 @@ that, an 80\,GB A100 or H100, against more than 22.5\,GB for LoRA
 LoRA recipes.}} \bl{\gn{We also train a wide LoRA, on every attention and
 feed-forward layer of both the language model and the action expert (rank 32,
 53 million trained weights, batch 8), on an 80\,GB H100
-(Section~\ref{sec:pi05}).} pi0.5 has three image slots, so it reads the
-overhead camera and one fingertip per arm.} It is given the instruction ``fold
+(Section~\ref{sec:pi05}).}} pi0.5 has three image slots, so it reads the
+overhead camera and one fingertip per arm. It is given the instruction ``fold
 the short'' and plans 50 steps.
 
 \textbf{DreamZero} \citep{dreamzero} is a world action model: it predicts

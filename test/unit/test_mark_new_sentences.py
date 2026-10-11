@@ -19,6 +19,11 @@ class TestSplitting(unittest.TestCase):
             chunks(text), ["We use e.g. ACT and Fig. 3 shows 0.5 s.", "Then it stops."]
         )
 
+    def test_a_sentence_may_start_with_pi05(self):
+        self.assertEqual(
+            chunks("It is done. pi0.5 is slow."), ["It is done.", "pi0.5 is slow."]
+        )
+
     def test_blank_lines_items_and_labels_are_boundaries(self):
         text = "\\begin{itemize}\n\\item One thing\n\\item Another\n\\end{itemize}\n\nNext para."
         self.assertEqual(chunks(text), ["One thing", "Another", "Next para."])
