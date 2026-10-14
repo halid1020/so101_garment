@@ -92,7 +92,30 @@ video, and action tokens to themselves and to the first frame's video tokens.}
 \bl{The instruction (UMT5 embedding) and the joint positions enter as context
 tokens.} \bl{Training denoises 9 latent frames (33 video frames) and a 32-step chunk
 together; at test time the video is prefilled once and 10 denoising steps
-produce the actions, of which 10 are executed.}}
+produce the actions, of which 10 are executed.}
+
+\bl{\textbf{DinoViTacFormer.}} \bl{The overhead image is resized to $224\times294$ and
+encoded by a frozen DINOv2 ViT-S/14 into $16\times21$ patch features of width
+384, each projected linearly to one token ($d=512$).} \bl{Each fingertip image
+($480\times640$) passes through one ResNet-18 with group normalisation, shared
+by the four and trained from scratch, whose $15\times20$ feature map becomes 300
+tokens per fingertip.} \bl{Every token carries ACT's two-dimensional sinusoidal
+position embedding plus a learned embedding of its camera.} \bl{A fusion stack holds
+two layers, each with two pre-norm cross-attention blocks (8 heads, feed-forward
+width 3200, dropout 0.1), one in which the overhead tokens attend to the
+fingertip tokens and one in which the fingertip tokens attend to the overhead
+tokens; both read the previous layer's tokens, and the outputs are
+concatenated.} \bl{The forecast pass runs one such stack, then a 2-layer encoder over
+the fused tokens, the latent and the joint positions, and a 1-layer decoder with
+8 learned queries (four fingertips, two horizons) whose outputs a linear layer
+turns into $3\times24\times32$ images.} \bl{The action pass embeds those images (or,
+for the first \num{60000} training steps, the recorded ones) as eight more
+fingertip tokens, runs a second stack, and continues as ACT: 4-layer encoder,
+1-layer decoder, 100 queries, latent of 32 with KL weight 10.} \bl{The loss adds the
+forecast's L1 error, weight 1, over the future frames that lie inside the
+demonstration.} \bl{Images reach the model in $[0,1]$ and are normalised with
+ImageNet statistics, as the frozen DINOv2 requires.} \bl{AdamW with learning rate
+$10^{-5}$ and weight decay $10^{-4}$, batch 8, \num{80000} steps, seed 1000.}}
 
 \gr{\begin{figure}[p]
   \centering
