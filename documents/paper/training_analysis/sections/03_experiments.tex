@@ -398,7 +398,10 @@ by \num{20000} of its \num{80000} steps (3.9) and then drifts up slightly, to
 falls from 4.6 to 4.1 to 3.9 over its \num{30000} steps, so it would probably
 gain from longer training, although its held-out loss rises here too.}}
 \gn{\bl{We therefore trained FastWAM for \num{80000} steps, about 23 passes over the
-training frames as for ACT and DreamZero.} \bl{\pending{FastWAM 80k result.}}}
+training frames as for ACT and DreamZero.} \bl{Its test error is 3.6 against 3.9, and its training error stays at 1.5.}
+\bl{But scoring the \num{30000}-step model with three random seeds already spans
+3.56 to 3.74 (Table~\ref{tab:floor}), and 3.6 falls inside that range, so the
+longer training does not measurably help.}}
 
 \gr{\subsubsection{\bl{Why pi0.5 does poorly with our LoRA}}
 \label{sec:pi05}
