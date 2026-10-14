@@ -503,7 +503,13 @@ setting is one training run, so we read them as \emph{no consistent benefit}
 from adding touch this way, not as touch hurting.}
 \bl{pi0.5 (wide LoRA) is unchanged without its two fingertips: 12.65 against 12.75
 over its plan, and 4.63 against 4.61 over the first ten steps.}
-\bl{\pending{overhead-only result for FastWAM.}}}
+\bl{FastWAM is the exception: without the fingertips it fits poorly, with a test
+error of 5.7 against 3.9 over its plan, and the same 5.7 on its training
+demonstrations against 1.5.} \bl{It is still learning, slowly: at \num{5000} of its
+\num{30000} steps it scored 7.1, barely better than holding the arm still (7.3).} \bl{This run
+also changes FastWAM's input layout, because the overhead image is stretched
+across the whole frame that it otherwise shares with the fingertip composite,
+so we cannot say whether the loss of touch or the new layout slows it down.}}
 
 \gn{\bl{\textbf{A separate encoder for touch.}} \bl{ACT passes the overhead view and the
 gel images through one shared ResNet-18, so one encoder must serve two very
