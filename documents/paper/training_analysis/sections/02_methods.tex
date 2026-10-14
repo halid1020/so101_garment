@@ -2,7 +2,7 @@
 \label{sec:methods}
 
 \gn{\bl{This section defines what every model is asked to do, then describes the
-six models, the demonstrations they learn from and how we split them, and the
+six models and our variant of ACT, the demonstrations they learn from and how we split them, and the
 measures we use to analyse the trained models.} \bl{Section~\ref{sec:experiments}
 then reports the experiments.}}
 
@@ -130,22 +130,47 @@ only the current frame.} It predicts nine frames over about a second and plans
 prediction at test time, since it is needed only in training; we run it to
 score the predicted frames.}
 
+\bl{\textbf{DinoViTacFormer} is our own variant of ACT that fuses vision and touch
+as ViTacFormer does \citep{heng2026vitacformer}.} \bl{It keeps ACT's conditional
+variational autoencoder, its latent $z$, its proprioception token and its
+decoder, and changes what the encoder reads.} \bl{The overhead image, resized to
+$224\times294$, goes through a frozen DINOv2 \citep{oquab2024dinov2} (ViT-S/14),
+whose 336 patch features are projected to tokens.} \bl{The four fingertip images, at
+full resolution, go through one ResNet-18 shared by the four and trained from
+scratch: 300 tokens each.} \bl{A learned embedding per camera tells the fingertips
+apart.} \bl{The two token sets are then fused by two layers of cross-attention in
+both directions, in which the overhead tokens query the fingertip tokens and the
+fingertip tokens query the overhead tokens, and the results are concatenated.}
+\bl{As in ViTacFormer, the fusion runs twice.} \bl{A first pass predicts each fingertip's
+image 10 and 20 steps ahead (\SI{0.33}{s} and \SI{0.67}{s}), downsampled to
+$24\times32$, trained with an L1 loss of weight one.} \bl{A second pass reads those
+predictions as eight more fingertip tokens, fuses again and decodes the chunk.}
+\bl{For the first \num{60000} of its \num{80000} training steps the second pass is
+given the recorded future fingertip images instead of the predictions, as in
+ViTacFormer's curriculum, so the action decoder first learns from correct
+signals and then adapts to its own.} \bl{At test time it only ever sees its
+predictions.} \bl{We leave out ViTacFormer's end-effector loss, because our actions
+are joint positions.} \bl{An ablation replaces the cross-attention with plain
+concatenation, as in ACT, and keeps everything else, the prediction included.}
+
 \gn{\bl{The fingertip images every model receives are therefore far coarser than
 the sensors record: from $480\times640$ down to $224\times224$ for pi0.5,
 $180\times240$ for Diffusion and flow matching, $112\times112$ for FastWAM and
-about $75\times75$ for DreamZero; only ACT reads them at full resolution.} \bl{Fine
+about $75\times75$ for DreamZero; only ACT and DinoViTacFormer read them at full
+resolution.} \bl{Fine
 detail of the gel's deformation, such as the texture of the cloth pressed into
 it, is lost before any model sees it.}}
 
 \begin{table}[t]
   \centering
-  \caption{The six models. \bl{\emph{Plan} is the number of steps each model
+  \caption{\bl{The six models, and DinoViTacFormer, our variant of ACT.} \bl{\emph{Plan} is the number of steps each model
   commits to and we score (at \SI{30}{\hertz}), \gn{and the time it covers}.}
   \emph{Fingertips} is how many of the four tactile cameras the model reads.
   \new{\emph{History} is how many frames it sees.} \gr{\bl{\emph{Total} counts every
   weight in the model, \emph{trained} those the optimiser updated (for pi0.5,
   its LoRA adapters); the world action models' frozen image autoencoders, and
-  FastWAM's frozen text encoder, are counted in neither.} \bl{\emph{Batch} $B$ and
+  FastWAM's frozen text encoder, are counted in neither, while DinoViTacFormer's
+  frozen DINOv2 counts in the total but is not trained.} \bl{\emph{Batch} $B$ and
   \emph{steps} $S$ are the training run's; \emph{passes} is how many times, on
   average, it saw each of the $N=\num{27465}$ training frames,}}
   \bl{\gn{$\text{passes} = B\,S/N$.}}}
@@ -164,6 +189,7 @@ it, is lost before any model sees it.}}
     \gn{pi0.5, wide LoRA} & \gn{VLA} & \gn{50 (\SI{1.7}{s})} & \gn{2} & \gn{robot-pretrained} & \gn{\SI{4.14}{B}} & \gn{\SI{53.2}{M}} & \gn{8} & \gn{\num{30000}} & \gn{8.7} & \gn{1} \\
     DreamZero & WAM & 24 (\SI{0.8}{s}) & 4 & scratch & \SI{58.6}{M} & \SI{58.6}{M} & 8 & \num{80000} & 23.3 & 2 \\
     FastWAM & WAM & 10 (\SI{0.33}{s}) & 4 (composite) & video-pretrained & \SI{6.02}{B} & \SI{6.02}{B} & 8 & \num{30000} & 8.7 & 1 \\
+    DinoViTacFormer & BC & 100 (\SI{3.3}{s}) & 4 & DINOv2 (frozen) & \SI{125.0}{M} & \SI{102.9}{M} & 8 & \num{80000} & 23.3 & 1 \\
     \bottomrule
   \end{tabular}}
 \end{table}
