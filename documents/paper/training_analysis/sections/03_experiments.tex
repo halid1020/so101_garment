@@ -521,6 +521,20 @@ does no better on the test demonstrations: 14.7 against 14.1 over its plan, and
 alone (13.8 and 5.8).} \bl{So giving touch its own encoder does not make the
 fingertips useful to ACT on this data.}}
 
+\bl{\textbf{Fusing touch by cross-attention.}} \bl{DinoViTacFormer changes ACT's
+encoder more deeply: it adds a frozen DINOv2 for the overhead view,
+cross-attention between vision and touch, and a forecast of the fingertip
+images.} \bl{It fits the training demonstrations about as well as ACT (2.62 against
+2.67).} \bl{Over the first ten steps of the test demonstrations it is better (6.9
+against 7.9), but over the whole plan it is worse (17.0 against 14.1).} \bl{It
+stays above ACT on the overhead camera alone on both counts (13.8 and 5.8).}
+\bl{Without the cross-attention, with the two token sets only concatenated, it
+scores 17.0 over its plan and 7.4 over the first ten steps.} \bl{Cross-attention
+therefore moves the first ten steps by 0.5 and leaves the whole plan
+unchanged.} \bl{Each variant was trained once, so a difference that small may be
+no more than a second training run would change.} \bl{Neither version makes the
+fingertips useful on held-out demonstrations.}
+
 
 
 \bl{\gn{\textbf{How much each model uses each input.}}} \gr{\bl{Figure~\ref{fig:streams} shows which inputs the models actually use.} \bl{ACT is
