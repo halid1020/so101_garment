@@ -392,6 +392,32 @@ else
     echo "   Training a fastwam row needs all four: re-run with SO101_STAGE_FASTWAM=1"
 fi
 
+# 7. Pre-stage DINOv2 (only if harena_dinovitac rows are trained). The policy
+# builds its frozen overhead encoder BY NAME when it is constructed -- in
+# training and again when a checkpoint is loaded to be scored -- and the job runs
+# with HF_HUB_OFFLINE=1. ~90 MB.
+DINO_REPO="${SO101_DINO_REPO:-facebook/dinov2-small}"
+if [ "${SO101_STAGE_DINOV2:-0}" = "1" ]; then
+    echo "=> Pre-staging ${DINO_REPO} into the HF cache..."
+    python - "$DINO_REPO" <<'DINO_PY' || exit 1
+import os
+import sys
+
+from huggingface_hub import snapshot_download
+
+repo = sys.argv[1]
+snapshot_download(repo_id=repo)
+os.environ["HF_HUB_OFFLINE"] = "1"  # prove a compute node can build it
+from transformers import Dinov2Model
+
+model = Dinov2Model.from_pretrained(repo)
+print(f"✓ {repo} loads offline ({sum(p.numel() for p in model.parameters()) / 1e6:.0f}M params)")
+DINO_PY
+else
+    echo "=> Skipping DINOv2 (training a harena_dinovitac row needs it:"
+    echo "   re-run with SO101_STAGE_DINOV2=1)."
+fi
+
 echo "=================================================="
 echo "✓ CREATE provisioning complete (sim-only subset)."
 echo "  Next: stage the dataset to scratch, then submit the job."

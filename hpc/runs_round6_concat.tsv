@@ -1,0 +1,8 @@
+# Sixth round (2026-10-14): DinoViTacFormer's "w/o cross-attention" ablation --
+# hpc/runs_round6.tsv with no fusion layers, so the two token sets are simply
+# concatenated, as ACT does. Everything else, the forecast included, is the same.
+# Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_concat
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.cross_attention_layers=0

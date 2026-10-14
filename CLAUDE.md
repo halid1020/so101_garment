@@ -313,6 +313,14 @@ Where to look for what:
     refused at submit time and the gate opens by itself when `LEROBOT_COMMIT`
     moves. `install.sh`/`provision_create.sh` already name the `fastwam` extra
     (MEASURED: pip ignores an extra the checkout does not define).
+  - **`harena_dinovitac` (DinoViTacFormer) needs DINOv2 in the HF cache.** It
+    builds its frozen overhead encoder (`facebook/dinov2-small`) BY NAME whenever
+    it is constructed, so training and loading a checkpoint for scoring both need
+    it, and jobs run offline: stage it once with `SO101_STAGE_DINOV2=1 bash
+    hpc/provision_create.sh`. Its `observation_delta_indices` (`[0, 10, 20]`, for
+    the tactile forecast) apply to EVERY observation key, so the loader decodes
+    three frames per camera; the model reads frame 0 and uses the rest only as
+    targets.
   - **A merged dataset cannot be curated again, unrepaired:**
     `aggregate_datasets` copies each source's episode-metadata rows and
     merely OFFSETS their `meta/episodes/file_index`, while writing every

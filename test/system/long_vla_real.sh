@@ -397,13 +397,15 @@ train_cell() {
     # the two implementations must not also change the number of steps.
     base="$(base_policy "$policy")"
     case "$base" in
-        act)       steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
+        # DinoViTacFormer is ACT's CVAE with another front end; ACT's budget is
+        # what makes the two comparable.
+        act|dinovitac) steps="$ACT_STEPS";  batch="$ACT_BATCH";  save="$ACT_SAVE";;
         diffusion) steps="$DIFF_STEPS"; batch="$DIFF_BATCH"; save="$DIFF_SAVE";;
         pi05)      steps="$PI05_STEPS"; batch="$PI05_BATCH"; save="$PI05_SAVE";;
         fastwam)   steps="$FASTWAM_STEPS"; batch="$FASTWAM_BATCH"; save="$FASTWAM_SAVE";;
         flowmatch) steps="$FLOWMATCH_STEPS"; batch="$FLOWMATCH_BATCH"; save="$FLOWMATCH_SAVE";;
         dreamzero) steps="$DREAMZERO_STEPS"; batch="$DREAMZERO_BATCH"; save="$DREAMZERO_SAVE";;
-        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero, optionally so101_ prefixed, act|diffusion|pi05|dreamzero|fastwam also _crop suffixed, and fastwam also _predict suffixed)";;
+        *) fail "unknown policy '$policy' (want act|diffusion|pi05|fastwam|flowmatch|dreamzero|dinovitac, optionally so101_ prefixed, act|diffusion|pi05|dreamzero|fastwam also _crop suffixed, and fastwam also _predict suffixed)";;
     esac
     # A run may override the policy's sizing; --only selects the policy, so one
     # value each is enough and the cluster manifest carries one column each.

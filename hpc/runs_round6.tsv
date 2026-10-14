@@ -1,0 +1,12 @@
+# Sixth round (2026-10-14): DinoViTacFormer -- ACT's CVAE reading a frozen DINOv2
+# (overhead) and a scratch ResNet-18 shared by the four fingertips, fused by
+# ViTacFormer's bidirectional cross-attention, with its tactile forecast and its
+# truth-then-forecast curriculum (switching at 60000 of the 80000 steps). ACT's
+# budget, the split-10 test, no crop. Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac
+# Its ablation, the same model with plain concatenation in place of the
+# cross-attention, is hpc/runs_round6_concat.tsv: a separate manifest because a
+# submission carries ONE run tag, and two rows of one array would share it.
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0]
