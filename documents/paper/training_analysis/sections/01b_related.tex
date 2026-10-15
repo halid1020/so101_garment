@@ -4,20 +4,48 @@
 
 \bl{Integrating tactile sensing has become a popular trend in robot learning
 \citep{huang2025vitac,heng2026vitacformer,zhu2025touchwild,xue2025rdp,bi2026vlatouch,lou2026dreamtac}.}
-\bl{This section reviews that literature from four angles.} \bl{We first summarise the
+\bl{This section reviews that literature from four angles.} \dg{We first summarise the
 tasks on which touch has been shown to help, and what it contributes to each
-(Section~\ref{sec:rw-tasks}).} \bl{We then set out the difficulties that integrating
-touch into a learned policy faces (Section~\ref{sec:rw-hard}), how each of the
-three model families we compare has addressed them
-(Section~\ref{sec:rw-families}), and the tactile sensors these works use,
-including our own (Section~\ref{sec:rw-sensors}).}
+(Section~\ref{sec:rw-tasks}), and the tactile sensors these works use, including
+our own (Section~\ref{sec:rw-sensors}).} \dg{We then set out the difficulties that
+integrating touch into a learned policy faces (Section~\ref{sec:rw-hard}), and how
+each of the three model families we compare has addressed them
+(Section~\ref{sec:rw-families}).}
 
 \subsection{\bl{Where touch has been shown to help}}
 \label{sec:rw-tasks}
 
-\bl{Touch helps most where the state that decides success cannot be seen: it is
-hidden from the cameras, inside the hand, or a force.} \bl{Across the works we
-reviewed, its contribution falls into four roles.}
+\begin{figure}[t]
+  \centering
+  \setlength{\tabcolsep}{2pt}
+  \newcommand{\cell}[1]{\includegraphics[width=0.32\textwidth,height=3.2cm,keepaspectratio]{#1}}
+  \begin{tabular}{@{}ccc@{}}
+    \cell{task_grasp_3dvitac.png} & \cell{task_inhand_3dvitac.png} &
+    \cell{task_tool_polytouch.png} \\
+    \small (a) Grasping an egg \citep{huang2025vitac} &
+    \small (b) Turning a hex key \citep{huang2025vitac} &
+    \small (c) Serving with a spatula \citep{zhao2025polytouch} \\[4pt]
+    \cell{task_force_rdp.png} & \cell{task_material_vlatouch.png} &
+    \cell{task_cloth_tirumala.png} \\
+    \small (d) Peeling \citep{xue2025rdp} &
+    \small (e) Choosing a sponge \citep{bi2026vlatouch} &
+    \small (f) Grasping cloth layers \citep{tirumala2022cloth}
+  \end{tabular}
+  \caption{\dg{Tasks in which touch has been shown to help, adapted from the cited
+  papers.} \dg{(a) Confirming a grasp: an egg taken from a tray that hides it.}
+  \dg{(b) Tracking an object in the hand: an Allen key turned between two hands
+  before insertion.} \dg{(c) Using a tool: a fried egg scooped with a spatula.}
+  \dg{(d) Keeping a contact force: a cucumber peeled while a person holds it.}
+  \dg{(e) Judging a material: the smoother of two sponges chosen by touch.} \dg{(f) Our
+  task's closest relative: a fingertip skin that tells one layer of cloth from two.}}
+  \label{fig:rw-tasks}
+\end{figure}
+
+\dg{Touch helps most where what decides success cannot be seen by the cameras.} \dg{The
+object may be hidden from them, as an egg in its tray or grapes inside a bag; it
+may be held in the hand, where the fingers hide how it sits; or what matters may
+be a force, which no camera measures.} \dg{Across the works we reviewed, touch
+contributes in four ways; Figure~\ref{fig:rw-tasks} shows examples of the tasks.}
 
 \bl{\textbf{Confirming and regulating a grasp.}} \bl{In 3D-ViTac's egg-steaming task,
 touch confirms that an egg is held securely, sets the grip force on the lid
@@ -30,13 +58,27 @@ lifts a paper cup between two arms without squeezing it, applying an outward
 correction once contact is made; vision alone scored 0 on that task and the
 tactile policy 0.70 \citep{xue2025rdp}.}
 
-\bl{\textbf{Tracking an object inside the hand.} 3D-ViTac tracks a hex key's
-position in the hand before inserting it, and a spoon's passive rotation while
-scooping \citep{huang2025vitac}.} \bl{Touch in the Wild reorients a transparent test
+\dg{\textbf{Tracking an object or a tool inside the hand.}} \dg{In 3D-ViTac's hex-key
+task, one hand picks up an Allen key by its tail, the key slips a little in the
+grasp, and the two hands must then turn it until it sits perpendicular to the
+fingers before inserting it into a hole \citep{huang2025vitac}.} \dg{The fingers hide
+from the cameras where the key sits and how it is tilted between them; touch
+shows it.} \dg{Without touch the policy usually failed to turn the key into place, and
+the whole task succeeded in 0.65 of trials, against 0.90 with touch. 3D-ViTac
+also follows how a spoon rotates passively in the hand while scooping.}
+\bl{Touch in the Wild reorients a transparent test
 tube against the edge of a rack, where vision misjudged the tube's orientation
 and was distracted by the colour of its cork; touch raised success from 0.25 to
-0.85 \citep{zhu2025touchwild}.} \bl{ViTacFormer's peg insertion and cap twisting rest
-on the same signal \citep{heng2026vitacformer}.}
+0.85 \citep{zhu2025touchwild}.} \dg{A tool doubles the problem, since it touches the
+hand at one end and the world at the other.} \dg{Shirai et al.\ estimate the pose of a
+grasped tool and of the object it pushes from GelSlim images, and detect the
+tool's slip from the motion of the gel's markers, so that a controller can pivot
+objects with the tool in closed loop \citep{shirai2023tool}.} \dg{Aoyama et al.\ teach
+surface following with grasped tools from a few human demonstrations, combining
+tactile and proximity sensing to tell the hand--tool contact from the
+tool--surface one \citep{aoyama2025tool}.} \dg{In PolyTouch's egg serving, where one arm
+scoops a toy fried egg with a spatula, adding touch and contact audio raised
+success from 66 to 100\,\% \citep{zhao2025polytouch}.}
 
 \bl{\textbf{Keeping a contact force.}} \bl{Wiping, peeling and erasing need a steady
 force against a surface the camera cannot measure.} \bl{Reactive Diffusion Policy
@@ -45,16 +87,20 @@ rotation while wiping a curved vase \citep{xue2025rdp}; Touch in the Wild keeps
 an eraser pressed to a whiteboard, where vision-only policies pressed too
 lightly and left marks \citep{zhu2025touchwild}; and it detects when a pipette
 bulb is fully squeezed, a phase vision-only policies skipped
-\citep{zhu2025touchwild}.}
+\citep{zhu2025touchwild}.} \dg{ViTacFormer's dexterous hands wipe ink off a vase by
+following its contour with their fingertips, which they did in 9 of 10 trials,
+against 3 for ACT without touch \citep{heng2026vitacformer}.}
 
 \bl{\textbf{Judging a material.}} \bl{VLA-Touch chooses the smoother of two sponges or
 the softer of two mangoes from tactile descriptions of roughness and hardness
 \citep{bi2026vlatouch}.}
 
-\bl{3D-ViTac also shows that touch can stand in for cameras.} \bl{Adding touch raised
-success by as much with one camera as with three (egg steaming: 0.50 to 0.80
-with one camera, 0.55 to 0.85 with three), and one camera with touch beat three
-cameras without it \citep{huang2025vitac}.} \bl{Touch was compensating for what the
+\dg{3D-ViTac also shows that touch can make up for missing cameras
+\citep{huang2025vitac}.} \dg{In its egg-steaming task, the fraction of successful
+trials rose from 0.50 to 0.80 when touch was added to a policy with one camera,
+and from 0.55 to 0.85 when it was added to a policy with three cameras: the same
+gain of 0.30 in both cases.} \dg{With touch, the one-camera policy (0.80) did better
+than the three-camera policy without it (0.55).} \bl{Touch was compensating for what the
 cameras could not see.}
 
 \bl{\textbf{Garments, our task, are less studied, and harder.}} \bl{A garment is thin and
@@ -64,8 +110,106 @@ they close on it.} \bl{A fold may also require grasping several layers at once, 
 chosen number of them, and a two-armed fold grasps different keypoints of the
 garment at the same time.} \bl{Whether a grasp holds one layer, two, or none is
 exactly the kind of state touch should reveal and the overhead camera cannot.}
-\bl{Whether naive tactile input helps here, and in which model family, is the
-question this report starts to answer.}
+\dg{A few works sense it.} \dg{Tirumala et al.\ put a ReSkin magnetic skin on one
+fingertip and train a classifier that tells whether the gripper holds one or two
+layers of a cloth stack; the robot grasps again at a slightly different height
+until the classifier agrees \citep{tirumala2022cloth}.} \dg{Picking one layer, it
+succeeded in 10 of 10 trials on the towel it was trained on, against 8 for the
+same method with an image classifier, and in 8 and 7 of 10 on two unseen cloths,
+against 3 and 2; two layers were harder, at 4 and 1 of 10 on the unseen cloths.}
+\dg{Sunil et al.\ use GelSight fingertips to classify whether a grasp holds a cloth
+edge, a corner, a fold, all fabric or nothing, and to estimate the edge's position
+and angle within the grasp, so that the robot can slide along the edge to the next
+corner and unfold a towel \citep{sunil2022cloth}; their later system grasps
+crumpled and hanging garments for folding and hanging, with the same kind of
+tactile classifier checking each grasp \citep{sunil2025inair}.} \dg{These works use
+touch to check and correct a grasp inside a pipeline designed by hand.} \dg{Whether
+naive tactile input helps a policy learned end to end fold a garment, and in
+which model family, is the question this report starts to answer.}
+
+\subsection{\bl{Tactile sensors}}
+\label{sec:rw-sensors}
+
+\begin{figure}[t]
+  \centering
+  \setlength{\tabcolsep}{2pt}
+  \newcommand{\cell}[1]{\includegraphics[width=0.19\textwidth,height=2.3cm,keepaspectratio]{#1}}
+  \begin{tabular}{@{}ccccc@{}}
+    \cell{sensor_digit.png} & \cell{sensor_3dvitac.png} &
+    \cell{sensor_polytouch.png} & \cell{sensor_tacthru.png} &
+    \cell{sensor_reskin.png} \\
+    \cell{sensing_digit.png} & \cell{sensing_3dvitac.png} &
+    \begin{tabular}[b]{@{}c@{}}
+      \includegraphics[width=0.19\textwidth,height=1.7cm,keepaspectratio]{sensing_polytouch.png}\\[1pt]
+      \includegraphics[width=0.19\textwidth,height=0.5cm]{sensing_polytouch_audio.png}
+    \end{tabular} &
+    \cell{sensing_tacthru.png} & \cell{sensing_reskin.png} \\
+    \small (a) DIGIT \citep{digit} & \small (b) 3D-ViTac \citep{huang2025vitac} &
+    \small (c) PolyTouch \citep{zhao2025polytouch} &
+    \small (d) TacThru \citep{li2026tacthru} &
+    \small (e) ReSkin \citep{bhirangi2021reskin}
+  \end{tabular}
+  \caption{\dg{Examples of the kinds of tactile sensor these works use (top) and what
+  each one records (bottom), adapted from the cited papers.} \dg{(a) A vision-based gel,
+  lit from inside and filmed by a camera behind it; below, the gel's image of an
+  object pressed into it.} \dg{(b) A piezoresistive $16\times16$ taxel pad on a
+  fin-shaped finger, with its readout board; below, its pressure map during a
+  grasp, one cell per taxel.} \dg{(c) A multimodal fingertip: a camera-based gel with a
+  contact microphone and a side window for vision; below, the fingertip camera's
+  image, with the gel in the middle and the scene through the side windows, and
+  the microphone's waveform.} \dg{(d) A see-through gel with ring-shaped markers;
+  below, its camera sees the text on a grasped bottle through the gel and the
+  markers on it.} \dg{(e) Magnetic skins over their sensor boards; below, the field
+  components its magnetometers measure, at the start (blue) and after 10\,000
+  presses (red).} \bl{Our own sensors are of kind (a);
+  Figure~\ref{fig:rimevidence} shows what they see.}}
+  \label{fig:sensors-rw}
+\end{figure}
+
+\dg{Figure~\ref{fig:sensors-rw} shows examples of the four kinds of sensor these works
+use, and what each one records.}
+\bl{\emph{Vision-based gel sensors} film the inside of a soft elastomer pad with a
+small camera, so contact appears as a change in its shading or in the motion of
+markers printed on it; GelSight \citep{gelsight} and DIGIT \citep{digit} are the
+common designs.} \bl{They resolve the shape of a contact finely, but at camera rates
+(25--30\,Hz) and inside a bulky fingertip.} \bl{\emph{Piezoresistive arrays} sandwich
+a pressure-sensitive film between two orthogonal sets of electrodes, so each
+crossing is a taxel whose resistance falls under load. 3D-ViTac's pads have
+$16\times16$ taxels of about 3\,mm\textsuperscript{2} each, are under 1\,mm thick,
+read at up to 32\,Hz and cost about \$20 \citep{huang2025vitac}; Touch in the Wild
+uses $12\times32$ pads with 2\,mm taxels at 23\,Hz \citep{zhu2025touchwild}.} \bl{They
+are thin and cheap but measure only normal pressure, at millimetre resolution.}
+\bl{\emph{Multimodal fingertips} add channels a camera cannot provide.} \bl{PolyTouch
+combines a camera-based gel, a contact microphone and a side window through
+which the same camera sees the scene, and lasts at least twenty times longer
+than commercial sensors \citep{zhao2025polytouch}; the Digit~360 fingertip behind
+Sparsh-X records a tactile image, contact audio, acceleration and pressure
+\citep{higuera2025sparshx}; and TacThru's transparent gel lets one camera see the
+contact and the scene beyond it \citep{li2026tacthru}.} \bl{\emph{Magnetic skins}
+embed magnetised particles in an elastomer over magnetometers, which read its
+deformation as a change in field; ReSkin's skins are thin, cheap and replaceable
+\citep{bhirangi2021reskin}.} \bl{Some policies read force instead of a tactile image:
+Reactive Diffusion Policy also runs on the arm's joint torques
+\citep{xue2025rdp}.}
+
+\bl{\textbf{Our sensors.}} \bl{Our rig carries four vision-based gel sensors, one on each
+fingertip.} \bl{In use they have two drawbacks.} \bl{The soft gel wears quickly, and the
+four sensors do not see alike: their gels have worn differently and sit at
+slightly different angles, so the same contact looks different on each finger,
+and one sensor shifted partway through our recording session
+(Section~\ref{sec:recordings}).} \bl{We therefore plan to replace the soft elastomer
+with a frosted acrylic sheet viewed by the same camera from behind: a rigid
+surface that does not wear like a gel and can be made identically for every
+finger.} \bl{We found no learned-manipulation work using such a sensor.} \bl{The closest
+designs we found let an object touch a rigid acrylic plate directly and detect
+the contact optically, which gives contact position and area but no imprint of
+deformation \citep{shimonomura2019review}, or keep a soft gel on the contact
+side of a rigid acrylic window, so that only light scattered at true contacts
+reaches the camera \citep{lin2025lighttact}.} \bl{A frosted sheet should also scatter
+light from outside and lower contrast, so its housing will need to shield it.}
+\bl{Another route to durability is a protective film over the gel: a textured film
+outlasted commercial gels by more than two orders of magnitude in accelerated
+tests \citep{cottrell2026durable}.}
 
 \subsection{\bl{What makes touch hard to learn from}}
 \label{sec:rw-hard}
@@ -73,10 +217,23 @@ question this report starts to answer.}
 \bl{Integrating tactile sensing into robot learning faces four major difficulties.}
 
 \bl{\textbf{Touch is sparse in time.}} \bl{It carries information only during contact.}
-\bl{Averaged over a demonstration it can look unimportant while being decisive at a
-few moments, and 3D-ViTac finds it irrelevant to the contact-free stages of its
-tasks \citep{huang2025vitac}.} \bl{A model given touch at every step must learn to
-ignore it most of the time without learning to ignore it altogether.}
+\dg{Averaged over a demonstration it can look unimportant while being decisive at a
+few moments.} \dg{The earliest learned policy we found that shows this is See, Hear,
+and Feel, which fuses a camera, a contact microphone and a GelSight sensor by
+self-attention: its attention moves to touch once a peg is partly inserted, and
+back to vision when the arm moves freely again \citep{li2022seehearfeel}.
+3D-ViTac likewise finds touch irrelevant to the contact-free stages of its tasks
+\citep{huang2025vitac}, and MS-Bot names the problem: the importance of each sense
+changes from one stage of a task to the next \citep{feng2024msbot}.} \bl{A model given touch at every step must learn to
+ignore it most of the time without learning to ignore it altogether.} \dg{Three
+designs tackle this directly.} \dg{MS-Bot predicts the current stage from the
+observations and the past actions and uses it to query the features of each
+sense by cross-attention, so that each sense's weight follows the stage; it
+inserted a keyed peg in 8 of 10 trials, against 6 for See, Hear, and Feel's
+fusion and 5 for concatenation \citep{feng2024msbot}.} \dg{TacVLA passes its tactile
+tokens only while contact is detected \citep{zhang2026tacvla}, and Dream-Tac biases
+attention towards the fingertip tokens in proportion to how much each fingertip
+image has just changed \citep{lou2026dreamtac} (Section~\ref{sec:rw-families}).}
 
 \bl{\textbf{The representation decides whether touch helps.}} \bl{The same readings can
 help or hurt depending on how they are presented. 3D-ViTac places each taxel at
@@ -147,6 +304,17 @@ with vision.}
   encoder is pretrained by reconstructing masked tactile patches from both
   modalities, on 2.6 million visuo-tactile pairs, and then conditions a
   diffusion policy \citep{zhu2025touchwild}.}
+  \item \dg{\textbf{PolyTouch}'s fingertip camera films the gel's imprint and, through a
+  side window, the scene beyond it, and a contact microphone in the same finger
+  records vibration \citep{zhao2025polytouch}.} \dg{Its policy encodes each fingertip
+  image with a pretrained tactile encoder (T3), the microphone's log-mel
+  spectrogram with an audio transformer, the wrist and scene cameras with CLIP,
+  and the proprioception with an MLP.} \dg{Six cross-attention blocks fuse the
+  fingertip and scene features; the rest are pooled and concatenated, and a
+  diffusion head predicts the actions.} \dg{On four two-armed tasks it raised the
+  average success over the same policy without the fingertip images and audio by
+  3 to 34 points; on serving an egg with a spatula, the inputs concatenated without
+  cross-attention reached 73\,\% and with it 100\,\%, against 66\,\% without them.}
   \item \bl{\textbf{TacThru-UMI} uses a transparent gel through which its camera
   sees both the contact and the scene beyond.} \bl{The wrist image (DINOv2 ViT-B),
   the sensor image (DINOv2 ViT-S), the tracked marker displacements and the
@@ -165,7 +333,18 @@ with vision.}
   wrench).} \bl{Vision shapes the plan; touch corrects its execution.}
   \item \bl{\textbf{FARM} makes force an output rather than only an input: the
   policy predicts a target grip force alongside the arm pose and a controller
-  tracks it \citep{helmut2026farm}.}
+  tracks it \citep{helmut2026farm}.} \dg{Its demonstrations are recorded with a
+  hand-held gripper carrying a GelSight Mini, and a pretrained finite-element
+  model turns each tactile image into maps of shear and normal force, which the
+  policy reads as a three-channel $96\times96$ image beside the total normal
+  force.} \dg{Separate ResNet-18 encoders read the wrist camera and this force image,
+  and a diffusion policy predicts the gripper pose, the grip width and the target
+  grip force together.} \dg{On the robot, the gripper follows the predicted width until
+  both the target and the measured force exceed 0.5\,N, and then tracks the target
+  force in closed loop.} \dg{Over 20 trials per task, FARM matched a policy given only
+  the total force at planting a plant and picking grapes (95\,\% each), and at
+  tightening a screw with an Allen key it succeeded every time, against 10\,\% with
+  the total force, 40\,\% with the raw tactile image and none with vision alone.}
 \end{itemize}
 
 \bl{\textbf{Vision-language-action models.}} \bl{Pretrained VLAs have no tactile input,
@@ -206,72 +385,4 @@ tactile ones during contact.} \bl{Touch raised its average success from 52 to 74
 and the gate to 83\,\%.} \bl{DreamZero and FastWAM, which we use, have no tactile
 channel of their own: we tile the fingertip images into their video frame
 (Section~\ref{sec:models}), so they predict touch only as pixels of that frame.}
-
-\subsection{\bl{Tactile sensors}}
-\label{sec:rw-sensors}
-
-\begin{figure}[t]
-  \centering
-  \begin{tabular}{@{}c@{\hspace{4pt}}c@{}}
-    \includegraphics[height=2.6cm]{sensor_digit.png} &
-    \includegraphics[height=2.6cm]{sensor_3dvitac.png} \\
-    \small (a) DIGIT, vision-based gel \citep{digit} &
-    \small (b) 3D-ViTac pad, piezoresistive \citep{huang2025vitac} \\[4pt]
-    \includegraphics[height=2.6cm]{sensor_polytouch.png} &
-    \includegraphics[height=2.6cm]{sensor_reskin.png} \\
-    \small (c) PolyTouch, multimodal \citep{zhao2025polytouch} &
-    \small (d) ReSkin, magnetic \citep{bhirangi2021reskin}
-  \end{tabular}
-  \caption{\bl{One example of each kind of tactile sensor, adapted from the cited
-  papers.} \bl{(a) A gel lit from inside and filmed by a camera behind it.} \bl{(b) A
-  $16\times16$ taxel pad on a fin-shaped finger, with its readout board.}
-  \bl{(c) A camera-based gel with a contact microphone and a side window for
-  vision.} \bl{(d) Magnetic skins over their sensor boards.} \bl{Our own sensors are of
-  kind (a); Figure~\ref{fig:rimevidence} shows what they see.}}
-  \label{fig:sensors-rw}
-\end{figure}
-
-\bl{Figure~\ref{fig:sensors-rw} shows the four kinds of sensor these works use.}
-\bl{\emph{Vision-based gel sensors} film the inside of a soft elastomer pad with a
-small camera, so contact appears as a change in its shading or in the motion of
-markers printed on it; GelSight \citep{gelsight} and DIGIT \citep{digit} are the
-common designs.} \bl{They resolve the shape of a contact finely, but at camera rates
-(25--30\,Hz) and inside a bulky fingertip.} \bl{\emph{Piezoresistive arrays} sandwich
-a pressure-sensitive film between two orthogonal sets of electrodes, so each
-crossing is a taxel whose resistance falls under load. 3D-ViTac's pads have
-$16\times16$ taxels of about 3\,mm\textsuperscript{2} each, are under 1\,mm thick,
-read at up to 32\,Hz and cost about \$20 \citep{huang2025vitac}; Touch in the Wild
-uses $12\times32$ pads with 2\,mm taxels at 23\,Hz \citep{zhu2025touchwild}.} \bl{They
-are thin and cheap but measure only normal pressure, at millimetre resolution.}
-\bl{\emph{Multimodal fingertips} add channels a camera cannot provide.} \bl{PolyTouch
-combines a camera-based gel, a contact microphone and a side window through
-which the same camera sees the scene, and lasts at least twenty times longer
-than commercial sensors \citep{zhao2025polytouch}; the Digit~360 fingertip behind
-Sparsh-X records a tactile image, contact audio, acceleration and pressure
-\citep{higuera2025sparshx}; and TacThru's transparent gel lets one camera see the
-contact and the scene beyond it \citep{li2026tacthru}.} \bl{\emph{Magnetic skins}
-embed magnetised particles in an elastomer over magnetometers, which read its
-deformation as a change in field; ReSkin's skins are thin, cheap and replaceable
-\citep{bhirangi2021reskin}.} \bl{Some policies read force instead of a tactile image:
-Reactive Diffusion Policy also runs on the arm's joint torques
-\citep{xue2025rdp}.}
-
-\bl{\textbf{Our sensors.}} \bl{Our rig carries four vision-based gel sensors, one on each
-fingertip.} \bl{In use they have two drawbacks.} \bl{The soft gel wears quickly, and the
-four sensors do not see alike: their gels have worn differently and sit at
-slightly different angles, so the same contact looks different on each finger,
-and one sensor shifted partway through our recording session
-(Section~\ref{sec:recordings}).} \bl{We therefore plan to replace the soft elastomer
-with a frosted acrylic sheet viewed by the same camera from behind: a rigid
-surface that does not wear like a gel and can be made identically for every
-finger.} \bl{We found no learned-manipulation work using such a sensor.} \bl{The closest
-designs we found let an object touch a rigid acrylic plate directly and detect
-the contact optically, which gives contact position and area but no imprint of
-deformation \citep{shimonomura2019review}, or keep a soft gel on the contact
-side of a rigid acrylic window, so that only light scattered at true contacts
-reaches the camera \citep{lin2025lighttact}.} \bl{A frosted sheet should also scatter
-light from outside and lower contrast, so its housing will need to shield it.}
-\bl{Another route to durability is a protective film over the gel: a textured film
-outlasted commercial gels by more than two orders of magnitude in accelerated
-tests \citep{cottrell2026durable}.}
 \end{gntext}

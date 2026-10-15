@@ -4,7 +4,9 @@
 A reviewer comparing two drafts wants to see what is new without reading both.
 This wraps each sentence of the current sources that does not occur in the
 older version (a git ref) in ``\\bl{...}``; the report defines ``\\bl`` as a
-colour. Deleted text is not shown.
+colour. With ``--latest``, a second and newer ref, a sentence that version also
+lacks is wrapped in ``\\dg{...}`` instead, so the latest round of changes stands
+out from the earlier ones. Deleted text is not shown.
 
 The comparison is by sentence, pooled across files, so a sentence that only
 moved to another section stays unmarked, and one whose number changed is
@@ -16,7 +18,7 @@ The marks are purely additive and the script removes its own before marking,
 so it can be re-run after every edit: stripping the marks gives the input back.
 
 Usage:
-    venv/bin/python tool/mark_new_sentences.py [--base b10f99a]
+    venv/bin/python tool/mark_new_sentences.py [--base b10f99a] [--latest REF]
         [--report documents/paper/training_analysis] [--strip]
 """
 
@@ -28,6 +30,8 @@ import subprocess
 from pathlib import Path
 
 MARK = r"\bl"
+#: The mark of a sentence the ``--latest`` version lacks too.
+LATEST_MARK = r"\dg"
 
 #: Environments whose body is never prose: skipped whole.
 SKIP_ENVS = {
@@ -96,7 +100,7 @@ _CMD = re.compile(r"\\([A-Za-z@]+\*?|.)", re.S)
 #: A sentence starts with a capital, a command, maths or a bracket -- or with
 #: "pi0.5", the one model name this report writes in lower case.
 _BOUNDARY = re.compile(r"[.?!]['\")}]*\s+(?=[A-Z\\$(`]|pi0)")
-_COLOUR_MACROS = re.compile(r"\\(?:new|rev|gr|gn|bl)(?![A-Za-z@])")
+_COLOUR_MACROS = re.compile(r"\\(?:new|rev|gr|gn|bl|dg)(?![A-Za-z@])")
 
 
 # -- braces --------------------------------------------------------------------
@@ -128,9 +132,9 @@ def brace_matches(text: str) -> "dict[int, int]":
 
 
 def strip_marks(text: str) -> str:
-    """Remove every ``\\bl{...}`` wrapper, keeping its contents."""
+    """Remove every ``\\bl{...}`` and ``\\dg{...}`` wrapper, keeping its contents."""
     while True:
-        m = re.search(r"\\bl\{", text)
+        m = re.search(r"\\(?:bl|dg)\{", text)
         if not m:
             return text
         match = brace_matches(text)
@@ -341,8 +345,13 @@ def _pieces(
     return [(a, b) for a, b in out if b > a and _has_words(text[a:b])]
 
 
-def mark(text: str, old: "set[str]") -> "tuple[str, int]":
-    """``text`` with every sentence not in ``old`` wrapped; and how many."""
+def mark(
+    text: str, old: "set[str]", latest: "set[str] | None" = None
+) -> "tuple[str, int]":
+    """``text`` with every sentence not in ``old`` wrapped; and how many.
+
+    A sentence also missing from ``latest`` takes ``LATEST_MARK`` instead.
+    """
     text = strip_marks(text)
     match = brace_matches(text)
     inserts: "list[tuple[int, str]]" = []
@@ -351,8 +360,9 @@ def mark(text: str, old: "set[str]") -> "tuple[str, int]":
         if normalise(text[s:e]) in old:
             continue
         count += 1
+        newest = latest is not None and normalise(text[s:e]) not in latest
         for a, b in _pieces(text, s, e, match):
-            inserts += [(a, MARK + "{"), (b, "}")]
+            inserts += [(a, (LATEST_MARK if newest else MARK) + "{"), (b, "}")]
     for pos, token in sorted(inserts, key=lambda x: x[0], reverse=True):
         text = text[:pos] + token + text[pos:]
     return text, count
@@ -403,19 +413,29 @@ def main() -> None:
         "--base", default="b10f99a", help="git ref of the older version"
     )
     parser.add_argument(
+        "--latest",
+        help="git ref of the latest round's starting point; what it lacks is marked "
+        "\\dg rather than \\bl",
+    )
+    parser.add_argument(
         "--report", type=Path, default=Path("documents/paper/training_analysis")
     )
     parser.add_argument("--strip", action="store_true", help="only remove the marks")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     old = set() if args.strip else pool(old_sources(args.base, args.report, repo))
+    latest = (
+        pool(old_sources(args.latest, args.report, repo))
+        if args.latest and not args.strip
+        else None
+    )
     for path in report_files(args.report):
         text = path.read_text()
         b, e = body(text)
         if args.strip:
             new, count = strip_marks(text[b:e]), 0
         else:
-            new, count = mark(text[b:e], old)
+            new, count = mark(text[b:e], old, latest)
         path.write_text(text[:b] + new + text[e:])
         total = len(sentences(strip_marks(text[b:e])))
         print(f"  {path.name}: {count} of {total} sentences new")

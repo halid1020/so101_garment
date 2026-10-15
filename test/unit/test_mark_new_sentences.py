@@ -82,6 +82,18 @@ class TestMarking(unittest.TestCase):
         self.assertEqual(strip_marks(once), text)
         self.assertEqual(mark(once, pool([self.OLD]))[0], once)
 
+    def test_what_the_latest_version_lacks_too_takes_the_latest_mark(self):
+        latest = pool([self.OLD + " Touch helps a lot."])
+        text = "ACT plans 100 steps. Touch helps a lot. ACT plans 50 steps."
+        out, n = mark(text, pool([self.OLD]), latest)
+        self.assertEqual(n, 2)
+        self.assertEqual(
+            out,
+            "ACT plans 100 steps. \\bl{Touch helps a lot.} \\dg{ACT plans 50 steps.}",
+        )
+        self.assertEqual(strip_marks(out), text)
+        self.assertEqual(mark(out, pool([self.OLD]), latest)[0], out)
+
 
 if __name__ == "__main__":
     unittest.main()

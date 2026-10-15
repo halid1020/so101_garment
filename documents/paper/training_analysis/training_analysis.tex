@@ -19,8 +19,12 @@
 % (commit b10f99a) is set in blue, as the reviewer asked; tool/mark_new_sentences.py
 % places the \bl marks and is re-run after every edit. The earlier rounds' macros
 % are kept as plain pass-throughs so that nothing inside a blue span turns black.
+% What changed in answer to the comments of 15 October 2026 (everything commit
+% a7c10ad lacks) is set in dark green instead: the same tool's --latest a7c10ad.
 \definecolor{newblue}{RGB}{0,70,200}
 \newcommand{\bl}[1]{{\color{newblue}#1}}
+\definecolor{newgreen}{RGB}{0,110,40}
+\newcommand{\dg}[1]{{\color{newgreen}#1}}
 \newcommand{\new}[1]{#1}
 \newenvironment{newtext}{}{}
 \newcommand{\rev}[1]{#1}
@@ -46,9 +50,10 @@
 Policies, Tactile Cropping and World Models}
 
 \author{Halid Kadi$^{1}$ \and Yupeng Wang$^{2}$ \and Yongqiang Zhao$^{2}$
-\and Juan Ye$^{1}$ \and Shan Luo$^{2}$\\[4pt]
+\and Juan Ye$^{1\dg{,*}}$ \and Shan Luo$^{2\dg{,*}}$\\[4pt]
 \small $^{1}$School of Computer Science, University of St Andrews\\
-\small $^{2}$Department of Engineering, King's College London}
+\small $^{2}$Department of Engineering, King's College London\\[2pt]
+\small \dg{$^{*}$Equal supervision.}}
 
 \date{Last updated: \today}
 
