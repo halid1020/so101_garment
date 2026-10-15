@@ -1,0 +1,12 @@
+# Seventh round (2026-10-15): DinoViTacFormer again, with a second training seed,
+# to tell whether cross-attention's 0.5 over the first ten test steps (6.9 against
+# 7.4 without it) is larger than what retraining alone moves. hpc/runs_round6.tsv
+# with --seed=1001 (lerobot-train's default is 1000). The seed sets the
+# initialisation and the shuffling only: the held-out episodes are the last 10 %
+# per task whatever it is. Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_s1001
+# and its ablation, hpc/runs_round7_concat.tsv, with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_concat_s1001
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --seed=1001

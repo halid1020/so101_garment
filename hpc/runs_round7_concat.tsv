@@ -1,0 +1,7 @@
+# Seventh round (2026-10-15): the second seed of DinoViTacFormer's "w/o
+# cross-attention" ablation -- hpc/runs_round6_concat.tsv with --seed=1001. See
+# hpc/runs_round7.tsv. Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_concat_s1001
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.cross_attention_layers=0 --seed=1001
