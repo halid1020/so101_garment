@@ -151,7 +151,10 @@ ViTacFormer's curriculum, so the action decoder first learns from correct
 signals and then adapts to its own.} \bl{At test time it only ever sees its
 predictions.} \bl{We leave out ViTacFormer's end-effector loss, because our actions
 are joint positions.} \bl{An ablation replaces the cross-attention with plain
-concatenation, as in ACT, and keeps everything else, the prediction included.}
+concatenation, as in ACT, and keeps everything else, the prediction included.} \dg{Two
+more ablations each change one other part: one finetunes DINOv2 instead of
+freezing it, and one drops the prediction, with its pass and its curriculum, so
+that the action pass reads only the present fingertip images.}
 
 \gn{\bl{The fingertip images every model receives are therefore far coarser than
 the sensors record: from $480\times640$ down to $224\times224$ for pi0.5,
