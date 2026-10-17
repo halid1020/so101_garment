@@ -1,0 +1,9 @@
+# Eighth round (2026-10-17): DinoViTacFormer with no tactile forecast -- no
+# forecast pass, no future-signal tokens, no forecast loss and no curriculum, so
+# the action pass reads the present fingertips only. Everything else is
+# hpc/runs_round6.tsv, its seed included. See hpc/runs_round8_finetune.tsv.
+# Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_noforecast
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.tactile_forecast=false

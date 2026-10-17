@@ -1,0 +1,12 @@
+# Eighth round (2026-10-17): which part of DinoViTacFormer costs it the long
+# horizon? Its extra test error lies in the shoulder-lift and elbow joints and is
+# there before the truth-to-forecast switch, which leaves two suspects: the frozen
+# DINOv2 on the overhead view, and the forecast itself. This run finetunes DINOv2
+# (at optimizer_lr, as ACT finetunes its ResNet) and keeps everything else of
+# hpc/runs_round6.tsv, its seed included. Submit with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_finetune
+# and the other suspect, hpc/runs_round8_noforecast.tsv, with
+#   SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_noforecast
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.freeze_dino=false
