@@ -525,15 +525,26 @@ fingertips useful to ACT on this data.}}
 encoder more deeply: it adds a frozen DINOv2 for the overhead view,
 cross-attention between vision and touch, and a forecast of the fingertip
 images.} \bl{It fits the training demonstrations about as well as ACT (2.62 against
-2.67).} \bl{Over the first ten steps of the test demonstrations it is better (6.9
-against 7.9), but over the whole plan it is worse (17.0 against 14.1).} \bl{It
-stays above ACT on the overhead camera alone on both counts (13.8 and 5.8).}
-\bl{Without the cross-attention, with the two token sets only concatenated, it
-scores 17.0 over its plan and 7.4 over the first ten steps.} \bl{Cross-attention
-therefore moves the first ten steps by 0.5 and leaves the whole plan
-unchanged.} \bl{Each variant was trained once, so a difference that small may be
-no more than a second training run would change.} \bl{Neither version makes the
-fingertips useful on held-out demonstrations.}
+2.67).} \dg{We trained it, and the version without cross-attention, from two random
+seeds each.} \dg{Averaged over the two seeds, DinoViTacFormer scores 16.5 over its
+plan and 7.3 over the first ten steps of the test demonstrations, against 14.1
+and 7.9 for ACT and 13.8 and 5.8 for ACT on the overhead camera alone.} \dg{Without
+the cross-attention, with the two token sets only concatenated, it scores 15.8
+and 6.6.} \dg{The seed alone moves these scores more than the cross-attention does:
+from one seed to the other, DinoViTacFormer moves by 1.0 over its plan and 0.8
+over the first ten steps, and the version without cross-attention by 2.4 and
+1.6.} \dg{So the cross-attention has no effect we can measure, and neither version
+makes the fingertips useful on held-out demonstrations.} \dg{The extra error of both over
+the whole plan lies in the shoulder-lift and elbow joints of both arms, which
+make the large reaching motions: 24 to 28 degrees for DinoViTacFormer against
+20 to 22 for ACT.} \dg{The switch from the true future fingertip images to the
+forecast shows no jump.} \dg{Scored every \num{10000} steps, the test error over
+the plan is already 17.1 at \num{30000} steps, half-way to the switch, and 17.0
+at \num{70000}, just after it.} \dg{Every checkpoint is scored as the model is
+used, on its own forecasts, so the curve rules out the switch as a sudden cost
+but not the forecast as a standing one.} \dg{The frozen DINOv2, which gives the
+overhead view features the training never adapts, is the other candidate, and
+these runs cannot tell the two apart.}
 
 
 

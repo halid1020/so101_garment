@@ -22,7 +22,10 @@ to the best models (Section~\ref{sec:pi05}).}}
 ACT slightly better on held-out demonstrations.} \bl{On a task this consistent, the
 overhead camera and the joint positions may already say what the next commands
 should be.}} \bl{The two world action models plan the near future best, though
-DreamZero barely reads its cameras to do so.}
+DreamZero barely reads its cameras to do so.} \dg{Most models were trained once.} \dg{Retraining DinoViTacFormer
+without cross-attention from a second random seed moved its test error by up to 2.4 over the plan,
+more than many of the differences between models in this report, so a small
+difference between two single runs should be read as unconfirmed.}
 
 \textbf{Next steps.} \bl{\textbf{Collect more varied demonstrations} (sessions,
 garments, starting positions), the most direct attack on the generalisation
