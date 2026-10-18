@@ -88,7 +88,8 @@ fingertips, and Diffusion and DreamZero slightly better without them.}
 \bl{FastWAM is the exception: without them it fits far worse, though that run
 also changes how its image is laid out.}}
 \bl{Fusing vision and touch by cross-attention, in our variant of ACT, does not
-change this either.}
+change this either.} \dg{What did hold that variant back over the far end of its plan was its
+frozen overhead encoder: finetuned, it matches ACT over the whole plan.}
   \item \bl{\rev{\textbf{DreamZero hardly reads its cameras to plan:} all five
   together move its plan by about \gr{7}\,\%; proprioception and its own past
   commands carry the rest.}}

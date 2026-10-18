@@ -16,7 +16,9 @@ model, and \rev{no model} over-weights the image edges that motivated it.}
 a narrow LoRA pi0.5 planned worse than a small flow-matching policy trained from
 scratch, and three times more training did not close the gap, but adapters on
 every attention and feed-forward layer, at a batch of eight, brought it close
-to the best models (Section~\ref{sec:pi05}).}}
+to the best models (Section~\ref{sec:pi05}).}} \dg{The same holds for DinoViTacFormer: with its
+DINOv2 frozen it planned the far end of the plan worse than ACT, and finetuned
+it matched ACT over the whole plan, though not over the first ten steps.}
 
 \bl{Touch is used, but briefly,} \new{\bl{and removing the fingertips altogether made
 ACT slightly better on held-out demonstrations.} \bl{On a task this consistent, the
