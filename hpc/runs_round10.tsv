@@ -1,0 +1,14 @@
+# Tenth round (2026-10-18): does touch help DinoViTacFormer once its overhead
+# encoder is no longer the bottleneck? Rounds 8-9 found the frozen DINOv2 cost
+# the far end of the plan; finetuned, the model matches ACT over the plan but
+# still trails ACT on the overhead camera alone (13.8 and 5.8). Two runs that
+# differ only in the fingertips, both with DINOv2 finetuned and no forecast (the
+# forecast has nothing to forecast without them): all five cameras, and the
+# overhead camera alone, where there is nothing to fuse and the model is ACT on
+# DINOv2 tokens. Seed 1000, as round 8. Submit each row with its own tag:
+#   --cameras all      SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_ft_nofc
+#   --cameras central  SO101_RUN_TAG=fold-short-from-flattend-tactile__central__dinovitac_ft_nofc
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.freeze_dino=false --policy.tactile_forecast=false
+fold-short-from-flattend-tactile harena_dinovitac  central  80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.freeze_dino=false --policy.tactile_forecast=false
