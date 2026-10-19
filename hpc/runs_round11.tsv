@@ -1,0 +1,11 @@
+# Eleventh round (2026-10-19): round 10 again from a second seed. Round 10 found
+# that, with DINOv2 finetuned and no forecast, the fingertips cost the first ten
+# steps (8.4 against 6.9) and the overhead-only model trails ACT on the overhead
+# camera alone (15.0 / 6.9 against 13.8 / 5.8), from one run each, while a seed
+# alone has moved a score by up to 2.4. Same two rows, seed 1001, as round 9.
+#   --cameras all      SO101_RUN_TAG=fold-short-from-flattend-tactile__all__dinovitac_ft_nofc_s1001
+#   --cameras central  SO101_RUN_TAG=fold-short-from-flattend-tactile__central__dinovitac_ft_nofc_s1001
+#
+# dataset                         policy            cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile harena_dinovitac  all      80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.freeze_dino=false --policy.tactile_forecast=false --seed=1001
+fold-short-from-flattend-tactile harena_dinovitac  central  80000  8     48    -     --dataset.eval_split=0.1 --policy.tactile_crop=[1.0,1.0] --policy.freeze_dino=false --policy.tactile_forecast=false --seed=1001
