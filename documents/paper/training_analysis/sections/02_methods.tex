@@ -154,7 +154,9 @@ are joint positions.} \bl{An ablation replaces the cross-attention with plain
 concatenation, as in ACT, and keeps everything else, the prediction included.} \dg{Two
 more ablations each change one other part: one finetunes DINOv2 instead of
 freezing it, and one drops the prediction, with its pass and its curriculum, so
-that the action pass reads only the present fingertip images.}
+that the action pass reads only the present fingertip images.} \dg{Two last runs do
+both, one with the fingertips and one on the overhead camera alone, which
+leaves ACT with DINOv2 in place of its ResNet.}
 
 \gn{\bl{The fingertip images every model receives are therefore far coarser than
 the sensors record: from $480\times640$ down to $224\times224$ for pi0.5,
