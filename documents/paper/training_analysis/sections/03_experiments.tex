@@ -557,19 +557,24 @@ DINOv2 frozen, or without the forecast, it stays between 15.7 and 17.5 from
 the first checkpoint on.} \dg{So it is the frozen overhead encoder, not the
 forecast, that costs DinoViTacFormer the far end of its plan.} \dg{Finetuning it
 trades that for the near end, and still leaves the model behind ACT on the
-overhead camera alone (13.8 and 5.8).} \dg{Two last runs, finetuned and without
-the forecast, ask whether the fingertips help once the overhead encoder can
-adapt.} \dg{With them the model scores 14.4 over its plan and 8.4 over the first ten
-steps, what the finetuned model scored with the forecast (14.1 to 14.6, and 8.4
-to 8.9), so the forecast does not matter here either.} \dg{On the overhead camera
-alone it scores 15.0 and 6.9.} \dg{That is the trade ACT makes when its fingertips
-are taken away (14.1 and 7.9 with them, 13.8 and 5.8 without): over the whole
-plan the fingertips change the error by less than a seed alone does, and every
-finetuned run that reads them plans the first ten steps worse, by 1.5 to 2.0.}
-\dg{On the overhead camera alone the model is ACT with DINOv2 in place of its
-ResNet, and it trails ACT by 1.2 and 1.1, from one run each.} \dg{Once DINOv2 can
-adapt, then, DinoViTacFormer behaves as ACT does: the fingertips do not help it,
-and DINOv2 reads the overhead view no better than ACT's ResNet.}
+overhead camera alone (13.8 and 5.8).} \dg{Two last pairs of runs, finetuned and without the forecast, from both seeds,
+ask whether the fingertips help once the overhead encoder can adapt.} \dg{With
+them the model scores 14.4 and 14.9 over its plan and 8.4 and 8.3 over the first
+ten steps, what the finetuned model scored with the forecast (14.1 to 14.6, and
+8.4 to 8.9), so the forecast does not matter here either.} \dg{On the overhead
+camera alone it scores 15.0 and 13.6, and 6.9 and 7.1.} \dg{That is the trade ACT
+makes when its fingertips are taken away (14.1 and 7.9 with them, 13.8 and 5.8
+without): over the whole plan the fingertips change the error by less than a
+seed alone does, and all five finetuned runs that read them plan the first ten
+steps worse, at 8.3 to 8.9 against 6.9 and 7.1.} \dg{Training does not close that
+gap: with the fingertips the error over the first ten steps falls from 9.7 at
+\num{10000} steps to 8.4 at \num{80000}, while on the overhead camera alone it
+stays between 6.7 and 7.4 throughout.} \dg{On the overhead camera alone the model
+is ACT with DINOv2 in place of its ResNet; it is level with ACT over the plan
+(14.3 on average, against 13.8) but behind it over the first ten steps (7.0
+against 5.8, from one ACT run).} \dg{Once DINOv2 can adapt, then, DinoViTacFormer
+behaves as ACT does: the fingertips do not help it, and DINOv2 reads the overhead
+view no better than ACT's ResNet.}
 
 
 
