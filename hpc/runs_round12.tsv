@@ -1,0 +1,11 @@
+# Twelfth round (2026-10-20): ACT from a second seed. Every DinoViTacFormer row
+# in the report is compared with ACT's single runs from thanos (all five cameras
+# 14.1 / 7.9, the overhead camera alone 13.8 / 5.8, seed 1000), while a seed
+# alone has moved a DinoViTacFormer score by up to 2.4. Same recipe as those runs
+# (plain act, batch 8, 80000 steps, eval_split 0.1), seed 1001 as rounds 9 and 11.
+#   --cameras all      SO101_RUN_TAG=fold-short-from-flattend-tactile__all__act_s1001
+#   --cameras central  SO101_RUN_TAG=fold-short-from-flattend-tactile__central__act_s1001
+#
+# dataset                         policy  cameras  steps  batch hours slots extra
+fold-short-from-flattend-tactile act     all      80000  8     36    -     --dataset.eval_split=0.1 --seed=1001
+fold-short-from-flattend-tactile act     central  80000  8     36    -     --dataset.eval_split=0.1 --seed=1001
